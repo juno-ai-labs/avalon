@@ -1,0 +1,77 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "avalon-api-eu",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "APP_ENV": "production",
+    "AVALON_REGION": "eu",
+    "AVALON_DEV_AUTH": "false",
+    "PUBLIC_API_BASE_URL": "https://eu.api.with-avalon.com",
+    "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
+    "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
+    "ALLOWED_ORIGINS": "app://avalon",
+    "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
+    "OPENROUTER_PRIMARY_MODEL": "google/gemini-2.5-flash-lite",
+    "OPENROUTER_FALLBACK_MODELS": "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
+    "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
+    "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
+    "RESEND_FROM_EMAIL": "Avalon <invites@send.with-avalon.com>",
+    "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
+    "HARNESS_MAX_MODEL_ITERATIONS": "8",
+    "HARNESS_MAX_TOOL_CALLS": "24",
+    "HARNESS_MAX_WALL_CLOCK_MS": "240000",
+    "TOOL_DEFAULT_TIMEOUT_MS": "30000",
+    "HARNESS_MAX_CONTEXT_BYTES": "200000",
+    "WEB_SEARCH_MAX_RESULTS": "8",
+    "WEB_FETCH_MAX_BYTES": "2000000",
+    "MAX_ATTACHMENT_BYTES": "25000000",
+    "WEBHOOK_REPLAY_WINDOW_SECONDS": "300",
+    "PROVIDER_WEBHOOK_MAX_BYTES": "2000000",
+    "LOG_LEVEL": "info"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "avalon-eu",
+      "database_id": "099eb3bf-4291-4a0f-a051-645e5c338881",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  "routes": [
+    { "pattern": "eu.api.with-avalon.com", "custom_domain": true }
+  ],
+  "r2_buckets": [
+    { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
+      { "name": "WORKSPACE_SCHEDULERS", "class_name": "WorkspaceScheduler" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] }
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "ACTIVITY_QUEUE", "queue": "avalon-eu-activities" }
+    ],
+    "consumers": [
+      {
+        "queue": "avalon-eu-activities",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-eu-activities-dead-letter"
+      }
+    ]
+  },
+  "workflows": [
+    { "name": "avalon-eu-workstream-loop", "binding": "WORKSTREAM_LOOP_WORKFLOW", "class_name": "WorkstreamLoopWorkflow" },
+    { "name": "avalon-eu-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" }
+  ],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}

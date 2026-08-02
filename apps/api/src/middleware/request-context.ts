@@ -1,0 +1,50 @@
+import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
+import type { MiddlewareHandler } from "hono";
+import type { HonoAppEnv } from "../env";
+import { ApiError } from "../lib/api-error";
+import { logEvent } from "../observability/logger";
+
+export const requestContext: MiddlewareHandler<HonoAppEnv> = async (c, next) => {
+  const incoming = c.req.header("x-request-id");
+  const requestId = incoming && /^[A-Za-z0-9._:-]{1,100}$/u.test(incoming) ? incoming : crypto.randomUUID();
+  c.set("requestId", requestId);
+  c.header("x-request-id", requestId);
+
+  const requestedRegion = c.req.header("x-avalon-region");
+  if (requestedRegion && requestedRegion !== c.env.AVALON_REGION) {
+    throw new ApiError(409, "region_mismatch", "This workspace belongs to a different data region");
+  }
+
+  const started = Date.now();
+  await next();
+  logEvent(c, "info", "http_request", {
+    method: c.req.method,
+    path: new URL(c.req.url).pathname,
+    status: c.res.status,
+    duration_ms: Date.now() - started,
+  });
+};
+
+export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
+  return [
+    secureHeaders({
+      crossOriginResourcePolicy: "same-site",
+      referrerPolicy: "no-referrer",
+      strictTransportSecurity: "max-age=31536000; includeSubDomains",
+      xContentTypeOptions: "nosniff",
+      xFrameOptions: "DENY",
+    }),
+    cors({
+      origin: (origin, c) => {
+        const allowed = new Set(c.env.ALLOWED_ORIGINS.split(",").map((value: string) => value.trim()).filter(Boolean));
+        return allowed.has(origin) ? origin : undefined;
+      },
+      allowHeaders: ["authorization", "content-type", "idempotency-key", "x-avalon-region", "x-request-id"],
+      exposeHeaders: ["x-request-id"],
+      allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+      credentials: false,
+      maxAge: 600,
+    }),
+  ];
+}

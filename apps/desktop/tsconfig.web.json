@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@renderer/*": ["src/renderer/*"]
+    },
+    "types": ["vite/client", "vitest/globals"]
+  },
+  "include": ["src/common/**/*.ts", "src/renderer/**/*.ts", "src/renderer/**/*.tsx"]
+}

@@ -1,0 +1,155 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { AuthContext, Env } from "../src/env";
+import { AutomationService } from "../src/services/automation-service";
+
+interface ExecutedStatement {
+  sql: string;
+  values: unknown[];
+}
+
+class AdoptionDatabase {
+  readonly executed: ExecutedStatement[] = [];
+  readonly subscription: Record<string, unknown> = {
+    id: "subscription-1",
+    workspace_id: "workspace-1",
+    template_id: "template-1",
+    template_version_id: "version-1",
+    status: "active",
+    scope: "personal",
+    owner_user_id: "user-1",
+    connector_bindings_json: "{}",
+    overrides_json: JSON.stringify({ tone: "concise" }),
+  };
+  readonly version: Record<string, unknown> = {
+    id: "version-2",
+    template_id: "template-1",
+    version_number: 2,
+    instructions: "Build the updated brief.",
+    trigger_definitions_json: JSON.stringify([{
+      type: "interval",
+      intervalSeconds: 3_600,
+      summary: "Every hour",
+    }]),
+    required_capabilities_json: "[]",
+    expected_outputs_json: JSON.stringify(["A concise brief"]),
+  };
+
+  readonly binding = {
+    prepare: (sql: string) => new AdoptionStatement(this, sql) as unknown as D1PreparedStatement,
+    batch: async <T = unknown>(statements: D1PreparedStatement[]) => {
+      const results: D1Result<T>[] = [];
+      for (const statement of statements) results.push(await statement.run<T>());
+      return results;
+    },
+  } as unknown as D1Database;
+}
+
+class AdoptionStatement {
+  private values: unknown[] = [];
+
+  constructor(
+    private readonly database: AdoptionDatabase,
+    private readonly sql: string,
+  ) {}
+
+  bind(...values: unknown[]): AdoptionStatement {
+    this.values = values;
+    return this;
+  }
+
+  async first<T>(): Promise<T | null> {
+    const sql = this.normalizedSql();
+    if (sql.includes("FROM automation_subscriptions s JOIN automation_templates")) {
+      return this.database.subscription as T;
+    }
+    if (sql.includes("FROM automation_template_versions WHERE id = ? AND template_id = ?")) {
+      return this.values[0] === this.database.version.id && this.values[1] === this.database.version.template_id
+        ? this.database.version as T
+        : null;
+    }
+    throw new Error(`Unexpected first() query: ${sql}`);
+  }
+
+  async run<T>(): Promise<D1Result<T>> {
+    this.database.executed.push({ sql: this.normalizedSql(), values: this.values });
+    return {
+      success: true,
+      results: [],
+      meta: { changes: 1 },
+    } as unknown as D1Result<T>;
+  }
+
+  private normalizedSql(): string {
+    return this.sql.replace(/\s+/gu, " ").trim();
+  }
+}
+
+afterEach(() => vi.useRealTimers());
+
+describe("automation template version adoption", () => {
+  it("atomically replaces schedule state while preserving subscription overrides", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T00:00:00.000Z"));
+    const database = new AdoptionDatabase();
+    const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
+    const schedulerGet = vi.fn(() => ({ fetch: schedulerFetch }));
+    const schedulerId = vi.fn(() => ({ toString: () => "scheduler-id" }));
+    const env = {
+      DB: database.binding,
+      AVALON_REGION: "global",
+      WORKSPACE_SCHEDULERS: { idFromName: schedulerId, get: schedulerGet },
+    } as unknown as Env;
+    const auth: AuthContext = {
+      sessionId: "session-1",
+      userId: "user-1",
+      workspaceId: "workspace-1",
+      region: "global",
+      role: "member",
+    };
+    const service = new AutomationService(env, auth);
+    const get = vi.spyOn(service, "get").mockResolvedValue({ id: "subscription-1" } as never);
+
+    await expect(service.adoptVersion("subscription-1", "version-2"))
+      .resolves.toEqual({ id: "subscription-1" });
+
+    expect(database.executed).toHaveLength(3);
+    expect(database.executed[0]).toMatchObject({
+      sql: expect.stringContaining("SET template_version_id = ?, next_run_at = ?, updated_at = ?"),
+      values: [
+        "version-2",
+        "2026-08-01T01:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+        "subscription-1",
+        "workspace-1",
+      ],
+    });
+    expect(database.executed[0]!.sql).not.toContain("overrides_json");
+    expect(database.executed[1]).toEqual({
+      sql: "DELETE FROM schedules WHERE automation_subscription_id = ? AND workspace_id = ?",
+      values: ["subscription-1", "workspace-1"],
+    });
+    expect(database.executed[2]).toMatchObject({
+      sql: expect.stringContaining("INSERT INTO schedules"),
+      values: [
+        expect.any(String),
+        "workspace-1",
+        "subscription-1",
+        "interval",
+        null,
+        3_600,
+        "UTC",
+        "2026-08-01T01:00:00.000Z",
+        1,
+        "2026-08-01T00:00:00.000Z",
+        "2026-08-01T00:00:00.000Z",
+      ],
+    });
+    expect(schedulerId).toHaveBeenCalledWith("global:workspace-1");
+    expect(schedulerFetch).toHaveBeenCalledWith(
+      "https://scheduler.internal/refresh",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(get).toHaveBeenCalledWith("subscription-1");
+  });
+});

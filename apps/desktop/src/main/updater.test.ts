@@ -1,0 +1,163 @@
+// @vitest-environment node
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  initializeAutoUpdate,
+  MANUAL_UPDATE_URL,
+  type AutoUpdateDependencies,
+  type UpdateStatus,
+} from './updater';
+
+class FakeUpdater extends EventEmitter {
+  autoDownload = false;
+  autoInstallOnAppQuit = false;
+  disableDifferentialDownload = false;
+  logger: unknown;
+  checkForUpdates = vi.fn(async () => null);
+  downloadUpdate = vi.fn(async () => []);
+  quitAndInstall = vi.fn();
+}
+
+function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
+  const updater = new FakeUpdater();
+  const statuses: UpdateStatus[] = [];
+  const showMessageBox = vi.fn(async () => ({ response: 1, checkboxChecked: false }));
+  const openExternal = vi.fn(async () => undefined);
+  const unref = vi.fn();
+  const scheduleInterval = vi.fn(() => ({ unref }));
+  const timeouts: Array<{ callback: () => void; delayMs: number }> = [];
+  const scheduleTimeout = vi.fn((callback: () => void, delayMs: number) => {
+    timeouts.push({ callback, delayMs });
+    return { unref };
+  });
+  const controller = initializeAutoUpdate({
+    isPackaged: true,
+    platform: 'darwin',
+    arch: 'arm64',
+    env: {},
+    currentVersion: '1.0.0',
+    showMessageBox,
+    openExternal,
+    onStatusChange: (status) => statuses.push(status),
+    updater: updater as unknown as AutoUpdateDependencies['updater'],
+    scheduleInterval,
+    scheduleTimeout,
+    ...overrides,
+  });
+  return {
+    controller,
+    updater,
+    statuses,
+    showMessageBox,
+    openExternal,
+    scheduleInterval,
+    scheduleTimeout,
+    timeouts,
+    unref,
+  };
+}
+
+describe('desktop auto-update runtime', () => {
+  it('checks immediately and daily without disabling differential downloads', () => {
+    const { controller, updater, statuses, scheduleInterval, unref } = setup();
+
+    expect(controller.enabled).toBe(true);
+    expect(updater.autoDownload).toBe(true);
+    expect(updater.autoInstallOnAppQuit).toBe(true);
+    expect(updater.disableDifferentialDownload).toBe(false);
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    expect(statuses).toEqual([{ kind: 'checking' }]);
+    expect(scheduleInterval).toHaveBeenCalledWith(expect.any(Function), 86_400_000);
+    expect(unref).toHaveBeenCalledOnce();
+  });
+
+  it('surfaces progress and installs a downloaded update after confirmation', async () => {
+    const { updater, statuses, showMessageBox } = setup();
+    showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
+
+    updater.emit('update-available', { version: '1.1.0' });
+    updater.emit('download-progress', { percent: 52.4 });
+    updater.emit('update-downloaded', { version: '1.1.0' });
+
+    expect(statuses).toContainEqual({ kind: 'downloading' });
+    expect(statuses).toContainEqual({ kind: 'downloading', percent: 52.4 });
+    expect(statuses.at(-1)).toEqual({ kind: 'downloaded', version: '1.1.0' });
+    expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Update ready',
+      buttons: ['Restart Now', 'Later'],
+    }));
+    await vi.waitFor(() => {
+      expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    });
+  });
+
+  it('reports a manual no-update result and gates unpackaged builds', async () => {
+    const { controller, updater, showMessageBox } = setup();
+    updater.emit('update-not-available', { version: '1.0.0' });
+    controller.checkForUpdates();
+    updater.emit('update-not-available', { version: '1.0.0' });
+    expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'You are running the latest version',
+    }));
+
+    const disabledDialog = vi.fn(async () => ({ response: 0, checkboxChecked: false }));
+    const disabled = setup({
+      isPackaged: false,
+      showMessageBox: disabledDialog,
+    }).controller;
+    disabled.checkForUpdates();
+    await Promise.resolve();
+    expect(disabled.enabled).toBe(false);
+    expect(disabledDialog).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Updates aren’t available in this build',
+    }));
+  });
+
+  it('retries only failed downloads with bounded exponential backoff', async () => {
+    const { updater, timeouts, scheduleTimeout, showMessageBox, openExternal } = setup();
+    showMessageBox.mockResolvedValue({ response: 0, checkboxChecked: false });
+    updater.emit('update-available', { version: '1.1.0' });
+
+    const expectedDelays = [3_000, 6_000, 12_000, 24_000, 48_000];
+    for (const [index, expectedDelay] of expectedDelays.entries()) {
+      updater.emit('error', new Error(`download failure ${index + 1}`));
+      expect(timeouts[index]?.delayMs).toBe(expectedDelay);
+      timeouts[index]!.callback();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    updater.emit('error', new Error('download failure exhausted'));
+
+    expect(scheduleTimeout).toHaveBeenCalledTimes(5);
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(5);
+    await vi.waitFor(() => {
+      expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Couldn’t update automatically',
+        buttons: ['Download Latest', 'Later'],
+      }));
+      expect(openExternal).toHaveBeenCalledWith(MANUAL_UPDATE_URL);
+    });
+
+    // Later duplicate errors cannot stack recovery prompts.
+    updater.emit('error', new Error('late duplicate'));
+    expect(showMessageBox).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry ordinary check failures or duplicate their dialog', async () => {
+    const { controller, updater, scheduleTimeout, showMessageBox } = setup();
+    updater.emit('update-not-available', { version: '1.0.0' });
+    updater.checkForUpdates.mockRejectedValueOnce(new Error('feed unavailable'));
+
+    controller.checkForUpdates();
+    updater.emit('error', new Error('feed unavailable'));
+    await vi.waitFor(() => {
+      expect(showMessageBox).toHaveBeenCalledTimes(1);
+    });
+
+    expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Couldn’t check for updates',
+    }));
+    expect(scheduleTimeout).not.toHaveBeenCalled();
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  });
+});

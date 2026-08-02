@@ -1,0 +1,632 @@
+import { z } from "zod";
+
+export const IdSchema = z.string().uuid();
+export const TimestampSchema = z.string().datetime({ offset: true });
+export const RegionSchema = z.enum(["global", "eu"]);
+export const ScopeSchema = z.enum(["personal", "workspace"]);
+export const HarnessStatusSchema = z.enum([
+  "scheduled",
+  "running",
+  "needs_input",
+  "completed",
+  "failed",
+  "idle"
+]);
+export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
+
+export const UserSchema = z.object({
+  id: IdSchema,
+  email: z.string().email(),
+  name: z.string().min(1),
+  avatarUrl: z.string().url().nullable(),
+  createdAt: TimestampSchema
+});
+
+export const WorkspaceSchema = z.object({
+  id: IdSchema,
+  name: z.string().min(1).max(120),
+  slug: z.string().min(2).max(80),
+  region: RegionSchema,
+  role: MemberRoleSchema,
+  createdAt: TimestampSchema
+});
+
+export const WorkspaceMemberSchema = z.object({
+  user: UserSchema,
+  role: MemberRoleSchema,
+  status: z.enum(["active", "invited", "suspended"]),
+  joinedAt: TimestampSchema.nullable()
+});
+
+export const WorkspaceInvitationRoleSchema = z.enum(["admin", "member"]);
+export const WorkspaceInvitationStatusSchema = z.enum(["pending", "accepted", "expired", "revoked"]);
+export const WorkspaceInvitationSchema = z.object({
+  id: IdSchema,
+  email: z.string().email(),
+  role: WorkspaceInvitationRoleSchema,
+  status: WorkspaceInvitationStatusSchema,
+  invitedByName: z.string().min(1),
+  expiresAt: TimestampSchema,
+  acceptedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema
+});
+export const WorkspaceInvitationPreviewSchema = z.object({
+  workspaceId: IdSchema,
+  workspaceName: z.string().min(1).max(120),
+  region: RegionSchema,
+  email: z.string().email(),
+  role: WorkspaceInvitationRoleSchema,
+  expiresAt: TimestampSchema
+});
+export const PendingWorkspaceInvitationSchema = WorkspaceInvitationPreviewSchema.extend({
+  id: IdSchema,
+  invitedByName: z.string().min(1)
+});
+export const WorkspaceOnboardingStateSchema = z.object({
+  workspace: WorkspaceSchema.nullable().default(null),
+  invitations: z.array(PendingWorkspaceInvitationSchema)
+});
+export const CreateWorkspaceRequestSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  region: RegionSchema
+});
+export const OnboardingRegionRequestSchema = z.object({ region: RegionSchema });
+export const ActivateWorkspaceRequestSchema = OnboardingRegionRequestSchema.extend({
+  workspaceId: IdSchema
+});
+export const CreateWorkspaceInvitationRequestSchema = z.object({
+  email: z.string().trim().email().max(254),
+  role: WorkspaceInvitationRoleSchema.default("member")
+});
+export const CreateWorkspaceInvitationResponseSchema = z.object({
+  invitation: WorkspaceInvitationSchema,
+  inviteUrl: z.string().url(),
+  emailDelivery: z.enum(["sent", "skipped"])
+});
+export const AcceptWorkspaceInvitationRequestSchema = z.object({
+  token: z.string().min(20).max(500)
+});
+
+export const ParticipantSchema = z.object({
+  user: UserSchema,
+  participationReason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
+  joinedAt: TimestampSchema
+});
+
+export const ViewerSchema = z.object({
+  user: UserSchema,
+  connectedAt: TimestampSchema
+});
+
+export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
+export const WorkstreamSchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  title: z.string().min(1).max(180),
+  objective: z.string().max(4000),
+  originType: WorkstreamOriginSchema,
+  originLabel: z.string().max(120).nullable(),
+  createdByUserId: IdSchema.nullable(),
+  automationSubscriptionId: IdSchema.nullable(),
+  automationRunId: IdSchema.nullable(),
+  plannedFor: TimestampSchema.nullable(),
+  harnessStatus: HarnessStatusSchema,
+  lastActivityAt: TimestampSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  archivedAt: TimestampSchema.nullable()
+});
+
+export const MessageAuthorSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("human"), user: UserSchema }),
+  z.object({ type: z.literal("agent") }),
+  z.object({ type: z.literal("system") })
+]);
+
+export const MentionSchema = z.object({
+  type: z.enum(["person", "connector"]),
+  userId: IdSchema.nullable(),
+  connectorType: z.string().max(80).nullable(),
+  startOffset: z.number().int().nonnegative(),
+  endOffset: z.number().int().positive()
+});
+
+export const MessageSchema = z.object({
+  id: IdSchema,
+  clientMessageId: z.string().max(120).nullable(),
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  author: MessageAuthorSchema,
+  messageType: z.enum(["text", "system", "tool", "artifact", "elicitation", "suggestion"]),
+  textContent: z.string(),
+  structuredContent: z.record(z.string(), z.unknown()).nullable(),
+  mentions: z.array(MentionSchema),
+  sequenceNumber: z.number().int().nonnegative(),
+  createdAt: TimestampSchema,
+  editedAt: TimestampSchema.nullable()
+});
+
+export const ResourceSchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  connectionId: IdSchema.nullable(),
+  resourceType: z.string().min(1).max(80),
+  provider: z.string().min(1).max(80),
+  providerResourceId: z.string().max(500).nullable(),
+  title: z.string().min(1).max(300),
+  mimeType: z.string().max(160).nullable(),
+  canonicalUrl: z.string().url().nullable(),
+  watchEnabled: z.boolean(),
+  watchStatus: z.enum(["watching", "paused", "unsupported", "error"]),
+  lastHydratedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema
+});
+
+export const ConnectionSchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  connectorType: z.enum(["google", "generic_webhook", "web_monitor", "github", "linear", "notion"]),
+  scope: ScopeSchema,
+  ownerUserId: IdSchema.nullable(),
+  ownerName: z.string().nullable(),
+  displayName: z.string().min(1).max(180),
+  grantedCapabilities: z.array(z.string()),
+  status: z.enum(["healthy", "needs_reconnect", "error", "disabled"]),
+  lastSyncAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema
+});
+
+export const ToolInvocationSchema = z.object({
+  id: IdSchema,
+  harnessRunId: IdSchema,
+  toolCallId: z.string().min(1).max(160),
+  toolName: z.string().min(1).max(160),
+  connectionId: IdSchema.nullable(),
+  status: z.enum(["pending", "started", "completed", "failed", "ambiguous"]),
+  inputSummary: z.string().max(1000),
+  outputSummary: z.string().max(4000).nullable(),
+  startedAt: TimestampSchema.nullable(),
+  completedAt: TimestampSchema.nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable()
+});
+
+export const HarnessRunMetadataSchema = z.object({
+  id: IdSchema,
+  origin: z.string().min(1).max(80),
+  status: z.enum(["scheduled", "running", "needs_input", "completed", "failed", "stopped"]),
+  model: z.string().max(160).nullable(),
+  startedAt: TimestampSchema.nullable(),
+  completedAt: TimestampSchema.nullable(),
+  createdAt: TimestampSchema
+});
+
+export const WorkstreamArtifactSchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  harnessRunId: IdSchema.nullable(),
+  artifactType: z.string().min(1).max(80),
+  title: z.string().min(1).max(300),
+  previewText: z.string().max(4000).nullable(),
+  status: z.string().min(1).max(80),
+  mimeType: z.string().min(1).max(160),
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema
+});
+
+export const BackgroundTaskSchema = z.object({
+  id: IdSchema,
+  harnessRunId: IdSchema,
+  title: z.string().min(1).max(300),
+  taskType: z.enum(["agent", "tool", "connector"]),
+  status: z.enum(["running", "needs_input", "completed", "failed"]),
+  startedAt: TimestampSchema,
+  completedAt: TimestampSchema.nullable(),
+  tokenCount: z.number().int().nonnegative().nullable(),
+  toolUses: z.number().int().nonnegative().nullable(),
+  transcriptMessageId: IdSchema.nullable()
+});
+
+export const ElicitationOptionSchema = z.object({
+  value: z.string().min(1).max(200),
+  label: z.string().min(1).max(300),
+  description: z.string().max(800).nullable()
+});
+export const ElicitationSchema = z.object({
+  id: IdSchema,
+  workstreamId: IdSchema,
+  harnessRunId: IdSchema,
+  prompt: z.string().min(1).max(4000),
+  responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
+  options: z.array(ElicitationOptionSchema),
+  minimumSelections: z.number().int().nonnegative(),
+  maximumSelections: z.number().int().positive().nullable(),
+  targetUserId: IdSchema.nullable(),
+  status: z.enum(["open", "answered", "cancelled"]),
+  answer: z.union([z.string(), z.array(z.string())]).nullable(),
+  answeredByUserId: IdSchema.nullable(),
+  createdAt: TimestampSchema,
+  answeredAt: TimestampSchema.nullable()
+});
+
+export const ActivitySuggestionSchema = z.object({
+  id: IdSchema,
+  activityId: IdSchema,
+  workstreamId: IdSchema,
+  title: z.string().min(1).max(300),
+  summary: z.string().max(2000),
+  confidence: z.number().min(0).max(1),
+  reason: z.string().min(1).max(1200),
+  status: z.enum(["pending", "accepted", "dismissed"]),
+  createdAt: TimestampSchema,
+  resolvedAt: TimestampSchema.nullable()
+});
+
+export const WorkstreamDetailSchema = WorkstreamSchema.extend({
+  participants: z.array(ParticipantSchema),
+  viewers: z.array(ViewerSchema),
+  resources: z.array(ResourceSchema),
+  connections: z.array(ConnectionSchema),
+  artifacts: z.array(WorkstreamArtifactSchema).default([]),
+  backgroundTasks: z.array(BackgroundTaskSchema).default([]),
+  openElicitations: z.array(ElicitationSchema),
+  suggestions: z.array(ActivitySuggestionSchema),
+  latestHarnessRunId: IdSchema.nullable(),
+  latestHarnessRun: HarnessRunMetadataSchema.nullable().optional()
+});
+
+export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("manual") }),
+  z.object({
+    type: z.literal("calendar"),
+    rrule: z.string().min(1),
+    timezone: z.string().min(1),
+    summary: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("interval"),
+    intervalSeconds: z.number().int().min(60),
+    summary: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("connector_activity"),
+    connectorType: z.string().min(1),
+    eventTypes: z.array(z.string().min(1)).min(1),
+    deterministicFilters: z.record(z.string(), z.unknown())
+  }),
+  z.object({
+    type: z.literal("semantic_activity"),
+    connectorType: z.string().min(1).nullable(),
+    deterministicPrefilter: z.record(z.string(), z.unknown()),
+    condition: z.string().min(1)
+  }),
+  z.object({ type: z.literal("resource_watch"), resourceId: IdSchema }),
+  z.object({ type: z.literal("webhook"), eventTypes: z.array(z.string()).min(1) })
+]);
+
+export const AutomationDraftSchema = z.object({
+  name: z.string().min(1).max(140),
+  description: z.string().min(1).max(1200),
+  instructions: z.string().min(1).max(12000),
+  triggers: z.array(TriggerDefinitionSchema).min(1),
+  requiredCapabilities: z.array(z.string()).default([]),
+  expectedOutputs: z.array(z.string()).default([]),
+  defaultBehavior: z.record(z.string(), z.unknown()).default({}),
+  suggestedScope: ScopeSchema,
+  followUpQuestion: z.string().nullable(),
+  ready: z.boolean()
+});
+
+export const AutomationSummarySchema = z.object({
+  id: IdSchema,
+  name: z.string(),
+  description: z.string(),
+  scope: ScopeSchema,
+  status: z.enum(["draft", "active", "paused", "error"]),
+  nextRunAt: TimestampSchema.nullable(),
+  lastRunAt: TimestampSchema.nullable(),
+  updateAvailable: z.boolean()
+});
+
+export const AutomationRunSchema = z.object({
+  id: IdSchema,
+  automationSubscriptionId: IdSchema,
+  workstreamId: IdSchema,
+  triggerType: z.string(),
+  plannedFor: TimestampSchema.nullable(),
+  startedAt: TimestampSchema.nullable(),
+  completedAt: TimestampSchema.nullable(),
+  status: HarnessStatusSchema,
+  resultSummary: z.string().nullable(),
+  createdAt: TimestampSchema
+});
+
+export const AutomationTemplateUpdateSchema = z.object({
+  versionId: IdSchema,
+  versionNumber: z.number().int().positive(),
+  instructions: z.string(),
+  triggers: z.array(TriggerDefinitionSchema),
+  requiredCapabilities: z.array(z.string()),
+  expectedOutputs: z.array(z.string())
+});
+
+export const AutomationDetailSchema = AutomationSummarySchema.extend({
+  templateId: IdSchema,
+  templateVersionId: IdSchema,
+  versionNumber: z.number().int().positive(),
+  instructions: z.string(),
+  triggers: z.array(TriggerDefinitionSchema),
+  requiredCapabilities: z.array(z.string()),
+  expectedOutputs: z.array(z.string()).default([]),
+  executionPrincipal: z.record(z.string(), z.unknown()),
+  connectorBindings: z.record(z.string(), IdSchema),
+  templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
+  nextPlannedWorkstream: WorkstreamSchema.nullable(),
+  recentRuns: z.array(AutomationRunSchema)
+});
+
+export const ApiErrorSchema = z.object({
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    requestId: z.string().nullable(),
+    details: z.record(z.string(), z.unknown()).optional()
+  })
+});
+
+export const CursorPageSchema = <T extends z.ZodType>(item: T) =>
+  z.object({ items: z.array(item), nextCursor: z.string().nullable() });
+
+export const SessionSchema = z.object({
+  accessToken: z.string().min(20),
+  refreshToken: z.string().min(20),
+  expiresAt: TimestampSchema,
+  user: UserSchema,
+  workspace: WorkspaceSchema.nullable(),
+  apiBaseUrl: z.string().url()
+});
+
+export const DesktopExchangeRequestSchema = z.object({
+  ticket: z.string().min(20).max(500),
+  region: RegionSchema,
+  attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u)
+});
+export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
+export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
+
+export const CreateWorkstreamRequestSchema = z.object({
+  title: z.string().min(1).max(180).optional(),
+  objective: z.string().min(1).max(4000),
+  participantUserIds: z.array(IdSchema).max(25).default([]),
+  openingMessage: z.string().min(1).max(50000),
+  clientMessageId: z.string().min(1).max(120)
+});
+
+export const UpdateWorkstreamRequestSchema = z.object({
+  title: z.string().min(1).max(180).optional(),
+  objective: z.string().max(4000).optional(),
+  archived: z.boolean().optional()
+});
+
+export const CreateMessageRequestSchema = z.object({
+  text: z.string().min(1).max(50000),
+  clientMessageId: z.string().min(1).max(120),
+  mentions: z.array(MentionSchema).default([]),
+  confirmedParticipantUserIds: z.array(IdSchema).default([])
+});
+
+export const AddParticipantRequestSchema = z.object({ userId: IdSchema });
+export const AnswerElicitationRequestSchema = z.object({
+  answer: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
+});
+export const CreateAutomationRequestSchema = z.object({
+  draft: AutomationDraftSchema,
+  scope: ScopeSchema,
+  connectorBindings: z.record(z.string(), IdSchema).default({})
+});
+export const CompileAutomationRequestSchema = z.object({
+  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
+  currentDraft: AutomationDraftSchema.nullable().default(null)
+});
+export const CreateWebMonitorRequestSchema = z.object({
+  url: z.string().url(),
+  intervalSeconds: z.number().int().min(300),
+  phrase: z.string().max(300).nullable().default(null),
+  scope: ScopeSchema
+});
+export const CreateWebhookConnectionRequestSchema = z.object({
+  displayName: z.string().min(1).max(180),
+  scope: ScopeSchema,
+  eventTypes: z.array(z.string().min(1)).default([])
+});
+
+export const ClientSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
+  z.object({ type: z.literal("create_message"), payload: CreateMessageRequestSchema }),
+  z.object({ type: z.literal("stop_harness") }),
+  z.object({ type: z.literal("answer_elicitation"), elicitationId: IdSchema, payload: AnswerElicitationRequestSchema }),
+  z.object({ type: z.literal("add_participant"), userId: IdSchema }),
+  z.object({ type: z.literal("remove_participant"), userId: IdSchema }),
+  z.object({ type: z.literal("attach_resource"), resourceId: IdSchema }),
+  z.object({ type: z.literal("detach_resource"), resourceId: IdSchema }),
+  z.object({ type: z.literal("accept_activity_suggestion"), suggestionId: IdSchema }),
+  z.object({ type: z.literal("dismiss_activity_suggestion"), suggestionId: IdSchema })
+]);
+
+const ServerEventBaseSchema = z.object({
+  sequence: z.number().int().nonnegative(),
+  occurredAt: TimestampSchema
+});
+export const ServerSocketEventSchema = z.discriminatedUnion("type", [
+  ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
+  ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("stream_started"), messageId: IdSchema, harnessRunId: IdSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("stream_delta"), messageId: IdSchema, delta: z.string() }),
+  ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), message: MessageSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("tool_started"), invocation: ToolInvocationSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("tool_completed"), invocation: ToolInvocationSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("tool_failed"), invocation: ToolInvocationSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("elicitation_created"), elicitation: ElicitationSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("elicitation_answered"), elicitation: ElicitationSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("participant_added"), participant: ParticipantSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("participant_removed"), userId: IdSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("resource_attached"), resource: ResourceSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: ResourceSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("resync_required"),
+    reason: z.enum(["history_unavailable", "sequence_ahead"]),
+    latestSequence: z.number().int().nonnegative()
+  }),
+  ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
+]);
+
+export const NormalizedActivitySchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  region: RegionSchema,
+  connectionId: IdSchema,
+  connectionScope: ScopeSchema,
+  connectionOwnerUserId: IdSchema.nullable(),
+  provider: z.string().min(1),
+  providerEventId: z.string().min(1),
+  eventType: z.string().min(1),
+  resourceType: z.string().nullable(),
+  providerResourceId: z.string().nullable(),
+  actor: z.record(z.string(), z.unknown()),
+  subject: z.record(z.string(), z.unknown()),
+  occurredAt: TimestampSchema,
+  receivedAt: TimestampSchema,
+  title: z.string().min(1),
+  summary: z.string(),
+  textSnippet: z.string().max(4000),
+  payloadRef: z.string().nullable(),
+  visibility: z.record(z.string(), z.unknown()),
+  targetUserIds: z.array(IdSchema),
+  entityKeys: z.array(z.string()),
+  dedupeKey: z.string().min(1),
+  rawContentHash: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown())
+});
+
+export const ActivityQueueMessageSchema = z.object({
+  region: RegionSchema,
+  workspaceId: IdSchema,
+  activityId: IdSchema,
+  attempt: z.number().int().nonnegative().default(0)
+});
+
+export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("user"), userId: IdSchema }),
+  z.object({ type: z.literal("workspace"), workspaceId: IdSchema })
+]);
+
+export const WorkstreamWorkflowInputSchema = z.object({
+  region: RegionSchema,
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  harnessRunId: IdSchema,
+  triggerMessageId: IdSchema.nullable(),
+  automationSubscriptionId: IdSchema.nullable(),
+  activityId: IdSchema.nullable(),
+  executionPrincipal: ExecutionPrincipalSchema,
+  reason: z.string().min(1).max(500)
+});
+export const ConnectorPollWorkflowInputSchema = z.object({
+  region: RegionSchema,
+  workspaceId: IdSchema,
+  connectionId: IdSchema,
+  pollScheduleId: IdSchema
+});
+
+export const AddressingClassificationSchema = z.object({
+  classification: z.enum(["agent_action", "human_only", "both", "uncertain"]),
+  confidence: z.number().min(0).max(1),
+  rationaleCode: z.enum([
+    "imperative",
+    "question",
+    "connector_mention",
+    "avalon_reference",
+    "active_task",
+    "elicitation_answer",
+    "human_coordination",
+    "social_acknowledgement",
+    "insufficient_signal"
+  ])
+});
+
+export const ActivityRoutingResultSchema = z.object({
+  candidateWorkstreamId: IdSchema.nullable(),
+  confidence: z.number().min(0).max(1),
+  reason: z.string().max(1000),
+  matchedEntities: z.array(z.string()),
+  suggest: z.boolean()
+});
+
+export const ToolDefinitionSchema = z.object({
+  name: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  description: z.string().min(1),
+  inputSchema: z.record(z.string(), z.unknown()),
+  capability: z.string().min(1),
+  mode: z.enum(["read", "write"]),
+  idempotency: z.enum(["safe", "provider_key", "record_before_execute"])
+});
+
+export const ConnectorManifestSchema = z.object({
+  type: z.string().min(1),
+  displayName: z.string().min(1),
+  supportedScopes: z.array(ScopeSchema),
+  oauthRequired: z.boolean(),
+  activityTypes: z.array(z.string()),
+  resourceTypes: z.array(z.string()),
+  tools: z.array(ToolDefinitionSchema),
+  supportsWatches: z.boolean(),
+  supportsPolling: z.boolean(),
+  supportsWebhooks: z.boolean()
+});
+
+export type Region = z.infer<typeof RegionSchema>;
+export type Scope = z.infer<typeof ScopeSchema>;
+export type HarnessStatus = z.infer<typeof HarnessStatusSchema>;
+export type User = z.infer<typeof UserSchema>;
+export type Workspace = z.infer<typeof WorkspaceSchema>;
+export type WorkspaceMember = z.infer<typeof WorkspaceMemberSchema>;
+export type WorkspaceInvitation = z.infer<typeof WorkspaceInvitationSchema>;
+export type WorkspaceInvitationPreview = z.infer<typeof WorkspaceInvitationPreviewSchema>;
+export type PendingWorkspaceInvitation = z.infer<typeof PendingWorkspaceInvitationSchema>;
+export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSchema>;
+export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
+export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
+export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
+export type Workstream = z.infer<typeof WorkstreamSchema>;
+export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
+export type Message = z.infer<typeof MessageSchema>;
+export type Resource = z.infer<typeof ResourceSchema>;
+export type Connection = z.infer<typeof ConnectionSchema>;
+export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
+export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
+export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
+export type Elicitation = z.infer<typeof ElicitationSchema>;
+export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
+export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
+export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
+export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
+export type AutomationRun = z.infer<typeof AutomationRunSchema>;
+export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
+export type Session = z.infer<typeof SessionSchema>;
+export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
+export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
+export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
+export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
+export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;
+export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
+export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
+export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;
+export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
+export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;

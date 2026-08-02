@@ -1,0 +1,164 @@
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+
+export const AVALON_APP_ID = 'app.avalon.desktop';
+export const AVALON_APPLE_TEAM_ID = '7ZLT6A8W25';
+export const DEFAULT_RELEASE_PREFIX = 'stable/darwin/arm64';
+
+const SEMVER_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+
+export function parseVersion(version) {
+  const match = SEMVER_PATTERN.exec(version);
+  if (!match) throw new Error(`Invalid semantic version: ${version}`);
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4]?.split('.') ?? [],
+  };
+}
+
+export function assertReleaseTag(tag, rootVersion, desktopVersion) {
+  if (!tag?.startsWith('v')) throw new Error(`Release tag must have the form v<semver>; received ${tag || '(empty)'}`);
+  const taggedVersion = tag.slice(1);
+  parseVersion(taggedVersion);
+  if (rootVersion !== taggedVersion) {
+    throw new Error(`Root package version ${rootVersion} does not match tag ${tag}`);
+  }
+  if (desktopVersion !== taggedVersion) {
+    throw new Error(`Desktop package version ${desktopVersion} does not match tag ${tag}`);
+  }
+  return taggedVersion;
+}
+
+export function compareVersions(left, right) {
+  const a = parseVersion(left);
+  const b = parseVersion(right);
+  for (const part of ['major', 'minor', 'patch']) {
+    if (a[part] !== b[part]) return a[part] < b[part] ? -1 : 1;
+  }
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    if (a.prerelease.length === b.prerelease.length) return 0;
+    return a.prerelease.length === 0 ? 1 : -1;
+  }
+  const length = Math.max(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const aPart = a.prerelease[index];
+    const bPart = b.prerelease[index];
+    if (aPart === undefined) return -1;
+    if (bPart === undefined) return 1;
+    if (aPart === bPart) continue;
+    const aNumeric = /^\d+$/u.test(aPart);
+    const bNumeric = /^\d+$/u.test(bPart);
+    if (aNumeric && bNumeric) return Number(aPart) < Number(bPart) ? -1 : 1;
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return aPart < bPart ? -1 : 1;
+  }
+  return 0;
+}
+
+function yamlScalar(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"')) return JSON.parse(trimmed);
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replaceAll("''", "'");
+  }
+  return trimmed;
+}
+
+export function parseMacUpdateFeed(text) {
+  const lines = text.split(/\r?\n/u);
+  const versionLine = lines.find((line) => /^version:\s*/u.test(line));
+  if (!versionLine) throw new Error('latest-mac.yml is missing its version');
+  const version = yamlScalar(versionLine.replace(/^version:\s*/u, ''));
+  parseVersion(version);
+
+  const fileIndex = lines.findIndex((line) => /^\s*-\s+url:\s*/u.test(line));
+  if (fileIndex < 0) throw new Error('latest-mac.yml is missing files[0].url');
+  const url = yamlScalar(lines[fileIndex].replace(/^\s*-\s+url:\s*/u, ''));
+  if (!url || /^https?:\/\//u.test(url) || url.includes('/') || url.includes('?') || url.includes('#')) {
+    throw new Error(`latest-mac.yml must reference a sibling artifact filename; received ${url}`);
+  }
+
+  let sha512;
+  let size;
+  for (let index = fileIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^\s*-\s+url:/u.test(line) || /^\S/u.test(line)) break;
+    if (/^\s+sha512:\s*/u.test(line)) sha512 = yamlScalar(line.replace(/^\s+sha512:\s*/u, ''));
+    if (/^\s+size:\s*/u.test(line)) size = Number(yamlScalar(line.replace(/^\s+size:\s*/u, '')));
+  }
+  if (!sha512 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(sha512)) {
+    throw new Error('latest-mac.yml is missing a valid files[0].sha512');
+  }
+  if (!Number.isSafeInteger(size) || size <= 0) {
+    throw new Error('latest-mac.yml is missing a valid positive files[0].size');
+  }
+  return { version, file: { url, sha512, size } };
+}
+
+export async function sha512File(filePath) {
+  const hash = createHash('sha512');
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('base64');
+}
+
+export async function loadReleaseDirectory(directory) {
+  const names = (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
+  const manifestNames = names.filter((name) => name === 'latest-mac.yml');
+  if (manifestNames.length !== 1) {
+    throw new Error(`Expected exactly one latest-mac.yml in ${directory}; found ${manifestNames.length}`);
+  }
+  const manifestPath = join(directory, manifestNames[0]);
+  const manifestBytes = await readFile(manifestPath);
+  const feed = parseMacUpdateFeed(manifestBytes.toString('utf8'));
+  const artifactNames = names.filter((name) => /\.(?:dmg|zip|blockmap)$/u.test(name));
+  if (!artifactNames.includes(feed.file.url)) {
+    throw new Error(`Update feed references missing artifact ${feed.file.url}`);
+  }
+  const zipNames = artifactNames.filter((name) => name.endsWith('.zip'));
+  const dmgNames = artifactNames.filter((name) => name.endsWith('.dmg'));
+  if (zipNames.length !== 1 || dmgNames.length !== 1) {
+    throw new Error(`Expected one ZIP and one DMG; found ${zipNames.length} ZIP and ${dmgNames.length} DMG`);
+  }
+  return {
+    directory,
+    manifestPath,
+    manifestBytes,
+    feed,
+    artifacts: artifactNames.map((name) => ({ name, path: join(directory, name) })),
+    zipPath: join(directory, zipNames[0]),
+    dmgPath: join(directory, dmgNames[0]),
+  };
+}
+
+export async function verifyFeedArtifact(release) {
+  const artifactPath = join(release.directory, release.feed.file.url);
+  const [actualSha512, metadata] = await Promise.all([sha512File(artifactPath), stat(artifactPath)]);
+  if (actualSha512 !== release.feed.file.sha512) {
+    throw new Error(`SHA-512 mismatch for ${basename(artifactPath)}`);
+  }
+  if (metadata.size !== release.feed.file.size) {
+    throw new Error(`Size mismatch for ${basename(artifactPath)}: feed=${release.feed.file.size}, actual=${metadata.size}`);
+  }
+}
+
+export function normalizeReleasePrefix(prefix = DEFAULT_RELEASE_PREFIX) {
+  const normalized = prefix.replace(/^\/+|\/+$/gu, '');
+  if (!normalized || normalized.split('/').some((part) => part === '.' || part === '..' || part === '')) {
+    throw new Error(`Invalid release prefix: ${prefix}`);
+  }
+  return normalized;
+}
+
+export function releaseContentType(name) {
+  if (name.endsWith('.dmg')) return 'application/x-apple-diskimage';
+  if (name.endsWith('.zip')) return 'application/zip';
+  if (name.endsWith('.yml')) return 'application/yaml; charset=utf-8';
+  return 'application/octet-stream';
+}

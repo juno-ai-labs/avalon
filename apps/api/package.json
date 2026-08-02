@@ -1,0 +1,38 @@
+{
+  "name": "@avalon/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.global.jsonc --env-file .dev.vars.global --persist-to .wrangler/state/global --port 8787 --inspector-port 9230",
+    "dev:eu": "wrangler dev --config wrangler.eu.jsonc --env-file .dev.vars.eu --persist-to .wrangler/state/eu --port 8788 --inspector-port 9231",
+    "build": "wrangler deploy --dry-run --config wrangler.global.jsonc --outdir dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:migrate": "wrangler d1 migrations apply DB --local --persist-to .wrangler/state/global --config wrangler.global.jsonc --env-file .dev.vars.global",
+    "db:migrate:eu": "wrangler d1 migrations apply DB --local --persist-to .wrangler/state/eu --config wrangler.eu.jsonc --env-file .dev.vars.eu",
+    "db:seed": "node ../../scripts/seed-local-region.mjs global",
+    "db:seed:eu": "node ../../scripts/seed-local-region.mjs eu",
+    "deploy:global": "wrangler deploy --config wrangler.global.jsonc",
+    "deploy:eu": "wrangler deploy --config wrangler.eu.jsonc"
+  },
+  "dependencies": {
+    "@avalon/agent-harness": "workspace:*",
+    "@avalon/connectors": "workspace:*",
+    "@avalon/contracts": "workspace:*",
+    "@avalon/db": "workspace:*",
+    "@hono/zod-validator": "latest",
+    "hono": "latest",
+    "jose": "latest",
+    "rrule": "latest",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "latest",
+    "@cloudflare/workers-types": "latest",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "latest"
+  }
+}

@@ -1,0 +1,208 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "..");
+const sourcePath = resolve(root, ".env.local");
+const legacyTargetPath = resolve(root, "apps/api/.dev.vars");
+const regionalTargetPaths = {
+  global: resolve(root, "apps/api/.dev.vars.global"),
+  eu: resolve(root, "apps/api/.dev.vars.eu")
+};
+
+const workerKeys = [
+  "APP_ENV",
+  "AVALON_REGION",
+  "AVALON_DEV_AUTH",
+  "PUBLIC_API_BASE_URL",
+  "PUBLIC_WEB_BASE_URL",
+  "ALLOWED_ORIGINS",
+  "DESKTOP_DEEP_LINK_URI",
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_PRIMARY_MODEL",
+  "OPENROUTER_FALLBACK_MODELS",
+  "OPENROUTER_CLASSIFIER_MODEL",
+  "OPENROUTER_STRUCTURED_MODEL",
+  "FIRECRAWL_API_KEY",
+  "RESEND_API_KEY",
+  "RESEND_FROM_EMAIL",
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+  "GITHUB_APP_ID",
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+  "GITHUB_APP_SLUG",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_WEBHOOK_SECRET",
+  "LINEAR_OAUTH_CLIENT_ID",
+  "LINEAR_OAUTH_CLIENT_SECRET",
+  "LINEAR_WEBHOOK_SECRET",
+  "NOTION_OAUTH_CLIENT_ID",
+  "NOTION_OAUTH_CLIENT_SECRET",
+  "NOTION_INTEGRATION_ID",
+  "NOTION_WEBHOOK_SETUP_TOKEN",
+  "SESSION_SIGNING_KEY",
+  "OAUTH_STATE_ENCRYPTION_KEY",
+  "CONNECTOR_CREDENTIALS_KEY",
+  "CONNECTOR_CREDENTIALS_KEY_VERSION",
+  "HARNESS_MAX_MODEL_ITERATIONS",
+  "HARNESS_MAX_TOOL_CALLS",
+  "HARNESS_MAX_WALL_CLOCK_MS",
+  "TOOL_DEFAULT_TIMEOUT_MS",
+  "HARNESS_MAX_CONTEXT_BYTES",
+  "WEB_SEARCH_MAX_RESULTS",
+  "WEB_FETCH_MAX_BYTES",
+  "MAX_ATTACHMENT_BYTES",
+  "WEBHOOK_REPLAY_WINDOW_SECONDS",
+  "PROVIDER_WEBHOOK_MAX_BYTES",
+  "LOG_LEVEL"
+];
+
+// Provider values may be supplied once as KEY or overridden per region for
+// providers that use regional registrations. GitHub intentionally uses the
+// unsuffixed values in both Workers because Avalon operates one public App with
+// a smart, installation-aware ingress.
+const regionalizableKeys = [
+  "FIRECRAWL_API_KEY",
+  "RESEND_API_KEY",
+  "RESEND_FROM_EMAIL",
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+  "GITHUB_APP_ID",
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+  "GITHUB_APP_SLUG",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_WEBHOOK_SECRET",
+  "LINEAR_OAUTH_CLIENT_ID",
+  "LINEAR_OAUTH_CLIENT_SECRET",
+  "LINEAR_WEBHOOK_SECRET",
+  "NOTION_OAUTH_CLIENT_ID",
+  "NOTION_OAUTH_CLIENT_SECRET",
+  "NOTION_INTEGRATION_ID",
+  "NOTION_WEBHOOK_SETUP_TOKEN",
+  "SESSION_SIGNING_KEY",
+  "OAUTH_STATE_ENCRYPTION_KEY",
+  "CONNECTOR_CREDENTIALS_KEY"
+];
+
+const safeDefaults = {
+  APP_ENV: "development",
+  AVALON_DEV_AUTH: "true",
+  PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
+  ALLOWED_ORIGINS: "app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
+  DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
+  OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
+  OPENROUTER_FALLBACK_MODELS: "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
+  OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
+  OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
+  RESEND_FROM_EMAIL: "Avalon <invites@send.with-avalon.com>",
+  CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+  HARNESS_MAX_MODEL_ITERATIONS: "8",
+  HARNESS_MAX_TOOL_CALLS: "24",
+  HARNESS_MAX_WALL_CLOCK_MS: "240000",
+  TOOL_DEFAULT_TIMEOUT_MS: "30000",
+  HARNESS_MAX_CONTEXT_BYTES: "200000",
+  WEB_SEARCH_MAX_RESULTS: "8",
+  WEB_FETCH_MAX_BYTES: "2000000",
+  MAX_ATTACHMENT_BYTES: "25000000",
+  WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
+  PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
+  LOG_LEVEL: "info"
+};
+
+function parseEnv(source) {
+  const values = {};
+  for (const rawLine of source.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const equals = line.indexOf("=");
+    if (equals < 1) continue;
+    const key = line.slice(0, equals).trim();
+    let value = line.slice(equals + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
+}
+
+let local = {};
+try {
+  local = parseEnv(await readFile(sourcePath, "utf8"));
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+}
+
+async function readEnvFile(path) {
+  try {
+    return parseEnv(await readFile(path, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    return {};
+  }
+}
+
+const legacyExisting = await readEnvFile(legacyTargetPath);
+const existingRegional = {
+  global: { ...legacyExisting, ...await readEnvFile(regionalTargetPaths.global) },
+  eu: { ...legacyExisting, ...await readEnvFile(regionalTargetPaths.eu) }
+};
+
+const sharedGitHubKeys = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+  "GITHUB_APP_SLUG",
+  "GITHUB_WEBHOOK_SECRET"
+];
+const sharedGitHubValues = Object.fromEntries(sharedGitHubKeys.map((key) => [
+  key,
+  local[key]
+    || local[`${key}_GLOBAL`]
+    || local[`${key}_EU`]
+    || existingRegional.global[key]
+    || existingRegional.eu[key]
+    || ""
+]));
+
+for (const region of ["global", "eu"]) {
+  const existing = existingRegional[region];
+  const regional = {
+    ...safeDefaults,
+    ...existing,
+    ...local,
+    AVALON_REGION: region,
+    PUBLIC_API_BASE_URL: region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788"
+  };
+  for (const key of regionalizableKeys) {
+    const regionalKey = `${key}_${region.toUpperCase()}`;
+    if (!key.startsWith("GITHUB_") && typeof local[regionalKey] === "string") {
+      regional[key] = local[regionalKey];
+    }
+  }
+  Object.assign(regional, sharedGitHubValues);
+  // A single GitHub App may issue independent private keys to each regional
+  // Worker. An unsuffixed key remains the convenient development default.
+  regional.GITHUB_APP_PRIVATE_KEY = local.GITHUB_APP_PRIVATE_KEY
+    || local[`GITHUB_APP_PRIVATE_KEY_${region.toUpperCase()}`]
+    || existing.GITHUB_APP_PRIVATE_KEY
+    || "";
+  // Keep generated development encryption/signing material stable per region.
+  regional.SESSION_SIGNING_KEY ||= randomBytes(48).toString("base64url");
+  regional.OAUTH_STATE_ENCRYPTION_KEY ||= randomBytes(32).toString("base64");
+  regional.CONNECTOR_CREDENTIALS_KEY ||= randomBytes(32).toString("base64");
+  // Migrate the original generated allowlist without overriding an explicit
+  // developer choice in .env.local. Built Electron renderers use app://avalon.
+  if (!("ALLOWED_ORIGINS" in local) && existing.ALLOWED_ORIGINS === "http://localhost:5173") {
+    regional.ALLOWED_ORIGINS = safeDefaults.ALLOWED_ORIGINS;
+  }
+  const serialized = workerKeys
+    .filter((key) => typeof regional[key] === "string" && regional[key].length > 0)
+    .map((key) => `${key}=${JSON.stringify(regional[key])}`)
+    .join("\n");
+  await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });
+}
+
+console.log("Synced fixed Global and EU local Worker environments from .env.local.");

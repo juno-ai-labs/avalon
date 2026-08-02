@@ -1,0 +1,10 @@
+extends: ./electron-builder.yml
+mac:
+  identity: "Juno AI Labs Inc. (7ZLT6A8W25)"
+  hardenedRuntime: true
+  forceCodeSigning: true
+  notarize: false
+  target:
+    - target: dir
+      arch:
+        - arm64

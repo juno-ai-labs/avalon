@@ -1,0 +1,75 @@
+import { describe, expect, it } from "vitest";
+import {
+  AcceptWorkspaceInvitationRequestSchema,
+  CreateWorkspaceInvitationRequestSchema,
+  SessionSchema,
+  WorkspaceInvitationPreviewSchema,
+  WorkspaceOnboardingStateSchema,
+} from "./index";
+
+const workspaceId = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
+
+describe("organization invitation contracts", () => {
+  it("defaults invitations to member and accepts an explicit administrator role", () => {
+    expect(CreateWorkspaceInvitationRequestSchema.parse({
+      email: "  member@example.com  ",
+    })).toEqual({ email: "member@example.com", role: "member" });
+
+    expect(CreateWorkspaceInvitationRequestSchema.parse({
+      email: "admin@example.com",
+      role: "admin",
+    })).toEqual({ email: "admin@example.com", role: "admin" });
+  });
+
+  it("does not permit owner escalation through an invitation payload", () => {
+    expect(CreateWorkspaceInvitationRequestSchema.safeParse({
+      email: "owner@example.com",
+      role: "owner",
+    }).success).toBe(false);
+  });
+
+  it("carries the immutable Global or EU region in invitation previews", () => {
+    const preview = {
+      workspaceId,
+      workspaceName: "Europe Research",
+      region: "eu",
+      email: "invitee@example.com",
+      role: "member",
+      expiresAt: "2026-08-08T01:00:00.000Z",
+    };
+    expect(WorkspaceInvitationPreviewSchema.parse(preview)).toEqual(preview);
+    expect(WorkspaceInvitationPreviewSchema.safeParse({
+      ...preview,
+      region: "us",
+    }).success).toBe(false);
+  });
+
+  it("rejects short invitation secrets before they reach the API service", () => {
+    expect(AcceptWorkspaceInvitationRequestSchema.safeParse({ token: "too-short" }).success).toBe(false);
+    expect(AcceptWorkspaceInvitationRequestSchema.parse({
+      token: "invite-token-longer-than-twenty-characters",
+    })).toEqual({ token: "invite-token-longer-than-twenty-characters" });
+  });
+
+  it("supports an authenticated identity before it is bound to a workspace", () => {
+    const session = {
+      accessToken: "access-token-longer-than-twenty-characters",
+      refreshToken: "refresh-token-longer-than-twenty-characters",
+      expiresAt: "2026-08-01T01:00:00.000Z",
+      user: {
+        id: workspaceId,
+        email: "adam@example.com",
+        name: "Adam",
+        avatarUrl: null,
+        createdAt: "2026-08-01T00:00:00.000Z",
+      },
+      workspace: null,
+      apiBaseUrl: "https://api.with-avalon.com",
+    };
+    expect(SessionSchema.parse(session)).toEqual(session);
+    expect(WorkspaceOnboardingStateSchema.parse({ invitations: [] })).toEqual({
+      workspace: null,
+      invitations: [],
+    });
+  });
+});

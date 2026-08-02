@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "jsx": "react-jsx",
+    "types": ["node", "electron-vite/node", "vite/client", "vitest/globals"]
+  },
+  "include": [
+    "electron.vite.config.ts",
+    "tailwind.config.ts",
+    "vitest.config.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
+}

@@ -1,0 +1,119 @@
+import { createRef } from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { describe, expect, it, vi } from 'vitest';
+import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
+import { WorkstreamComposer } from './workstream-composer';
+
+const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com' };
+const bob: WorkspaceMember = { id: 'user-2', name: 'Bob Builder', email: 'bob@example.com' };
+const cara: WorkspaceMember = { id: 'user-3', name: 'Cara Chen', email: 'cara@example.com' };
+
+const workstream: WorkstreamDetail = {
+  id: 'workstream-1',
+  title: 'Investigate the release',
+  origin: 'ad_hoc',
+  harnessStatus: 'completed',
+  lastActivityAt: '2026-07-31T20:00:00.000Z',
+  createdAt: '2026-07-31T20:00:00.000Z',
+  participants: [creator],
+  viewers: [],
+  resources: [],
+  connections: [],
+  artifacts: [],
+  backgroundTasks: [],
+  automationRuns: [],
+};
+
+function renderComposer(
+  onSend = vi.fn(async () => undefined),
+  onManageParticipants = vi.fn(),
+): ReturnType<typeof render> {
+  vi.stubGlobal('ResizeObserver', class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  });
+  return render(
+    <Tooltip.Provider>
+      <WorkstreamComposer
+        fileInputRef={createRef<HTMLInputElement>()}
+        members={[creator, bob, cara]}
+        onAttach={async () => undefined}
+        onManageParticipants={onManageParticipants}
+        onSend={onSend}
+        onStop={async () => undefined}
+        sending={false}
+        socketState="connected"
+        uploading={false}
+        workstream={workstream}
+      />
+    </Tooltip.Provider>,
+  );
+}
+
+describe('WorkstreamComposer mention confirmation', () => {
+  it('shows active participants above the composer and opens the real participant action', () => {
+    const onManageParticipants = vi.fn();
+    renderComposer(undefined, onManageParticipants);
+
+    expect(screen.getByLabelText('Work-stream participants')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Adam' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add people' }));
+
+    expect(onManageParticipants).toHaveBeenCalledTimes(2);
+  });
+
+  it('filters functional slash commands and opens participant mentions from the keyboard', async () => {
+    renderComposer();
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: '/part' } });
+
+    const commands = screen.getByRole('listbox', { name: 'Composer commands' });
+    expect(commands).toBeVisible();
+    expect(screen.getByRole('option', { name: /\/participants/u })).toBeVisible();
+    expect(screen.queryByRole('option', { name: /\/attach/u })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(composer).toHaveValue('@'));
+    expect(screen.getByRole('listbox', { name: 'Mentions' })).toBeVisible();
+    expect(screen.queryByRole('listbox', { name: 'Composer commands' })).not.toBeInTheDocument();
+  });
+
+  it('confirms every mentioned nonparticipant together and sends their IDs without a preliminary add', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+
+    fireEvent.change(screen.getByLabelText('Message the work stream'), {
+      target: { value: 'Please ask @Bob Builder and @Cara Chen to review.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByRole('heading', { name: 'Add participants?' })).toBeVisible();
+    expect(screen.getByText('bob@example.com')).toBeVisible();
+    expect(screen.getByText('cara@example.com')).toBeVisible();
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add all and mention' }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith(
+      'Please ask @Bob Builder and @Cara Chen to review.',
+      [],
+      ['user-2', 'user-3'],
+    ));
+    expect(screen.getByLabelText('Message the work stream')).toHaveValue('');
+  });
+
+  it('sends participant mentions without asking for confirmation', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+
+    fireEvent.change(screen.getByLabelText('Message the work stream'), { target: { value: '@Adam looks good.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Adam looks good.', []));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
