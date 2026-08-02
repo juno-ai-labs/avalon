@@ -198,26 +198,10 @@ a.button:hover { transform: translateY(-1px); }
 .button-disabled { background: #282925; color: var(--muted); cursor: not-allowed; min-width: 225px; }
 
 .apple-mark {
-  background: currentColor;
-  border-radius: 41% 47% 48% 43%;
-  color: #1c1d1a;
   display: block;
-  font-size: 8px;
   height: 16px;
-  position: relative;
-  width: 14px;
-}
-
-.apple-mark::after {
-  background: #1c1d1a;
-  border-radius: 90% 0 90% 0;
-  content: "";
-  height: 5px;
-  position: absolute;
-  right: 0;
-  top: -4px;
-  transform: rotate(-15deg);
-  width: 4px;
+  object-fit: contain;
+  width: 13px;
 }
 
 .button-arrow { color: #65665f; font-size: 14px; margin-left: 8px; }
