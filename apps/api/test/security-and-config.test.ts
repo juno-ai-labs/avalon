@@ -1,0 +1,485 @@
+import { describe, expect, it } from "vitest";
+import {
+  ConnectorError,
+  createGoogleConnector,
+  type ConnectorConnectionContext,
+} from "@avalon/connectors";
+import { createApp } from "../src/app";
+import type { Env } from "../src/env";
+import { numericEnv } from "../src/env";
+import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualText } from "../src/lib/crypto";
+import { redact } from "../src/observability/logger";
+import { AuthService } from "../src/services/auth-service";
+import { __connectionServiceTesting } from "../src/services/connection-service";
+import { __integrationTesting } from "../src/services/integrations";
+import { isAllowedSocketOrigin, issueSocketTicket, verifySocketTicket } from "../src/services/socket-service";
+import { __resourceServiceTesting } from "../src/services/resource-service";
+import { __workstreamServiceTesting } from "../src/services/workstream-service";
+
+describe("API security utilities", () => {
+  it("round-trips authenticated encrypted values without exposing plaintext", async () => {
+    const secret = randomToken(32);
+    const encrypted = await encryptString('{"refreshToken":"sensitive"}', secret);
+    expect(encrypted.ciphertext).not.toContain("sensitive");
+    await expect(decryptString(encrypted.ciphertext, encrypted.iv, secret)).resolves.toBe(
+      '{"refreshToken":"sensitive"}',
+    );
+  });
+
+  it("binds connector ciphertext to the connection identity", async () => {
+    const secret = randomToken(32);
+    const encrypted = await encryptString('{"refreshToken":"sensitive"}', secret, "connection-1");
+    await expect(
+      decryptString(encrypted.ciphertext, encrypted.iv, secret, "connection-1"),
+    ).resolves.toBe('{"refreshToken":"sensitive"}');
+    await expect(
+      decryptString(encrypted.ciphertext, encrypted.iv, secret, "connection-2"),
+    ).rejects.toThrow();
+  });
+
+  it("creates deterministic HMACs and compares them without early length exits", async () => {
+    const first = await hmacSha256("secret", "payload");
+    const second = await hmacSha256("secret", "payload");
+    expect(timingSafeEqualText(first, second)).toBe(true);
+    expect(timingSafeEqualText(first, `${second}x`)).toBe(false);
+  });
+
+  it("redacts nested credential-like fields from structured logs", () => {
+    expect(
+      redact({ connection: { refreshToken: "secret", displayName: "Google" }, authorization: "Bearer x" }),
+    ).toEqual({ connection: { refreshToken: "[REDACTED]", displayName: "Google" }, authorization: "[REDACTED]" });
+  });
+
+  it("binds suggested provider resources to their originating connection", () => {
+    const sql = __workstreamServiceTesting.activityResourceLookupSql.replace(/\s+/gu, " ");
+    expect(sql).toContain("connection_id = ?");
+    expect(sql).toContain("connection_id IS NULL AND ? IS NULL");
+    expect(sql).toContain("provider = ? AND provider_resource_id = ?");
+  });
+
+  it("attaches resources with watching off until a canonical watch is activated", () => {
+    const attachSql = __workstreamServiceTesting.attachResourceSql.replace(/\s+/gu, " ");
+    expect(attachSql).toContain("VALUES (?, ?, ?, 0, 'attachment', ?)");
+    expect(attachSql).toContain("ON CONFLICT(workstream_id, resource_id) DO NOTHING");
+    expect(attachSql).not.toContain("watch_enabled = 1");
+
+    const readSql = __workstreamServiceTesting.workstreamResourcesSql.replace(/\s+/gu, " ");
+    expect(readSql).toContain("LEFT JOIN resource_watches rw");
+    expect(readSql).toContain("rw.enabled = 1");
+    expect(readSql).not.toContain("rw.next_poll_at IS NOT NULL");
+    expect(readSql).toContain("WHEN rw.id IS NOT NULL THEN 'watching'");
+
+    const enableSql = __resourceServiceTesting.enableResourceWatchSql.replace(/\s+/gu, " ");
+    expect(enableSql).toContain("watch_type = excluded.watch_type");
+    expect(enableSql).toContain("next_poll_at = excluded.next_poll_at");
+    const resourceSql = __resourceServiceTesting.resourceWithWatchStateSql.replace(/\s+/gu, " ");
+    expect(resourceSql).toContain("CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END");
+    expect(resourceSql).not.toContain("rw.next_poll_at IS NOT NULL");
+
+    const at = "2026-08-01T12:00:00.000Z";
+    expect(__resourceServiceTesting.resourceWatchMode({ supportsWatches: true, supportsPolling: true }, at)).toEqual({
+      watchType: "incremental",
+      nextPollAt: at,
+    });
+    expect(__resourceServiceTesting.resourceWatchMode({ supportsWatches: true, supportsPolling: false }, at)).toEqual({
+      watchType: "webhook",
+      nextPollAt: null,
+    });
+    expect(() => __resourceServiceTesting.resourceWatchMode({ supportsWatches: false, supportsPolling: false }, at))
+      .toThrow("This connector does not support resource watches");
+  });
+
+  it("loads durable rail data only from the current work stream and workspace", () => {
+    const artifactSql = __workstreamServiceTesting.workstreamArtifactsSql.replace(/\s+/gu, " ");
+    const harnessSql = __workstreamServiceTesting.workstreamHarnessTasksSql.replace(/\s+/gu, " ");
+    const toolSql = __workstreamServiceTesting.workstreamToolTasksSql.replace(/\s+/gu, " ");
+
+    expect(artifactSql).toContain("WHERE workspace_id = ? AND workstream_id = ?");
+    expect(harnessSql).toContain("WHERE hr.workspace_id = ? AND hr.workstream_id = ?");
+    expect(harnessSql).toContain("m.client_message_id = ('harness:' || hr.id)");
+    expect(toolSql).toContain("WHERE ti.workspace_id = ? AND ti.workstream_id = ?");
+    expect(__workstreamServiceTesting.backgroundTaskStatus("needs_input")).toBe("needs_input");
+    expect(__workstreamServiceTesting.backgroundTaskStatus("ambiguous")).toBe("failed");
+  });
+
+  it("serves artifacts with conservative MIME and safe filenames", () => {
+    expect(__workstreamServiceTesting.mimeTypeForArtifact("markdown")).toBe("text/markdown; charset=utf-8");
+    expect(__workstreamServiceTesting.mimeTypeForArtifact("unknown-binary")).toBe("text/plain; charset=utf-8");
+    expect(__workstreamServiceTesting.safeArtifactFileName('../Q3: plan?', 'markdown')).toBe('Q3- plan-.md');
+    expect(__workstreamServiceTesting.safeArtifactFileName('results.csv', 'csv')).toBe('results.csv');
+  });
+
+  it("preserves offline credentials only for the same stable Google account", () => {
+    const existing = {
+      id: "connection-1",
+      workspace_id: "workspace-1",
+      connector_type: "google",
+      scope: "personal" as const,
+      owner_user_id: "user-1",
+      provider_account_id: "google-account-1",
+    };
+    const reconciled = __connectionServiceTesting.reconcileGoogleAccount(
+      existing,
+      { refreshToken: "offline-token", providerAccountId: "google-account-1" },
+      {
+        accessToken: "new-access-token",
+        providerAccountId: "google-account-1",
+        providerAccountEmail: "adam@example.com",
+      },
+    );
+    expect(reconciled).toMatchObject({
+      providerAccountId: "google-account-1",
+      displayName: "Google · adam@example.com",
+      credentials: { refreshToken: "offline-token", accessToken: "new-access-token" },
+    });
+    expect(() =>
+      __connectionServiceTesting.reconcileGoogleAccount(
+        existing,
+        { refreshToken: "offline-token" },
+        { refreshToken: "different", providerAccountId: "google-account-2" },
+      )
+    ).toThrow(/same Google account/i);
+  });
+
+  it("labels each Google capability preset distinctly", () => {
+    expect(__connectionServiceTesting.googleConnectionDisplayName(
+      ["gmail.read", "calendar.read", "calendar.write"],
+      "Google · adam@example.com",
+    )).toBe("Google Mail + Calendar · adam@example.com");
+    expect(__connectionServiceTesting.googleConnectionDisplayName(
+      ["drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write"],
+      "Google · adam@example.com",
+    )).toBe("Google Drive + Docs + Sheets · adam@example.com");
+    expect(__connectionServiceTesting.googleConnectionDisplayName(
+      ["gmail.read", "drive.read"],
+      "Google · adam@example.com",
+    )).toBe("Google Workspace · adam@example.com");
+  });
+
+  it("minimizes Google provider scopes and rejects partially granted consent", () => {
+    const scopes = __connectionServiceTesting.googleProviderScopesForCapabilities([
+      "gmail.read",
+      "gmail.draft",
+      "gmail.send",
+      "calendar.read",
+      "calendar.write",
+      "docs.read",
+      "docs.write",
+      "sheets.read",
+      "sheets.write",
+    ]);
+    expect(scopes).toEqual(expect.arrayContaining([
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/spreadsheets",
+    ]));
+    expect(scopes).not.toContain("https://www.googleapis.com/auth/gmail.send");
+    expect(scopes).not.toContain("https://www.googleapis.com/auth/calendar.events.readonly");
+    expect(scopes).not.toContain("https://www.googleapis.com/auth/documents.readonly");
+    expect(scopes).not.toContain("https://www.googleapis.com/auth/spreadsheets.readonly");
+
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      ["gmail.read", "calendar.write"],
+      { scopes: ["https://www.googleapis.com/auth/gmail.readonly"] },
+    )).toThrow(/calendar\.write/u);
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      ["gmail.draft", "gmail.send", "calendar.read", "calendar.write", "docs.read", "docs.write"],
+      {
+        scopes: [
+          "https://www.googleapis.com/auth/gmail.compose",
+          "https://www.googleapis.com/auth/calendar.events",
+          "https://www.googleapis.com/auth/documents",
+        ],
+      },
+    )).not.toThrow();
+  });
+
+  it("persists credentials mutated by a reactive connector refresh with connection-bound encryption", async () => {
+    const updates: Array<{ sql: string; values: unknown[] }> = [];
+    const database = {
+      prepare(sql: string) {
+        const update = { sql, values: [] as unknown[] };
+        updates.push(update);
+        return {
+          bind(...values: unknown[]) {
+            update.values = values;
+            return this;
+          },
+          async run() {
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const encryptionKey = randomToken(32);
+    const connection = connectorContext({
+      accessToken: "expired-access-token",
+      refreshToken: "offline-refresh-token",
+    });
+    const requestedTokens: string[] = [];
+    const adapter = createGoogleConnector({
+      clientId: "google-client",
+      clientSecret: "google-secret",
+      redirectUri: "https://api.example.com/connections/google/callback",
+      fetch: (async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(request);
+        if (url === "https://oauth2.googleapis.com/token") {
+          return Response.json({
+            access_token: "rotated-access-token",
+            expires_in: 3_600,
+            token_type: "Bearer",
+          });
+        }
+        if (url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/messages")) {
+          const token = new Headers(init?.headers).get("authorization") ?? "";
+          requestedTokens.push(token);
+          return token === "Bearer rotated-access-token"
+            ? Response.json({ messages: [] })
+            : Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        throw new Error(`Unexpected Google URL: ${url}`);
+      }) as typeof fetch,
+    });
+
+    await expect(__integrationTesting.withConnectorCredentialLifecycle(
+      {
+        DB: database,
+        CONNECTOR_CREDENTIALS_KEY: encryptionKey,
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "7",
+      },
+      connection,
+      () => adapter.executeTool(
+        "google.gmail.search",
+        { query: "from:example.com" },
+        {
+          connection,
+          principal: { type: "workspace", workspaceId: connection.workspaceId },
+          signal: new AbortController().signal,
+        },
+      ),
+    )).resolves.toMatchObject({ summary: "Found 0 Gmail messages" });
+
+    expect(requestedTokens).toEqual([
+      "Bearer expired-access-token",
+      "Bearer rotated-access-token",
+    ]);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.sql).toContain("WHERE id = ? AND workspace_id = ?");
+    const [ciphertext, iv, keyVersion, , persistedConnectionId, persistedWorkspaceId] = updates[0]!.values;
+    expect(keyVersion).toBe(7);
+    expect(persistedConnectionId).toBe(connection.id);
+    expect(persistedWorkspaceId).toBe(connection.workspaceId);
+    expect(String(ciphertext)).not.toContain("rotated-access-token");
+    await expect(decryptString(
+      String(ciphertext),
+      String(iv),
+      encryptionKey,
+      connection.id,
+    )).resolves.toContain("rotated-access-token");
+  });
+
+  it("marks revoked connector grants for reconnect and stores only a sanitized reason", async () => {
+    const updates: Array<{ sql: string; values: unknown[] }> = [];
+    const database = {
+      prepare(sql: string) {
+        const update = { sql, values: [] as unknown[] };
+        updates.push(update);
+        return {
+          bind(...values: unknown[]) {
+            update.values = values;
+            return this;
+          },
+          async run() {
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const connection = connectorContext({
+      accessToken: "expired-access-token",
+      refreshToken: "must-never-be-persisted-in-an-error",
+    });
+
+    await expect(__integrationTesting.withConnectorCredentialLifecycle(
+      {
+        DB: database,
+        CONNECTOR_CREDENTIALS_KEY: randomToken(32),
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      },
+      connection,
+      async () => {
+        throw new ConnectorError("unauthorized", "Google authorization was revoked", {
+          reconnectRequired: true,
+          reason: "invalid_grant",
+          payload: { refreshToken: "must-never-be-persisted-in-an-error" },
+        });
+      },
+    )).rejects.toMatchObject({
+      code: "unauthorized",
+      details: { reconnectRequired: true, reason: "invalid_grant" },
+    });
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.sql).toContain("status = 'needs_reconnect'");
+    expect(updates[0]!.sql).toContain("WHERE id = ? AND workspace_id = ?");
+    const serializedError = String(updates[0]!.values[0]);
+    expect(serializedError).toContain("invalid_grant");
+    expect(serializedError).not.toContain("must-never-be-persisted-in-an-error");
+    expect(updates[0]!.values.slice(-2)).toEqual([connection.id, connection.workspaceId]);
+  });
+});
+
+function connectorContext(credentials: Record<string, unknown>): ConnectorConnectionContext {
+  return {
+    id: "00000000-0000-7000-8000-000000000010",
+    workspaceId: "00000000-0000-7000-8000-000000000011",
+    scope: "workspace",
+    ownerUserId: null,
+    grantedScopes: ["gmail.read"],
+    credentials,
+    cursor: {},
+    config: {},
+  };
+}
+
+describe("environment guardrails", () => {
+  it("rejects oversized refresh bodies before authentication work", async () => {
+    const body = JSON.stringify({ refreshToken: "a".repeat(5_000) });
+    const response = await createApp().request(
+      "https://api.example.com/auth/refresh",
+      {
+        method: "POST",
+        headers: {
+          "content-length": String(new TextEncoder().encode(body).byteLength),
+          "content-type": "application/json",
+        },
+        body,
+      },
+      {
+        ALLOWED_ORIGINS: "app://avalon",
+        AVALON_REGION: "global",
+        LOG_LEVEL: "error",
+      } as Env,
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "payload_too_large" },
+    });
+  });
+
+  it("allows the desktop idempotency header in CORS preflights", async () => {
+    const response = await createApp().request(
+      "https://api.example.com/automations/00000000-0000-7000-8000-000000000001/run",
+      {
+        method: "OPTIONS",
+        headers: {
+          origin: "app://avalon",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization,content-type,idempotency-key",
+        },
+      },
+      {
+        ALLOWED_ORIGINS: "app://avalon",
+        AVALON_REGION: "global",
+        LOG_LEVEL: "error",
+      } as Env,
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
+    expect(response.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("idempotency-key");
+  });
+
+  it("uses a safe fallback for invalid positive numeric limits", () => {
+    const env = { HARNESS_MAX_TOOL_CALLS: "not-a-number" } as Env;
+    expect(numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24)).toBe(24);
+    env.HARNESS_MAX_TOOL_CALLS = "12";
+    expect(numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24)).toBe(12);
+  });
+
+  it("does not expose development session creation outside the explicit dev guard", async () => {
+    const env = { APP_ENV: "production", AVALON_DEV_AUTH: "false" } as Env;
+    await expect(new AuthService(env).createDevelopmentSession()).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
+  });
+
+  it("bounds aggregate model context by UTF-8 bytes", () => {
+    const bounded = __integrationTesting.boundModelContext(
+      `system-${"🛡️".repeat(100)}`,
+      [
+        { role: "user", content: "old-".repeat(100) },
+        { role: "assistant", content: "new-".repeat(100) },
+      ],
+      256,
+    );
+    expect(bounded.byteLength).toBeLessThanOrEqual(256);
+    expect(bounded.messages.at(-1)?.content).toContain("new-");
+  });
+
+  it.each([
+    "http://127.0.0.1/private",
+    "http://[fd00::1]/private",
+    "http://metadata.google.internal/latest",
+  ])("rejects inherent web fetches to non-public literal host %s", (url) => {
+    expect(() => __integrationTesting.assertSafePublicUrl(url)).toThrow(/private|local/i);
+  });
+
+  it("scopes short-lived socket tickets to one region, workspace, user, and work stream", async () => {
+    const env = { SESSION_SIGNING_KEY: "test-signing-key", AVALON_REGION: "global" } as Env;
+    const ticket = await issueSocketTicket(
+      env,
+      {
+        sessionId: "session",
+        userId: "00000000-0000-7000-8000-000000000001",
+        workspaceId: "00000000-0000-7000-8000-000000000002",
+        region: "global",
+        role: "owner",
+      },
+      "00000000-0000-7000-8000-000000000003",
+    );
+    await expect(verifySocketTicket(env, ticket)).resolves.toMatchObject({
+      userId: "00000000-0000-7000-8000-000000000001",
+      workspaceId: "00000000-0000-7000-8000-000000000002",
+      workstreamId: "00000000-0000-7000-8000-000000000003",
+      region: "global",
+    });
+    await expect(
+      verifySocketTicket({ ...env, SESSION_SIGNING_KEY: "another-key" }, ticket),
+    ).rejects.toMatchObject({ code: "invalid_socket_ticket" });
+  });
+
+  it("requires an exact configured Origin for WebSocket upgrades", () => {
+    const env = { ALLOWED_ORIGINS: "app://avalon, http://localhost:5173/" } as Env;
+    expect(isAllowedSocketOrigin(env, "app://avalon")).toBe(true);
+    expect(isAllowedSocketOrigin(env, "http://localhost:5173")).toBe(true);
+    expect(isAllowedSocketOrigin(env, "https://with-avalon.com.evil.example")).toBe(false);
+    expect(isAllowedSocketOrigin(env, null)).toBe(false);
+  });
+
+  it("batches rapid model deltas before publishing realtime frames", async () => {
+    let now = 0;
+    const published: string[] = [];
+    const batcher = __integrationTesting.createStreamDeltaBatcher(
+      async (delta) => { published.push(delta); },
+      { maxCharacters: 5, maxDelayMs: 100, now: () => now },
+    );
+
+    await batcher.push("a");
+    await batcher.push("bc");
+    expect(published).toEqual([]);
+    await batcher.push("de");
+    expect(published).toEqual(["abcde"]);
+    now = 101;
+    await batcher.push("f");
+    expect(published).toEqual(["abcde", "f"]);
+    await batcher.push("gh");
+    await batcher.flush();
+    expect(published).toEqual(["abcde", "f", "gh"]);
+  });
+});

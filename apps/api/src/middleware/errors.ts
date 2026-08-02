@@ -1,0 +1,60 @@
+import type { ErrorHandler, NotFoundHandler } from "hono";
+import { RepositoryError } from "@avalon/db";
+import { ConnectorError } from "@avalon/connectors";
+import type { HonoAppEnv } from "../env";
+import { ApiError } from "../lib/api-error";
+import { logEvent } from "../observability/logger";
+
+export const notFoundHandler: NotFoundHandler<HonoAppEnv> = (c) =>
+  c.json(
+    {
+      error: {
+        code: "not_found",
+        message: "The requested API route does not exist",
+        requestId: c.get("requestId") ?? null,
+      },
+    },
+    404,
+  );
+
+export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
+  let status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 426 | 429 | 500 | 502 | 503 = 500;
+  let code = "internal_error";
+  let message = "An unexpected error occurred";
+  let details: Record<string, unknown> | undefined;
+
+  if (error instanceof ApiError) {
+    ({ status, code, message, details } = error);
+  } else if (error instanceof RepositoryError) {
+    status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 500;
+    code = error.code;
+    message = error.message;
+  } else if (error instanceof ConnectorError) {
+    status = error.code === "invalid_configuration" ? 503
+      : error.code === "unauthorized" || error.code === "invalid_signature" ? 401
+      : error.code === "payload_too_large" ? 413
+      : error.code === "provider_error" ? 502
+      : 422;
+    code = error.code;
+    message = error.message;
+  }
+
+  logEvent(c, status >= 500 ? "error" : "warn", "request_failed", {
+    code,
+    status,
+    error_name: error.name,
+    error_message: error.message,
+  });
+
+  return c.json(
+    {
+      error: {
+        code,
+        message,
+        requestId: c.get("requestId") ?? null,
+        ...(details ? { details } : {}),
+      },
+    },
+    status,
+  );
+};

@@ -1,0 +1,267 @@
+import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron';
+import { autoUpdater } from 'electron-updater';
+import { updatePolicy } from './update-policy';
+
+const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const DOWNLOAD_RETRY_BASE_DELAY_MS = 3_000;
+const MAX_DOWNLOAD_RETRIES = 5;
+
+export const MANUAL_UPDATE_URL =
+  'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg';
+
+export type UpdateStatus =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'checking' }
+  | { readonly kind: 'downloading'; readonly percent?: number }
+  | { readonly kind: 'downloaded'; readonly version: string };
+
+interface UpdateLogger {
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+}
+
+interface IntervalHandle {
+  unref(): unknown;
+}
+
+export interface AutoUpdateDependencies {
+  readonly isPackaged: boolean;
+  readonly platform: NodeJS.Platform;
+  readonly arch: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly currentVersion: string;
+  readonly showMessageBox: (options: MessageBoxOptions) => Promise<MessageBoxReturnValue>;
+  readonly openExternal: (url: string) => Promise<unknown>;
+  readonly onStatusChange?: (status: UpdateStatus) => void;
+  readonly log?: UpdateLogger;
+  /** Test seam; production uses electron-updater's singleton. */
+  readonly updater?: typeof autoUpdater;
+  /** Test seam; production uses the Node interval. */
+  readonly scheduleInterval?: (callback: () => void, delayMs: number) => IntervalHandle;
+  /** Test seam; production uses the Node timeout. */
+  readonly scheduleTimeout?: (callback: () => void, delayMs: number) => IntervalHandle;
+}
+
+export interface AutoUpdateController {
+  readonly enabled: boolean;
+  checkForUpdates(): void;
+  installDownloadedUpdate(): void;
+}
+
+function sameStatus(left: UpdateStatus, right: UpdateStatus): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'downloaded' && right.kind === 'downloaded') {
+    return left.version === right.version;
+  }
+  if (left.kind === 'downloading' && right.kind === 'downloading') {
+    return left.percent === right.percent;
+  }
+  return true;
+}
+
+/**
+ * Wire the signed macOS update lifecycle. The feed is embedded by
+ * electron-builder in app-update.yml; setting a feed URL at runtime would make
+ * packaged builds dependent on mutable local configuration.
+ */
+export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateController {
+  const log = deps.log ?? console;
+  const updater = deps.updater ?? autoUpdater;
+  const policy = updatePolicy(deps);
+  const showDialog = (options: MessageBoxOptions): Promise<MessageBoxReturnValue | null> => (
+    deps.showMessageBox(options).catch((error: unknown) => {
+      log.error('[avalon] failed to show update dialog', error);
+      return null;
+    })
+  );
+
+  if (policy.kind === 'disabled') {
+    log.info(`[avalon] auto-update disabled: ${policy.reason}`);
+    return {
+      enabled: false,
+      checkForUpdates: () => {
+        void showDialog({
+          type: 'info',
+          message: 'Updates aren’t available in this build',
+          detail: 'Automatic updates work in the installed Apple-silicon Avalon app.',
+          buttons: ['OK'],
+        });
+      },
+      installDownloadedUpdate: () => undefined,
+    };
+  }
+
+  let status: UpdateStatus = { kind: 'idle' };
+  let manualCheck = false;
+  let checkInFlight = false;
+  let downloadInFlight = false;
+  let downloadRetryCount = 0;
+  let downloadRetryScheduled = false;
+  let manualRecoveryPrompted = false;
+  const setStatus = (next: UpdateStatus): void => {
+    if (sameStatus(status, next)) return;
+    status = next;
+    deps.onStatusChange?.(next);
+  };
+  const showCheckFailure = (): void => {
+    if (!manualCheck) return;
+    manualCheck = false;
+    void showDialog({
+      type: 'warning',
+      message: 'Couldn’t check for updates',
+      detail: 'Avalon could not reach the update service. Please try again later.',
+      buttons: ['OK'],
+    });
+  };
+  const promptManualRecovery = (): void => {
+    if (manualRecoveryPrompted) return;
+    manualRecoveryPrompted = true;
+    log.warn('[avalon] automatic update retries exhausted; offering signed installer');
+    void showDialog({
+      type: 'warning',
+      message: 'Couldn’t update automatically',
+      detail:
+        'Avalon could not finish the update after several attempts. Download the latest signed Avalon installer and replace the current copy in Applications.',
+      buttons: ['Download Latest', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then((result) => {
+      if (result?.response !== 0) return;
+      void deps.openExternal(MANUAL_UPDATE_URL).catch((error: unknown) => {
+        log.error('[avalon] failed to open the manual update download', error);
+      });
+    });
+  };
+
+  const scheduleTimeout = deps.scheduleTimeout
+    ?? ((callback: () => void, delayMs: number) => (
+      setTimeout(callback, delayMs) as unknown as IntervalHandle
+    ));
+  const handleDownloadFailure = (error: unknown): void => {
+    log.error('[avalon] update download failed', error);
+    if (!downloadInFlight || downloadRetryScheduled) return;
+    if (downloadRetryCount >= MAX_DOWNLOAD_RETRIES) {
+      downloadInFlight = false;
+      setStatus({ kind: 'idle' });
+      promptManualRecovery();
+      return;
+    }
+
+    downloadRetryCount += 1;
+    downloadRetryScheduled = true;
+    setStatus({ kind: 'downloading' });
+    const delayMs = DOWNLOAD_RETRY_BASE_DELAY_MS * (2 ** (downloadRetryCount - 1));
+    log.info(
+      `[avalon] retrying update download in ${delayMs}ms `
+        + `(${downloadRetryCount}/${MAX_DOWNLOAD_RETRIES})`,
+    );
+    const retryTimer = scheduleTimeout(() => {
+      // Clear before starting the next attempt: electron-updater may emit the
+      // error synchronously before downloadUpdate's promise rejects.
+      downloadRetryScheduled = false;
+      void Promise.resolve()
+        .then(() => updater.downloadUpdate())
+        .catch((retryError: unknown) => handleDownloadFailure(retryError));
+    }, delayMs);
+    retryTimer.unref();
+  };
+
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  // Keep electron-updater's differential download default enabled. The
+  // Cloudflare feed supports HTTP range requests and blockmap downloads.
+  updater.logger = log;
+
+  updater.on('checking-for-update', () => {
+    checkInFlight = true;
+    setStatus({ kind: 'checking' });
+    log.info('[avalon] checking for updates');
+  });
+  updater.on('update-available', (info) => {
+    checkInFlight = false;
+    manualCheck = false;
+    downloadInFlight = true;
+    downloadRetryCount = 0;
+    downloadRetryScheduled = false;
+    manualRecoveryPrompted = false;
+    setStatus({ kind: 'downloading' });
+    log.info(`[avalon] update ${info.version} is available`);
+  });
+  updater.on('update-not-available', () => {
+    checkInFlight = false;
+    setStatus({ kind: 'idle' });
+    log.info('[avalon] is up to date');
+    if (!manualCheck) return;
+    manualCheck = false;
+    void showDialog({
+      type: 'info',
+      message: 'You are running the latest version',
+      detail: `Avalon ${deps.currentVersion} is the latest version.`,
+      buttons: ['OK'],
+    });
+  });
+  updater.on('download-progress', (progress) => {
+    downloadInFlight = true;
+    setStatus({ kind: 'downloading', percent: progress.percent });
+  });
+  updater.on('update-downloaded', (info) => {
+    checkInFlight = false;
+    downloadInFlight = false;
+    downloadRetryCount = 0;
+    downloadRetryScheduled = false;
+    setStatus({ kind: 'downloaded', version: info.version });
+    log.info(`[avalon] update ${info.version} downloaded`);
+    void showDialog({
+      type: 'info',
+      message: 'Update ready',
+      detail: `Avalon ${info.version} has been downloaded. Restart now to finish updating?`,
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }).then((result) => {
+      if (result?.response === 0) updater.quitAndInstall(false, true);
+    });
+  });
+  updater.on('error', (error) => {
+    checkInFlight = false;
+    if (downloadInFlight) {
+      handleDownloadFailure(error);
+      return;
+    }
+    log.error('[avalon] auto-update error', error);
+    setStatus({ kind: 'idle' });
+    showCheckFailure();
+  });
+
+  const runCheck = (manual: boolean): void => {
+    if (checkInFlight || status.kind === 'downloading' || status.kind === 'downloaded') return;
+    manualCheck = manual;
+    checkInFlight = true;
+    setStatus({ kind: 'checking' });
+    void updater.checkForUpdates().catch((error: unknown) => {
+      checkInFlight = false;
+      setStatus({ kind: 'idle' });
+      log.error('[avalon] update check failed', error);
+      showCheckFailure();
+    });
+  };
+
+  log.info(
+    `[avalon] auto-update initialized (current=${deps.currentVersion}, platform=${deps.platform}, `
+      + `arch=${deps.arch}, differentialDownload=enabled)`,
+  );
+  runCheck(false);
+  const scheduleInterval = deps.scheduleInterval
+    ?? ((callback: () => void, delayMs: number) => (
+      setInterval(callback, delayMs) as unknown as IntervalHandle
+    ));
+  const interval = scheduleInterval(() => runCheck(false), UPDATE_INTERVAL_MS);
+  interval.unref();
+
+  return {
+    enabled: true,
+    checkForUpdates: () => runCheck(true),
+    installDownloadedUpdate: () => updater.quitAndInstall(false, true),
+  };
+}

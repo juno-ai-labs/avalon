@@ -1,0 +1,33 @@
+{
+  "published": false,
+  "version": "0.1.0",
+  "platform": "macOS",
+  "architecture": "Apple silicon",
+  "downloadBaseUrl": "https://downloads.with-avalon.com",
+  "bucket": "avalon-desktop-releases",
+  "prefix": "stable/darwin/arm64",
+  "files": {
+    "dmg": "Avalon-0.1.0-arm64.dmg",
+    "canonicalDmg": "Avalon.dmg",
+    "zip": "Avalon-0.1.0-arm64-mac.zip",
+    "blockmaps": [
+      "Avalon-0.1.0-arm64.dmg.blockmap",
+      "Avalon-0.1.0-arm64-mac.zip.blockmap"
+    ],
+    "checksums": "SHA256SUMS",
+    "latest": "latest-mac.yml"
+  },
+  "objects": {
+    "dmg": "stable/darwin/arm64/Avalon-0.1.0-arm64.dmg",
+    "canonicalDmg": "stable/darwin/arm64/Avalon.dmg",
+    "zip": "stable/darwin/arm64/Avalon-0.1.0-arm64-mac.zip",
+    "blockmaps": [
+      "stable/darwin/arm64/Avalon-0.1.0-arm64.dmg.blockmap",
+      "stable/darwin/arm64/Avalon-0.1.0-arm64-mac.zip.blockmap"
+    ],
+    "checksums": "stable/darwin/arm64/0.1.0/SHA256SUMS",
+    "latest": "stable/darwin/arm64/latest-mac.yml"
+  },
+  "sha256": {},
+  "publishedAt": null
+}

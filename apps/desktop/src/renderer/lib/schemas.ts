@@ -1,0 +1,259 @@
+import { z } from 'zod';
+
+const scopeSchema = z.enum(['you', 'workspace']);
+const harnessStatusSchema = z.enum(['scheduled', 'running', 'needs_input', 'completed', 'failed']);
+
+export const workspaceMemberSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string(),
+    avatarUrl: z.string().optional(),
+    role: z.string().optional(),
+    accent: z.string().optional(),
+    viewing: z.boolean().optional(),
+  })
+  .passthrough();
+
+export const workspaceSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    region: z.enum(['global', 'eu']),
+    currentUser: workspaceMemberSchema,
+  })
+  .passthrough();
+
+export const automationSummarySchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    scope: scopeSchema,
+    status: z.enum(['active', 'paused', 'draft']),
+    nextRunAt: z.string().optional(),
+    lastRunAt: z.string().optional(),
+    statusMessage: z.string().optional(),
+  })
+  .passthrough();
+
+export const workstreamSummarySchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    objective: z.string().optional(),
+    origin: z.enum(['ad_hoc', 'automation']),
+    automationName: z.string().optional(),
+    harnessStatus: harnessStatusSchema,
+    lastActivityAt: z.string(),
+    plannedFor: z.string().optional(),
+    preview: z.string().optional(),
+  })
+  .passthrough();
+
+export const resourceSchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    resourceType: z.string(),
+    provider: z.string().optional(),
+    mimeType: z.string().optional(),
+    canonicalUrl: z.string().optional(),
+    watchEnabled: z.boolean().default(false),
+    watchStatus: z.enum(['watching', 'paused', 'unsupported', 'error']).default('paused'),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
+
+export const connectionSchema = z
+  .object({
+    id: z.string(),
+    connectorType: z.string(),
+    displayName: z.string(),
+    scope: scopeSchema,
+    ownerName: z.string().optional(),
+    status: z.enum(['healthy', 'reconnect_required', 'disabled']),
+    capabilities: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+export const toolEventSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    summary: z.string().optional(),
+    status: z.enum(['started', 'completed', 'failed', 'ambiguous']),
+    durationMs: z.number().optional(),
+    toolType: z.string().optional(),
+    input: z.unknown().optional(),
+    output: z.unknown().optional(),
+  })
+  .passthrough();
+
+export const messageSchema = z
+  .object({
+    id: z.string(),
+    workstreamId: z.string(),
+    sequenceNumber: z.number(),
+    authorType: z.enum(['human', 'agent', 'system']),
+    author: workspaceMemberSchema.optional(),
+    messageType: z.enum([
+      'text',
+      'tool_event',
+      'artifact',
+      'elicitation',
+      'activity_suggestion',
+      'system',
+    ]),
+    text: z.string().optional(),
+    createdAt: z.string(),
+    streaming: z.boolean().optional(),
+    toolEvent: toolEventSchema.optional(),
+    artifact: z
+      .object({
+        id: z.string(),
+        title: z.string(),
+        artifactType: z.string(),
+        previewText: z.string().optional(),
+        status: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    elicitation: z
+      .object({
+        id: z.string(),
+        prompt: z.string(),
+        responseType: z.enum(['text', 'radio', 'single_select', 'multi_select']),
+        options: z
+          .array(
+            z.object({
+              label: z.string(),
+              value: z.string(),
+              description: z.string().optional(),
+            }),
+          )
+          .optional(),
+        minimumSelections: z.number().optional(),
+        maximumSelections: z.number().optional(),
+        targetUserId: z.string().optional(),
+        status: z.enum(['open', 'answered']),
+        answer: z.unknown().optional(),
+        answeredByName: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    activitySuggestion: z
+      .object({
+        id: z.string(),
+        title: z.string(),
+        source: z.string().optional(),
+        occurredAt: z.string().optional(),
+        reason: z.string(),
+        status: z.enum(['pending', 'accepted', 'dismissed']),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+const participantSchema = workspaceMemberSchema;
+
+export const backgroundTaskSchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    type: z.enum(['agent', 'tool', 'connector']),
+    status: z.enum(['running', 'completed', 'failed']),
+    startedAt: z.string(),
+    completedAt: z.string().optional(),
+    durationMs: z.number().optional(),
+    tokenCount: z.number().optional(),
+    toolUses: z.number().optional(),
+    transcriptMessageId: z.string().optional(),
+  })
+  .passthrough();
+
+export const automationRunSchema = z
+  .object({
+    id: z.string(),
+    workstreamId: z.string(),
+    title: z.string(),
+    status: harnessStatusSchema,
+    triggerType: z.string(),
+    triggerTime: z.string(),
+    resultSummary: z.string().optional(),
+    durationMs: z.number().optional(),
+    participants: z.array(participantSchema).optional(),
+  })
+  .passthrough();
+
+export const workstreamDetailSchema = workstreamSummarySchema.extend({
+  createdAt: z.string(),
+  createdBy: workspaceMemberSchema.optional(),
+  participants: z.array(participantSchema).default([]),
+  viewers: z.array(participantSchema).default([]),
+  resources: z.array(resourceSchema).default([]),
+  connections: z.array(connectionSchema).default([]),
+  backgroundTasks: z.array(backgroundTaskSchema).default([]),
+  automationRuns: z.array(automationRunSchema).default([]),
+  automationSubscriptionId: z.string().optional(),
+  latestHarnessRunId: z.string().optional(),
+});
+
+export const automationDetailSchema = automationSummarySchema.extend({
+  description: z.string(),
+  instructions: z.string(),
+  triggerSummary: z.string(),
+  scheduleSummary: z.string().optional(),
+  capabilities: z.array(z.string()).default([]),
+  executionScope: z.string(),
+  owner: workspaceMemberSchema.optional(),
+  runs: z.array(automationRunSchema).default([]),
+  nextRun: automationRunSchema.optional(),
+});
+
+export const automationDraftResponseSchema = z
+  .object({
+    draftId: z.string(),
+    assistantMessage: z.string().optional(),
+    question: z
+      .object({
+        id: z.string(),
+        prompt: z.string(),
+        placeholder: z.string().optional(),
+      })
+      .optional(),
+    summary: z
+      .object({
+        name: z.string(),
+        description: z.string(),
+        steps: z.array(z.string()),
+        scope: scopeSchema,
+        triggerSummary: z.string(),
+        capabilities: z.array(z.string()),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+export const workspaceTemplateSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    authorName: z.string(),
+    description: z.string(),
+    usageCount: z.number(),
+    capabilities: z.array(z.string()),
+    latestVersion: z.number(),
+  })
+  .passthrough();
+
+export const socketTicketSchema = z.object({
+  url: z.string(),
+  ticket: z.string(),
+});
+
+export const desktopSessionResponseSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string().optional(),
+  expiresAt: z.string().optional(),
+});

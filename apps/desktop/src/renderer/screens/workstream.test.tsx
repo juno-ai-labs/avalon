@@ -1,0 +1,112 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { describe, expect, it, vi } from 'vitest';
+import type { DesktopSession } from '../../common/desktop';
+import type { BackgroundTask, WorkstreamResource } from '../lib/types';
+import { AddResourceDialog, JumpToLatestButton, mergeBackgroundTasks, workspaceMemberFromSession } from './workstream';
+
+describe('JumpToLatestButton', () => {
+  it('is compact and icon-only while retaining an accessible action name', () => {
+    const onJump = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <JumpToLatestButton onJump={onJump} />
+      </Tooltip.Provider>,
+    );
+
+    const button = screen.getByRole('button', { name: 'Jump to latest' });
+    expect(button).not.toHaveTextContent('Latest');
+    fireEvent.click(button);
+    expect(onJump).toHaveBeenCalledOnce();
+  });
+});
+
+describe('AddResourceDialog', () => {
+  it('searches and attaches discovered connector resources while retaining upload fallback', () => {
+    const resource: WorkstreamResource = {
+      id: 'resource-1',
+      title: 'Avalon release pull request',
+      resourceType: 'github_pull_request',
+      provider: 'github',
+      canonicalUrl: 'https://github.com/avalon/avalon/pull/42',
+      watchEnabled: false,
+      watchStatus: 'paused',
+    };
+    const onAttach = vi.fn();
+    const onSearchChange = vi.fn();
+    const onUpload = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <AddResourceDialog
+          current={[]}
+          fetching={false}
+          hasMore={false}
+          loading={false}
+          onAttach={onAttach}
+          onLoadMore={vi.fn()}
+          onOpenChange={vi.fn()}
+          onSearchChange={onSearchChange}
+          onUpload={onUpload}
+          open
+          pending={false}
+          resources={[resource]}
+          search=""
+        />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search resources' }), { target: { value: 'release' } });
+    expect(onSearchChange).toHaveBeenCalledWith('release');
+    fireEvent.click(screen.getByRole('button', { name: /Avalon release pull request/u }));
+    expect(onAttach).toHaveBeenCalledWith(resource);
+    fireEvent.click(screen.getByRole('button', { name: 'Upload file' }));
+    expect(onUpload).toHaveBeenCalledOnce();
+  });
+});
+
+describe('workspaceMemberFromSession', () => {
+  it('uses the signed-in person for an optimistic human message in a multiplayer stream', () => {
+    const session: DesktopSession = {
+      accessToken: 'access-token-longer-than-twenty-characters',
+      expiresAt: '2026-07-31T20:00:00.000Z',
+      apiBaseUrl: 'https://api.with-avalon.com',
+      user: {
+        id: 'user-current',
+        name: 'Current Person',
+        email: 'current@example.com',
+        avatarUrl: 'https://example.com/current.png',
+      },
+      workspace: {
+        id: 'workspace-one',
+        name: 'Avalon',
+        region: 'global',
+        role: 'member',
+      },
+    };
+
+    expect(workspaceMemberFromSession(session)).toEqual({
+      id: 'user-current',
+      name: 'Current Person',
+      email: 'current@example.com',
+      avatarUrl: 'https://example.com/current.png',
+      role: 'member',
+    });
+  });
+});
+
+describe('mergeBackgroundTasks', () => {
+  it('keeps persisted history while allowing realtime state to replace the matching task', () => {
+    const persisted: BackgroundTask[] = [
+      { id: 'old', title: 'Earlier task', type: 'tool', status: 'completed', startedAt: '2026-07-31T10:00:00.000Z' },
+      { id: 'current', title: 'Current task', type: 'tool', status: 'running', startedAt: '2026-08-01T10:00:00.000Z' },
+    ];
+    const live: BackgroundTask[] = [
+      { id: 'current', title: 'Current task', type: 'tool', status: 'completed', startedAt: '2026-08-01T10:00:00.000Z' },
+    ];
+
+    expect(mergeBackgroundTasks(persisted, live)).toEqual([
+      expect.objectContaining({ id: 'current', status: 'completed' }),
+      expect.objectContaining({ id: 'old', status: 'completed' }),
+    ]);
+  });
+});

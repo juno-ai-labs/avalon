@@ -1,0 +1,897 @@
+import type { NormalizedActivity, ToolDefinition } from "@avalon/contracts";
+import { z } from "zod";
+import {
+  base64,
+  isRecord,
+  jsonHeaders,
+  numberValue,
+  providerJson,
+  recordArray,
+  recordValue,
+  sha256Hex,
+  stringValue,
+  truncateText,
+  verifyHmacSha256,
+  type FetchLike,
+} from "./provider-utils";
+import {
+  assertPrincipalAccess,
+  ConnectorError,
+  type ConnectorAdapter,
+  type ConnectorConnectionContext,
+} from "./types";
+
+const NOTION_API_BASE_URL = "https://api.notion.com/v1";
+const NOTION_AUTHORIZE_URL = "https://api.notion.com/v1/oauth/authorize";
+const NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token";
+const NOTION_REVOKE_URL = "https://api.notion.com/v1/oauth/revoke";
+const NOTION_INTROSPECT_URL = "https://api.notion.com/v1/oauth/introspect";
+const DEFAULT_NOTION_VERSION = "2026-03-11";
+const NOTION_RESPONSE_BYTES = 1_000_000;
+const NOTION_TEXT_CHARS = 80_000;
+const NOTION_WEBHOOK_BYTES = 1_000_000;
+
+export interface NotionConnectorConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  integrationId?: string;
+  notionVersion?: string;
+  fetch?: FetchLike;
+}
+
+export const NotionCapabilities = {
+  read: "notion.read",
+  insert: "notion.insert",
+  update: "notion.update",
+  commentRead: "notion.comment.read",
+  commentInsert: "notion.comment.insert",
+} as const;
+
+/** Creator-dashboard capabilities required by each Avalon capability. */
+export const NotionCapabilitySettings = {
+  [NotionCapabilities.read]: ["read_content"],
+  [NotionCapabilities.insert]: ["insert_content", "insert_property"],
+  [NotionCapabilities.update]: ["update_content"],
+  [NotionCapabilities.commentRead]: ["read_comments"],
+  [NotionCapabilities.commentInsert]: ["insert_comments"],
+} as const;
+
+export const notionTools: ToolDefinition[] = [
+  {
+    name: "notion.search",
+    description: "Search accessible Notion pages or data sources by title.",
+    capability: NotionCapabilities.read,
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { type: "string", minLength: 1, maxLength: 500 },
+        object: { type: "string", enum: ["page", "data_source"] },
+        pageSize: { type: "integer", minimum: 1, maximum: 25 },
+        startCursor: { type: ["string", "null"], maxLength: 500 },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "notion.retrieve_page",
+    description: "Retrieve bounded page metadata and enhanced Markdown content.",
+    capability: NotionCapabilities.read,
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: idInputSchema("pageId"),
+  },
+  {
+    name: "notion.retrieve_data_source",
+    description: "Retrieve a Notion data source and its property schema.",
+    capability: NotionCapabilities.read,
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: idInputSchema("dataSourceId"),
+  },
+  {
+    name: "notion.query_data_source",
+    description: "Query one bounded page of rows from a Notion data source.",
+    capability: NotionCapabilities.read,
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        dataSourceId: { type: "string", minLength: 1, maxLength: 200 },
+        pageSize: { type: "integer", minimum: 1, maximum: 25 },
+        startCursor: { type: ["string", "null"], maxLength: 500 },
+      },
+      required: ["dataSourceId"],
+    },
+  },
+  {
+    name: "notion.create_page",
+    description: "Create a Notion page from bounded enhanced Markdown.",
+    capability: NotionCapabilities.insert,
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        parentPageId: { type: ["string", "null"], maxLength: 200 },
+        title: { type: "string", minLength: 1, maxLength: 300 },
+        markdown: { type: ["string", "null"], maxLength: 40_000 },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "notion.update_page_markdown",
+    description: "Apply bounded, targeted search-and-replace edits to a Notion page.",
+    capability: NotionCapabilities.update,
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pageId: { type: "string", minLength: 1, maxLength: 200 },
+        updates: {
+          type: "array",
+          minItems: 1,
+          maxItems: 10,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              oldText: { type: "string", minLength: 1, maxLength: 20_000 },
+              newText: { type: "string", maxLength: 20_000 },
+              replaceAllMatches: { type: "boolean" },
+            },
+            required: ["oldText", "newText"],
+          },
+        },
+      },
+      required: ["pageId", "updates"],
+    },
+  },
+  {
+    name: "notion.append_page_markdown",
+    description: "Append bounded enhanced Markdown to an existing Notion page.",
+    capability: NotionCapabilities.update,
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pageId: { type: "string", minLength: 1, maxLength: 200 },
+        markdown: { type: "string", minLength: 1, maxLength: 40_000 },
+      },
+      required: ["pageId", "markdown"],
+    },
+  },
+  {
+    name: "notion.list_comments",
+    description: "List one bounded page of unresolved comments for a Notion page or block.",
+    capability: NotionCapabilities.commentRead,
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        blockId: { type: "string", minLength: 1, maxLength: 200 },
+        pageSize: { type: "integer", minimum: 1, maximum: 25 },
+        startCursor: { type: ["string", "null"], maxLength: 500 },
+      },
+      required: ["blockId"],
+    },
+  },
+  {
+    name: "notion.create_comment",
+    description: "Create a top-level page comment or reply to an existing Notion discussion.",
+    capability: NotionCapabilities.commentInsert,
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pageId: { type: "string", minLength: 1, maxLength: 200 },
+        discussionId: { type: "string", minLength: 1, maxLength: 200 },
+        markdown: { type: "string", minLength: 1, maxLength: 20_000 },
+      },
+      required: ["markdown"],
+      oneOf: [{ required: ["pageId"] }, { required: ["discussionId"] }],
+    },
+  },
+];
+
+const idSchema = z.string().trim().min(1).max(200);
+const cursorSchema = z.string().min(1).max(500).nullable().optional();
+const searchSchema = z.object({
+  query: z.string().trim().min(1).max(500),
+  object: z.enum(["page", "data_source"]).optional(),
+  pageSize: z.number().int().min(1).max(25).default(20),
+  startCursor: cursorSchema,
+}).strict();
+const queryDataSourceSchema = z.object({
+  dataSourceId: idSchema,
+  pageSize: z.number().int().min(1).max(25).default(20),
+  startCursor: cursorSchema,
+}).strict();
+const createPageSchema = z.object({
+  parentPageId: idSchema.nullable().optional(),
+  title: z.string().trim().min(1).max(300).refine((value) => !/[\r\n]/u.test(value), "Page titles cannot contain newlines"),
+  markdown: z.string().max(40_000).nullable().optional(),
+}).strict();
+const updatePageSchema = z.object({
+  pageId: idSchema,
+  updates: z.array(z.object({
+    oldText: z.string().min(1).max(20_000),
+    newText: z.string().max(20_000),
+    replaceAllMatches: z.boolean().default(false),
+  }).strict()).min(1).max(10),
+}).strict();
+const appendPageSchema = z.object({ pageId: idSchema, markdown: z.string().min(1).max(40_000) }).strict();
+const commentsListSchema = z.object({
+  blockId: idSchema,
+  pageSize: z.number().int().min(1).max(25).default(20),
+  startCursor: cursorSchema,
+}).strict();
+const createCommentSchema = z.object({
+  pageId: idSchema.optional(),
+  discussionId: idSchema.optional(),
+  markdown: z.string().min(1).max(20_000),
+}).strict().refine((value) => Boolean(value.pageId) !== Boolean(value.discussionId), {
+  message: "Choose exactly one Notion page or discussion",
+});
+
+export function createNotionConnector(config: NotionConnectorConfig): ConnectorAdapter {
+  assertConfig(config);
+  const fetcher = config.fetch ?? globalThis.fetch;
+  const notionVersion = config.notionVersion ?? DEFAULT_NOTION_VERSION;
+  const integrationId = config.integrationId ?? config.clientId;
+  const basicAuthorization = `Basic ${base64(`${config.clientId}:${config.clientSecret}`)}`;
+
+  const refresh = async (
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> => {
+    const refreshToken = credentialString(connection, "refreshToken");
+    try {
+      const payload = await providerJson(fetcher, NOTION_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: basicAuthorization,
+          "content-type": "application/json",
+          "notion-version": notionVersion,
+        },
+        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: refreshToken }),
+        signal,
+      }, NOTION_RESPONSE_BYTES);
+      return normalizeToken(payload, connection.credentials);
+    } catch (error) {
+      if (isRefreshRejected(error)) {
+        throw new ConnectorError("unauthorized", "The Notion refresh token is no longer valid", {
+          status: isRecord(error.details) ? error.details.status : 401,
+          reconnectRequired: true,
+          reason: "refresh_rejected",
+        });
+      }
+      throw error;
+    }
+  };
+
+  const withAccess = async <T>(
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+    operation: (token: string) => Promise<T>,
+  ): Promise<T> => {
+    let token = credentialString(connection, "accessToken");
+    try {
+      return await operation(token);
+    } catch (error) {
+      if (!isProviderUnauthorized(error)) throw error;
+      connection.credentials = await refresh(connection, signal);
+      token = credentialString(connection, "accessToken");
+      return operation(token);
+    }
+  };
+
+  const request = async (
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+    method: "GET" | "POST" | "PATCH",
+    path: string,
+    body?: Record<string, unknown>,
+    query?: Record<string, string | number | null | undefined>,
+  ): Promise<Record<string, unknown>> => withAccess(connection, signal, async (token) => {
+    const url = new URL(`${NOTION_API_BASE_URL}${path}`);
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value != null) url.searchParams.set(key, String(value));
+    }
+    return providerJson(fetcher, url, {
+      method,
+      headers: jsonHeaders(token, { "notion-version": notionVersion }),
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal,
+    }, NOTION_RESPONSE_BYTES);
+  });
+
+  const retrievePage = async (
+    connection: ConnectorConnectionContext,
+    pageId: string,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> => {
+    // Keep rotating-refresh-token access serialized for one connection.
+    const page = await request(connection, signal, "GET", `/pages/${encodeURIComponent(pageId)}`);
+    const markdown = await request(connection, signal, "GET", `/pages/${encodeURIComponent(pageId)}/markdown`);
+    return {
+      page: boundNotionValue(page),
+      markdown: boundMarkdown(markdown),
+    };
+  };
+
+  return {
+    manifest: {
+      type: "notion",
+      displayName: "Notion",
+      supportedScopes: ["personal"],
+      oauthRequired: true,
+      activityTypes: [
+        "notion.page.content_updated", "notion.page.created", "notion.page.deleted",
+        "notion.page.locked", "notion.page.moved", "notion.page.properties_updated",
+        "notion.page.transcription_block.transcript_deleted", "notion.page.undeleted", "notion.page.unlocked",
+        "notion.database.content_updated", "notion.database.created", "notion.database.deleted",
+        "notion.database.moved", "notion.database.schema_updated", "notion.database.undeleted",
+        "notion.data_source.content_updated", "notion.data_source.created", "notion.data_source.deleted",
+        "notion.data_source.moved", "notion.data_source.schema_updated", "notion.data_source.undeleted",
+        "notion.comment.created", "notion.comment.deleted", "notion.comment.updated",
+        "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
+        "notion.view.created", "notion.view.deleted", "notion.view.updated",
+      ],
+      resourceTypes: [
+        "notion_page", "notion_block", "notion_database", "notion_data_source",
+        "notion_comment", "notion_view", "notion_file_upload",
+      ],
+      tools: notionTools,
+      supportsWatches: true,
+      supportsPolling: false,
+      supportsWebhooks: true,
+    },
+
+    async beginAuthorization(input) {
+      const parsed = z.object({
+        state: z.string().min(20),
+        codeChallenge: z.string().min(20),
+        scopes: z.array(z.string().min(1)).min(1),
+      }).parse(input);
+      if (parsed.scopes.some((scope) => !supportedAuthorizationCapabilities.has(scope))) {
+        throw new ConnectorError("unsupported_capability", "The requested Notion capability is not configured by this connector");
+      }
+      const url = new URL(NOTION_AUTHORIZE_URL);
+      url.searchParams.set("client_id", config.clientId);
+      url.searchParams.set("redirect_uri", config.redirectUri);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("owner", "user");
+      url.searchParams.set("state", parsed.state);
+      return {
+        url: url.toString(),
+        state: { requestedCapabilities: [...new Set(parsed.scopes)] },
+      };
+    },
+
+    async handleAuthorizationCallback(input) {
+      const parsed = z.object({
+        code: z.string().min(1),
+        codeVerifier: z.string().min(20),
+      }).parse(input);
+      const payload = await providerJson(fetcher, NOTION_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: basicAuthorization,
+          "content-type": "application/json",
+          "notion-version": notionVersion,
+        },
+        body: JSON.stringify({
+          grant_type: "authorization_code",
+          code: parsed.code,
+          redirect_uri: config.redirectUri,
+        }),
+      }, NOTION_RESPONSE_BYTES);
+      const credentials = normalizeToken(payload);
+      const owner = recordValue(payload, "owner");
+      const ownerUser = owner ? recordValue(owner, "user") : null;
+      if (stringValue(owner ?? {}, "type") !== "user" || !ownerUser || !stringValue(ownerUser, "id")) {
+        throw new ConnectorError("provider_error", "Notion did not return the authorizing user for this personal connection");
+      }
+      const botId = requiredString(credentials, "botId", "Notion did not return an installed bot ID");
+      const workspaceId = requiredString(credentials, "notionWorkspaceId", "Notion did not return a workspace ID");
+      const workspaceName = stringValue(credentials, "notionWorkspaceName") ?? workspaceId;
+      return {
+        ...credentials,
+        integrationId,
+        providerAccountId: botId,
+        providerAccountName: workspaceName,
+      };
+    },
+
+    refreshCredentials: refresh,
+
+    async revoke(connection, signal) {
+      const token = stringValue(connection.credentials, "refreshToken") ?? stringValue(connection.credentials, "accessToken");
+      if (!token) return;
+      await providerJson(fetcher, NOTION_REVOKE_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: basicAuthorization,
+          "content-type": "application/json",
+          "notion-version": notionVersion,
+        },
+        body: JSON.stringify({ token }),
+        signal,
+      }, 64_000);
+    },
+
+    async hydrateResource(connection, resource, signal) {
+      assertPersonalConnection(connection);
+      const resourceId = idSchema.parse(resource.provider_resource_id);
+      const resourceType = z.string().parse(resource.resource_type);
+      if (resourceType === "notion_page") return retrievePage(connection, resourceId, signal);
+      if (resourceType === "notion_data_source") {
+        return boundNotionValue(await request(connection, signal, "GET", `/data_sources/${encodeURIComponent(resourceId)}`));
+      }
+      if (resourceType === "notion_database") {
+        return boundNotionValue(await request(connection, signal, "GET", `/databases/${encodeURIComponent(resourceId)}`));
+      }
+      if (resourceType === "notion_view") {
+        return boundNotionValue(await request(connection, signal, "GET", `/views/${encodeURIComponent(resourceId)}`));
+      }
+      if (resourceType === "notion_block") {
+        const block = await request(connection, signal, "GET", `/blocks/${encodeURIComponent(resourceId)}`);
+        const children = await request(connection, signal, "GET", `/blocks/${encodeURIComponent(resourceId)}/children`, undefined, { page_size: 25 });
+        return { block: boundNotionValue(block), children: boundNotionValue(children) };
+      }
+      if (resourceType === "notion_file_upload") {
+        return boundNotionValue(await request(connection, signal, "GET", `/file_uploads/${encodeURIComponent(resourceId)}`));
+      }
+      if (resourceType === "notion_comment") {
+        return boundNotionValue(await request(connection, signal, "GET", `/comments/${encodeURIComponent(resourceId)}`));
+      }
+      throw new ConnectorError("unsupported_capability", `Notion cannot hydrate resource type ${resourceType} from its resource ID alone`);
+    },
+
+    async executeTool(name, rawArgs, context) {
+      assertPersonalConnection(context.connection);
+      assertPrincipalAccess(context.connection, context.principal);
+      const definition = notionTools.find((candidate) => candidate.name === name);
+      if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
+        throw new ConnectorError("unsupported_capability", `The Notion connection has not granted ${definition?.capability ?? name}`);
+      }
+
+      if (name === "notion.search") {
+        const args = searchSchema.parse(rawArgs);
+        const body: Record<string, unknown> = {
+          query: args.query,
+          page_size: args.pageSize,
+          sort: { direction: "descending", timestamp: "last_edited_time" },
+        };
+        if (args.object) body.filter = { property: "object", value: args.object };
+        if (args.startCursor) body.start_cursor = args.startCursor;
+        const output = await request(context.connection, context.signal, "POST", "/search", body);
+        return { output: boundNotionValue(output), summary: `Searched Notion for “${args.query.slice(0, 80)}”` };
+      }
+
+      if (name === "notion.retrieve_page") {
+        const pageId = z.object({ pageId: idSchema }).strict().parse(rawArgs).pageId;
+        return { output: await retrievePage(context.connection, pageId, context.signal), summary: `Read Notion page ${pageId}` };
+      }
+
+      if (name === "notion.retrieve_data_source") {
+        const dataSourceId = z.object({ dataSourceId: idSchema }).strict().parse(rawArgs).dataSourceId;
+        const output = await request(context.connection, context.signal, "GET", `/data_sources/${encodeURIComponent(dataSourceId)}`);
+        return { output: boundNotionValue(output), summary: `Read Notion data source ${dataSourceId}` };
+      }
+
+      if (name === "notion.query_data_source") {
+        const args = queryDataSourceSchema.parse(rawArgs);
+        const body: Record<string, unknown> = { page_size: args.pageSize };
+        if (args.startCursor) body.start_cursor = args.startCursor;
+        const output = await request(context.connection, context.signal, "POST", `/data_sources/${encodeURIComponent(args.dataSourceId)}/query`, body);
+        return { output: boundNotionValue(output), summary: `Queried Notion data source ${args.dataSourceId}` };
+      }
+
+      if (name === "notion.create_page") {
+        const args = createPageSchema.parse(rawArgs);
+        const markdown = `# ${args.title}${args.markdown ? `\n\n${args.markdown}` : ""}`;
+        const body: Record<string, unknown> = { markdown };
+        if (args.parentPageId) body.parent = { page_id: args.parentPageId };
+        const page = await request(context.connection, context.signal, "POST", "/pages", body);
+        const id = requiredString(page, "id", "Notion did not return the created page ID");
+        return { output: boundNotionValue(page), summary: `Created Notion page “${args.title}”`, providerOperationId: id };
+      }
+
+      if (name === "notion.update_page_markdown") {
+        const args = updatePageSchema.parse(rawArgs);
+        const output = await request(context.connection, context.signal, "PATCH", `/pages/${encodeURIComponent(args.pageId)}/markdown`, {
+          type: "update_content",
+          update_content: {
+            content_updates: args.updates.map((update) => ({
+              old_str: update.oldText,
+              new_str: update.newText,
+              replace_all_matches: update.replaceAllMatches,
+            })),
+          },
+        });
+        return { output: boundMarkdown(output), summary: `Updated Notion page ${args.pageId}`, providerOperationId: args.pageId };
+      }
+
+      if (name === "notion.append_page_markdown") {
+        const args = appendPageSchema.parse(rawArgs);
+        const output = await request(context.connection, context.signal, "PATCH", `/pages/${encodeURIComponent(args.pageId)}/markdown`, {
+          type: "insert_content",
+          insert_content: { content: args.markdown, position: { type: "end" } },
+        });
+        return { output: boundMarkdown(output), summary: `Appended content to Notion page ${args.pageId}`, providerOperationId: args.pageId };
+      }
+
+      if (name === "notion.list_comments") {
+        const args = commentsListSchema.parse(rawArgs);
+        const output = await request(context.connection, context.signal, "GET", "/comments", undefined, {
+          block_id: args.blockId,
+          page_size: args.pageSize,
+          start_cursor: args.startCursor,
+        });
+        return { output: boundNotionValue(output), summary: `Listed comments for Notion block ${args.blockId}` };
+      }
+
+      if (name === "notion.create_comment") {
+        const args = createCommentSchema.parse(rawArgs);
+        const body: Record<string, unknown> = { markdown: args.markdown };
+        if (args.pageId) body.parent = { page_id: args.pageId };
+        if (args.discussionId) body.discussion_id = args.discussionId;
+        const comment = await request(context.connection, context.signal, "POST", "/comments", body);
+        const id = requiredString(comment, "id", "Notion did not return the created comment ID");
+        return { output: boundNotionValue(comment), summary: "Created a Notion comment", providerOperationId: id };
+      }
+
+      throw new ConnectorError("unsupported_capability", `Unsupported Notion tool: ${name}`);
+    },
+
+    async healthCheck(connection) {
+      if (!connection) return { ok: true, message: "Notion OAuth is configured" };
+      assertPersonalConnection(connection);
+      const token = credentialString(connection, "accessToken");
+      const payload = await providerJson(fetcher, NOTION_INTROSPECT_URL, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: basicAuthorization,
+          "content-type": "application/json",
+          "notion-version": notionVersion,
+        },
+        body: JSON.stringify({ token }),
+        signal: AbortSignal.timeout(15_000),
+      }, 128_000);
+      if (payload.active !== true) {
+        throw new ConnectorError("unauthorized", "Notion authorization is inactive and must be reconnected", {
+          reconnectRequired: true,
+          reason: "inactive_token",
+        });
+      }
+      return { ok: true, message: "Notion authorization is healthy" };
+    },
+  };
+}
+
+export interface VerifyNotionWebhookInput {
+  secret: string;
+  rawBody: string;
+  signatureHeader: string | null;
+  expectedIntegrationId?: string;
+  maxBytes?: number;
+}
+
+export interface VerifiedNotionWebhook {
+  eventId: string;
+  eventType: string;
+  workspaceId: string;
+  workspaceName: string | null;
+  integrationId: string;
+  subscriptionId: string;
+  timestamp: string;
+  attemptNumber: number;
+  apiVersion: string | null;
+  accessibleBotIds: string[];
+  bodyHash: string;
+  event: Record<string, unknown>;
+}
+
+export async function verifyNotionWebhook(input: VerifyNotionWebhookInput): Promise<VerifiedNotionWebhook> {
+  assertWebhookSize(input.rawBody, input.maxBytes ?? NOTION_WEBHOOK_BYTES);
+  if (!input.signatureHeader?.startsWith("sha256=")) {
+    throw new ConnectorError("invalid_signature", "The Notion webhook signature is missing or malformed");
+  }
+  await verifyHmacSha256(input.secret, input.rawBody, input.signatureHeader, "sha256=");
+  const event = parseWebhookObject(input.rawBody, "Notion");
+  if (stringValue(event, "verification_token")) {
+    throw new ConnectorError("provider_error", "A Notion verification challenge is not an activity event");
+  }
+  const integrationId = webhookUuid(event, "integration_id", "The Notion webhook integration ID is missing");
+  if (input.expectedIntegrationId && input.expectedIntegrationId !== integrationId) {
+    throw new ConnectorError("unauthorized", "The Notion webhook was sent for a different public integration");
+  }
+  const timestamp = stringValue(event, "timestamp");
+  if (!timestamp || !Number.isFinite(Date.parse(timestamp))) {
+    throw new ConnectorError("provider_error", "The Notion webhook timestamp is missing or invalid");
+  }
+  const attemptNumber = numberValue(event, "attempt_number") ?? 1;
+  if (!Number.isInteger(attemptNumber) || attemptNumber < 1 || attemptNumber > 8) {
+    throw new ConnectorError("provider_error", "The Notion webhook attempt number is invalid");
+  }
+  const accessibleBotIds = recordArray(event, "accessible_by")
+    .filter((identity) => stringValue(identity, "type") === "bot")
+    .map((identity) => stringValue(identity, "id"))
+    .filter((id): id is string => Boolean(id))
+    .slice(0, 100);
+  return {
+    eventId: webhookUuid(event, "id", "The Notion webhook event ID is missing"),
+    eventType: requiredBoundedString(event, "type", 200, "The Notion webhook event type is missing"),
+    workspaceId: webhookUuid(event, "workspace_id", "The Notion webhook workspace ID is missing"),
+    workspaceName: boundedOptionalString(event, "workspace_name", 500),
+    integrationId,
+    subscriptionId: webhookUuid(event, "subscription_id", "The Notion webhook subscription ID is missing"),
+    timestamp: new Date(timestamp).toISOString(),
+    attemptNumber,
+    apiVersion: boundedOptionalString(event, "api_version", 50),
+    accessibleBotIds,
+    bodyHash: await sha256Hex(input.rawBody),
+    event,
+  };
+}
+
+/** Reads the one-time webhook setup challenge. Ordinary event payloads return null. */
+export function readNotionWebhookVerificationToken(rawBody: string, maxBytes = 64_000): string | null {
+  assertWebhookSize(rawBody, maxBytes);
+  const payload = parseWebhookObject(rawBody, "Notion");
+  if (!("verification_token" in payload)) return null;
+  return requiredBoundedString(payload, "verification_token", 1_000, "The Notion webhook verification token is invalid");
+}
+
+export function normalizeNotionWebhook(
+  connection: ConnectorConnectionContext,
+  verified: VerifiedNotionWebhook,
+  payloadRef: string | null = null,
+): Omit<NormalizedActivity, "id"> {
+  assertPersonalConnection(connection);
+  const connectedWorkspaceId = stringValue(connection.credentials, "notionWorkspaceId") ?? stringValue(connection.config, "notionWorkspaceId");
+  if (connectedWorkspaceId && connectedWorkspaceId !== verified.workspaceId) {
+    throw new ConnectorError("unauthorized", "The Notion webhook does not belong to this installed workspace");
+  }
+  const connectedIntegrationId = stringValue(connection.credentials, "integrationId") ?? stringValue(connection.config, "integrationId");
+  if (connectedIntegrationId && connectedIntegrationId !== verified.integrationId) {
+    throw new ConnectorError("unauthorized", "The Notion webhook does not belong to this public integration");
+  }
+  const botId = stringValue(connection.credentials, "botId");
+  if (!botId || !verified.accessibleBotIds.includes(botId)) {
+    throw new ConnectorError("unauthorized", "This personal Notion connection cannot access the webhook entity");
+  }
+  const event = verified.event;
+  const entity = recordValue(event, "entity") ?? {};
+  const data = recordValue(event, "data") ?? {};
+  const authors = recordArray(event, "authors").slice(0, 100);
+  const entityId = stringValue(entity, "id");
+  const entityType = stringValue(entity, "type") ?? verified.eventType.split(".")[0] ?? "object";
+  const parent = recordValue(data, "parent") ?? {};
+  const label = boundedOptionalString(data, "name", 500)
+    ?? boundedOptionalString(data, "title", 500)
+    ?? entityId
+    ?? verified.eventType;
+  const resourceType = notionResourceType(entityType);
+  const action = verified.eventType.split(".").slice(1).join(" ").replaceAll("_", " ") || "updated";
+  const entityKeys = [
+    entityId,
+    stringValue(parent, "id"),
+    stringValue(parent, "page_id"),
+    stringValue(parent, "data_source_id"),
+    verified.workspaceId,
+  ].filter((value): value is string => Boolean(value));
+  return {
+    workspaceId: connection.workspaceId,
+    region: regionFromConnection(connection),
+    connectionId: connection.id,
+    connectionScope: connection.scope,
+    connectionOwnerUserId: connection.ownerUserId,
+    provider: "notion",
+    providerEventId: verified.eventId,
+    eventType: `notion.${verified.eventType}`,
+    resourceType,
+    providerResourceId: entityId,
+    actor: { authors },
+    subject: { entity, data },
+    occurredAt: verified.timestamp,
+    receivedAt: new Date().toISOString(),
+    title: `Notion ${humanize(entityType)} ${action}: ${label}`.slice(0, 500),
+    summary: `A Notion ${humanize(entityType)} was ${action}.`,
+    textSnippet: "",
+    payloadRef,
+    visibility: {
+      scope: "personal",
+      notionWorkspaceId: verified.workspaceId,
+      accessibleBotIds: verified.accessibleBotIds,
+    },
+    targetUserIds: connection.ownerUserId ? [connection.ownerUserId] : [],
+    entityKeys,
+    dedupeKey: verified.eventId,
+    rawContentHash: verified.bodyHash,
+    metadata: {
+      subscriptionId: verified.subscriptionId,
+      integrationId: verified.integrationId,
+      notionWorkspaceId: verified.workspaceId,
+      notionWorkspaceName: verified.workspaceName,
+      attemptNumber: verified.attemptNumber,
+      apiVersion: verified.apiVersion,
+    },
+  };
+}
+
+function normalizeToken(payload: Record<string, unknown>, previous: Record<string, unknown> = {}): Record<string, unknown> {
+  const owner = recordValue(payload, "owner");
+  const ownerUser = owner ? recordValue(owner, "user") : null;
+  return {
+    ...previous,
+    accessToken: requiredString(payload, "access_token", "Notion did not return an access token"),
+    refreshToken: requiredString(payload, "refresh_token", "Notion did not return a rotating refresh token"),
+    tokenType: stringValue(payload, "token_type") ?? "bearer",
+    ...(stringValue(payload, "bot_id") ? { botId: stringValue(payload, "bot_id") } : {}),
+    ...(stringValue(payload, "workspace_id") ? { notionWorkspaceId: stringValue(payload, "workspace_id") } : {}),
+    ...(stringValue(payload, "workspace_name") ? { notionWorkspaceName: stringValue(payload, "workspace_name") } : {}),
+    ...(stringValue(payload, "workspace_icon") ? { notionWorkspaceIcon: stringValue(payload, "workspace_icon") } : {}),
+    ...(ownerUser && stringValue(ownerUser, "id") ? { notionOwnerUserId: stringValue(ownerUser, "id") } : {}),
+    ...(stringValue(payload, "duplicated_template_id") ? { duplicatedTemplateId: stringValue(payload, "duplicated_template_id") } : {}),
+  };
+}
+
+function boundMarkdown(payload: Record<string, unknown>): Record<string, unknown> {
+  const markdown = stringValue(payload, "markdown") ?? "";
+  const bounded = truncateText(markdown, NOTION_TEXT_CHARS);
+  return {
+    ...boundNotionValue(payload) as Record<string, unknown>,
+    markdown: bounded.text,
+    avalonTruncated: bounded.truncated,
+    avalonTotalChars: bounded.totalChars,
+  };
+}
+
+function boundNotionValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return truncateText(value, NOTION_TEXT_CHARS).text;
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+  if (depth >= 8) return "[truncated]";
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => boundNotionValue(item, depth + 1));
+  if (!isRecord(value)) return null;
+  return Object.fromEntries(Object.entries(value).slice(0, 150).map(([key, item]) => [key, boundNotionValue(item, depth + 1)]));
+}
+
+const supportedAuthorizationCapabilities = new Set<string>([
+  ...Object.values(NotionCapabilities),
+  ...Object.values(NotionCapabilitySettings).flatMap((settings) => [...settings]),
+]);
+
+function assertConfig(config: NotionConnectorConfig): void {
+  if (!config.clientId || !config.clientSecret || !config.redirectUri) {
+    throw new ConnectorError("invalid_configuration", "Notion public integration client ID, secret, and redirect URI are required");
+  }
+  if ((config.notionVersion ?? DEFAULT_NOTION_VERSION) !== DEFAULT_NOTION_VERSION) {
+    throw new ConnectorError("invalid_configuration", `This connector requires Notion-Version ${DEFAULT_NOTION_VERSION}`);
+  }
+  try {
+    const redirect = new URL(config.redirectUri);
+    if (redirect.protocol !== "https:" && redirect.hostname !== "localhost" && redirect.hostname !== "127.0.0.1") throw new Error("invalid protocol");
+  } catch {
+    throw new ConnectorError("invalid_configuration", "Notion OAuth redirect URI is invalid");
+  }
+}
+
+function assertPersonalConnection(connection: ConnectorConnectionContext): void {
+  if (connection.scope !== "personal" || !connection.ownerUserId) {
+    throw new ConnectorError("unauthorized", "Notion public connections must be owned by one Avalon user");
+  }
+}
+
+function credentialString(connection: ConnectorConnectionContext, key: string): string {
+  const value = stringValue(connection.credentials, key);
+  if (!value) {
+    throw new ConnectorError("unauthorized", `Notion ${key} is missing`, {
+      reconnectRequired: true,
+      reason: `missing_${toSnakeCase(key)}`,
+    });
+  }
+  return value;
+}
+
+function isProviderUnauthorized(error: unknown): boolean {
+  return error instanceof ConnectorError
+    && error.code === "unauthorized"
+    && isRecord(error.details)
+    && error.details.status === 401;
+}
+
+function isRefreshRejected(error: unknown): error is ConnectorError {
+  return error instanceof ConnectorError
+    && isRecord(error.details)
+    && [400, 401, 403].includes(Number(error.details.status));
+}
+
+function requiredString(record: Record<string, unknown>, key: string, message: string): string {
+  const value = stringValue(record, key);
+  if (!value) throw new ConnectorError("provider_error", message);
+  return value;
+}
+
+function idInputSchema(name: string): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: { [name]: { type: "string", minLength: 1, maxLength: 200 } },
+    required: [name],
+  };
+}
+
+function assertWebhookSize(rawBody: string, maxBytes: number): void {
+  if (new TextEncoder().encode(rawBody).byteLength > maxBytes) {
+    throw new ConnectorError("payload_too_large", "The Notion webhook exceeded the configured size limit");
+  }
+}
+
+function parseWebhookObject(rawBody: string, provider: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch (error) {
+    throw new ConnectorError("provider_error", `${provider} sent malformed webhook JSON`, error);
+  }
+  if (!isRecord(parsed)) throw new ConnectorError("provider_error", `${provider} sent an invalid webhook payload`);
+  return parsed;
+}
+
+function webhookUuid(record: Record<string, unknown>, key: string, message: string): string {
+  const value = stringValue(record, key);
+  if (!value || !z.string().uuid().safeParse(value).success) throw new ConnectorError("provider_error", message);
+  return value;
+}
+
+function requiredBoundedString(record: Record<string, unknown>, key: string, max: number, message: string): string {
+  const value = stringValue(record, key);
+  if (!value || value.length > max) throw new ConnectorError("provider_error", message);
+  return value;
+}
+
+function boundedOptionalString(record: Record<string, unknown>, key: string, max: number): string | null {
+  const value = stringValue(record, key);
+  return value ? value.slice(0, max) : null;
+}
+
+function notionResourceType(entityType: string): string | null {
+  if (["page", "block", "database", "data_source", "comment", "view", "file_upload"].includes(entityType)) {
+    return `notion_${entityType}`;
+  }
+  return null;
+}
+
+function humanize(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
+function toSnakeCase(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").replace(/[^a-z0-9]+/giu, "_").replace(/^_+|_+$/gu, "").toLowerCase();
+}
+
+function regionFromConnection(connection: ConnectorConnectionContext): "global" | "eu" {
+  return connection.config.region === "eu" ? "eu" : "global";
+}
