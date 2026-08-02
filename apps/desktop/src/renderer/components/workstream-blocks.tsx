@@ -5,6 +5,7 @@ import {
   ChevronRight,
   CircleAlert,
   Clipboard,
+  Copy,
   FileText,
   LoaderCircle,
   Pin,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { Highlight, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
@@ -34,12 +36,104 @@ function safeJson(value: unknown): string {
   }
 }
 
+const markdownCodeTheme: PrismTheme = {
+  plain: { backgroundColor: 'transparent', color: '#e5e4df' },
+  styles: [
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#777772' } },
+    { types: ['punctuation'], style: { color: '#aaa9a3' } },
+    { types: ['namespace'], style: { opacity: 0.72 } },
+    { types: ['tag', 'constant', 'symbol', 'deleted'], style: { color: '#ff8a50' } },
+    { types: ['boolean', 'number'], style: { color: '#e6a06b' } },
+    { types: ['selector', 'attr-name', 'string', 'char', 'builtin', 'inserted'], style: { color: '#b995f5' } },
+    { types: ['operator', 'entity', 'url'], style: { color: '#d8d7d2' } },
+    { types: ['atrule', 'attr-value', 'keyword'], style: { color: '#ff7b2c' } },
+    { types: ['function'], style: { color: '#17a9f5' } },
+    { types: ['regex', 'important', 'variable'], style: { color: '#e8b75c' } },
+    { types: ['important', 'bold'], style: { fontWeight: '700' } },
+    { types: ['italic'], style: { fontStyle: 'italic' } },
+    { types: ['class-name', 'maybe-class-name'], style: { color: '#b995f5' } },
+  ],
+};
+
+const markdownLanguageAliases: Record<string, Language> = {
+  cs: 'csharp',
+  html: 'markup',
+  js: 'javascript',
+  md: 'markdown',
+  py: 'python',
+  rb: 'ruby',
+  sh: 'bash',
+  shell: 'bash',
+  text: 'plain',
+  ts: 'typescript',
+  txt: 'plain',
+  yml: 'yaml',
+  zsh: 'bash',
+};
+
+function MarkdownCodeBlock({ code, language }: { code: string; language: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const highlightedLanguage = markdownLanguageAliases[language] ?? language ?? 'plain';
+
+  const copy = async (): Promise<void> => {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  };
+
+  return (
+    <div className="markdown-code-block" data-language={language || 'plain'}>
+      <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
+        {({ className, getLineProps, getTokenProps, style, tokens }) => (
+          <pre className={className} style={style}>
+            <code>
+              {tokens.map((line, lineIndex) => (
+                <span {...getLineProps({ line })} key={lineIndex}>
+                  {line.map((token, tokenIndex) => (
+                    <span {...getTokenProps({ token })} key={tokenIndex} />
+                  ))}
+                  {lineIndex < tokens.length - 1 ? '\n' : null}
+                </span>
+              ))}
+            </code>
+          </pre>
+        )}
+      </Highlight>
+      <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
+        {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+      </button>
+    </div>
+  );
+}
+
+function MarkdownCode({ children, className }: React.ComponentProps<'code'>): React.JSX.Element {
+  const source = String(children ?? '');
+  const languageMatch = /(?:^|\s)language-([\w#+.-]+)/u.exec(className ?? '');
+  const isBlock = Boolean(languageMatch) || source.endsWith('\n');
+
+  if (!isBlock) return <code className="markdown-inline-code">{children}</code>;
+
+  return (
+    <MarkdownCodeBlock
+      code={source.replace(/\n$/u, '')}
+      language={languageMatch?.[1]?.toLowerCase() ?? 'plain'}
+    />
+  );
+}
+
 function MarkdownBody({ children }: { children: string }): React.JSX.Element {
   return (
     <div className="markdown-body">
       <ReactMarkdown
         components={{
-          a: ({ children: linkChildren, ...props }) => <a {...props} rel="noreferrer" target="_blank">{linkChildren}</a>,
+          a: ({ children: linkChildren, ...props }) => <a {...props} rel="noopener noreferrer" target="_blank">{linkChildren}</a>,
+          code: MarkdownCode,
+          pre: ({ children: preChildren }) => <>{preChildren}</>,
+          table: ({ children: tableChildren }) => (
+            <div className="markdown-table-scroll">
+              <table>{tableChildren}</table>
+            </div>
+          ),
         }}
         remarkPlugins={[remarkGfm]}
       >
