@@ -8,6 +8,10 @@ allowBuilds:
   esbuild: true
   workerd: true
 
+peerDependencyRules:
+  allowedVersions:
+    "tw-fade@0.8>tailwindcss": "3"
+
 catalog:
   typescript: ^5.9.3
   zod: latest
