@@ -1,0 +1,442 @@
+import {
+  createContext,
+  type PropsWithChildren,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
+import { AvalonApi } from './api';
+import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
+import type { Region } from './types';
+
+const REGION_STORAGE_KEY = 'avalon:selected-region';
+const WORKSPACE_NAME_STORAGE_KEY = 'avalon:workspace-name';
+
+export interface PendingInvitation {
+  token: string;
+  region: Region;
+}
+
+interface AppSessionValue {
+  booting: boolean;
+  runtime: RuntimeConfig | null;
+  region: Region | null;
+  workspaceName: string;
+  session: DesktopSession | null;
+  api: AvalonApi | null;
+  invitationApi: AvalonApi | null;
+  deepLinkError: string | null;
+  exchangingTicket: boolean;
+  selectRegion: (region: Region) => void;
+  setWorkspaceName: (name: string) => void;
+  editWorkspaceSetup: () => void;
+  pendingInvitation: PendingInvitation | null;
+  clearPendingInvitation: () => void;
+  getOnboardingState: () => Promise<DesktopWorkspaceOnboardingState>;
+  activateWorkspace: (region: Region, workspaceId: string) => Promise<void>;
+  acceptInvitation: (region: Region, invitationId: string) => Promise<void>;
+  declineInvitation: (region: Region, invitationId: string) => Promise<void>;
+  createDevelopmentSession: () => Promise<void>;
+  finishWorkspaceSetup: (name: string, region: Region) => Promise<void>;
+  refreshSession: () => Promise<DesktopSession>;
+  signOut: () => Promise<void>;
+  clearDeepLinkError: () => void;
+}
+
+const AppSessionContext = createContext<AppSessionValue | null>(null);
+
+function readRegion(): Region | null {
+  const value = window.localStorage.getItem(REGION_STORAGE_KEY);
+  return value === 'global' || value === 'eu' ? value : null;
+}
+
+function readWorkspaceName(): string {
+  return window.localStorage.getItem(WORKSPACE_NAME_STORAGE_KEY)?.trim() ?? '';
+}
+
+function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
+  if (session.workspace) return session.workspace.region;
+  return runtime.api.eu === session.apiBaseUrl ? 'eu' : 'global';
+}
+
+export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
+  const [runtime, setRuntime] = useState<RuntimeConfig | null>(null);
+  const [region, setRegion] = useState<Region | null>(() => readRegion());
+  const [workspaceName, setWorkspaceNameState] = useState(() => readWorkspaceName());
+  const [session, setSession] = useState<DesktopSession | null>(null);
+  const [pendingInvitation, setPendingInvitation] = useState<PendingInvitation | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [exchangingTicket, setExchangingTicket] = useState(false);
+  const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
+  const bridge = useMemo(() => desktopBridge(), []);
+  const queryClient = useQueryClient();
+
+  const applySession = useCallback((nextSession: DesktopSession): void => {
+    setSession(nextSession);
+    const nextRegion = nextSession.workspace?.region
+      ?? (runtime?.api.eu === nextSession.apiBaseUrl ? 'eu' : 'global');
+    window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+    setRegion(nextRegion);
+    if (nextSession.workspace) {
+      window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+      setWorkspaceNameState(nextSession.workspace.name);
+    }
+    queryClient.clear();
+  }, [queryClient, runtime]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([bridge.getRuntimeConfig(), bridge.getSession()])
+      .then(([nextRuntime, nextSession]) => {
+        if (!active) return;
+        setRuntime(nextRuntime);
+        setSession(nextSession);
+        if (nextSession) {
+          const nextRegion = regionForSession(nextRuntime, nextSession);
+          window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+          setRegion(nextRegion);
+          if (nextSession.workspace) {
+            window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+            setWorkspaceNameState(nextSession.workspace.name);
+          }
+        } else {
+          // Avalon has one identity control plane. A data region is selected
+          // only after sign-in, when creating a new workspace.
+          window.localStorage.setItem(REGION_STORAGE_KEY, 'global');
+          setRegion('global');
+        }
+      })
+      .finally(() => {
+        if (active) setBooting(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [bridge]);
+
+  useEffect(() => bridge.onSessionChanged((nextSession) => {
+    queryClient.clear();
+    setSession(nextSession);
+    if (nextSession) {
+      const nextRegion = nextSession.workspace?.region
+        ?? (runtime ? regionForSession(runtime, nextSession) : null);
+      if (nextRegion) {
+        window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+        setRegion(nextRegion);
+      }
+      if (nextSession.workspace) {
+        window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+        setWorkspaceNameState(nextSession.workspace.name);
+      }
+    } else {
+      window.localStorage.setItem(REGION_STORAGE_KEY, 'global');
+      setRegion('global');
+    }
+  }), [bridge, queryClient, runtime]);
+
+  const api = useMemo(() => {
+    if (session) return new AvalonApi(session.apiBaseUrl, session);
+    if (!runtime) return null;
+    return new AvalonApi(runtime.api.global, null);
+  }, [runtime, session]);
+
+  // Invitation preview and OAuth must always use the invite's regional
+  // service, even when an existing session belongs to the other region.
+  const invitationApi = useMemo(() => {
+    if (!pendingInvitation || !runtime) return null;
+    return new AvalonApi(runtime.api[pendingInvitation.region], null);
+  }, [pendingInvitation, runtime]);
+
+  const createDevelopmentSession = useCallback(async () => {
+    if (!api) throw new Error('Choose a workspace region first.');
+    const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Avalon Development');
+    setSession(nextSession);
+    if (nextSession.workspace) {
+      setRegion(nextSession.workspace.region);
+      setWorkspaceNameState(nextSession.workspace.name);
+    }
+  }, [api, bridge, workspaceName]);
+
+  const getOnboardingState = useCallback(
+    () => bridge.getOnboardingState(),
+    [bridge],
+  );
+
+  const activateWorkspace = useCallback(async (selectedRegion: Region, workspaceId: string): Promise<void> => {
+    const nextSession = await bridge.activateWorkspace({ region: selectedRegion, workspaceId });
+    applySession(nextSession);
+  }, [applySession, bridge]);
+
+  const acceptInvitation = useCallback(async (invitationRegion: Region, invitationId: string): Promise<void> => {
+    const nextSession = await bridge.acceptInvitation({ region: invitationRegion, invitationId });
+    applySession(nextSession);
+  }, [applySession, bridge]);
+
+  const declineInvitation = useCallback(async (invitationRegion: Region, invitationId: string): Promise<void> => {
+    await bridge.declineInvitation({ region: invitationRegion, invitationId });
+  }, [bridge]);
+
+  const refreshSession = useCallback(async (): Promise<DesktopSession> => {
+    const nextSession = await bridge.refreshSession();
+    setSession(nextSession);
+    if (nextSession.workspace) {
+      window.localStorage.setItem(REGION_STORAGE_KEY, nextSession.workspace.region);
+      window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+      setRegion(nextSession.workspace.region);
+      setWorkspaceNameState(nextSession.workspace.name);
+    }
+    return nextSession;
+  }, [bridge]);
+
+  const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region): Promise<void> => {
+    const normalized = name.trim();
+    if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
+    window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, normalized);
+    setWorkspaceNameState(normalized);
+    const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized });
+    applySession(nextSession);
+  }, [applySession, bridge]);
+
+  const signOut = useCallback(async () => {
+    try {
+      await bridge.logout();
+    } finally {
+      setSession(null);
+      window.localStorage.setItem(REGION_STORAGE_KEY, 'global');
+      setRegion('global');
+      queryClient.clear();
+    }
+  }, [bridge, queryClient]);
+
+  const selectRegion = useCallback((nextRegion: Region) => {
+    window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+    setRegion(nextRegion);
+  }, []);
+
+  const setWorkspaceName = useCallback((name: string) => {
+    const normalized = name.trim();
+    window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, normalized);
+    setWorkspaceNameState(normalized);
+  }, []);
+
+  const editWorkspaceSetup = useCallback(() => {
+    window.localStorage.removeItem(REGION_STORAGE_KEY);
+    setRegion(null);
+    setDeepLinkError(null);
+  }, []);
+
+  useEffect(() => {
+    // Native callbacks are single-use. Do not subscribe or drain main's queue
+    // until the trusted runtime endpoints are loaded, otherwise a cold-start
+    // OAuth callback could be consumed and rejected solely because config was
+    // still pending.
+    if (!runtime) return undefined;
+    const handleDeepLink = (rawUrl: string): void => {
+      let deepLink: URL;
+      try {
+        deepLink = new URL(rawUrl);
+      } catch {
+        setDeepLinkError('Avalon received an invalid sign-in link.');
+        return;
+      }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams') {
+        const workstreamId = deepLink.pathname.slice(1);
+        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
+          setDeepLinkError('Sign in before opening this work-stream link.');
+          return;
+        }
+        setDeepLinkError(null);
+        window.location.hash = `/workstreams/${workstreamId}`;
+        return;
+      }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
+        const token = deepLink.searchParams.get('token');
+        const inviteRegion = deepLink.searchParams.get('region');
+        if (!token || token.length < 20 || (inviteRegion !== 'global' && inviteRegion !== 'eu')) {
+          setDeepLinkError('Avalon received an invalid organization invitation.');
+          return;
+        }
+        setPendingInvitation({ token, region: inviteRegion });
+        setDeepLinkError(null);
+        // Invitations are discovered from the verified platform identity.
+        // Refresh an already-mounted empty setup gate immediately instead of
+        // leaving the user on “Create organization” until the next launch.
+        void queryClient.invalidateQueries({ queryKey: ['workspace-onboarding'] });
+        return;
+      }
+      if (deepLink.protocol !== 'avalon:' || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
+        setDeepLinkError('Avalon received an unexpected sign-in link.');
+        return;
+      }
+      const connectionId = deepLink.searchParams.get('connection');
+      if (connectionId && deepLink.searchParams.get('status') === 'connected') {
+        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(connectionId)) {
+          setDeepLinkError('Avalon received an invalid connector completion link.');
+          return;
+        }
+        setDeepLinkError(null);
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['connections'] }),
+          queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+          queryClient.invalidateQueries({ queryKey: ['automation'] }),
+        ]);
+        return;
+      }
+      const connectionError = deepLink.searchParams.get('error');
+      if (connectionError) {
+        const failedAttemptId = deepLink.searchParams.get('attempt');
+        if (failedAttemptId && /^[A-Za-z0-9_-]{43}$/u.test(failedAttemptId)) {
+          void bridge.cancelDesktopAuthAttempt(failedAttemptId);
+        }
+        setDeepLinkError(`Sign in could not be completed: ${connectionError.replace(/[_-]+/gu, ' ')}`);
+        return;
+      }
+      const ticket = deepLink.searchParams.get('ticket');
+      if (!ticket) {
+        setDeepLinkError('The sign-in link did not contain a desktop ticket.');
+        return;
+      }
+      const callbackRegion = deepLink.searchParams.get('region');
+      if (callbackRegion !== 'global') {
+        setDeepLinkError('The sign-in link did not match Avalon’s identity service.');
+        return;
+      }
+      const attemptId = deepLink.searchParams.get('attempt');
+      if (!attemptId || !/^[A-Za-z0-9_-]{43}$/u.test(attemptId)) {
+        setDeepLinkError('The sign-in link did not match a native authentication attempt.');
+        return;
+      }
+      window.localStorage.setItem(REGION_STORAGE_KEY, callbackRegion);
+      setRegion(callbackRegion);
+      setExchangingTicket(true);
+      setDeepLinkError(null);
+      void bridge
+        .exchangeDesktopTicket({
+          apiBaseUrl: runtime.api[callbackRegion],
+          region: callbackRegion,
+          ticket,
+          attemptId,
+        })
+        .then((nextSession) => {
+          if (nextSession.workspace) {
+            window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+            setWorkspaceNameState(nextSession.workspace.name);
+          }
+          setSession(nextSession);
+        })
+        .catch((error: unknown) => {
+          setDeepLinkError(error instanceof Error ? error.message : 'Sign in could not be completed.');
+        })
+        .finally(() => setExchangingTicket(false));
+    };
+    const unsubscribe = bridge.onDeepLink(handleDeepLink);
+    void bridge.consumePendingDeepLinks().then((deepLinks) => deepLinks.forEach(handleDeepLink));
+    return unsubscribe;
+  }, [bridge, queryClient, runtime, session]);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    const expiresAt = Date.parse(session.expiresAt);
+    const refreshAt = Number.isFinite(expiresAt) ? Math.max(1_000, expiresAt - Date.now() - 60_000) : 60_000;
+    const refresh = async (): Promise<void> => {
+      try {
+        const refreshed = await bridge.refreshSession();
+        if (!cancelled) setSession(refreshed);
+      } catch {
+        if (!cancelled && Date.now() < expiresAt) {
+          retryTimer = window.setTimeout(() => void refresh(), 30_000);
+        } else if (!cancelled) {
+          // Main owns the encrypted refresh credential. Clearing renderer
+          // state alone would leave a stored session that blocks the next
+          // PKCE exchange, so terminal expiry must clear/revoke native state.
+          try {
+            await bridge.logout();
+          } catch {
+            // Main clears (or tombstones) local credentials before attempting
+            // the best-effort server revocation.
+          }
+          if (cancelled) return;
+          setDeepLinkError('Your session expired. Sign in again to continue.');
+          setSession(null);
+        }
+      }
+    };
+    const timer = window.setTimeout(() => void refresh(), refreshAt);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [bridge, session]);
+
+  const value = useMemo<AppSessionValue>(
+    () => ({
+      booting,
+      runtime,
+      region,
+      workspaceName,
+      session,
+      api,
+      invitationApi,
+      deepLinkError,
+      exchangingTicket,
+      selectRegion,
+      setWorkspaceName,
+      editWorkspaceSetup,
+      pendingInvitation,
+      clearPendingInvitation: () => {
+        setPendingInvitation(null);
+        if (session?.workspace) {
+          window.localStorage.setItem(REGION_STORAGE_KEY, session.workspace.region);
+          setRegion(session.workspace.region);
+        }
+      },
+      getOnboardingState,
+      activateWorkspace,
+      acceptInvitation,
+      declineInvitation,
+      createDevelopmentSession,
+      finishWorkspaceSetup,
+      refreshSession,
+      signOut,
+      clearDeepLinkError: () => setDeepLinkError(null),
+    }),
+    [
+      api,
+      acceptInvitation,
+      activateWorkspace,
+      booting,
+      createDevelopmentSession,
+      declineInvitation,
+      deepLinkError,
+      exchangingTicket,
+      finishWorkspaceSetup,
+      getOnboardingState,
+      pendingInvitation,
+      invitationApi,
+      region,
+      runtime,
+      refreshSession,
+      session,
+      signOut,
+      selectRegion,
+      setWorkspaceName,
+      editWorkspaceSetup,
+      workspaceName,
+    ],
+  );
+
+  return <AppSessionContext.Provider value={value}>{children}</AppSessionContext.Provider>;
+}
+
+export function useAppSession(): AppSessionValue {
+  const context = useContext(AppSessionContext);
+  if (!context) throw new Error('useAppSession must be used inside AppSessionProvider');
+  return context;
+}

@@ -1,0 +1,90 @@
+# Connector architecture
+
+Connectors are typed adapters behind a registry. A manifest declares OAuth needs, supported personal/workspace scopes, activity and resource types, tools, polling, webhooks, and watches. The adapter owns provider protocol details; Avalon owns tenancy, execution principals, persistence, retries, schedules, and audit.
+
+## Authorization model
+
+- A personal connection can be used only by its owner principal.
+- A workspace connection is an organization capability: every ad-hoc work stream in that workspace receives all tools granted to the connection. Those tool calls execute as the workspace principal, even when the run was started by a member.
+- Workspace automations remain explicitly bound to selected workspace connections so a published automation cannot silently change providers or accounts.
+- A work-stream participant does not expose their personal connections by joining.
+- Tools require both a manifest capability and a capability recorded on the connection.
+- Credentials are decrypted only for the duration of a backend operation.
+
+## Google
+
+Google identity and connector authorization are separate. Connector authorization uses the web-server code flow, PKCE, offline access, and incremental scopes. Settings presents two product-facing presets, but both create ordinary `google` connections backed by the same adapter, credential lifecycle, OAuth callback, and tool registry. They are authorization bundles, not separate backend connector types, and a user may connect either or both.
+
+| Settings preset | Requested Avalon capabilities |
+| --- | --- |
+| **Google Mail + Calendar** | `gmail.read`, `gmail.draft`, `gmail.send`, `calendar.read`, `calendar.write` |
+| **Google Drive + Docs + Sheets** | `drive.read`, `docs.read`, `docs.write`, `sheets.read`, `sheets.write` |
+
+The capability check is enforced for every tool invocation. The current Google tools are:
+
+- Gmail: `google.gmail.search`, `google.gmail.read_thread`, `google.gmail.read_message`, `google.gmail.create_draft`, and `google.gmail.send`.
+- Calendar: `google.calendar.list_calendars`, `google.calendar.list_events`, `google.calendar.read_event`, `google.calendar.create_event`, and `google.calendar.update_event`. Event tools accept an explicit calendar ID and otherwise use the primary calendar; scheduled activity polling currently follows the configured calendar, which defaults to primary.
+- Drive: `google.drive.search`, `google.drive.get_metadata`, `google.drive.download`, and `google.drive.export`.
+- Docs: `google.docs.read_document`, `google.docs.create_document`, `google.docs.append_text`, and `google.docs.replace_text`.
+- Sheets: `google.sheets.read_spreadsheet`, `google.sheets.read_values`, `google.sheets.create_spreadsheet`, `google.sheets.update_values`, and `google.sheets.append_values`.
+
+Docs and Sheets operations use their native provider APIs. Docs reads return bounded document structure and text; writes create a document, append plain text, or replace exact text. Sheets reads return bounded spreadsheet metadata or formatted values from an explicit A1 range; writes create a spreadsheet or update/append bounded row values. Drive download/export remains available for file-oriented retrieval, but it does not replace the native Docs and Sheets operations.
+
+Google activity ingestion is polling-only. Gmail history IDs, Calendar sync/completion cursors, and Drive change page tokens are retained and committed only after canonical activities are persisted. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Avalon does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Avalon resource watches route the normalized polled activity and must not be confused with provider push delivery.
+
+A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
+
+The two records are isolated by Avalon capability checks, not by separate Google OAuth principals. Because both presets use one OAuth client with incremental authorization, Google may return a token containing scopes previously granted to that account; Avalon still exposes only the capabilities recorded on the particular connection. Disconnect is local when another Google connection for that account remains. Operators must not describe the presets as provider-level credential isolation.
+
+## GitHub App
+
+GitHub uses one public App with a signature-verifying smart ingress. One installation may be connected to Global workspaces, EU workspaces, or both; an indexed installation directory fans exact signed deliveries only to the applicable regional Workers. OAuth callbacks, credentials, raw payload storage, normalization, and activity processing remain regional. Workspace connections execute with short-lived installation tokens. Personal connections require an expiring user token and prove that the user can access the selected installation and repository.
+
+The agent can list repositories and commits, read files, inspect and create/update issues and comments, inspect and create/review pull requests, and read Actions and check runs. GitHub delivery signatures are verified against the exact raw body before installation-aware normalization and queueing. Webhooks also discover durable repository, commit, file, issue, pull-request, release, workflow-run, and check-run resources so people and agents can attach provider objects directly to work streams without copying their content into Avalon. Issue-dependency and sub-issue deliveries add both sides of the relationship, including cross-repository issues, while retaining one normalized activity per delivery.
+
+## Linear
+
+Linear uses public OAuth applications with PKCE and `actor=app`. A workspace install grants `read`, `issues:create`, `comments:create`, and `write` only as requested. The agent can search/read issues and projects, list teams, create/update issues, and create comments.
+
+Linear's app-provisioned organization webhook is timestamp/signature verified, replay bounded, normalized, deduplicated, and routed through the regional activity queue.
+
+## Notion
+
+Notion uses public connections with an `Any workspace` installation scope and the provider's page picker. The agent can search and retrieve pages/data sources, query data sources, create pages, update or append Markdown, and read/create comments. Only pages explicitly shared during installation are visible.
+
+Notion's one-time webhook verification token is accepted through a guarded regional setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing.
+
+## Web discovery
+
+`avalon.web_search` and `avalon.web_fetch` use Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The tools are omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
+
+## Generic webhook
+
+Each connection receives a unique secret and URL. Send compact JSON with a Unix timestamp and signature header:
+
+```text
+X-Avalon-Signature: t=<seconds>,v1=<hex HMAC-SHA256 of "<seconds>.<raw body>">
+```
+
+Avalon validates time, signature, replay receipt, body schema, scope, and dedupe key before normalizing an activity. Transcript providers can use this connector, but the product must not label it a native Granola integration.
+
+## Web monitor
+
+The web monitor stores URL, polling interval, optional phrase condition, ETag, Last-Modified, last hash, and R2 snapshot reference. Conditional HTTP metadata and a normalized readable-text hash run before any semantic model. Only actual changes produce activities.
+
+Outbound fetches enforce protocol, network, redirect, byte, timeout, and content-type rules. Polling is scheduled through the workspace Durable Object rather than per-monitor Cron deployments.
+
+## Activity ingestion
+
+1. Verify or poll the provider.
+2. Normalize compact metadata and store any large raw body in R2.
+3. Insert with provider/dedupe uniqueness.
+4. Enqueue only region, workspace ID, and activity ID.
+5. Evaluate explicit resource watches and deterministic automation triggers.
+6. Run semantic trigger matching only after deterministic prefilters.
+7. Create automation work idempotently or produce an in-stream contextual suggestion.
+8. Persist accepted/dismissed routing feedback.
+
+Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
+
+There is deliberately no Slack connector and no global activity feed.

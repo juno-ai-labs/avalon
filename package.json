@@ -1,0 +1,63 @@
+{
+  "name": "avalon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.13.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,desktop -c blue,magenta \"pnpm dev:api\" \"pnpm dev:desktop\"",
+    "dev:site": "pnpm --filter @avalon/site dev",
+    "env:sync": "node scripts/sync-dev-env.mjs",
+    "dev:api": "pnpm env:sync && concurrently -k -n global,eu -c blue,cyan \"pnpm --filter @avalon/api dev\" \"pnpm --filter @avalon/api dev:eu\"",
+    "dev:desktop": "dotenv -e .env.local -- pnpm --filter @avalon/desktop dev",
+    "dev:desktop:prod": "VITE_API_GLOBAL_URL=https://api.with-avalon.com VITE_API_EU_URL=https://eu.api.with-avalon.com AVALON_DEV_AUTH=false pnpm --filter @avalon/desktop dev",
+    "db:migrate": "pnpm env:sync && pnpm --filter @avalon/api db:migrate && pnpm --filter @avalon/api db:migrate:eu",
+    "db:seed": "pnpm env:sync && pnpm --filter @avalon/api db:seed && pnpm --filter @avalon/api db:seed:eu",
+    "smoke:local": "node scripts/smoke-local.mjs",
+    "smoke:model": "node scripts/smoke-gemini.mjs",
+    "test": "pnpm -r --if-present test",
+    "test:watch": "vitest",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "eslint . --max-warnings=0",
+    "build": "pnpm -r --if-present build",
+    "package:desktop": "pnpm --filter @avalon/desktop package:local",
+    "package:desktop:release": "dotenv -e .env.local -- pnpm --filter @avalon/desktop package:release",
+    "publish:desktop:release": "dotenv -e .env.local -- pnpm --filter @avalon/desktop release:publish:r2",
+    "start:desktop:packaged": "pnpm --filter @avalon/desktop start:packaged",
+    "deploy:site": "dotenv -e .env.local -- pnpm --filter @avalon/site run deploy",
+    "deploy:global": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:global",
+    "deploy:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:eu"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@types/node": "latest",
+    "concurrently": "latest",
+    "dotenv-cli": "latest",
+    "eslint": "latest",
+    "globals": "latest",
+    "tsx": "latest",
+    "typescript": "catalog:",
+    "typescript-eslint": "latest",
+    "vitest": "latest",
+    "ws": "8.21.0"
+  },
+  "description": "Avalon is a work-stream-first desktop workspace where people and an agent collaborate in the same durable context. It combines an Electron desktop client with a regional Hono API on Cloudflare Workers, D1, R2, Durable Objects, Queues, and Workflows.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juno-ai-labs/avalon.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/juno-ai-labs/avalon/issues"
+  },
+  "homepage": "https://github.com/juno-ai-labs/avalon#readme"
+}

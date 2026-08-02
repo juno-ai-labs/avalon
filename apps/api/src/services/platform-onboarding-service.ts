@@ -1,0 +1,859 @@
+import {
+  PendingWorkspaceInvitationSchema,
+  SessionSchema,
+  WorkspaceSchema,
+  type PendingWorkspaceInvitation,
+  type Region,
+  type Session,
+  type Workspace,
+  type WorkspaceOnboardingState,
+} from "@avalon/contracts";
+import { newId, nowIso } from "@avalon/db";
+import { z } from "zod";
+import type { Env, IdentityAuthContext } from "../env";
+import { ApiError } from "../lib/api-error";
+import { AuthService } from "./auth-service";
+import { acceptInvitationForUser } from "./workspace-service";
+
+const platformIdentitySchema = z.object({
+  platformUserId: z.string().uuid(),
+  googleSubject: z.string().min(1).max(255),
+  email: z.string().email().max(254),
+  name: z.string().min(1).max(255),
+  avatarUrl: z.string().url().nullable(),
+  createdAt: z.string().datetime({ offset: true }),
+});
+
+const regionalDiscoverySchema = z.object({
+  region: z.enum(["global", "eu"]),
+  workspaces: z.array(WorkspaceSchema),
+  invitations: z.array(PendingWorkspaceInvitationSchema),
+});
+
+const regionalActionBaseSchema = z.object({
+  identity: platformIdentitySchema,
+  operationId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+});
+
+export const regionalActivateSchema = regionalActionBaseSchema;
+export const regionalCreateSchema = regionalActionBaseSchema.extend({
+  name: z.string().trim().min(2).max(120),
+});
+export const regionalAcceptSchema = regionalActionBaseSchema.extend({
+  invitationId: z.string().uuid(),
+});
+export const regionalDeclineSchema = z.object({
+  identity: platformIdentitySchema,
+  invitationId: z.string().uuid(),
+});
+
+export type PlatformIdentity = z.infer<typeof platformIdentitySchema>;
+export type RegionalDiscovery = z.infer<typeof regionalDiscoverySchema>;
+export type RegionalActivateInput = z.infer<typeof regionalActivateSchema>;
+export type RegionalCreateInput = z.infer<typeof regionalCreateSchema>;
+export type RegionalAcceptInput = z.infer<typeof regionalAcceptSchema>;
+export type RegionalDeclineInput = z.infer<typeof regionalDeclineSchema>;
+
+const regionalRpcBusinessStatusSchema = z.union([
+  z.literal(400),
+  z.literal(401),
+  z.literal(403),
+  z.literal(404),
+  z.literal(409),
+  z.literal(413),
+  z.literal(422),
+  z.literal(426),
+  z.literal(429),
+]);
+const regionalRpcBusinessErrorSchema = z.object({
+  status: regionalRpcBusinessStatusSchema,
+  code: z.string().min(1).max(120),
+  message: z.string().min(1).max(1_000),
+});
+const regionalRpcEnvelopeSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), value: z.unknown() }),
+  z.object({ ok: z.literal(false), error: regionalRpcBusinessErrorSchema }),
+]);
+
+export type RegionalRpcBusinessError = z.infer<typeof regionalRpcBusinessErrorSchema>;
+export type RegionalRpcResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: RegionalRpcBusinessError };
+
+function isRegionalBusinessApiError(
+  error: unknown,
+): error is ApiError & { status: RegionalRpcBusinessError["status"] } {
+  return error instanceof ApiError && (
+    error.status === 400
+    || error.status === 401
+    || error.status === 403
+    || error.status === 404
+    || error.status === 409
+    || error.status === 413
+    || error.status === 422
+    || error.status === 426
+    || error.status === 429
+  );
+}
+
+export async function serializeRegionalRpcResult<T>(
+  operation: () => Promise<T>,
+): Promise<RegionalRpcResult<T>> {
+  try {
+    return { ok: true, value: await operation() };
+  } catch (error) {
+    if (isRegionalBusinessApiError(error)) {
+      return {
+        ok: false,
+        error: { status: error.status, code: error.code, message: error.message },
+      };
+    }
+    throw error;
+  }
+}
+
+/** Named WorkerEntrypoint RPC surface. It is intentionally not an HTTP route. */
+export interface RegionalIdentityBridgeBinding {
+  discover(identity: PlatformIdentity): Promise<RegionalDiscovery>;
+  activate(input: RegionalActivateInput): Promise<Session>;
+  create(input: RegionalCreateInput): Promise<Session>;
+  accept(input: RegionalAcceptInput): Promise<Session>;
+  decline(input: RegionalDeclineInput): Promise<{ ok: true }>;
+}
+
+/** Raw Cloudflare RPC surface. Business failures are data, never thrown errors. */
+export interface RegionalIdentityBridgeRpcBinding {
+  discover(identity: PlatformIdentity): Promise<RegionalRpcResult<RegionalDiscovery>>;
+  activate(input: RegionalActivateInput): Promise<RegionalRpcResult<Session>>;
+  create(input: RegionalCreateInput): Promise<RegionalRpcResult<Session>>;
+  accept(input: RegionalAcceptInput): Promise<RegionalRpcResult<Session>>;
+  decline(input: RegionalDeclineInput): Promise<RegionalRpcResult<{ ok: true }>>;
+}
+
+/** Converts the serialized RPC envelope back into the local service contract. */
+export class RegionalIdentityBridgeClient implements RegionalIdentityBridgeBinding {
+  constructor(private readonly rpc: RegionalIdentityBridgeRpcBinding) {}
+
+  discover(identity: PlatformIdentity): Promise<RegionalDiscovery> {
+    return this.call(this.rpc.discover(identity), regionalDiscoverySchema);
+  }
+
+  activate(input: RegionalActivateInput): Promise<Session> {
+    return this.call(this.rpc.activate(input), SessionSchema);
+  }
+
+  create(input: RegionalCreateInput): Promise<Session> {
+    return this.call(this.rpc.create(input), SessionSchema);
+  }
+
+  accept(input: RegionalAcceptInput): Promise<Session> {
+    return this.call(this.rpc.accept(input), SessionSchema);
+  }
+
+  decline(input: RegionalDeclineInput): Promise<{ ok: true }> {
+    return this.call(this.rpc.decline(input), z.object({ ok: z.literal(true) }));
+  }
+
+  private async call<T>(pending: Promise<unknown>, valueSchema: z.ZodType<T>): Promise<T> {
+    // A thrown RPC exception or malformed response intentionally escapes as an
+    // unknown error. The coordinator must treat its side-effect outcome as
+    // ambiguous and keep the workspace reservation fail-closed.
+    const envelope = regionalRpcEnvelopeSchema.parse(await pending);
+    if (!envelope.ok) {
+      throw new ApiError(envelope.error.status, envelope.error.code, envelope.error.message);
+    }
+    return valueSchema.parse(envelope.value);
+  }
+}
+
+interface RegionalUserRow {
+  id: string;
+  platform_user_id: string | null;
+  google_subject: string;
+  email: string;
+}
+
+interface InvitationDiscoveryRow {
+  id: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_region: Region;
+  email: string;
+  role: "admin" | "member";
+  invited_by_name: string;
+  expires_at: string;
+}
+
+interface OperationRow {
+  platform_user_id: string;
+  action: "activate" | "accept" | "create";
+  workspace_id: string;
+  invitation_id: string | null;
+}
+
+function mapWorkspace(row: Record<string, unknown>): Workspace {
+  return WorkspaceSchema.parse({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    region: row.region,
+    role: row.role,
+    createdAt: row.created_at,
+  });
+}
+
+function mapPendingInvitation(row: InvitationDiscoveryRow): PendingWorkspaceInvitation {
+  return PendingWorkspaceInvitationSchema.parse({
+    id: row.id,
+    workspaceId: row.workspace_id,
+    workspaceName: row.workspace_name,
+    region: row.workspace_region,
+    email: row.email,
+    role: row.role,
+    invitedByName: row.invited_by_name,
+    expiresAt: row.expires_at,
+  });
+}
+
+function sameDestination(
+  value: { region: Region; workspaceId: string },
+  region: Region,
+  workspaceId: string,
+): boolean {
+  return value.region === region && value.workspaceId === workspaceId;
+}
+
+/** Regional data-plane operations called either directly for Global or by RPC for EU. */
+export class RegionalOnboardingService implements RegionalIdentityBridgeBinding {
+  constructor(private readonly env: Env) {}
+
+  async discover(rawIdentity: PlatformIdentity): Promise<RegionalDiscovery> {
+    const identity = platformIdentitySchema.parse(rawIdentity);
+    const user = await this.ensureRegionalUser(identity);
+    const [workspaceResult, invitationResult] = await Promise.all([
+      this.env.DB.prepare(
+        `SELECT w.id, w.name, w.slug, w.region, w.created_at, m.role
+         FROM workspace_members m
+         JOIN workspaces w ON w.id = m.workspace_id
+         WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
+         ORDER BY m.joined_at, w.created_at`,
+      ).bind(user.id, this.env.AVALON_REGION).all<Record<string, unknown>>(),
+      this.env.DB.prepare(
+        `SELECT i.id, i.workspace_id, w.name AS workspace_name,
+           w.region AS workspace_region, i.email, i.role,
+           inviter.name AS invited_by_name, i.expires_at
+         FROM workspace_invitations i
+         JOIN workspaces w ON w.id = i.workspace_id
+         JOIN users inviter ON inviter.id = i.invited_by_user_id
+         WHERE i.email = ? COLLATE NOCASE
+           AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?
+           AND w.region = ?
+         ORDER BY i.created_at DESC LIMIT 100`,
+      ).bind(identity.email, nowIso(), this.env.AVALON_REGION).all<InvitationDiscoveryRow>(),
+    ]);
+    return regionalDiscoverySchema.parse({
+      region: this.env.AVALON_REGION,
+      workspaces: (workspaceResult.results ?? []).map(mapWorkspace),
+      invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
+    });
+  }
+
+  async activate(rawInput: RegionalActivateInput): Promise<Session> {
+    const input = regionalActivateSchema.parse(rawInput);
+    const user = await this.ensureRegionalUser(input.identity);
+    await this.requireMembership(user.id, input.workspaceId);
+    // Activation is a read/verify plus fresh session issue. It intentionally
+    // does not claim the action journal because the binding's operation may
+    // have originally been a create or invitation acceptance.
+    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+  }
+
+  async create(rawInput: RegionalCreateInput): Promise<Session> {
+    const input = regionalCreateSchema.parse(rawInput);
+    const user = await this.ensureRegionalUser(input.identity);
+    const replay = await this.loadOperation(input.operationId);
+    if (replay) {
+      this.assertOperation(replay, input, "create", null);
+      await this.requireMembership(user.id, input.workspaceId);
+      return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+    }
+
+    const existing = await this.firstMembership(user.id);
+    if (existing && existing.workspace_id !== input.workspaceId) {
+      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
+    }
+    if (!existing) {
+      const at = nowIso();
+      const slugBase = input.name.toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "workspace";
+      const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(input.workspaceId, input.name, slug, this.env.AVALON_REGION, user.id, at, at),
+        this.env.DB.prepare(
+          `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+           SELECT ?, ?, 'owner', 'active', ?
+           WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = ? AND region = ?)
+           ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
+        ).bind(input.workspaceId, user.id, at, input.workspaceId, this.env.AVALON_REGION),
+        this.operationStatement(input, "create", null, at),
+      ]);
+    } else {
+      await this.recordOperation(input, "create", null);
+    }
+    await this.requireMembership(user.id, input.workspaceId);
+    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+  }
+
+  async accept(rawInput: RegionalAcceptInput): Promise<Session> {
+    const input = regionalAcceptSchema.parse(rawInput);
+    const user = await this.ensureRegionalUser(input.identity);
+    const replay = await this.loadOperation(input.operationId);
+    if (replay) {
+      this.assertOperation(replay, input, "accept", input.invitationId);
+      await this.requireMembership(user.id, input.workspaceId);
+      return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+    }
+
+    const acceptedWorkspaceId = await acceptInvitationForUser(this.env, input.invitationId, {
+      id: user.id,
+      email: input.identity.email,
+    });
+    if (acceptedWorkspaceId !== input.workspaceId) {
+      throw new ApiError(409, "invitation_workspace_mismatch", "The invitation changed while it was being accepted");
+    }
+    await this.recordOperation(input, "accept", input.invitationId);
+    return new AuthService(this.env).createRegionalSession(user.id, input.workspaceId);
+  }
+
+  async decline(rawInput: RegionalDeclineInput): Promise<{ ok: true }> {
+    const input = regionalDeclineSchema.parse(rawInput);
+    await this.ensureRegionalUser(input.identity);
+    const at = nowIso();
+    const result = await this.env.DB.prepare(
+      `UPDATE workspace_invitations SET revoked_at = ?
+       WHERE id = ? AND email = ? COLLATE NOCASE
+         AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+    ).bind(at, input.invitationId, input.identity.email, at).run();
+    if (Number(result.meta.changes ?? 0) === 0) {
+      throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+    }
+    return { ok: true };
+  }
+
+  private async ensureRegionalUser(identity: PlatformIdentity): Promise<RegionalUserRow> {
+    let user = await this.env.DB.prepare(
+      "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
+    ).bind(identity.platformUserId).first<RegionalUserRow>();
+    if (user) {
+      if (user.google_subject !== identity.googleSubject) {
+        throw new ApiError(409, "regional_identity_conflict", "The regional identity link does not match this account");
+      }
+      await this.syncRegionalProfile(user.id, identity);
+      return { ...user, email: identity.email };
+    }
+
+    user = await this.env.DB.prepare(
+      "SELECT id, platform_user_id, google_subject, email FROM users WHERE google_subject = ?",
+    ).bind(identity.googleSubject).first<RegionalUserRow>();
+    if (user) {
+      if (user.platform_user_id && user.platform_user_id !== identity.platformUserId) {
+        throw new ApiError(409, "regional_identity_conflict", "The regional identity is already linked to another account");
+      }
+      const result = await this.env.DB.prepare(
+        `UPDATE users SET platform_user_id = ?, email = ?, name = ?, avatar_url = ?, updated_at = ?
+         WHERE id = ? AND (platform_user_id IS NULL OR platform_user_id = ?)`,
+      ).bind(
+        identity.platformUserId,
+        identity.email,
+        identity.name,
+        identity.avatarUrl,
+        nowIso(),
+        user.id,
+        identity.platformUserId,
+      ).run();
+      if (Number(result.meta.changes ?? 0) !== 1) {
+        throw new ApiError(409, "regional_identity_conflict", "The regional identity could not be linked safely");
+      }
+      return { ...user, platform_user_id: identity.platformUserId, email: identity.email };
+    }
+
+    const id = newId();
+    const at = nowIso();
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO users
+         (id, google_subject, email, name, avatar_url, created_at, updated_at, platform_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        id,
+        identity.googleSubject,
+        identity.email,
+        identity.name,
+        identity.avatarUrl,
+        at,
+        at,
+        identity.platformUserId,
+      ).run();
+    } catch {
+      const raced = await this.env.DB.prepare(
+        "SELECT id, platform_user_id, google_subject, email FROM users WHERE platform_user_id = ?",
+      ).bind(identity.platformUserId).first<RegionalUserRow>();
+      if (!raced || raced.google_subject !== identity.googleSubject) {
+        throw new ApiError(409, "regional_identity_conflict", "The regional identity could not be linked safely");
+      }
+      return raced;
+    }
+    return {
+      id,
+      platform_user_id: identity.platformUserId,
+      google_subject: identity.googleSubject,
+      email: identity.email,
+    };
+  }
+
+  private async syncRegionalProfile(userId: string, identity: PlatformIdentity): Promise<void> {
+    try {
+      await this.env.DB.prepare(
+        "UPDATE users SET email = ?, name = ?, avatar_url = ?, updated_at = ? WHERE id = ?",
+      ).bind(identity.email, identity.name, identity.avatarUrl, nowIso(), userId).run();
+    } catch {
+      throw new ApiError(409, "regional_identity_conflict", "The verified account profile conflicts with a regional identity");
+    }
+  }
+
+  private async firstMembership(userId: string): Promise<{ workspace_id: string } | null> {
+    return this.env.DB.prepare(
+      `SELECT m.workspace_id FROM workspace_members m
+       JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
+       ORDER BY m.joined_at LIMIT 1`,
+    ).bind(userId, this.env.AVALON_REGION).first<{ workspace_id: string }>();
+  }
+
+  private async requireMembership(userId: string, workspaceId: string): Promise<void> {
+    const membership = await this.env.DB.prepare(
+      `SELECT 1 AS present FROM workspace_members m
+       JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.user_id = ? AND m.workspace_id = ? AND m.status = 'active' AND w.region = ?`,
+    ).bind(userId, workspaceId, this.env.AVALON_REGION).first<{ present: number }>();
+    if (!membership) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+  }
+
+  private async loadOperation(operationId: string): Promise<OperationRow | null> {
+    return this.env.DB.prepare(
+      `SELECT platform_user_id, action, workspace_id, invitation_id
+       FROM regional_onboarding_operations WHERE operation_id = ?`,
+    ).bind(operationId).first<OperationRow>();
+  }
+
+  private assertOperation(
+    row: OperationRow,
+    input: RegionalActionInput,
+    action: OperationRow["action"],
+    invitationId: string | null,
+  ): void {
+    if (
+      row.platform_user_id !== input.identity.platformUserId
+      || row.action !== action
+      || row.workspace_id !== input.workspaceId
+      || row.invitation_id !== invitationId
+    ) {
+      throw new ApiError(409, "onboarding_operation_conflict", "The onboarding operation was already used for another action");
+    }
+  }
+
+  private operationStatement(
+    input: RegionalActionInput,
+    action: OperationRow["action"],
+    invitationId: string | null,
+    at = nowIso(),
+  ): D1PreparedStatement {
+    return this.env.DB.prepare(
+      `INSERT INTO regional_onboarding_operations
+       (operation_id, platform_user_id, action, workspace_id, invitation_id, completed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(operation_id) DO NOTHING`,
+    ).bind(
+      input.operationId,
+      input.identity.platformUserId,
+      action,
+      input.workspaceId,
+      invitationId,
+      at,
+      at,
+    );
+  }
+
+  private async recordOperation(
+    input: RegionalActionInput,
+    action: OperationRow["action"],
+    invitationId: string | null,
+  ): Promise<void> {
+    await this.operationStatement(input, action, invitationId).run();
+    const stored = await this.loadOperation(input.operationId);
+    if (!stored) throw new ApiError(500, "onboarding_operation_failed", "The onboarding operation could not be recorded");
+    this.assertOperation(stored, input, action, invitationId);
+  }
+}
+
+type RegionalActionInput = RegionalActivateInput | RegionalCreateInput | RegionalAcceptInput;
+
+export interface PlatformBindingRow {
+  platform_user_id: string;
+  region: Region;
+  workspace_id: string;
+  status: "pending" | "active";
+  operation_id: string;
+  pending_expires_at: string | null;
+}
+
+export interface PlatformBindingStore {
+  get(platformUserId: string): Promise<PlatformBindingRow | null>;
+  reserve(platformUserId: string, region: Region, workspaceId: string, operationId: string): Promise<PlatformBindingRow>;
+  activate(platformUserId: string, operationId: string): Promise<void>;
+  release(platformUserId: string, operationId: string): Promise<void>;
+}
+
+export class D1PlatformBindingStore implements PlatformBindingStore {
+  constructor(private readonly db: D1Database, private readonly now: () => Date = () => new Date()) {}
+
+  async get(platformUserId: string): Promise<PlatformBindingRow | null> {
+    return this.db.prepare("SELECT * FROM platform_workspace_bindings WHERE platform_user_id = ?")
+      .bind(platformUserId).first<PlatformBindingRow>();
+  }
+
+  async reserve(
+    platformUserId: string,
+    region: Region,
+    workspaceId: string,
+    operationId: string,
+  ): Promise<PlatformBindingRow> {
+    const at = this.now().toISOString();
+    // Diagnostic deadline for operators and observability only. Unknown RPC
+    // outcomes are never reclaimed automatically because the old EU action
+    // could still commit after an apparent timeout.
+    const expiresAt = new Date(this.now().getTime() + 2 * 60_000).toISOString();
+    await this.db.prepare(
+      `INSERT INTO platform_workspace_bindings
+       (platform_user_id, region, workspace_id, status, operation_id,
+        pending_expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+       ON CONFLICT(platform_user_id) DO NOTHING`,
+    ).bind(platformUserId, region, workspaceId, operationId, expiresAt, at, at).run();
+    const row = await this.get(platformUserId);
+    if (!row) throw new ApiError(503, "workspace_binding_unavailable", "The workspace selection could not be reserved");
+    return row;
+  }
+
+  async activate(platformUserId: string, operationId: string): Promise<void> {
+    const result = await this.db.prepare(
+      `UPDATE platform_workspace_bindings
+       SET status = 'active', pending_expires_at = NULL, updated_at = ?
+       WHERE platform_user_id = ? AND operation_id = ? AND status = 'pending'`,
+    ).bind(this.now().toISOString(), platformUserId, operationId).run();
+    if (Number(result.meta.changes ?? 0) === 1) return;
+    const row = await this.get(platformUserId);
+    if (!row || row.status !== "active" || row.operation_id !== operationId) {
+      throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+    }
+  }
+
+  async release(platformUserId: string, operationId: string): Promise<void> {
+    await this.db.prepare(
+      `DELETE FROM platform_workspace_bindings
+       WHERE platform_user_id = ? AND operation_id = ? AND status = 'pending'`,
+    ).bind(platformUserId, operationId).run();
+  }
+
+}
+
+export interface PlatformOnboardingDependencies {
+  gateways?: Partial<Record<Region, RegionalIdentityBridgeBinding>>;
+  bindings?: PlatformBindingStore;
+  newId?: () => string;
+}
+
+/** Global-only identity/control-plane coordinator. */
+export class PlatformOnboardingService {
+  private readonly gateways: Record<Region, RegionalIdentityBridgeBinding>;
+  private readonly bindings: PlatformBindingStore;
+  private readonly createId: () => string;
+
+  constructor(
+    private readonly env: Env,
+    private readonly auth: IdentityAuthContext,
+    dependencies: PlatformOnboardingDependencies = {},
+  ) {
+    this.requireGlobalControlPlane();
+    const euRpc = env.EU_IDENTITY_BRIDGE;
+    const eu = dependencies.gateways?.eu ?? (euRpc ? new RegionalIdentityBridgeClient(euRpc) : undefined);
+    if (!eu) {
+      throw new ApiError(503, "regional_onboarding_unavailable", "The European Union onboarding service is unavailable");
+    }
+    this.gateways = {
+      global: dependencies.gateways?.global ?? new RegionalOnboardingService(env),
+      eu,
+    };
+    this.bindings = dependencies.bindings ?? new D1PlatformBindingStore(env.DB);
+    this.createId = dependencies.newId ?? newId;
+  }
+
+  async state(): Promise<WorkspaceOnboardingState> {
+    const identity = await this.loadPlatformIdentity();
+    const discovery = await this.discover(identity);
+    const workspace = await this.resolveWorkspaceBinding(identity.platformUserId, discovery);
+    return {
+      workspace,
+      invitations: workspace ? [] : discovery.flatMap((item) => item.invitations),
+    };
+  }
+
+  async activate(region: Region, workspaceId: string): Promise<Session> {
+    const identity = await this.loadPlatformIdentity();
+    const discovery = await this.discover(identity);
+    const workspace = discovery.flatMap((item) => item.workspaces)
+      .find((item) => item.region === region && item.id === workspaceId);
+    if (!workspace) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    return this.completeRegionalAction(identity, region, workspaceId, (operationId) =>
+      this.gateways[region].activate({ identity, operationId, workspaceId }));
+  }
+
+  async createWorkspace(name: string, region: Region): Promise<Session> {
+    const identity = await this.loadPlatformIdentity();
+    const discovery = await this.discover(identity);
+    if (discovery.some((item) => item.workspaces.length > 0)) {
+      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
+    }
+    const workspaceId = this.createId();
+    return this.completeRegionalAction(identity, region, workspaceId, (operationId) =>
+      this.gateways[region].create({ identity, operationId, workspaceId, name }));
+  }
+
+  async acceptInvitation(invitationId: string, region: Region): Promise<Session> {
+    const identity = await this.loadPlatformIdentity();
+    const discovery = await this.discover(identity);
+    if (discovery.some((item) => item.workspaces.length > 0)) {
+      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account already belongs to another organization");
+    }
+    const invitation = discovery.flatMap((item) => item.invitations)
+      .find((item) => item.id === invitationId && item.region === region);
+    if (!invitation) {
+      throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+    }
+    return this.completeRegionalAction(identity, region, invitation.workspaceId, (operationId) =>
+      this.gateways[region].accept({
+        identity,
+        operationId,
+        workspaceId: invitation.workspaceId,
+        invitationId,
+      }));
+  }
+
+  async declineInvitation(invitationId: string, region: Region): Promise<void> {
+    const identity = await this.loadPlatformIdentity();
+    await this.gateways[region].decline({ identity, invitationId });
+  }
+
+  private requireGlobalControlPlane(): void {
+    if (this.env.AVALON_REGION !== "global" || this.auth.region !== "global") {
+      throw new ApiError(409, "global_identity_required", "Sign in through the Avalon platform before choosing an organization");
+    }
+  }
+
+  private async loadPlatformIdentity(): Promise<PlatformIdentity> {
+    const row = await this.env.DB.prepare(
+      `SELECT id, google_subject, email, name, avatar_url, created_at, platform_user_id
+       FROM users WHERE id = ?`,
+    ).bind(this.auth.userId).first<{
+      id: string;
+      google_subject: string;
+      email: string;
+      name: string;
+      avatar_url: string | null;
+      created_at: string;
+      platform_user_id: string | null;
+    }>();
+    if (!row) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
+    if (row.platform_user_id && row.platform_user_id !== row.id) {
+      throw new ApiError(409, "platform_identity_conflict", "The Global identity record is not canonical");
+    }
+    if (!row.platform_user_id) {
+      const result = await this.env.DB.prepare(
+        "UPDATE users SET platform_user_id = ?, updated_at = ? WHERE id = ? AND platform_user_id IS NULL",
+      ).bind(row.id, nowIso(), row.id).run();
+      if (Number(result.meta.changes ?? 0) !== 1) {
+        const winner = await this.env.DB.prepare("SELECT platform_user_id FROM users WHERE id = ?")
+          .bind(row.id).first<{ platform_user_id: string | null }>();
+        if (winner?.platform_user_id !== row.id) {
+          throw new ApiError(409, "platform_identity_conflict", "The Global identity could not be linked safely");
+        }
+      }
+    }
+    return platformIdentitySchema.parse({
+      platformUserId: row.id,
+      googleSubject: row.google_subject,
+      email: row.email,
+      name: row.name,
+      avatarUrl: row.avatar_url,
+      createdAt: row.created_at,
+    });
+  }
+
+  private async discover(identity: PlatformIdentity): Promise<RegionalDiscovery[]> {
+    try {
+      return await Promise.all([
+        this.gateways.global.discover(identity),
+        this.gateways.eu.discover(identity),
+      ]);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(503, "regional_onboarding_unavailable", "A regional onboarding service is unavailable");
+    }
+  }
+
+  private async resolveWorkspaceBinding(
+    platformUserId: string,
+    discovery: RegionalDiscovery[],
+  ): Promise<Workspace | null> {
+    const workspaces = discovery.flatMap((item) => item.workspaces);
+    const unique = new Map(workspaces.map((workspace) => [`${workspace.region}:${workspace.id}`, workspace]));
+    if (unique.size > 1) {
+      throw new ApiError(409, "workspace_membership_conflict", "This Avalon account is linked to more than one organization");
+    }
+    const workspace = unique.values().next().value as Workspace | undefined;
+    const binding = await this.bindings.get(platformUserId);
+    if (!workspace) {
+      if (binding?.status === "active") {
+        throw new ApiError(409, "workspace_binding_inconsistent", "The selected organization is no longer available");
+      }
+      if (binding?.status === "pending") {
+        throw new ApiError(409, "workspace_setup_in_progress", "Organization setup is already in progress");
+      }
+      return null;
+    }
+
+    if (binding) {
+      if (!sameDestination({ region: binding.region, workspaceId: binding.workspace_id }, workspace.region, workspace.id)) {
+        throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+      }
+      if (binding.status === "pending") await this.bindings.activate(platformUserId, binding.operation_id);
+      return workspace;
+    }
+
+    const operationId = this.createId();
+    const reserved = await this.bindings.reserve(platformUserId, workspace.region, workspace.id, operationId);
+    if (!sameDestination({ region: reserved.region, workspaceId: reserved.workspace_id }, workspace.region, workspace.id)) {
+      throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+    }
+    await this.bindings.activate(platformUserId, reserved.operation_id);
+    return workspace;
+  }
+
+  private async completeRegionalAction(
+    identity: PlatformIdentity,
+    region: Region,
+    workspaceId: string,
+    action: (operationId: string) => Promise<Session>,
+  ): Promise<Session> {
+    const operationId = this.createId();
+    const reservation = await this.bindings.reserve(
+      identity.platformUserId,
+      region,
+      workspaceId,
+      operationId,
+    );
+    if (!sameDestination({ region: reservation.region, workspaceId: reservation.workspace_id }, region, workspaceId)) {
+      throw new ApiError(409, "workspace_binding_conflict", "This Avalon account is already bound to another organization");
+    }
+    if (reservation.status === "active") {
+      return this.issueExistingSession(identity, region, workspaceId);
+    }
+    if (reservation.operation_id !== operationId) {
+      throw new ApiError(409, "workspace_setup_in_progress", "Organization setup is already in progress");
+    }
+
+    let session: Session;
+    try {
+      session = await action(operationId);
+    } catch (error) {
+      // Only a validated RPC business-error envelope becomes ApiError here.
+      // It proves the regional action was rejected, so the reservation is safe
+      // to release. Thrown RPC/runtime errors have unknown side-effect outcome.
+      if (error instanceof ApiError && error.status < 500) {
+        await this.bindings.release(identity.platformUserId, operationId);
+        throw error;
+      }
+      session = await this.recoverAmbiguousAction(identity, region, workspaceId, operationId, error);
+    }
+    this.assertRegionalSession(session, region, workspaceId);
+    await this.bindings.activate(identity.platformUserId, operationId);
+    // The bootstrap Global refresh session must not remain usable after the
+    // desktop receives a regional replacement. If the HTTP response is lost,
+    // the durable membership/binding remains and the next login safely takes
+    // the existing-workspace activation path instead of replaying the write.
+    await new AuthService(this.env).logout({ sessionId: this.auth.sessionId });
+    return session;
+  }
+
+  private async issueExistingSession(
+    identity: PlatformIdentity,
+    region: Region,
+    workspaceId: string,
+  ): Promise<Session> {
+    const operationId = this.createId();
+    const session = await this.gateways[region].activate({ identity, operationId, workspaceId });
+    this.assertRegionalSession(session, region, workspaceId);
+    await new AuthService(this.env).logout({ sessionId: this.auth.sessionId });
+    return session;
+  }
+
+  private async recoverAmbiguousAction(
+    identity: PlatformIdentity,
+    region: Region,
+    workspaceId: string,
+    operationId: string,
+    originalError: unknown,
+  ): Promise<Session> {
+    try {
+      const discovery = await this.gateways[region].discover(identity);
+      const membership = discovery.workspaces.find((item) => item.id === workspaceId && item.region === region);
+      if (membership) {
+        return this.gateways[region].activate({ identity, operationId, workspaceId });
+      }
+      // A thrown RPC/runtime error can race a regional commit. Never release
+      // the reservation merely because an immediate read did not yet observe
+      // membership; later discovery or manual reconciliation must resolve it.
+    } catch {
+      // Keep the pending reservation when the outcome cannot be proven.
+      // A later discovery reconciles it if the regional membership committed.
+    }
+    if (originalError instanceof ApiError) throw originalError;
+    throw new ApiError(503, "regional_onboarding_unavailable", "The regional onboarding action could not be confirmed");
+  }
+
+  private assertRegionalSession(session: Session, region: Region, workspaceId: string): void {
+    if (
+      !session.workspace
+      || session.workspace.region !== region
+      || session.workspace.id !== workspaceId
+      || session.apiBaseUrl.replace(/\/$/u, "") !== this.apiBaseForRegion(region)
+    ) {
+      throw new ApiError(502, "regional_session_mismatch", "The regional service returned a mismatched session");
+    }
+  }
+
+  private apiBaseForRegion(region: Region): string {
+    if (region === "global") return this.env.PUBLIC_API_BASE_URL.replace(/\/$/u, "");
+    const configured = this.env.EU_PUBLIC_API_BASE_URL?.replace(/\/$/u, "");
+    if (!configured) throw new ApiError(503, "regional_onboarding_unavailable", "The European Union API endpoint is not configured");
+    return configured;
+  }
+}
+
+export const __platformOnboardingTesting = {
+  platformIdentitySchema,
+  regionalDiscoverySchema,
+};

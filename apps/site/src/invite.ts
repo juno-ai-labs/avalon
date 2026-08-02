@@ -1,0 +1,30 @@
+const button = document.querySelector<HTMLAnchorElement>('#open-avalon');
+const error = document.querySelector<HTMLElement>('#invite-error');
+const parameters = new URLSearchParams(window.location.hash.replace(/^#/u, ''));
+const entries = [...parameters.entries()];
+const token = parameters.get('token');
+const region = parameters.get('region');
+const valid =
+  entries.length === 2
+  && entries.every(([name]) => name === 'token' || name === 'region')
+  && parameters.getAll('token').length === 1
+  && parameters.getAll('region').length === 1
+  && token !== null
+  && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
+  && (region === 'global' || region === 'eu');
+
+// Remove the bearer-like invitation token from browser history/address UI as
+// soon as it has been copied into local variables. It is never sent to the
+// static host, rendered, or logged.
+window.history.replaceState(null, document.title, window.location.pathname);
+
+if (button && valid && token && region) {
+  const deepLink = new URL('avalon://invitations/accept');
+  deepLink.searchParams.set('region', region);
+  deepLink.searchParams.set('token', token);
+  button.href = deepLink.toString();
+  button.removeAttribute('aria-disabled');
+} else {
+  button?.setAttribute('hidden', '');
+  error?.removeAttribute('hidden');
+}

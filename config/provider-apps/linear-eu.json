@@ -1,0 +1,35 @@
+{
+  "$schema": "https://linear.app/.well-known/oauth-app-manifest.schema.json",
+  "schemaVersion": "1.0.0",
+  "distribution": "public",
+  "display": {
+    "description": "Connect workspace issues, projects, comments, and events to Avalon EU.",
+    "iconUrl": "https://with-avalon.com/brand/avalon-mark.png"
+  },
+  "developer": {
+    "name": "Avalon"
+  },
+  "oauth": {
+    "client_name": "Avalon EU",
+    "client_uri": "https://with-avalon.com",
+    "redirect_uris": [
+      "https://eu.api.with-avalon.com/connections/linear/callback"
+    ],
+    "grant_types": [
+      "authorization_code"
+    ]
+  },
+  "webhook": {
+    "enabled": true,
+    "url": "https://eu.api.with-avalon.com/ingest/linear",
+    "resourceTypes": [
+      "Issue",
+      "Comment",
+      "Project",
+      "ProjectUpdate",
+      "Document",
+      "OAuthAuthorization",
+      "PermissionChange"
+    ]
+  }
+}

@@ -1,0 +1,54 @@
+appId: app.avalon.desktop
+productName: Avalon
+copyright: Copyright © 2026 Avalon
+asar: true
+artifactName: Avalon-${version}-${os}-${arch}.${ext}
+afterAllArtifactBuild: ./scripts/finalize-macos-release.mjs
+directories:
+  output: release
+  buildResources: resources
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+files:
+  - out/**/*
+  - package.json
+protocols:
+  - name: Avalon desktop authentication
+    schemes:
+      - avalon
+publish:
+  - provider: generic
+    url: https://downloads.with-avalon.com/stable/darwin/arm64
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  forceCodeSigning: true
+  gatekeeperAssess: false
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.inherit.plist
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+dmg:
+  # electron-builder 26 notarizes Avalon.app, but not the disk image. The
+  # afterAllArtifactBuild hook signs, notarizes, staples, and re-blockmaps it.
+  sign: false
+win:
+  icon: resources/icon.png
+  target:
+    - nsis
+linux:
+  icon: resources/icon.png
+  category: Office
+  target:
+    - AppImage
+    - deb
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

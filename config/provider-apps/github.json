@@ -1,0 +1,39 @@
+{
+  "name": "Avalon Workstreams",
+  "url": "https://with-avalon.com",
+  "description": "Connect GitHub repositories to Avalon work streams and automations.",
+  "hook_attributes": {
+    "url": "https://github.with-avalon.com/ingest/github",
+    "active": true
+  },
+  "callback_urls": [
+    "https://api.with-avalon.com/connections/github/callback",
+    "https://eu.api.with-avalon.com/connections/github/callback"
+  ],
+  "setup_url": "https://github.with-avalon.com/connections/github/setup",
+  "setup_on_update": false,
+  "request_oauth_on_install": false,
+  "public": true,
+  "default_permissions": {
+    "metadata": "read",
+    "contents": "read",
+    "issues": "write",
+    "pull_requests": "write",
+    "actions": "read",
+    "checks": "read"
+  },
+  "default_events": [
+    "push",
+    "release",
+    "issues",
+    "issue_dependencies",
+    "issue_comment",
+    "sub_issues",
+    "pull_request",
+    "pull_request_review",
+    "pull_request_review_comment",
+    "workflow_run",
+    "check_run",
+    "repository"
+  ]
+}

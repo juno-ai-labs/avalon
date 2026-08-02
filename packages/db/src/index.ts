@@ -1,0 +1,392 @@
+import type {
+  AutomationSummary,
+  HarnessStatus,
+  Message,
+  Scope,
+  Workstream
+} from "@avalon/contracts";
+
+export interface D1ResultLike<T = unknown> {
+  success: boolean;
+  results?: T[];
+  meta?: Record<string, unknown>;
+}
+
+export interface D1PreparedStatementLike {
+  bind(...values: unknown[]): D1PreparedStatementLike;
+  first<T = Record<string, unknown>>(column?: string): Promise<T | null>;
+  all<T = Record<string, unknown>>(): Promise<D1ResultLike<T>>;
+  run<T = Record<string, unknown>>(): Promise<D1ResultLike<T>>;
+}
+
+export interface D1DatabaseLike {
+  prepare(query: string): D1PreparedStatementLike;
+  batch<T = unknown>(statements: D1PreparedStatementLike[]): Promise<D1ResultLike<T>[]>;
+}
+
+export class RepositoryError extends Error {
+  constructor(
+    readonly code: "not_found" | "conflict" | "constraint" | "database_error",
+    message: string,
+    override readonly cause?: unknown
+  ) {
+    super(message);
+    this.name = "RepositoryError";
+  }
+}
+
+export function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export function newId(now = Date.now()): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let timestamp = BigInt(now);
+  for (let index = 5; index >= 0; index -= 1) {
+    bytes[index] = Number(timestamp & 0xffn);
+    timestamp >>= 8n;
+  }
+  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function parseJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string" || value.length === 0) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function toWorkstream(row: Record<string, unknown>): Workstream {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    title: String(row.title),
+    objective: String(row.objective ?? ""),
+    originType: row.origin_type === "automation" ? "automation" : "ad_hoc",
+    originLabel: row.origin_label == null ? null : String(row.origin_label),
+    createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id),
+    automationSubscriptionId:
+      row.automation_subscription_id == null ? null : String(row.automation_subscription_id),
+    automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),
+    plannedFor: row.planned_for == null ? null : String(row.planned_for),
+    harnessStatus: String(row.harness_status) as HarnessStatus,
+    lastActivityAt: String(row.last_activity_at),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    archivedAt: row.archived_at == null ? null : String(row.archived_at)
+  };
+}
+
+function toMessage(row: Record<string, unknown>): Message {
+  const authorType = String(row.author_type);
+  const author =
+    authorType === "human"
+      ? {
+          type: "human" as const,
+          user: {
+            id: String(row.author_user_id),
+            email: String(row.author_email),
+            name: String(row.author_name),
+            avatarUrl: row.author_avatar_url == null ? null : String(row.author_avatar_url),
+            createdAt: String(row.author_created_at)
+          }
+        }
+      : authorType === "agent"
+        ? ({ type: "agent" } as const)
+        : ({ type: "system" } as const);
+  return {
+    id: String(row.id),
+    clientMessageId: row.client_message_id == null ? null : String(row.client_message_id),
+    workspaceId: String(row.workspace_id),
+    workstreamId: String(row.workstream_id),
+    author,
+    messageType: String(row.message_type) as Message["messageType"],
+    textContent: String(row.text_content ?? ""),
+    structuredContent: parseJson<Record<string, unknown> | null>(row.structured_content_json, null),
+    mentions: parseJson<Message["mentions"]>(row.mentions_json, []),
+    sequenceNumber: Number(row.sequence_number),
+    createdAt: String(row.created_at),
+    editedAt: row.edited_at == null ? null : String(row.edited_at)
+  };
+}
+
+export interface CreateWorkstreamInput {
+  workspaceId: string;
+  title: string;
+  objective: string;
+  creatorUserId: string;
+  openingMessage: string;
+  clientMessageId: string;
+  participantUserIds: string[];
+}
+
+export interface CreateMessageInput {
+  workspaceId: string;
+  workstreamId: string;
+  authorUserId: string;
+  text: string;
+  clientMessageId: string;
+  mentions: Array<Record<string, unknown>>;
+}
+
+export function createDatabase(db: D1DatabaseLike) {
+  const workstreams = {
+    async list(workspaceId: string, limit = 100, before?: string): Promise<Workstream[]> {
+      const cursorClause = before ? "AND w.last_activity_at < ?" : "";
+      const statement = db.prepare(
+        `SELECT w.*, t.name AS origin_label
+         FROM workstreams w
+         LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
+         LEFT JOIN automation_templates t ON t.id = s.template_id
+         WHERE w.workspace_id = ? AND w.archived_at IS NULL ${cursorClause}
+         ORDER BY w.last_activity_at DESC
+         LIMIT ?`
+      );
+      const bound = before
+        ? statement.bind(workspaceId, before, Math.min(limit, 250))
+        : statement.bind(workspaceId, Math.min(limit, 250));
+      const result = await bound.all<Record<string, unknown>>();
+      return (result.results ?? []).map(toWorkstream);
+    },
+
+    async get(workspaceId: string, id: string): Promise<Workstream | null> {
+      const row = await db
+        .prepare(
+          `SELECT w.*, t.name AS origin_label
+           FROM workstreams w
+           LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
+           LEFT JOIN automation_templates t ON t.id = s.template_id
+           WHERE w.workspace_id = ? AND w.id = ? AND w.archived_at IS NULL`
+        )
+        .bind(workspaceId, id)
+        .first<Record<string, unknown>>();
+      return row ? toWorkstream(row) : null;
+    },
+
+    async create(input: CreateWorkstreamInput): Promise<{ workstream: Workstream; messageId: string }> {
+      const workstreamId = newId();
+      const messageId = newId();
+      const at = nowIso();
+      const uniqueParticipants = [...new Set([input.creatorUserId, ...input.participantUserIds])];
+      const statements = [
+        db
+          .prepare(
+            `INSERT INTO workstreams
+             (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+              next_sequence_number, last_activity_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'running', 2, ?, ?, ?)`
+          )
+          .bind(
+            workstreamId,
+            input.workspaceId,
+            input.title,
+            input.objective,
+            input.creatorUserId,
+            at,
+            at,
+            at
+          ),
+        db
+          .prepare(
+            `INSERT INTO messages
+             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+              message_type, text_content, sequence_number, created_at)
+             VALUES (?, ?, ?, ?, 'human', ?, 'text', ?, 1, ?)`
+          )
+          .bind(
+            messageId,
+            input.clientMessageId,
+            input.workspaceId,
+            workstreamId,
+            input.creatorUserId,
+            input.openingMessage,
+            at
+          ),
+        ...uniqueParticipants.map((userId) =>
+          db
+            .prepare(
+              `INSERT INTO workstream_participants
+               (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+               VALUES (?, ?, ?, ?, ?)`
+            )
+            .bind(
+              workstreamId,
+              userId,
+              input.creatorUserId,
+              userId === input.creatorUserId ? "creator" : "explicit",
+              at
+            )
+        )
+      ];
+      const results = await db.batch(statements);
+      if (results.some((result) => !result.success)) {
+        throw new RepositoryError("database_error", "Could not create work stream");
+      }
+      const created = await workstreams.get(input.workspaceId, workstreamId);
+      if (!created) throw new RepositoryError("database_error", "Created work stream was not readable");
+      return { workstream: created, messageId };
+    },
+
+    async addParticipant(
+      workspaceId: string,
+      workstreamId: string,
+      userId: string,
+      addedByUserId: string,
+      reason: "explicit" | "message" | "elicitation" | "action"
+    ): Promise<void> {
+      const result = await db
+        .prepare(
+          `INSERT INTO workstream_participants
+           (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+           SELECT ?, ?, ?, ?, ?, NULL
+           WHERE EXISTS (SELECT 1 FROM workstreams WHERE id = ? AND workspace_id = ?)
+           ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+             removed_at = NULL,
+             added_by_user_id = CASE WHEN workstream_participants.removed_at IS NOT NULL
+               THEN excluded.added_by_user_id ELSE workstream_participants.added_by_user_id END,
+             participation_reason = CASE WHEN workstream_participants.removed_at IS NOT NULL
+               THEN excluded.participation_reason ELSE workstream_participants.participation_reason END,
+             joined_at = CASE WHEN workstream_participants.removed_at IS NOT NULL
+               THEN excluded.joined_at ELSE workstream_participants.joined_at END`
+        )
+        .bind(workstreamId, userId, addedByUserId, reason, nowIso(), workstreamId, workspaceId)
+        .run();
+      if (!result.success) throw new RepositoryError("database_error", "Could not add participant");
+    },
+
+    async createMessage(input: CreateMessageInput): Promise<Message> {
+      await workstreams.addParticipant(
+        input.workspaceId,
+        input.workstreamId,
+        input.authorUserId,
+        input.authorUserId,
+        "message"
+      );
+      const messageId = newId();
+      const at = nowIso();
+      const increment = db
+        .prepare(
+          `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
+             last_activity_at = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? RETURNING next_sequence_number - 1 AS sequence_number`
+        )
+        .bind(at, at, input.workstreamId, input.workspaceId);
+      const incrementResult = await increment.first<{ sequence_number: number }>();
+      if (!incrementResult) throw new RepositoryError("not_found", "Work stream not found");
+      await db
+        .prepare(
+          `INSERT INTO messages
+           (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+            message_type, text_content, structured_content_json, sequence_number, created_at)
+           VALUES (?, ?, ?, ?, 'human', ?, 'text', ?, NULL, ?, ?)
+           ON CONFLICT(workstream_id, client_message_id) DO NOTHING`
+        )
+        .bind(
+          messageId,
+          input.clientMessageId,
+          input.workspaceId,
+          input.workstreamId,
+          input.authorUserId,
+          input.text,
+          incrementResult.sequence_number,
+          at
+        )
+        .run();
+      const row = await db
+        .prepare(
+          `SELECT m.*, u.email AS author_email, u.name AS author_name,
+             u.avatar_url AS author_avatar_url, u.created_at AS author_created_at,
+             '[]' AS mentions_json
+           FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
+           WHERE m.workstream_id = ? AND m.client_message_id = ?`
+        )
+        .bind(input.workstreamId, input.clientMessageId)
+        .first<Record<string, unknown>>();
+      if (!row) throw new RepositoryError("database_error", "Could not store message");
+      return toMessage(row);
+    },
+
+    async listMessages(
+      workspaceId: string,
+      workstreamId: string,
+      limit = 100,
+      beforeSequence?: number
+    ): Promise<Message[]> {
+      const cursor = beforeSequence ?? Number.MAX_SAFE_INTEGER;
+      const result = await db
+        .prepare(
+          `SELECT m.*, u.email AS author_email, u.name AS author_name,
+             u.avatar_url AS author_avatar_url, u.created_at AS author_created_at,
+             COALESCE((SELECT json_group_array(json_object(
+               'type', mm.mention_type,
+               'userId', mm.mentioned_user_id,
+               'connectorType', mm.connector_type,
+               'startOffset', mm.start_offset,
+               'endOffset', mm.end_offset
+             )) FROM message_mentions mm WHERE mm.message_id = m.id), '[]') AS mentions_json
+           FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
+           WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.sequence_number < ?
+           ORDER BY m.sequence_number DESC LIMIT ?`
+        )
+        .bind(workspaceId, workstreamId, cursor, Math.min(limit, 250))
+        .all<Record<string, unknown>>();
+      return (result.results ?? []).reverse().map(toMessage);
+    }
+  };
+
+  const automations = {
+    async list(workspaceId: string): Promise<AutomationSummary[]> {
+      const result = await db
+        .prepare(
+          `SELECT s.id, t.name, t.description, s.scope, s.status,
+             s.next_run_at, s.last_run_at,
+             CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
+           FROM automation_subscriptions s
+           JOIN automation_templates t ON t.id = s.template_id
+           JOIN automation_template_versions v ON v.id = s.template_version_id
+           WHERE s.workspace_id = ? AND t.archived_at IS NULL
+           ORDER BY t.name COLLATE NOCASE`
+        )
+        .bind(workspaceId)
+        .all<Record<string, unknown>>();
+      return (result.results ?? []).map((row) => ({
+        id: String(row.id),
+        name: String(row.name),
+        description: String(row.description),
+        scope: String(row.scope) as Scope,
+        status: String(row.status) as AutomationSummary["status"],
+        nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
+        lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
+        updateAvailable: Number(row.update_available) === 1
+      }));
+    }
+  };
+
+  const activities = {
+    async claim(activityId: string): Promise<boolean> {
+      const result = await db
+        .prepare(
+          `UPDATE activities SET processing_status = 'processing'
+           WHERE id = ? AND processing_status IN ('pending', 'failed')`
+        )
+        .bind(activityId)
+        .run();
+      return result.success && Number(result.meta?.changes ?? 0) > 0;
+    },
+    async markProcessed(activityId: string): Promise<void> {
+      await db
+        .prepare("UPDATE activities SET processing_status = 'processed' WHERE id = ?")
+        .bind(activityId)
+        .run();
+    }
+  };
+
+  return { raw: db, workstreams, automations, activities };
+}
+
+export type AvalonDatabase = ReturnType<typeof createDatabase>;

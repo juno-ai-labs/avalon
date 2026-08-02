@@ -1,0 +1,746 @@
+import { NormalizedActivitySchema } from "@avalon/contracts";
+import { describe, expect, it } from "vitest";
+import {
+  canGitHubPersonalConnectionAccessRepository,
+  createGitHubAppJwt,
+  createGitHubConnector,
+  discoverGitHubConnectionRepositories,
+  discoverGitHubWebhookResources,
+  GitHubCapabilities,
+  GitHubWebhookResourceLimits,
+  mintGitHubInstallationToken,
+  normalizeGitHubWebhook,
+  verifyGitHubWebhook,
+  verifyGitHubWebhookSignature,
+  type GitHubConnectorConfig,
+} from "./github";
+import type { FetchLike } from "./provider-utils";
+import type { ConnectorConnectionContext } from "./types";
+
+const FIXED_NOW = 1_788_000_000_000;
+
+describe("GitHub connector", () => {
+  it("publishes bounded tools and begins with installation before user authorization", async () => {
+    const adapter = githubAdapter(async () => jsonResponse({}));
+    expect(adapter.manifest).toMatchObject({
+      type: "github",
+      supportedScopes: ["personal", "workspace"],
+      oauthRequired: true,
+      supportsWebhooks: true,
+      supportsPolling: false,
+    });
+    expect(new Set(adapter.manifest.tools.map((tool) => tool.name)).size).toBe(adapter.manifest.tools.length);
+    expect(adapter.manifest.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "github.contents.get", capability: GitHubCapabilities.contentsRead, mode: "read" }),
+      expect.objectContaining({ name: "github.issues.create", capability: GitHubCapabilities.issuesWrite, mode: "write" }),
+      expect.objectContaining({ name: "github.pull_requests.create_review", capability: GitHubCapabilities.pullRequestsWrite }),
+    ]));
+
+    const install = await adapter.beginAuthorization!({
+      state: "s".repeat(32),
+      codeChallenge: "c".repeat(43),
+      connectionScope: "workspace",
+    });
+    expect(new URL(install.url).pathname).toBe("/apps/avalon/installations/new");
+    expect(install.state).toEqual({ connectionScope: "workspace" });
+
+    const authorize = await adapter.beginAuthorization!({
+      state: "s".repeat(32),
+      codeChallenge: "c".repeat(43),
+      scopes: ["read:user"],
+      installationId: "42",
+      connectionScope: "personal",
+    });
+    const authorizeUrl = new URL(authorize.url);
+    expect(authorizeUrl.pathname).toBe("/login/oauth/authorize");
+    expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(authorize.state).toEqual({ installationId: "42", connectionScope: "personal" });
+  });
+
+  it("creates and cryptographically verifies an RS256 app JWT, then mints an installation token", async () => {
+    const keys = await rsaKeyMaterial();
+    const jwt = await createGitHubAppJwt({ clientId: "Iv1.client-id", privateKey: keys.privateKeyPem, now: FIXED_NOW });
+    const [encodedHeader, encodedClaims, encodedSignature] = jwt.split(".");
+    expect(JSON.parse(decodeBase64Url(encodedHeader!))).toEqual({ alg: "RS256", typ: "JWT" });
+    expect(JSON.parse(decodeBase64Url(encodedClaims!))).toMatchObject({
+      iss: "Iv1.client-id",
+      iat: FIXED_NOW / 1_000 - 60,
+      exp: FIXED_NOW / 1_000 + 540,
+    });
+    await expect(crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      keys.publicKey,
+      decodeBase64UrlBytes(encodedSignature!).buffer as ArrayBuffer,
+      new TextEncoder().encode(`${encodedHeader}.${encodedClaims}`),
+    )).resolves.toBe(true);
+
+    let bearer = "";
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      expect(url.pathname).toBe("/app/installations/42/access_tokens");
+      expect(init?.method).toBe("POST");
+      bearer = new Headers(init?.headers).get("authorization") ?? "";
+      return jsonResponse({
+        token: "installation-access",
+        expires_at: "2026-09-01T00:00:00.000Z",
+        permissions: { contents: "read", issues: "write" },
+      });
+    };
+    await expect(mintGitHubInstallationToken(githubConfig(fetcher, keys.privateKeyPem), 42)).resolves.toMatchObject({
+      accessToken: "installation-access",
+      tokenKind: "installation",
+      permissions: { contents: "read", issues: "write" },
+    });
+    expect(bearer.split(".")).toHaveLength(3);
+    expect(bearer.startsWith("Bearer ")).toBe(true);
+  });
+
+  it("correlates a personal user token to the selected installation", async () => {
+    const keys = await rsaKeyMaterial();
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/login/oauth/access_token") {
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("code_verifier")).toBe("v".repeat(43));
+        return jsonResponse({
+          access_token: "user-access",
+          refresh_token: "user-refresh",
+          expires_in: 3600,
+          refresh_token_expires_in: 7200,
+        });
+      }
+      if (url.pathname === "/user/installations") {
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer user-access");
+        expect(url.searchParams.get("per_page")).toBe("100");
+        expect(url.searchParams.get("page")).toBe("1");
+        return jsonResponse({
+          total_count: 1,
+          installations: [{ id: 42, account: { login: "acme" }, repository_selection: "selected" }],
+        });
+      }
+      if (url.pathname === "/app/installations/42") {
+        expect(new Headers(init?.headers).get("authorization")?.split(".")).toHaveLength(3);
+        return jsonResponse({ id: 42, account: { login: "acme" }, repository_selection: "selected" });
+      }
+      if (url.pathname === "/user") return jsonResponse({ id: 7, login: "ada", name: "Ada" });
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = createGitHubConnector(githubConfig(fetcher, keys.privateKeyPem));
+    await expect(adapter.handleAuthorizationCallback!({
+      code: "oauth-code",
+      codeVerifier: "v".repeat(43),
+      installationId: "42",
+      connectionScope: "personal",
+    })).resolves.toMatchObject({
+      accessToken: "user-access",
+      refreshToken: "user-refresh",
+      tokenKind: "user",
+      installationId: "42",
+      githubUserId: "7",
+      providerAccountId: "42",
+      providerAccountName: "acme",
+    });
+  });
+
+  it("rejects a user token that cannot access the selected installation", async () => {
+    const keys = await rsaKeyMaterial();
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/login/oauth/access_token") {
+        return jsonResponse({ access_token: "user-access" });
+      }
+      if (url.pathname === "/user/installations") {
+        return jsonResponse({
+          total_count: 1,
+          installations: [{ id: 7, account: { login: "other" } }],
+        });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = createGitHubConnector(githubConfig(fetcher, keys.privateKeyPem));
+
+    await expect(adapter.handleAuthorizationCallback!({
+      code: "oauth-code",
+      codeVerifier: "v".repeat(43),
+      installationId: "42",
+      connectionScope: "workspace",
+    })).rejects.toMatchObject({
+      code: "unauthorized",
+      message: "The authorizing GitHub user cannot access this installation",
+    });
+  });
+
+  it("enforces execution principal and capability grants, and bounds file and patch text", async () => {
+    const longText = "x".repeat(45_000);
+    const longPatch = "+line\n".repeat(3_000);
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/contents/README.md")) {
+        return jsonResponse({
+          type: "file", name: "README.md", path: "README.md", sha: "abc", size: longText.length,
+          encoding: "base64", content: toBase64(longText), html_url: "https://github.test/acme/widget/blob/main/README.md",
+        });
+      }
+      if (url.pathname.endsWith("/pulls/5/files")) {
+        return jsonResponse([{ filename: "src/index.ts", status: "modified", patch: longPatch }]);
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const connection = personalConnection([GitHubCapabilities.contentsRead, GitHubCapabilities.pullRequestsRead]);
+    const context = {
+      connection,
+      principal: { type: "user" as const, userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    };
+    const content = await adapter.executeTool("github.contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
+    expect(content.output).toMatchObject({ content: "x".repeat(40_000), truncated: true, totalChars: 45_000 });
+    const files = await adapter.executeTool("github.pull_requests.list_files", { owner: "acme", repo: "widget", pullNumber: 5 }, context);
+    expect((files.output as Array<{ patch: string }>)[0]?.patch).toHaveLength(12_000);
+
+    await expect(adapter.executeTool("github.issues.get", { owner: "acme", repo: "widget", issueNumber: 1 }, context))
+      .rejects.toMatchObject({ code: "unsupported_capability" });
+    await expect(adapter.executeTool("github.contents.get", { owner: "acme", repo: "widget", path: "README.md" }, {
+      ...context,
+      principal: { type: "user", userId: "user-2" },
+    })).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("rotates a personal token and retries exactly once after a 401", async () => {
+    const authorizations: string[] = [];
+    let refreshes = 0;
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/login/oauth/access_token") {
+        refreshes += 1;
+        const body = new URLSearchParams(String(init?.body));
+        expect(body.get("grant_type")).toBe("refresh_token");
+        expect(body.get("refresh_token")).toBe("old-refresh");
+        return jsonResponse({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3600 });
+      }
+      if (url.pathname === "/user/installations/42/repositories") {
+        const authorization = new Headers(init?.headers).get("authorization") ?? "";
+        authorizations.push(authorization);
+        if (authorization === "Bearer old-access") return jsonResponse({ message: "Bad credentials" }, 401);
+        return jsonResponse({ repositories: [{ id: 1, full_name: "acme/widget" }] });
+      }
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const connection = personalConnection([GitHubCapabilities.metadataRead]);
+    const result = await adapter.executeTool("github.repositories.list", {}, {
+      connection,
+      principal: { type: "user", userId: "user-1" },
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(result.output).toMatchObject({ repositories: [{ id: 1, full_name: "acme/widget" }] });
+    expect(refreshes).toBe(1);
+    expect(authorizations).toEqual(["Bearer old-access", "Bearer new-access"]);
+    expect(connection.credentials).toMatchObject({ accessToken: "new-access", refreshToken: "new-refresh" });
+  });
+
+  it("verifies exact webhook bytes and normalizes installation-scoped events", async () => {
+    await expect(verifyGitHubWebhookSignature(
+      "It's a Secret to Everybody",
+      "Hello, World!",
+      "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17",
+    )).resolves.toBeUndefined();
+
+    const secret = "github-webhook-secret";
+    const rawBody = JSON.stringify({
+      action: "opened",
+      installation: { id: 42 },
+      repository: { id: 1, full_name: "acme/widget", html_url: "https://github.com/acme/widget" },
+      sender: { id: 7, login: "ada" },
+      issue: {
+        id: 99,
+        node_id: "I_99",
+        number: 12,
+        title: "Ship connectors",
+        body: "Wire GitHub activity into Avalon",
+        updated_at: "2026-08-01T12:00:00.000Z",
+        html_url: "https://github.com/acme/widget/issues/12",
+      },
+    });
+    const delivery = await verifyGitHubWebhook({
+      secret,
+      rawBody,
+      signatureHeader: `sha256=${await hmacHex(secret, rawBody)}`,
+      eventHeader: "issues",
+      deliveryHeader: "11111111-1111-4111-8111-111111111111",
+      receivedAt: "2026-08-01T12:00:01.000Z",
+    });
+    const connection = workspaceConnection([]);
+    const activity = normalizeGitHubWebhook(connection, delivery, "r2://payload/github");
+    expect(activity).toMatchObject({
+      provider: "github",
+      eventType: "github.issue.opened",
+      resourceType: "github_issue",
+      providerResourceId: "acme/widget#12",
+      dedupeKey: "github:11111111-1111-4111-8111-111111111111",
+      payloadRef: "r2://payload/github",
+    });
+    expect(() => NormalizedActivitySchema.parse({ id: "00000000-0000-4000-8000-000000000003", ...activity })).not.toThrow();
+
+    const wrongConnection = workspaceConnection([]);
+    wrongConnection.credentials.installationId = "43";
+    expect(() => normalizeGitHubWebhook(wrongConnection, delivery)).toThrow(/installation/i);
+    await expect(verifyGitHubWebhook({
+      secret,
+      rawBody,
+      signatureHeader: `sha256=${"0".repeat(64)}`,
+      eventHeader: "issues",
+      deliveryHeader: "11111111-1111-4111-8111-111111111111",
+    })).rejects.toMatchObject({ code: "invalid_signature" });
+    await expect(verifyGitHubWebhookSignature(secret, rawBody, await hmacHex(secret, rawBody)))
+      .rejects.toMatchObject({ code: "invalid_signature" });
+
+    expect(normalizeGitHubWebhook(connection, { ...delivery, event: "installation" })).toBeNull();
+  });
+
+  it("treats issue comments on pull requests as pull-request activity and resources", () => {
+    const delivery = {
+      event: "issue_comment",
+      action: "created",
+      deliveryId: "github-pr-comment-1",
+      installationId: "42",
+      payload: {
+        installation: { id: 42 },
+        repository: {
+          id: 1,
+          name: "widget",
+          full_name: "acme/widget",
+          html_url: "https://github.com/acme/widget",
+          owner: { login: "acme" },
+        },
+        sender: { id: 7, login: "ada" },
+        issue: {
+          id: 5,
+          number: 12,
+          title: "Ship it",
+          html_url: "https://github.com/acme/widget/pull/12",
+          pull_request: { url: "https://api.github.com/repos/acme/widget/pulls/12" },
+        },
+        comment: {
+          id: 88,
+          body: "Looks good",
+          html_url: "https://github.com/acme/widget/pull/12#issuecomment-88",
+        },
+      },
+      rawContentHash: "a".repeat(64),
+      receivedAt: "2026-08-01T12:00:01.000Z",
+    };
+    const activity = normalizeGitHubWebhook(workspaceConnection([]), delivery);
+    expect(activity).toMatchObject({
+      eventType: "github.pull_request_comment.created",
+      resourceType: "github_pull_request",
+      providerResourceId: "acme/widget#12",
+    });
+    const discovery = discoverGitHubWebhookResources(delivery);
+    expect(discovery.resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ resourceType: "github_repository", providerResourceId: "acme/widget" }),
+      expect.objectContaining({ resourceType: "github_pull_request", providerResourceId: "acme/widget#12" }),
+      expect.objectContaining({ resourceType: "github_pull_request_comment", providerResourceId: "acme/widget#12/comments/88" }),
+    ]));
+  });
+
+  it("bounds push resource discovery independently from compact activity entity keys", () => {
+    const commits = Array.from({ length: GitHubWebhookResourceLimits.pushCommits + 1 }, (_, index) => {
+      const sha = (index + 1).toString(16).padStart(40, "0");
+      return {
+        id: sha,
+        message: `Commit ${index}`,
+        added: [`src/${index}-a.ts`, `src/${index}-b.ts`, `src/${index}-c.ts`],
+        modified: [],
+        removed: [],
+      };
+    });
+    const delivery = {
+      event: "push",
+      action: null,
+      deliveryId: "github-push-bounded-1",
+      installationId: "42",
+      payload: {
+        installation: { id: 42 },
+        ref: "refs/heads/main",
+        after: commits[0]!.id,
+        head_commit: commits[0],
+        commits,
+        repository: {
+          id: 1,
+          name: "widget",
+          full_name: "acme/widget",
+          html_url: "https://github.com/acme/widget",
+          owner: { login: "acme" },
+        },
+        sender: { id: 7, login: "ada" },
+      },
+      rawContentHash: "b".repeat(64),
+      receivedAt: "2026-08-01T12:00:01.000Z",
+    };
+    const discovery = discoverGitHubWebhookResources(delivery);
+    expect(discovery.truncated).toBe(true);
+    expect(discovery.resources.filter((resource) => resource.resourceType === "github_commit"))
+      .toHaveLength(GitHubWebhookResourceLimits.pushCommits);
+    expect(discovery.resources.filter((resource) => resource.resourceType === "github_file"))
+      .toHaveLength(GitHubWebhookResourceLimits.pushFiles);
+    expect(normalizeGitHubWebhook(workspaceConnection([]), delivery)?.entityKeys).toHaveLength(128);
+  });
+
+  it("normalizes releases as one hydratable resource for every documented action", () => {
+    const adapter = githubAdapter(async () => jsonResponse({}));
+    const actions = ["created", "deleted", "edited", "prereleased", "published", "released", "unpublished"];
+    expect(adapter.manifest.resourceTypes).toContain("github_release");
+    expect(adapter.manifest.activityTypes).toEqual(expect.arrayContaining(
+      actions.map((action) => `github.release.${action}`),
+    ));
+    for (const action of actions) {
+      const delivery = githubRelationshipDelivery("release", action, {
+        release: {
+          id: 901,
+          node_id: "RE_901",
+          name: "Avalon 1.0",
+          tag_name: "v1.0.0",
+          body: "First public release",
+          target_commitish: "main",
+          draft: false,
+          prerelease: action === "prereleased",
+          published_at: "2026-08-01T12:00:00.000Z",
+          html_url: "https://github.com/acme/widget/releases/tag/v1.0.0",
+        },
+      });
+      expect(normalizeGitHubWebhook(workspaceConnection([]), delivery)).toMatchObject({
+        eventType: `github.release.${action}`,
+        resourceType: "github_release",
+        providerResourceId: "acme/widget/releases/901",
+        occurredAt: "2026-08-01T12:00:00.000Z",
+      });
+      expect(discoverGitHubWebhookResources(delivery).resources).toEqual(expect.arrayContaining([
+        expect.objectContaining({ resourceType: "github_repository", providerResourceId: "acme/widget" }),
+        expect.objectContaining({
+          resourceType: "github_release",
+          providerResourceId: "acme/widget/releases/901",
+          metadata: expect.objectContaining({ releaseId: 901, tagName: "v1.0.0" }),
+        }),
+      ]));
+    }
+  });
+
+  it("discovers both sides of issue dependency events, including cross-repository issues", () => {
+    const actions = ["blocked_by_added", "blocked_by_removed", "blocking_added", "blocking_removed"];
+    for (const action of actions) {
+      const delivery = githubRelationshipDelivery("issue_dependencies", action, {
+        blocked_issue_id: 101,
+        blocked_issue: {
+          id: 101,
+          number: 12,
+          title: "Ship Avalon",
+          repository_url: "https://api.github.com/repos/acme/widget",
+          html_url: "https://github.com/acme/widget/issues/12",
+        },
+        blocking_issue_id: 202,
+        blocking_issue: {
+          id: 202,
+          number: 7,
+          title: "Complete security review",
+          repository_url: "https://api.github.com/repos/acme/security",
+          html_url: "https://github.com/acme/security/issues/7",
+        },
+        blocking_issue_repo: githubRepository("acme/security", 2),
+      });
+      expect(normalizeGitHubWebhook(workspaceConnection([]), delivery)).toMatchObject({
+        eventType: `github.issue_dependencies.${action}`,
+        resourceType: "github_issue",
+        providerResourceId: "acme/widget#12",
+      });
+      const discovery = discoverGitHubWebhookResources(delivery);
+      expect(discovery.truncated).toBe(false);
+      expect(discovery.resources).toEqual(expect.arrayContaining([
+        expect.objectContaining({ resourceType: "github_repository", providerResourceId: "acme/widget" }),
+        expect.objectContaining({ resourceType: "github_repository", providerResourceId: "acme/security" }),
+        expect.objectContaining({ resourceType: "github_issue", providerResourceId: "acme/widget#12" }),
+        expect.objectContaining({ resourceType: "github_issue", providerResourceId: "acme/security#7" }),
+      ]));
+      expect(discovery.resources).toHaveLength(4);
+    }
+  });
+
+  it("discovers parent and child issues for every sub-issue relationship action", () => {
+    const actions = ["parent_issue_added", "parent_issue_removed", "sub_issue_added", "sub_issue_removed"];
+    for (const action of actions) {
+      const delivery = githubRelationshipDelivery("sub_issues", action, {
+        parent_issue_id: 301,
+        parent_issue: {
+          id: 301,
+          number: 30,
+          title: "Launch Avalon",
+          repository_url: "https://api.github.com/repos/acme/roadmap",
+          html_url: "https://github.com/acme/roadmap/issues/30",
+        },
+        parent_issue_repo: githubRepository("acme/roadmap", 3),
+        sub_issue_id: 101,
+        sub_issue: {
+          id: 101,
+          number: 12,
+          title: "Ship connector",
+          repository_url: "https://api.github.com/repos/acme/widget",
+          html_url: "https://github.com/acme/widget/issues/12",
+        },
+      });
+      expect(normalizeGitHubWebhook(workspaceConnection([]), delivery)).toMatchObject({
+        eventType: `github.sub_issues.${action}`,
+        resourceType: "github_issue",
+        providerResourceId: "acme/widget#12",
+      });
+      const discovery = discoverGitHubWebhookResources(delivery);
+      expect(discovery.truncated).toBe(false);
+      expect(discovery.resources).toEqual(expect.arrayContaining([
+        expect.objectContaining({ resourceType: "github_repository", providerResourceId: "acme/roadmap" }),
+        expect.objectContaining({ resourceType: "github_issue", providerResourceId: "acme/roadmap#30" }),
+        expect.objectContaining({ resourceType: "github_issue", providerResourceId: "acme/widget#12" }),
+      ]));
+      expect(discovery.resources).toHaveLength(4);
+    }
+  });
+
+  it("bootstraps only repositories selected for the App installation", async () => {
+    const paths: string[] = [];
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      paths.push(`${url.pathname}${url.search}`);
+      return jsonResponse({
+        total_count: 2,
+        repositories: [
+          { id: 1, name: "one", full_name: "acme/one", html_url: "https://github.com/acme/one", owner: { login: "acme" } },
+          { id: 2, name: "two", full_name: "acme/two", html_url: "https://github.com/acme/two", owner: { login: "acme" } },
+        ],
+      });
+    };
+    const config = githubConfig(fetcher);
+    await expect(discoverGitHubConnectionRepositories(config, workspaceConnection([])))
+      .resolves.toMatchObject({
+        truncated: false,
+        resources: [
+          expect.objectContaining({ providerResourceId: "acme/one", metadata: expect.objectContaining({ selected: true }) }),
+          expect.objectContaining({ providerResourceId: "acme/two", metadata: expect.objectContaining({ selected: true }) }),
+        ],
+      });
+    await discoverGitHubConnectionRepositories(config, personalConnection([]));
+    expect(paths[0]).toBe("/installation/repositories?per_page=100&page=1");
+    expect(paths[1]).toBe("/user/installations/42/repositories?per_page=100&page=1");
+    expect(paths.some((path) => path.startsWith("/user/repos"))).toBe(false);
+  });
+
+  it("hydrates resources, reports personal health, and revokes without broadening access", async () => {
+    const calls: Array<{ path: string; method: string; authorization: string | null }> = [];
+    const fetcher: FetchLike = async (input, init) => {
+      const url = requestUrl(input);
+      calls.push({
+        path: url.pathname,
+        method: init?.method ?? "GET",
+        authorization: new Headers(init?.headers).get("authorization"),
+      });
+      if (url.pathname === "/repos/acme/widget") return jsonResponse({ id: 1, full_name: "acme/widget", private: true });
+      if (url.pathname === "/repos/acme/widget/releases/901") return jsonResponse({ id: 901, tag_name: "v1.0.0" });
+      if (url.pathname.startsWith("/repos/acme/widget/issues/comments/")) return jsonResponse({ id: 31, kind: "issue-comment" });
+      if (url.pathname.startsWith("/repos/acme/widget/pulls/5/reviews/")) return jsonResponse({ id: 32, kind: "review" });
+      if (url.pathname.startsWith("/repos/acme/widget/pulls/comments/")) return jsonResponse({ id: 33, kind: "review-comment" });
+      if (url.pathname.startsWith("/repos/acme/widget/check-runs/")) return jsonResponse({ id: 34, kind: "check-run" });
+      if (url.pathname === "/user") return jsonResponse({ id: 7, login: "ada" });
+      if (url.pathname === "/applications/github-client/token") return emptyResponse(204);
+      throw new Error(`Unexpected GitHub URL: ${url}`);
+    };
+    const adapter = githubAdapter(fetcher);
+    const connection = personalConnection([]);
+    await expect(canGitHubPersonalConnectionAccessRepository(githubConfig(fetcher), connection, "acme/widget"))
+      .resolves.toBe(true);
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "github_repository",
+      provider_resource_id: "acme/widget",
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ full_name: "acme/widget", private: true });
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "github_release",
+      provider_resource_id: "acme/widget/releases/901",
+      metadata: { owner: "acme", repo: "widget", releaseId: 901 },
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ id: 901, tag_name: "v1.0.0" });
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "github_pull_request_comment",
+      provider_resource_id: "acme/widget#5/comments/31",
+      metadata: { owner: "acme", repo: "widget", pullNumber: 5, commentId: "31" },
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "issue-comment" });
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "github_pull_request_review",
+      provider_resource_id: "acme/widget#5/reviews/32",
+      metadata: { owner: "acme", repo: "widget", pullNumber: 5, reviewId: "32" },
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "review" });
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "github_pull_request_review_comment",
+      provider_resource_id: "acme/widget#5/review-comments/33",
+      metadata: { owner: "acme", repo: "widget", pullNumber: 5, commentId: "33" },
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "review-comment" });
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "github_check_run",
+      provider_resource_id: "acme/widget/check-runs/34",
+      metadata: { owner: "acme", repo: "widget", checkRunId: "34" },
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "check-run" });
+    await expect(adapter.healthCheck(connection)).resolves.toEqual({ ok: true, message: "GitHub user authorization is healthy" });
+    await adapter.revoke!(connection, AbortSignal.timeout(1_000));
+    expect(calls.at(-1)).toMatchObject({ path: "/applications/github-client/token", method: "DELETE" });
+    expect(calls.at(-1)?.authorization?.startsWith("Basic ")).toBe(true);
+  });
+});
+
+function githubRelationshipDelivery(
+  event: string,
+  action: string,
+  payload: Record<string, unknown>,
+) {
+  return {
+    event,
+    action,
+    deliveryId: `github-${event}-${action}`,
+    installationId: "42",
+    payload: {
+      installation: { id: 42 },
+      repository: githubRepository("acme/widget", 1),
+      sender: { id: 7, login: "ada" },
+      ...payload,
+    },
+    rawContentHash: "c".repeat(64),
+    receivedAt: "2026-08-01T12:00:01.000Z",
+  };
+}
+
+function githubRepository(fullName: string, id: number) {
+  const [owner, name] = fullName.split("/");
+  return {
+    id,
+    name,
+    full_name: fullName,
+    html_url: `https://github.com/${fullName}`,
+    owner: { login: owner },
+  };
+}
+
+function githubAdapter(fetcher: FetchLike) {
+  return createGitHubConnector(githubConfig(fetcher));
+}
+
+function githubConfig(fetcher: FetchLike, privateKey = dummyPrivateKey()): GitHubConnectorConfig {
+  return {
+    appId: "12345",
+    clientId: "github-client",
+    clientSecret: "github-secret",
+    privateKey,
+    redirectUri: "https://api.avalon.test/connections/github/callback",
+    webhookSecret: "github-webhook-secret",
+    appSlug: "avalon",
+    apiBaseUrl: "https://api.github.test",
+    webBaseUrl: "https://github.test",
+    fetch: fetcher,
+    now: () => FIXED_NOW,
+  };
+}
+
+function personalConnection(grantedScopes: string[]): ConnectorConnectionContext {
+  return {
+    id: "connection-github-personal",
+    workspaceId: "workspace-1",
+    scope: "personal",
+    ownerUserId: "user-1",
+    grantedScopes,
+    credentials: {
+      accessToken: "old-access",
+      refreshToken: "old-refresh",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      installationId: "42",
+      tokenKind: "user",
+    },
+    cursor: {},
+    config: { region: "global" },
+  };
+}
+
+function workspaceConnection(grantedScopes: string[]): ConnectorConnectionContext {
+  return {
+    id: "00000000-0000-4000-8000-000000000002",
+    workspaceId: "00000000-0000-4000-8000-000000000001",
+    scope: "workspace",
+    ownerUserId: null,
+    grantedScopes,
+    credentials: {
+      accessToken: "installation-access",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      installationId: "42",
+      tokenKind: "installation",
+    },
+    cursor: {},
+    config: { region: "global" },
+  };
+}
+
+function requestUrl(input: string | URL | Request): URL {
+  return new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+}
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+}
+
+function emptyResponse(status = 204): Response {
+  return new Response(null, { status });
+}
+
+async function hmacHex(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
+  return [...signature].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function rsaKeyMaterial(): Promise<{ privateKeyPem: string; publicKey: CryptoKey }> {
+  const pair = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  ) as CryptoKeyPair;
+  const encoded = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+  const body = toBase64Bytes(encoded).match(/.{1,64}/gu)?.join("\n") ?? "";
+  const header = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+  const footer = ["-----END", "PRIVATE KEY-----"].join(" ");
+  return {
+    privateKeyPem: `${header}\n${body}\n${footer}`,
+    publicKey: pair.publicKey,
+  };
+}
+
+function dummyPrivateKey(): string {
+  const header = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+  const footer = ["-----END", "PRIVATE KEY-----"].join(" ");
+  return `${header}\nAA==\n${footer}`;
+}
+
+function toBase64(value: string): string {
+  return toBase64Bytes(new TextEncoder().encode(value));
+}
+
+function toBase64Bytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function decodeBase64Url(value: string): string {
+  return new TextDecoder().decode(decodeBase64UrlBytes(value));
+}
+
+function decodeBase64UrlBytes(value: string): Uint8Array {
+  const base64 = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(base64);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
