@@ -11,7 +11,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-The default Global API is `http://127.0.0.1:8787`; the optional EU development API uses port `8788`. `GET /health` checks D1, R2, Durable Objects, Queue and Workflow bindings, and reports provider configuration separately.
+The default Global API is `http://127.0.0.1:8787`; the optional EU development API uses port `8788`. `GET /health` checks D1, R2, Durable Objects, Queue and Workflow bindings, the one-Global-registry route, and regional inbound-email configuration, and reports other provider configuration separately.
 
 After the API is running, use `pnpm smoke:local` for the repeatable authentication, work-stream, sidebar-data, idempotency, URL-safety, and realtime acceptance check. The complete desktop acceptance flow is documented in `docs/E2E.md`.
 
@@ -47,7 +47,19 @@ Set these as Worker secrets separately in each deployment:
 
 Generate independent signing/encryption material per region. Cloudflare administration credentials belong only in the local deployment environment; they must never become Worker variables.
 
-`RESEND_API_KEY` should be a send-only key and may be shared by the two regional Workers. The checked-in sender is `Avalon <invites@send.with-avalon.com>`; keep that exact subdomain verified in Resend with its DKIM and SPF records. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+Set `RESEND_WEBHOOK_SIGNING_SECRET` and `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the
+Global Worker. `RESEND_API_KEY` is required in both regions with Resend's
+**Full access** permission because each owning region retrieves its own full
+message after the Global ingress has routed only signed metadata. An optional
+`RESEND_RECEIVING_API_KEY` can override it later if Avalon returns to separate
+sending and receiving credentials. All non-Global work-stream and automation
+email-name reservations use
+the Global `WorkstreamEmailRoutingBridge`; there is no regional allocator key or
+regional fallback registry.
+
+`RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. The checked-in sender is `Avalon <invites@with-avalon.com>`; keep that domain verified with its Resend DKIM/SPF records. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
+
+Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.with-avalon.com`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.with-avalon.com/ingest/resend`. Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -65,16 +77,18 @@ Do not grant DNS, billing, user-management, API-token-management, or account-wid
 
 ## Deployment order
 
-Current production status: the site and both regional APIs are deployed, regional migrations are current, both regional infrastructure health checks pass, and Firecrawl and Resend invitation delivery are configured in both Workers. Google identity OAuth is configured only on the Global Worker; connector OAuth callbacks remain regional. Base Google credentials and callbacks are configured, but expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App is registered, its regional Worker secrets are configured, and its registration ping succeeded through the smart ingress. A user-started installation/OAuth acceptance run remains pending. Linear and Notion provider-owned registrations and secrets also remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, and connector acceptance runs remain release gates.
+Current production status: the site and both regional APIs are deployed, both regional infrastructure health checks pass, and Firecrawl and Resend invitation delivery are configured in both Workers. Work-stream and automation inbound email code and migrations `0017_workstream_inbound_email.sql` through `0022_automation_email_routes.sql` are not live until the dedicated receiving domain, Full access permission on the reused Resend key, webhook secret, Global allocator key, and remote migrations are installed. Google identity OAuth is configured only on the Global Worker; connector OAuth callbacks remain regional. Base Google credentials and callbacks are configured, but expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App is registered, its regional Worker secrets are configured, and its registration ping succeeded through the smart ingress. A user-started installation/OAuth acceptance run remains pending. Linear and Notion provider-owned registrations and secrets also remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
-Deploy the EU Worker first because the Global Worker has a named service binding to its `RegionalIdentityBridge` entrypoint. Apply migrations to both D1 databases before deploying either updated Worker. For each release:
+Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
+
+For ordinary releases after both entrypoints exist:
 
 1. Validate both Wrangler configurations with dry-run builds.
 2. Create or confirm each region's named Cloudflare resources.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global.
-6. Deploy the EU Worker, then the Global Worker.
+6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release only, use the three-stage bootstrap order above.
 7. Call `GET /health` on both regional APIs.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.

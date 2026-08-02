@@ -9,6 +9,7 @@ import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } fr
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { resourceRoutes } from "./routes/resources";
+import { resendInboundRoutes } from "./routes/resend";
 import { socketRoutes } from "./routes/socket";
 import { workspaceRoutes } from "./routes/workspace";
 import { workstreamRoutes } from "./routes/workstreams";
@@ -42,6 +43,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/auth", authRoutes);
   app.route("/connections", connectionCallbackRoutes);
   app.route("/ingest", webhookIngestionRoutes);
+  app.route("/ingest/resend", resendInboundRoutes);
   app.route("/socket", socketRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();

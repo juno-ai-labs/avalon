@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 export const healthRoutes = new Hono<HonoAppEnv>();
 
@@ -51,7 +52,44 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),
     message: c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL ? "configured" : "not configured",
   };
-  const required = [checks.d1, checks.r2, checks.durableObjects, checks.queue, checks.workflows];
+  try {
+    const registry = await new WorkstreamEmailRoutingService(c.env).ping();
+    checks.workstreamEmailRegistry = {
+      ok: registry.region === "global",
+      message: c.env.AVALON_REGION === "global"
+        ? "authoritative Global registry available"
+        : "authoritative Global registry available through RPC",
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown registry error";
+    console.warn("Work-stream email registry health check failed", {
+      region: c.env.AVALON_REGION,
+      reason,
+    });
+    checks.workstreamEmailRegistry = {
+      ok: false,
+      message: c.env.APP_ENV === "development" ? reason : "unavailable",
+    };
+  }
+  const receivingKeyConfigured = Boolean(c.env.RESEND_RECEIVING_API_KEY ?? c.env.RESEND_API_KEY);
+  const inboundConfigured = c.env.AVALON_REGION === "global"
+    ? receivingKeyConfigured
+      && Boolean(c.env.RESEND_WEBHOOK_SIGNING_SECRET ?? c.env.RESEND_WEBHOOK_SECRET)
+      && typeof c.env.EU_INBOUND_EMAIL_BRIDGE?.ingestResendEmail === "function"
+    : receivingKeyConfigured;
+  checks.inboundEmail = {
+    ok: inboundConfigured,
+    message: inboundConfigured ? "configured" : "not configured",
+  };
+  const required = [
+    checks.d1,
+    checks.r2,
+    checks.durableObjects,
+    checks.queue,
+    checks.workflows,
+    checks.workstreamEmailRegistry,
+  ];
+  if (c.env.APP_ENV === "production") required.push(checks.inboundEmail);
   const ok = required.every((check) => check?.ok);
   return c.json({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }, ok ? 200 : 503);
 });

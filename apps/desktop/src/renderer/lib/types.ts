@@ -46,6 +46,7 @@ export interface PendingWorkspaceInvitation extends WorkspaceInvitationPreview {
 export interface AutomationSummary {
   id: string;
   name: string;
+  emailAddress?: string;
   scope: Scope;
   status: AutomationStatus;
   nextRunAt?: string;
@@ -57,6 +58,7 @@ export interface WorkstreamSummary {
   id: string;
   title: string;
   objective?: string;
+  emailAddress?: string;
   origin: 'ad_hoc' | 'automation';
   automationName?: string;
   harnessStatus: HarnessStatus;

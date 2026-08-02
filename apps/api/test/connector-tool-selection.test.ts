@@ -262,4 +262,34 @@ describe("connector tools selected for harness runs", () => {
     expect(googleToolNames(selected.tools)).not.toContain("google.sheets.read_values");
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
   });
+
+  it("keeps connector reads but removes connector writes from inbound-email automations", async () => {
+    const database = new ToolSelectionDatabase(
+      [connection(WORKSPACE_CONNECTION_ID, "workspace", null)],
+      [
+        { capability: "drive.read", connection_id: WORKSPACE_CONNECTION_ID },
+        { capability: "docs.read", connection_id: WORKSPACE_CONNECTION_ID },
+        { capability: "docs.write", connection_id: WORKSPACE_CONNECTION_ID },
+        { capability: "sheets.write", connection_id: WORKSPACE_CONNECTION_ID },
+      ],
+    );
+    const input = workflowInput(SUBSCRIPTION_ID);
+    input.reason = "inbound_email";
+
+    const selected = await __integrationTesting.loadHarnessTools(env(database), input);
+
+    expect(googleToolNames(selected.tools)).toEqual([
+      "google.drive.search",
+      "google.drive.get_metadata",
+      "google.drive.download",
+      "google.drive.export",
+      "google.docs.read_document",
+    ]);
+    expect(selected.tools
+      .filter((tool) => tool.definition.name.startsWith("google."))
+      .every((tool) => tool.definition.mode === "read"))
+      .toBe(true);
+    expect(selected.modeByTool.has("google.docs.create_document")).toBe(false);
+    expect(selected.connectionByTool.has("google.sheets.update_values")).toBe(false);
+  });
 });

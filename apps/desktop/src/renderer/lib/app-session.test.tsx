@@ -168,6 +168,7 @@ describe('single-platform desktop identity routing', () => {
   it('rejects a regional authentication callback instead of creating a second login surface', async () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=eu&attempt=${'a'.repeat(43)}`));
 
@@ -179,6 +180,7 @@ describe('single-platform desktop identity routing', () => {
     const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(
       'avalon://invitations/accept?token=private-invitation-token-long-enough&region=eu',
@@ -200,6 +202,7 @@ describe('single-platform desktop identity routing', () => {
     bridge.getSession.mockResolvedValue(globalSession);
     renderProvider();
     expect(await screen.findByText('global:Global Research')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(
       'avalon://invitations/accept?token=private-invitation-token-long-enough&region=eu',

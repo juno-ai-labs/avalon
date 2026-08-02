@@ -1,5 +1,11 @@
 import type { MessageBoxOptions, MessageBoxReturnValue } from 'electron';
-import { autoUpdater } from 'electron-updater';
+import type { AppUpdater } from 'electron-updater';
+// electron-updater is published as CommonJS. Electron's native ESM loader does
+// not reliably synthesize named exports for it in a packaged app, so import the
+// CommonJS namespace through the default export. Keep the lazy singleton read
+// inside initialization so unit tests can inject an updater without requiring
+// a real Electron `app` instance.
+import electronUpdater from 'electron-updater';
 import { updatePolicy } from './update-policy';
 
 const UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -36,7 +42,7 @@ export interface AutoUpdateDependencies {
   readonly onStatusChange?: (status: UpdateStatus) => void;
   readonly log?: UpdateLogger;
   /** Test seam; production uses electron-updater's singleton. */
-  readonly updater?: typeof autoUpdater;
+  readonly updater?: AppUpdater;
   /** Test seam; production uses the Node interval. */
   readonly scheduleInterval?: (callback: () => void, delayMs: number) => IntervalHandle;
   /** Test seam; production uses the Node timeout. */
@@ -67,7 +73,7 @@ function sameStatus(left: UpdateStatus, right: UpdateStatus): boolean {
  */
 export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateController {
   const log = deps.log ?? console;
-  const updater = deps.updater ?? autoUpdater;
+  const updater = deps.updater ?? electronUpdater.autoUpdater;
   const policy = updatePolicy(deps);
   const showDialog = (options: MessageBoxOptions): Promise<MessageBoxReturnValue | null> => (
     deps.showMessageBox(options).catch((error: unknown) => {

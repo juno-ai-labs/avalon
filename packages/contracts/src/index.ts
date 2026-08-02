@@ -104,6 +104,8 @@ export const WorkstreamSchema = z.object({
   workspaceId: IdSchema,
   title: z.string().min(1).max(180),
   objective: z.string().max(4000),
+  /** Stable inbound address. Null is transitional for pre-migration rows only. */
+  emailAddress: z.string().email().max(254).nullable().default(null),
   originType: WorkstreamOriginSchema,
   originLabel: z.string().max(120).nullable(),
   createdByUserId: IdSchema.nullable(),
@@ -322,6 +324,7 @@ export const AutomationSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
   description: z.string(),
+  emailAddress: z.string().email().nullable().default(null),
   scope: ScopeSchema,
   status: z.enum(["draft", "active", "paused", "error"]),
   nextRunAt: TimestampSchema.nullable(),

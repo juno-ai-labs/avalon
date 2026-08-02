@@ -59,6 +59,10 @@ Structured logs include correlation IDs and domain IDs needed for operations. Re
 
 Workspace invitation tokens are random bearer secrets stored only as SHA-256 hashes in D1. The plaintext token exists transiently in the regional Worker, the Resend transactional request, the recipient's email, and the fragment-protected browser/deep-link handoff. It is never placed in a query string, log, audit event, or Resend tag. Resend uses a send-only API key and a stable per-invitation idempotency key; an outbound provider failure revokes the new invitation before the API returns an error.
 
+Work-stream inbound addresses are routing identifiers, never authenticators. Resend webhooks are verified against their untouched raw body before parsing and deduplicated by delivery ID. Received HTML, headers, attachments, sender identities, and quoted content are untrusted. Incoming mail is attached as a regional resource and system message; it never launches a write-capable agent run merely because the From address resembles a workspace member. Friendly addresses are immutable and permanently reserved so a stale sender can never reach a different work stream.
+
+Automation email may start a read-only run, but the sender match remains defense in depth rather than authenticated identity. Those runs receive no external connector writes and no outbound web tools, and an atomic per-address hourly budget bounds model spend if an address leaks or a sender is spoofed.
+
 Audit events cover sign-in/session changes, membership, connector authorization/revocation, external writes, automation changes, suggestion decisions, and administrative actions.
 
 ## Secrets
