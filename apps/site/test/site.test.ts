@@ -97,8 +97,8 @@ describe('public Avalon site', () => {
     expect(release.bucket).toBe('avalon-desktop-releases');
     expect(release.prefix).toBe('stable/darwin/arm64');
     expect(release.files).toMatchObject({
-      dmg: 'Avalon-0.1.0-mac-arm64.dmg',
-      zip: 'Avalon-0.1.0-mac-arm64.zip',
+      dmg: `Avalon-${release.version}-mac-arm64.dmg`,
+      zip: `Avalon-${release.version}-mac-arm64.zip`,
     });
     expect(desktopDmgUrl(release)).toBe(
       'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg',
@@ -180,7 +180,9 @@ describe('public Avalon site', () => {
     const invalidRange: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith('/latest-mac.yml')) {
-        return new Response('version: 0.1.0\nfiles:\n  - url: Avalon-0.1.0-mac-arm64.zip\n');
+        return new Response(
+          `version: ${release.version}\nfiles:\n  - url: Avalon-${release.version}-mac-arm64.zip\n`,
+        );
       }
       if (init?.method === 'HEAD') {
         return new Response(null, { headers: { 'content-length': '42' } });
@@ -193,7 +195,7 @@ describe('public Avalon site', () => {
 
     await expect(discoverDesktopRelease(release, notFound)).resolves.toEqual({
       published: false,
-      version: '0.1.0',
+      version: release.version,
     });
     await expect(discoverDesktopRelease(release, invalidRange)).rejects.toThrow(/range/u);
   });
