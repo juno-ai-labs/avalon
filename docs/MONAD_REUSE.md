@@ -295,9 +295,29 @@ all fire at once.
   ~30 tools, so it loads ~6 core plugins and defers the rest behind a
   `load_plugin` call with a compact catalog in the system prompt. Avalon
   currently contributes *every* granted tool of *every* healthy workspace
-  connector to *every* ad-hoc work stream (`docs/AGENT_HARNESS.md`, "Context") —
-  the same trajectory, without the mitigation. Worth measuring tool count per run
-  before it becomes a quality problem.
+  connector to *every* ad-hoc work stream (`docs/AGENT_HARNESS.md`, "Context").
+  **Measured** against the connector manifests: 59 connector tools serializing to
+  29,780 bytes of wire JSON, plus 6 built-in `avalon.*` tools — **65 tools,
+  ~31 KB, ~8,600 tokens on every model call**, resent up to
+  `HARNESS_MAX_MODEL_ITERATIONS` (8) times per run.
+
+  | Group | Tools | Wire bytes |
+  |---|---:|---:|
+  | `github` | 18 | 12,757 |
+  | `notion` | 9 | 3,779 |
+  | `linear` | 8 | 3,248 |
+  | `google.calendar` | 5 | 2,632 |
+  | `google.sheets` | 5 | 2,288 |
+  | `google.gmail` | 5 | 2,235 |
+  | `google.docs` | 4 | 1,380 |
+  | `google.drive` | 4 | 1,192 |
+  | `web_monitor` | 1 | 273 |
+
+  That is 2× Monad's degradation threshold. Note also that `boundModelContext`
+  (`apps/api/src/services/integrations.ts:634-657`) budgets only the system
+  prompt and messages against `HARNESS_MAX_CONTEXT_BYTES` — tool definitions are
+  passed separately (`agent-harness/src/index.ts:706-713`) and **escape the byte
+  budget entirely**, so the largest fixed payload per call is unmetered.
 - **System prompt as a pure render.** Monad re-renders the whole system message
   from run state on every plugin/skill activation rather than mutating it in
   place, specifically so unchanged inputs re-render byte-identically and the
