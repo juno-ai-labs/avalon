@@ -186,6 +186,20 @@ describe("Avalon Firecrawl harness tools", () => {
     expect(present).toContain("avalon.web_fetch");
   });
 
+  it("removes outbound web tools from untrusted inbound-email runs", () => {
+    const tools = __integrationTesting
+      .createAvalonTools(envWithFirecrawl("fc-test-key"), {
+        ...workflowInput,
+        reason: "inbound_email",
+      })
+      .map((tool) => tool.definition.name);
+
+    expect(tools).not.toContain("avalon.web_search");
+    expect(tools).not.toContain("avalon.web_fetch");
+    expect(tools).toContain("avalon.read_workstream");
+    expect(tools).toContain("avalon.read_resource");
+  });
+
   it("returns link-only search output without exposing Firecrawl credit telemetry", async () => {
     const fetcher = mockFetchResponse(jsonResponse({
       success: true,

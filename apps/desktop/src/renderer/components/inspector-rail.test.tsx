@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Message, WorkstreamDetail } from '../lib/types';
@@ -8,6 +8,7 @@ import { InspectorRail } from './inspector-rail';
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Monday invoice review',
+  emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
   origin: 'automation',
   automationName: 'Weekly invoice monitor',
   harnessStatus: 'completed',
@@ -72,6 +73,53 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('google/gemini-2.5-flash-lite')).toBeVisible();
     expect(screen.getByText('automation schedule')).toBeVisible();
     expect(screen.getByText('harness-run-1')).toBeVisible();
+  });
+
+  it('shows the complete work-stream email address in Details and copies it with feedback', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} />
+      </Tooltip.Provider>,
+    );
+
+    const emailAddress = 'luminous-tidal-structured-curie@automation.with-avalon.com';
+    expect(screen.getByText(emailAddress)).toBeVisible();
+
+    const copyButton = screen.getByRole('button', { name: 'Copy work-stream email address' });
+    expect(copyButton).toHaveAttribute('title', 'Copy work-stream email address');
+    fireEvent.click(copyButton);
+
+    expect(writeText).toHaveBeenCalledWith(emailAddress);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Work-stream email address copied' })).toHaveAttribute('title', 'Copied');
+    });
+  });
+
+  it('keeps the icon copy control retryable when the clipboard rejects the write', async () => {
+    const writeText = vi.fn(async () => Promise.reject(new Error('clipboard unavailable')));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy work-stream email address' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Copy failed; retry work-stream email address' }))
+        .toHaveAttribute('title', 'Copy failed — click to retry');
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('could not be copied');
   });
 
   it('keeps background activity primary and derives durable collections from real work-stream data', () => {

@@ -23,6 +23,7 @@ const nextVersionId = '00000000-0000-7000-8000-000000000011';
 const detail: AutomationDetail = {
   id: automationId,
   name: 'Weekly brief',
+  emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
   description: 'A concise weekly status brief.',
   scope: 'you',
   status: 'active',
@@ -105,5 +106,59 @@ describe('Automation template updates', () => {
     await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(automationId, nextVersionId));
     await waitFor(() => expect(screen.queryByText('Version 2 is available')).not.toBeInTheDocument());
     expect(screen.getByText('Summarize changes and decisions.')).toBeVisible();
+  });
+
+  it('shows the permanent email trigger and copies it from an icon button', async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    renderScreen();
+
+    const emailAddress = await screen.findByText('luminous-tidal-structured-curie@automation.with-avalon.com');
+    expect(emailAddress).toBeVisible();
+    expect(screen.getByText('Email this address from your Avalon account email to start a new work stream.')).toBeVisible();
+
+    const copyButton = screen.getByRole('button', {
+      name: 'Copy automation email address luminous-tidal-structured-curie@automation.with-avalon.com',
+    });
+    expect(copyButton).not.toHaveTextContent('luminous-tidal-structured-curie@automation.with-avalon.com');
+    fireEvent.click(copyButton);
+    expect(writeText).toHaveBeenCalledWith('luminous-tidal-structured-curie@automation.with-avalon.com');
+    await waitFor(() => {
+      expect(screen.getByRole('button', {
+        name: 'Automation email address copied luminous-tidal-structured-curie@automation.with-avalon.com',
+      })).toHaveAttribute('title', 'Copied');
+    });
+  });
+
+  it('explains that workspace automation mail must come from a workspace member', async () => {
+    api.getAutomation.mockResolvedValue({ ...detail, scope: 'workspace' });
+    renderScreen();
+
+    expect(await screen.findByText(
+      'Email this address from a workspace member email to start a new work stream.',
+    )).toBeVisible();
+  });
+
+  it('keeps the automation copy control retryable when the clipboard write fails', async () => {
+    const writeText = vi.fn(async () => Promise.reject(new Error('clipboard unavailable')));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    renderScreen();
+
+    const emailAddress = 'luminous-tidal-structured-curie@automation.with-avalon.com';
+    fireEvent.click(await screen.findByRole('button', {
+      name: `Copy automation email address ${emailAddress}`,
+    }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', {
+        name: `Copy failed; retry automation email address ${emailAddress}`,
+      })).toHaveAttribute('title', 'Copy failed — click to retry');
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('could not be copied');
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import type { AuthContext, Env } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
 
@@ -70,14 +71,16 @@ describe("resource listing", () => {
       "WHERE r.workspace_id = ? AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
     );
     expect(statements[0]?.sql).toContain("ORDER BY r.updated_at DESC, r.id DESC");
-    expect(statements[0]?.values).toEqual([workspaceId, userId, 3]);
+    expect(statements[0]?.values).toEqual([workspaceId, userId, userId, userId, 3]);
 
     await service.list({ query: "Release_100%", cursor: first.nextCursor!, limit: 2 });
     const second = statements[1]!;
     expect(second.sql).toContain("LOWER(r.title) LIKE ?");
     expect(second.sql).toContain("r.updated_at < ? OR (r.updated_at = ? AND r.id < ?)");
-    expect(second.values.slice(0, 6)).toEqual([
+    expect(second.values.slice(0, 8)).toEqual([
       workspaceId,
+      userId,
+      userId,
       userId,
       "%release\\_100\\%%",
       "%release\\_100\\%%",
@@ -108,4 +111,122 @@ describe("resource listing", () => {
     });
     expect(prepared).toBe(false);
   });
+
+  it("keeps inbound-email resources scoped to visible attached work streams", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec(`
+      CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT
+      );
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,
+        resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
+        title TEXT NOT NULL, mime_type TEXT, canonical_url TEXT, content_ref TEXT,
+        last_hydrated_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE automation_subscriptions (
+        id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT
+      );
+      CREATE TABLE workstreams (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT
+      );
+      CREATE TABLE workstream_participants (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, removed_at TEXT
+      );
+      CREATE TABLE workstream_resources (
+        workstream_id TEXT NOT NULL, resource_id TEXT NOT NULL, relationship_type TEXT NOT NULL
+      );
+      CREATE TABLE resource_watches (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, workstream_id TEXT NOT NULL,
+        resource_id TEXT NOT NULL, enabled INTEGER NOT NULL
+      );
+      INSERT INTO automation_subscriptions (id, scope, owner_user_id)
+        VALUES ('personal-subscription', 'personal', 'owner-user');
+      INSERT INTO workstreams (id, workspace_id, automation_subscription_id)
+        VALUES ('private-workstream', '${workspaceId}', 'personal-subscription');
+      INSERT INTO workstream_participants (workstream_id, user_id, removed_at)
+        VALUES ('private-workstream', 'participant-user', NULL);
+      INSERT INTO resources
+        (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+         title, mime_type, canonical_url, content_ref, last_hydrated_at, created_at, updated_at)
+        VALUES ('email-resource', '${workspaceId}', NULL, 'email', 'resend', 'email-1',
+                'Private email', 'application/json', NULL, 'private/email.json',
+                '2026-08-02T18:00:00.000Z', '2026-08-02T18:00:00.000Z', '2026-08-02T18:00:00.000Z');
+    `);
+    const d1 = sqliteD1(database);
+    const payloadReads: string[] = [];
+    const environment = {
+      DB: d1,
+      PAYLOADS: {
+        async get(key: string) {
+          payloadReads.push(key);
+          return null;
+        },
+      },
+    } as unknown as Env;
+
+    // Provider identity keeps the email private even before the attachment
+    // transaction has committed.
+    await expect(new ResourceService(environment, authFor("owner-user")).list({ limit: 10 }))
+      .resolves.toMatchObject({ items: [] });
+
+    database.exec(`
+      INSERT INTO workstream_resources (workstream_id, resource_id, relationship_type)
+        VALUES ('private-workstream', 'email-resource', 'inbound_email');
+    `);
+
+    await expect(new ResourceService(environment, authFor("outsider-user")).list({ limit: 10 }))
+      .resolves.toMatchObject({ items: [] });
+    await expect(new ResourceService(environment, authFor("outsider-user")).get("email-resource"))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+    await expect(new ResourceService(environment, authFor("outsider-user")).content("email-resource"))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+    expect(payloadReads).toHaveLength(0);
+
+    await expect(new ResourceService(environment, authFor("participant-user")).list({ limit: 10 }))
+      .resolves.toMatchObject({ items: [expect.objectContaining({ id: "email-resource" })] });
+    await expect(new ResourceService(environment, authFor("owner-user")).get("email-resource"))
+      .resolves.toMatchObject({ id: "email-resource", provider: "resend" });
+    database.close();
+  });
 });
+
+function authFor(authUserId: string): AuthContext {
+  return { ...auth, userId: authUserId };
+}
+
+function sqliteD1(database: DatabaseSync): D1Database {
+  return {
+    prepare(sql: string) {
+      let values: Array<string | number | null> = [];
+      return {
+        bind(...next: Array<string | number | null>) {
+          values = next;
+          return this;
+        },
+        async first<T>() {
+          return (database.prepare(sql).get(...values) ?? null) as T | null;
+        },
+        async all<T>() {
+          return {
+            results: database.prepare(sql).all(...values) as T[],
+            success: true,
+            meta: emptyD1Meta(),
+          } as D1Result<T>;
+        },
+      };
+    },
+  } as unknown as D1Database;
+}
+
+function emptyD1Meta(): D1Meta {
+  return {
+    duration: 0,
+    size_after: 0,
+    rows_read: 0,
+    rows_written: 0,
+    last_row_id: 0,
+    changed_db: false,
+    changes: 0,
+  };
+}

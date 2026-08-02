@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
 const RETRY_STATES_KEY = "schedulerRetryStates";
@@ -391,6 +392,7 @@ export class WorkspaceScheduler {
   private async startAutomation(schedule: ScheduleRow, now: Date): Promise<void> {
     const subscriptionId = schedule.automation_subscription_id;
     if (!subscriptionId) throw new Error("missing_automation_subscription");
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
 
     const source = await this.env.DB.prepare(
       `SELECT s.id AS subscription_id,
@@ -433,23 +435,30 @@ export class WorkspaceScheduler {
         .first<PlannedWorkstreamRow>();
 
       const workstreamId = planned?.id ?? crypto.randomUUID();
+      const createdWorkstreamId = planned ? null : workstreamId;
       const runId = crypto.randomUUID();
       const timestamp = now.toISOString();
 
       if (!planned) {
+        const emailRoute = await emailRouting.reserve({
+          region: this.env.AVALON_REGION,
+          workspaceId: schedule.workspace_id,
+          workstreamId,
+        });
         await this.env.DB.prepare(
           `INSERT INTO workstreams (
-             id, workspace_id, title, objective, origin_type,
+             id, workspace_id, title, objective, email_address, email_route_status, origin_type,
              created_by_user_id, automation_subscription_id, automation_run_id,
              planned_for, harness_status, last_activity_at, created_at, updated_at, archived_at
-           ) VALUES (?1, ?2, ?3, ?4, 'automation', NULL, ?5, NULL, ?6,
-                     'scheduled', ?7, ?7, ?7, NULL)`
+           ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, ?7,
+                     'scheduled', ?8, ?8, ?8, NULL)`
         )
           .bind(
             workstreamId,
             schedule.workspace_id,
             source.template_name,
             source.template_description || source.instructions,
+            emailRoute.emailAddress,
             subscriptionId,
             schedule.next_run_at,
             timestamp
@@ -476,6 +485,14 @@ export class WorkspaceScheduler {
         )
           .bind(subscriptionId, schedule.next_run_at)
           .first<AutomationRunRow>();
+        if (createdWorkstreamId && run?.workstream_id !== createdWorkstreamId) {
+          // A concurrent scheduler won the unique run claim. The losing Global
+          // address remains a permanent non-routable reservation tombstone.
+          await this.env.DB.prepare(
+            `DELETE FROM workstreams
+             WHERE id = ? AND workspace_id = ? AND automation_run_id IS NULL`,
+          ).bind(createdWorkstreamId, schedule.workspace_id).run();
+        }
       } else {
         run = {
           id: runId,
@@ -494,6 +511,11 @@ export class WorkspaceScheduler {
     }
 
     if (!run) throw new Error("automation_run_claim_failed");
+    await emailRouting.ensureWorkstreamAddress({
+      region: this.env.AVALON_REGION,
+      workspaceId: schedule.workspace_id,
+      workstreamId: run.workstream_id,
+    });
     if (["completed", "failed", "needs_input"].includes(run.status)) return;
 
     const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));

@@ -30,6 +30,7 @@ const detail = {
   workspaceId,
   title: 'Investigate ENG-142',
   objective: 'Find the cause.',
+  emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
   originType: 'ad_hoc' as const,
   originLabel: null,
   createdByUserId: userId,
@@ -118,6 +119,7 @@ describe('Avalon API wire adapter', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
       origin: 'ad_hoc',
+      emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
       harnessStatus: 'completed',
       participants: [{ id: userId, role: 'creator' }],
       viewers: [{ id: userId, viewing: true }],
@@ -441,6 +443,7 @@ describe('Avalon API wire adapter', () => {
     const current = {
       id: automationId,
       name: 'Weekly brief',
+      emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
       description: 'A concise weekly status brief.',
       scope: 'personal' as const,
       status: 'active' as const,
@@ -492,6 +495,7 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
 
     await expect(api.getAutomation(automationId)).resolves.toMatchObject({
+      emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
       versionNumber: 1,
       statusMessage: 'Update available',
       templateUpdate: {

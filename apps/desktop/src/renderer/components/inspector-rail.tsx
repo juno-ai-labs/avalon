@@ -78,7 +78,29 @@ function ContextContent({
   onToggleWatch,
 }: Pick<InspectorRailProps, 'workstream' | 'onAddParticipant' | 'onAddResource' | 'onToggleWatch'>): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
+  const [emailCopyState, setEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  useEffect(() => {
+    setEmailCopyState('idle');
+  }, [workstream?.id]);
+
+  useEffect(() => {
+    if (emailCopyState === 'idle') return;
+    const reset = window.setTimeout(() => setEmailCopyState('idle'), 2_000);
+    return () => window.clearTimeout(reset);
+  }, [emailCopyState]);
+
   if (!workstream) return <EmptyState title="No work stream selected" description="Open a work stream to inspect its context." />;
+
+  const copyEmailAddress = async (): Promise<void> => {
+    if (!workstream.emailAddress) return;
+    try {
+      await navigator.clipboard.writeText(workstream.emailAddress);
+      setEmailCopyState('copied');
+    } catch {
+      setEmailCopyState('failed');
+    }
+  };
 
   return (
     <div className="rail-sections">
@@ -175,6 +197,40 @@ function ContextContent({
 
       <Section title="Details">
         <dl className="detail-list">
+          {workstream.emailAddress && (
+            <div>
+              <dt>Email</dt>
+              <dd className="copy-detail email-detail">
+                <span>{workstream.emailAddress}</span>
+                <IconButton
+                  label={emailCopyState === 'copied'
+                    ? 'Work-stream email address copied'
+                    : emailCopyState === 'failed'
+                      ? 'Copy failed; retry work-stream email address'
+                      : 'Copy work-stream email address'}
+                  onClick={() => void copyEmailAddress()}
+                  title={emailCopyState === 'copied'
+                    ? 'Copied'
+                    : emailCopyState === 'failed'
+                      ? 'Copy failed — click to retry'
+                      : 'Copy work-stream email address'}
+                >
+                  {emailCopyState === 'copied'
+                    ? <Check aria-hidden="true" size={12} />
+                    : emailCopyState === 'failed'
+                      ? <CircleAlert aria-hidden="true" size={12} />
+                      : <Copy aria-hidden="true" size={12} />}
+                </IconButton>
+                <span aria-live="polite" className="sr-only" role="status">
+                  {emailCopyState === 'copied'
+                    ? 'Work-stream email address copied.'
+                    : emailCopyState === 'failed'
+                      ? 'The work-stream email address could not be copied.'
+                      : ''}
+                </span>
+              </dd>
+            </div>
+          )}
           <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Automation'}</dd></div>
           <div><dt>Created</dt><dd>{formatDateTime(workstream.createdAt)}</dd></div>
           <div><dt>Last activity</dt><dd>{formatRelative(workstream.lastActivityAt)}</dd></div>

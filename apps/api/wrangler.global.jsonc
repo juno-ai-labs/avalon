@@ -19,7 +19,8 @@
     "OPENROUTER_FALLBACK_MODELS": "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
     "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
-    "RESEND_FROM_EMAIL": "Avalon <invites@send.with-avalon.com>",
+    "RESEND_FROM_EMAIL": "Avalon <invites@with-avalon.com>",
+    "WORKSTREAM_EMAIL_DOMAIN": "automation.with-avalon.com",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
     "HARNESS_MAX_MODEL_ITERATIONS": "8",
     "HARNESS_MAX_TOOL_CALLS": "24",
@@ -31,6 +32,9 @@
     "MAX_ATTACHMENT_BYTES": "25000000",
     "WEBHOOK_REPLAY_WINDOW_SECONDS": "300",
     "PROVIDER_WEBHOOK_MAX_BYTES": "2000000",
+    "INBOUND_EMAIL_MAX_BYTES": "5000000",
+    "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS": "300",
+    "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR": "30",
     "LOG_LEVEL": "info"
   },
   "d1_databases": [
@@ -55,6 +59,11 @@
       "binding": "EU_GITHUB_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "GitHubRegionalBridge"
+    },
+    {
+      "binding": "EU_INBOUND_EMAIL_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "InboundEmailRegionalBridge"
     }
   ],
   "r2_buckets": [

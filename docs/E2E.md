@@ -35,7 +35,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 3. Open an invitation while signed out and confirm its organization, email, role, and region preview through the issuing regional API. Complete sign-in and accept it once; reuse must fail.
 4. While signed into a Global organization, open an EU invitation. Confirm the current session is not retargeted, the preview still uses the EU API, and the app requires sign-out before continuing with the invited account. Closing the invitation must restore the Global session route.
 5. Open **Avalon → Settings…** and press **Command-,**. Confirm both paths focus the same Settings window and show account/session, version/platform/API/realtime diagnostics, immutable region, members, and role-appropriate invitation controls.
-6. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Avalon <invites@send.with-avalon.com>`, contains the correct organization, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
+6. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Avalon <invites@with-avalon.com>`, contains the correct organization, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
 7. Install a workspace Google Drive connection, open a fresh work stream as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 7. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
 
@@ -109,6 +109,22 @@ Pass evidence: two independently selectable preset connections, exact stored cap
 6. Repeat the same signed delivery identifier and confirm ingestion reports a duplicate without creating a second activity, suggestion, or attachment.
 
 Pass evidence: one activity, one suggestion before acceptance, one attached resource after acceptance, stable participant membership, and idempotent webhook replay.
+
+## Flow 9 — inbound work-stream email
+
+1. Create one Global and one EU work stream and confirm each exposes an immutable four-segment address at `automation.with-avalon.com`.
+2. Send plain text to both addresses. Confirm one verified `email.received` event creates one regional email resource and one system transcript message in each target.
+3. Replay the same Resend delivery and confirm no duplicate resource or message is created.
+4. Send to an unknown alias and confirm the webhook is acknowledged without attaching it anywhere. Send HTML containing script-like content and confirm Avalon never renders or executes it.
+5. Confirm the Global database does not contain the EU email body and that inbound mail does not automatically start an agent run.
+
+## Flow 10 — inbound automation email
+
+1. Create one Global and one EU automation and confirm each exposes a permanent four-segment address from the same account-wide namespace as work streams.
+2. Send one message to each address. Confirm each owning region stores the untrusted email resource, creates exactly one new work stream and automation run, and passes only that labelled opening message to the harness.
+3. Replay the same Resend email ID while processing and after completion. Confirm an active lease returns a retryable response, an expired lease can be reclaimed, and the completed replay returns the original work-stream and run IDs without launching again.
+4. Pause an automation and confirm its route is disabled and mail cannot start a run. Resume it and confirm the exact same address is active again.
+5. Confirm a work-stream reservation cannot claim an automation local part (or vice versa), even across regions, and that removing an owner leaves a permanent tombstone.
 
 ## PRD flow 5 — future scheduled run
 

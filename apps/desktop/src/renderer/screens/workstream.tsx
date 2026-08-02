@@ -11,6 +11,7 @@ import {
   FileUp,
   Info,
   LoaderCircle,
+  Mail,
   Menu,
   PanelRight,
   Plus,
@@ -205,6 +206,9 @@ function WorkstreamHeader({
   const copyLink = (): void => {
     void navigator.clipboard.writeText(`avalon://workstreams/${workstream.id}`);
   };
+  const copyEmailAddress = (): void => {
+    if (workstream.emailAddress) void navigator.clipboard.writeText(workstream.emailAddress);
+  };
   const runningTasks = workstream.backgroundTasks.filter((task) => task.status === 'running').length;
 
   return (
@@ -242,6 +246,9 @@ function WorkstreamHeader({
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
               <DropdownMenu.Item className="menu-item" onSelect={copyLink}><Copy size={14} /> Copy work-stream link</DropdownMenu.Item>
+              {workstream.emailAddress && (
+                <DropdownMenu.Item className="menu-item" onSelect={copyEmailAddress}><Mail size={14} /> Copy work-stream email address</DropdownMenu.Item>
+              )}
               <DropdownMenu.Item className="menu-item" onSelect={() => void navigator.clipboard.writeText(workstream.id)}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
