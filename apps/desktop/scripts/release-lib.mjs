@@ -75,28 +75,35 @@ export function parseMacUpdateFeed(text) {
   const version = yamlScalar(versionLine.replace(/^version:\s*/u, ''));
   parseVersion(version);
 
-  const fileIndex = lines.findIndex((line) => /^\s*-\s+url:\s*/u.test(line));
-  if (fileIndex < 0) throw new Error('latest-mac.yml is missing files[0].url');
-  const url = yamlScalar(lines[fileIndex].replace(/^\s*-\s+url:\s*/u, ''));
-  if (!url || /^https?:\/\//u.test(url) || url.includes('/') || url.includes('?') || url.includes('#')) {
-    throw new Error(`latest-mac.yml must reference a sibling artifact filename; received ${url}`);
+  const fileIndexes = lines
+    .map((line, index) => (/^\s*-\s+url:\s*/u.test(line) ? index : -1))
+    .filter((index) => index >= 0);
+  if (fileIndexes.length === 0) throw new Error('latest-mac.yml is missing files[0].url');
+  const files = fileIndexes.map((fileIndex, position) => {
+    const url = yamlScalar(lines[fileIndex].replace(/^\s*-\s+url:\s*/u, ''));
+    if (!url || /^https?:\/\//u.test(url) || url.includes('/') || url.includes('?') || url.includes('#')) {
+      throw new Error(`latest-mac.yml must reference a sibling artifact filename; received ${url}`);
+    }
+    let sha512;
+    let size;
+    for (let index = fileIndex + 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (/^\s*-\s+url:/u.test(line) || /^\S/u.test(line)) break;
+      if (/^\s+sha512:\s*/u.test(line)) sha512 = yamlScalar(line.replace(/^\s+sha512:\s*/u, ''));
+      if (/^\s+size:\s*/u.test(line)) size = Number(yamlScalar(line.replace(/^\s+size:\s*/u, '')));
+    }
+    if (!sha512 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(sha512)) {
+      throw new Error(`latest-mac.yml is missing a valid files[${position}].sha512`);
+    }
+    if (!Number.isSafeInteger(size) || size <= 0) {
+      throw new Error(`latest-mac.yml is missing a valid positive files[${position}].size`);
+    }
+    return { url, sha512, size };
+  });
+  if (new Set(files.map((file) => file.url)).size !== files.length) {
+    throw new Error('latest-mac.yml contains duplicate file URLs');
   }
-
-  let sha512;
-  let size;
-  for (let index = fileIndex + 1; index < lines.length; index += 1) {
-    const line = lines[index];
-    if (/^\s*-\s+url:/u.test(line) || /^\S/u.test(line)) break;
-    if (/^\s+sha512:\s*/u.test(line)) sha512 = yamlScalar(line.replace(/^\s+sha512:\s*/u, ''));
-    if (/^\s+size:\s*/u.test(line)) size = Number(yamlScalar(line.replace(/^\s+size:\s*/u, '')));
-  }
-  if (!sha512 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(sha512)) {
-    throw new Error('latest-mac.yml is missing a valid files[0].sha512');
-  }
-  if (!Number.isSafeInteger(size) || size <= 0) {
-    throw new Error('latest-mac.yml is missing a valid positive files[0].size');
-  }
-  return { version, file: { url, sha512, size } };
+  return { version, files, file: files[0] };
 }
 
 export async function sha512File(filePath) {
@@ -118,8 +125,10 @@ export async function loadReleaseDirectory(directory) {
   const manifestBytes = await readFile(manifestPath);
   const feed = parseMacUpdateFeed(manifestBytes.toString('utf8'));
   const artifactNames = names.filter((name) => /\.(?:dmg|zip|blockmap)$/u.test(name));
-  if (!artifactNames.includes(feed.file.url)) {
-    throw new Error(`Update feed references missing artifact ${feed.file.url}`);
+  for (const file of feed.files) {
+    if (!artifactNames.includes(file.url)) {
+      throw new Error(`Update feed references missing artifact ${file.url}`);
+    }
   }
   const zipNames = artifactNames.filter((name) => name.endsWith('.zip'));
   const dmgNames = artifactNames.filter((name) => name.endsWith('.dmg'));
@@ -138,13 +147,15 @@ export async function loadReleaseDirectory(directory) {
 }
 
 export async function verifyFeedArtifact(release) {
-  const artifactPath = join(release.directory, release.feed.file.url);
-  const [actualSha512, metadata] = await Promise.all([sha512File(artifactPath), stat(artifactPath)]);
-  if (actualSha512 !== release.feed.file.sha512) {
-    throw new Error(`SHA-512 mismatch for ${basename(artifactPath)}`);
-  }
-  if (metadata.size !== release.feed.file.size) {
-    throw new Error(`Size mismatch for ${basename(artifactPath)}: feed=${release.feed.file.size}, actual=${metadata.size}`);
+  for (const file of release.feed.files) {
+    const artifactPath = join(release.directory, file.url);
+    const [actualSha512, metadata] = await Promise.all([sha512File(artifactPath), stat(artifactPath)]);
+    if (actualSha512 !== file.sha512) {
+      throw new Error(`SHA-512 mismatch for ${basename(artifactPath)}`);
+    }
+    if (metadata.size !== file.size) {
+      throw new Error(`Size mismatch for ${basename(artifactPath)}: feed=${file.size}, actual=${metadata.size}`);
+    }
   }
 }
 

@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { access, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { notarizationCredentialMode, prepareNotarizationEnvironment } from './apple-notarization.mjs';
+import { writeFinalMacFeed } from './finalize-macos-release.mjs';
 import { smokeLaunch } from './launch-smoke.mjs';
 
 const mode = process.argv[2] ?? 'local';
@@ -21,6 +22,7 @@ const stagingDirectory = join(releaseDirectory, `.staging-${mode}-${suffix}`);
 const publishedDirectory = join(releaseDirectory, mode);
 const backupDirectory = join(releaseDirectory, `.previous-${mode}-${suffix}`);
 const configFile = mode === 'local' ? 'electron-builder.local.yml' : 'electron-builder.yml';
+const desktopPackage = JSON.parse(await readFile(join(desktopDirectory, 'package.json'), 'utf8'));
 
 if (mode === 'release') {
   if (process.env.CSC_LINK) {
@@ -104,6 +106,9 @@ try {
 
   const appPath = join(stagingDirectory, 'mac-arm64', 'Avalon.app');
   if (mode === 'release') {
+    // electron-builder writes update info after afterAllArtifactBuild. Rewrite
+    // it now so every manifest entry describes the signed and stapled bytes.
+    await writeFinalMacFeed(stagingDirectory, desktopPackage.version, environment);
     await run(process.execPath, [join(desktopDirectory, 'scripts', 'verify-macos-release.mjs'), stagingDirectory]);
   } else {
     await run(process.execPath, [join(desktopDirectory, 'scripts', 'verify-macos-app.mjs'), mode, appPath]);
