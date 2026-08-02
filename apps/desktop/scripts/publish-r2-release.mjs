@@ -163,6 +163,34 @@ async function getR2Object(key, destination) {
   return true;
 }
 
+async function getPublicObject(key, destination, verificationId) {
+  const prefixWithSeparator = `${prefix}/`;
+  if (!key.startsWith(prefixWithSeparator)) {
+    throw new Error(`Release object is outside the public prefix: ${key}`);
+  }
+  const url = new URL(publicUrl(key.slice(prefixWithSeparator.length)));
+  url.searchParams.set('avalon-release-verify', verificationId.slice(0, 24));
+  const response = await fetch(url, {
+    headers: { 'cache-control': 'no-cache' },
+    signal: AbortSignal.timeout(5 * 60_000),
+  });
+  if (response.status === 404) {
+    await response.body?.cancel();
+    return false;
+  }
+  if (!response.ok || !response.body) {
+    const body = (await response.text()).slice(0, 1_000);
+    throw new Error(
+      `Could not inspect ${url}; the public release domain returned HTTP ${response.status}: ${body}`,
+    );
+  }
+  await pipeline(
+    Readable.fromWeb(response.body),
+    createWriteStream(destination, { mode: 0o600 }),
+  );
+  return true;
+}
+
 async function putR2Object(key, source, { contentType, cacheControl, disposition }) {
   const args = wranglerArgs(
     'put',
@@ -237,22 +265,26 @@ async function verifyPublicArtifact(name, expectedSize, verificationId) {
 
 async function verifyR2Hash(key, expectedHash, destination) {
   let found = false;
+  let mismatched = false;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     await rm(destination, { force: true });
-    if (await getR2Object(key, destination)) {
+    const readable = await getR2Object(key, destination)
+      || await getPublicObject(key, destination, expectedHash);
+    if (readable) {
       found = true;
-      break;
+      const actualHash = await sha512File(destination);
+      if (actualHash === expectedHash) return;
+      mismatched = true;
     }
     if (attempt < 9) await sleep(Math.min(1_000 * 2 ** attempt, 30_000));
+  }
+  if (mismatched) {
+    throw new Error(`Remote SHA-512 mismatch for r2://${bucket}/${key}`);
   }
   if (!found) {
     throw new Error(
       `Uploaded release object did not become readable from r2://${bucket}/${key} within the verification window`,
     );
-  }
-  const actualHash = await sha512File(destination);
-  if (actualHash !== expectedHash) {
-    throw new Error(`Remote SHA-512 mismatch for r2://${bucket}/${key}`);
   }
 }
 
