@@ -203,8 +203,9 @@ async function verifyPublicArtifact(name, expectedSize, verificationId) {
         headers: { 'cache-control': 'no-cache' },
         signal: AbortSignal.timeout(30_000),
       });
-      const length = Number(head.headers.get('content-length'));
-      if (!head.ok || length !== expectedSize) {
+      const contentLength = head.headers.get('content-length');
+      const hasIncorrectLength = contentLength !== null && Number(contentLength) !== expectedSize;
+      if (!head.ok || hasIncorrectLength) {
         failure = `HEAD HTTP ${head.status}, content-length=${head.headers.get('content-length') ?? 'missing'}`;
         await sleep(500 * 2 ** attempt);
         continue;
