@@ -37,8 +37,8 @@ test('published site configuration points to the exact promoted release channel'
     ['SHA256SUMS', sha256('f')],
   ]);
   const config = createPublishedSiteReleaseConfig({
-    published: false,
-    version: '0.1.0',
+    published: true,
+    version: '0.0.9',
     platform: 'macOS',
     architecture: 'Apple silicon',
   }, {
@@ -53,6 +53,7 @@ test('published site configuration points to the exact promoted release channel'
   });
 
   assert.equal(config.published, true);
+  assert.equal(config.version, '0.1.0');
   assert.equal(config.objects.dmg, 'stable/darwin/arm64/Avalon-0.1.0-arm64.dmg');
   assert.equal(config.objects.canonicalDmg, 'stable/darwin/arm64/Avalon.dmg');
   assert.equal(config.objects.checksums, 'stable/darwin/arm64/0.1.0/SHA256SUMS');
@@ -63,7 +64,7 @@ test('published site configuration points to the exact promoted release channel'
   ]);
 });
 
-test('site activation requires the matching version and both differential blockmaps', () => {
+test('site activation requires both differential blockmaps and refuses downgrades', () => {
   const options = {
     version: '0.1.0',
     artifactNames: artifacts.filter((name) => name !== 'Avalon-0.1.0-arm64.dmg.blockmap'),
@@ -79,7 +80,7 @@ test('site activation requires the matching version and both differential blockm
   );
   assert.throws(
     () => createPublishedSiteReleaseConfig({ version: '0.1.1' }, options),
-    /does not match/u,
+    /Refusing to roll site release back/u,
   );
 });
 
