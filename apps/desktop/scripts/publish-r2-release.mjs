@@ -267,14 +267,18 @@ async function verifyR2Hash(key, expectedHash, destination) {
   let found = false;
   let mismatched = false;
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    await rm(destination, { force: true });
-    const readable = await getR2Object(key, destination)
-      || await getPublicObject(key, destination, expectedHash);
-    if (readable) {
-      found = true;
-      const actualHash = await sha512File(destination);
-      if (actualHash === expectedHash) return;
-      mismatched = true;
+    const readers = [
+      () => getR2Object(key, destination),
+      () => getPublicObject(key, destination, expectedHash),
+    ];
+    for (const read of readers) {
+      await rm(destination, { force: true });
+      if (await read()) {
+        found = true;
+        const actualHash = await sha512File(destination);
+        if (actualHash === expectedHash) return;
+        mismatched = true;
+      }
     }
     if (attempt < 9) await sleep(Math.min(1_000 * 2 ** attempt, 30_000));
   }
