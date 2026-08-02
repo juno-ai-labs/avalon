@@ -71,6 +71,14 @@ describe('public Avalon site', () => {
     expect(page).not.toContain('<p>Today</p>');
   });
 
+  it('uses the official black Apple logo in the primary macOS call to action', () => {
+    const page = readProjectFile('index.html');
+
+    expect(page).toContain('src="/brand/apple-logo.svg"');
+    expect(page).not.toContain('<span class="apple-mark"');
+    expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
+  });
+
   it('keeps unsigned preview installers unpublished while retaining the future download destination', () => {
     const page = readProjectFile('index.html');
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
