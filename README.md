@@ -86,6 +86,7 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [End-to-end verification](docs/E2E.md)
 - [Operations runbook](docs/RUNBOOK.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
+- [Monad harness/runtime reuse assessment](docs/MONAD_REUSE.md)
 
 ## Hosted deployment
 
