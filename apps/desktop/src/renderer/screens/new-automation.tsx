@@ -13,7 +13,7 @@ import {
   WandSparkles,
   Zap,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -191,6 +191,13 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [bindings, setBindings] = useState<Record<string, string>>({});
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    if (input) textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+  }, [input]);
 
   const connections = useQuery({
     queryKey: ['connections'],
@@ -371,11 +378,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                 <div className="automation-composer">
                   <textarea
                     aria-label={draft?.question?.prompt ?? 'Describe an automation'}
-                    onChange={(event) => {
-                      setInput(event.target.value);
-                      event.target.style.height = 'auto';
-                      event.target.style.height = `${Math.min(event.target.scrollHeight, 180)}px`;
-                    }}
+                    onChange={(event) => setInput(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey) {
                         event.preventDefault();
