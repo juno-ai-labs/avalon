@@ -235,9 +235,19 @@ async function verifyPublicArtifact(name, expectedSize, verificationId) {
 }
 
 async function verifyR2Hash(key, expectedHash, destination) {
-  await rm(destination, { force: true });
-  if (!await getR2Object(key, destination)) {
-    throw new Error(`Uploaded release object disappeared from r2://${bucket}/${key}`);
+  let found = false;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await rm(destination, { force: true });
+    if (await getR2Object(key, destination)) {
+      found = true;
+      break;
+    }
+    if (attempt < 9) await sleep(Math.min(1_000 * 2 ** attempt, 30_000));
+  }
+  if (!found) {
+    throw new Error(
+      `Uploaded release object did not become readable from r2://${bucket}/${key} within the verification window`,
+    );
   }
   const actualHash = await sha512File(destination);
   if (actualHash !== expectedHash) {
