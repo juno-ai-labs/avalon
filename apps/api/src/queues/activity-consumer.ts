@@ -15,6 +15,7 @@ import { z } from "zod";
 import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 interface ActivityRow {
   id: string;
@@ -500,6 +501,7 @@ async function startActivityAutomation(
   activity: ActivityRow,
   subscription: SubscriptionRow
 ): Promise<string | null> {
+  const emailRouting = new WorkstreamEmailRoutingService(env);
   let run = await env.DB.prepare(
     `SELECT id, workstream_id, workflow_instance_id, status
        FROM automation_runs
@@ -517,18 +519,24 @@ async function startActivityAutomation(
     const workstreamId = crypto.randomUUID();
     const runId = crypto.randomUUID();
     harnessRunId = crypto.randomUUID();
+    const emailRoute = await emailRouting.reserve({
+      region: activity.workspace_region,
+      workspaceId: activity.workspace_id,
+      workstreamId,
+    });
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO workstreams (
-           id, workspace_id, title, objective, origin_type, created_by_user_id,
+           id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
            automation_subscription_id, automation_run_id, planned_for, harness_status,
            next_sequence_number, last_activity_at, created_at, updated_at, archived_at
-         ) VALUES (?1, ?2, ?3, ?4, 'automation', NULL, ?5, NULL, NULL, 'running', 1, ?6, ?6, ?6, NULL)`
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, NULL, 'running', 1, ?7, ?7, ?7, NULL)`
       ).bind(
         workstreamId,
         activity.workspace_id,
         `${subscription.template_name}: ${activity.title}`.slice(0, 180),
         subscription.template_description,
+        emailRoute.emailAddress,
         subscription.id,
         now
       ),
@@ -568,6 +576,12 @@ async function startActivityAutomation(
     if (!harness) throw new Error("activity_harness_run_missing");
     harnessRunId = harness.id;
   }
+
+  await emailRouting.ensureWorkstreamAddress({
+    region: activity.workspace_region,
+    workspaceId: activity.workspace_id,
+    workstreamId: run.workstream_id,
+  });
 
   if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
   const workflowId = `activity-${subscription.id}-${activity.id}`;

@@ -187,6 +187,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     id: workstream.id,
     title: workstream.title,
     objective: workstream.objective,
+    ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     origin: workstream.originType,
     ...(workstream.originLabel ? { automationName: workstream.originLabel } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
@@ -371,6 +372,7 @@ function mapAutomationSummary(automation: z.infer<typeof WireAutomationSummarySc
   return {
     id: automation.id,
     name: automation.name,
+    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: automation.scope === 'personal' ? 'you' : 'workspace',
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),

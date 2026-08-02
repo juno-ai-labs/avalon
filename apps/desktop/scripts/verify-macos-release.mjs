@@ -1,11 +1,11 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { assertBlockmapMatches } from './blockmap.mjs';
+import { smokeLaunch } from './launch-smoke.mjs';
 import {
   AVALON_APP_ID,
   AVALON_APPLE_TEAM_ID,
@@ -77,91 +77,6 @@ function verifyBundle(appPath, source) {
   if (identifier !== AVALON_APP_ID) throw new Error(`${source} has bundle identifier ${identifier}`);
   if (version !== desktopPackage.version) {
     throw new Error(`${source} has version ${version}; expected ${desktopPackage.version}`);
-  }
-}
-
-function runningSmokePids(marker) {
-  return new Set(
-    run('/bin/ps', ['-axo', 'pid=,command='])
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.includes('Contents/MacOS/Avalon') && line.includes(marker))
-      .map((line) => Number(line.match(/^(\d+)/u)?.[1]))
-      .filter(Number.isSafeInteger),
-  );
-}
-
-function runningRendererPids(appPath, userDataDirectory) {
-  const rendererExecutable = join(
-    appPath,
-    'Contents/Frameworks/Avalon Helper (Renderer).app/Contents/MacOS/Avalon Helper (Renderer)',
-  );
-  return new Set(
-    run('/bin/ps', ['-axo', 'pid=,command='])
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(
-        (line) => line.includes(rendererExecutable)
-          && line.includes('--type=renderer')
-          && line.includes(`--user-data-dir=${userDataDirectory}`),
-      )
-      .map((line) => Number(line.match(/^(\d+)/u)?.[1]))
-      .filter(Number.isSafeInteger),
-  );
-}
-
-function sleep(milliseconds) {
-  return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
-}
-
-async function smokeLaunch(appPath, userDataDirectory) {
-  const marker = `--avalon-release-smoke=${randomUUID()}`;
-  run('/usr/bin/open', [
-    '-na',
-    appPath,
-    '--args',
-    `--user-data-dir=${userDataDirectory}`,
-    marker,
-  ]);
-  let launchedPid;
-  try {
-    let rendererPids = new Set();
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await sleep(500);
-      launchedPid = [...runningSmokePids(marker)][0];
-      rendererPids = runningRendererPids(appPath, userDataDirectory);
-      if (launchedPid && rendererPids.size > 0) break;
-    }
-    if (!launchedPid) throw new Error('Packaged Avalon did not start through LaunchServices');
-    if (rendererPids.size === 0) {
-      throw new Error('Packaged Avalon did not start a signed Renderer helper from the extracted app');
-    }
-
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await sleep(500);
-      process.kill(launchedPid, 0);
-      rendererPids = runningRendererPids(appPath, userDataDirectory);
-      if (rendererPids.size === 0) {
-        throw new Error('Packaged Avalon Renderer helper exited during the clean-profile launch smoke');
-      }
-    }
-  } catch (error) {
-    if (launchedPid && error?.message?.includes('Renderer helper')) throw error;
-    throw new Error(`Packaged Avalon process ${launchedPid ?? '(missing)'} exited during launch smoke`, {
-      cause: error,
-    });
-  } finally {
-    const smokePids = new Set([
-      ...runningSmokePids(marker),
-      ...runningRendererPids(appPath, userDataDirectory),
-    ]);
-    for (const pid of smokePids) {
-      try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // It may have exited between the liveness check and cleanup.
-      }
-    }
   }
 }
 

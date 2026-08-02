@@ -1,6 +1,8 @@
 import type { Region } from "@avalon/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding } from "./services/github-routing-service";
+import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
+import type { InboundEmailRegionalRpcBinding } from "./services/resend-inbound-email-service";
 
 export interface Env {
   DB: D1Database;
@@ -12,6 +14,8 @@ export interface Env {
   CONNECTOR_POLL_WORKFLOW: Workflow;
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
+  EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
+  GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   AVALON_REGION: Region;
@@ -31,6 +35,11 @@ export interface Env {
   FIRECRAWL_API_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
+  RESEND_RECEIVING_API_KEY?: string;
+  RESEND_WEBHOOK_SIGNING_SECRET?: string;
+  RESEND_WEBHOOK_SECRET?: string;
+  WORKSTREAM_EMAIL_ADDRESS_KEY?: string;
+  WORKSTREAM_EMAIL_DOMAIN?: string;
 
   GOOGLE_OAUTH_CLIENT_ID: string;
   GOOGLE_OAUTH_CLIENT_SECRET: string;
@@ -62,6 +71,9 @@ export interface Env {
   MAX_ATTACHMENT_BYTES: string;
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
+  INBOUND_EMAIL_MAX_BYTES?: string;
+  INBOUND_EMAIL_PROCESSING_LEASE_SECONDS?: string;
+  AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
 }
 
@@ -100,7 +112,10 @@ export function numericEnv(
     | "WEB_FETCH_MAX_BYTES"
     | "MAX_ATTACHMENT_BYTES"
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
-    | "PROVIDER_WEBHOOK_MAX_BYTES",
+    | "PROVIDER_WEBHOOK_MAX_BYTES"
+    | "INBOUND_EMAIL_MAX_BYTES"
+    | "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS"
+    | "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR",
   fallback: number,
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);

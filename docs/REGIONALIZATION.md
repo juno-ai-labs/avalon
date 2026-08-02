@@ -20,6 +20,7 @@ The same Worker source is deployed twice:
 | Secrets | global key set | independent EU key set |
 | Identity onboarding | canonical platform identity and opaque workspace binding | regional membership/invitation operations exposed only by named Worker RPC |
 | GitHub App ingress | signature verification and installation-to-region directory | exact signed delivery forwarded through named Worker RPC only when connected in EU |
+| Work-stream email registry | one authoritative, case-insensitive reservation table for every region | no local allocator; reservations and status changes use the Global named RPC binding |
 
 Queues and Workflows carry region plus opaque record IDs, never sensitive payload bodies. Every service receives a fixed regional dependency container; repositories cannot choose a region from user-controlled object IDs.
 
@@ -30,6 +31,8 @@ Queues and Workflows carry region plus opaque record IDs, never sensitive payloa
 - The EU regional identity bridge is a named service entrypoint, not a public HTTP route.
 - The GitHub smart ingress is host-gated at `github.with-avalon.com`; it verifies GitHub's signature before parsing or routing and never exposes its EU bridge as HTTP.
 - GitHub OAuth callbacks, connector credentials, raw payload persistence, resources, activities, and automation processing stay in the connected workspace region. The shared ingress necessarily receives webhook bytes transiently before regional routing.
+- Resend Receiving terminates at the Global ingress because a receiving domain has one catch-all webhook. Global retains only the friendly-address route and delivery receipt. EU message bodies are retrieved with the EU Worker and persisted only in EU R2/D1.
+- Work-stream email names have one Global reservation registry for all regions. Global reserves locally; every non-Global Worker must call the named Global router and fails closed without it. Regional D1 is never an allocation fallback, and disabled/deleted names remain Global tombstones forever.
 - A bootstrap session has no workspace ID and cannot authorize workspace data access.
 - At most one active platform workspace binding may exist for an identity; simultaneous memberships in both regions fail closed for operator reconciliation.
 - Pending cross-region operations are idempotent and fail closed after ambiguous RPC outcomes. Their diagnostic deadline never authorizes automatic reuse: later discovery reconciles a committed regional membership, while a genuinely orphaned reservation requires operator verification and cleanup.

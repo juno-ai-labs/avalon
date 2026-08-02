@@ -8,6 +8,8 @@ export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
+export { InboundEmailRegionalBridge } from "./inbound-email-regional-bridge";
+export { WorkstreamEmailRoutingBridge } from "./workstream-email-routing-bridge";
 
 export default {
   fetch: app.fetch,

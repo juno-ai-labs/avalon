@@ -67,6 +67,7 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     workspaceId: String(row.workspace_id),
     title: String(row.title),
     objective: String(row.objective ?? ""),
+    emailAddress: row.email_address == null ? null : String(row.email_address),
     originType: row.origin_type === "automation" ? "automation" : "ad_hoc",
     originLabel: row.origin_label == null ? null : String(row.origin_label),
     createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id),
@@ -116,9 +117,11 @@ function toMessage(row: Record<string, unknown>): Message {
 }
 
 export interface CreateWorkstreamInput {
+  id?: string;
   workspaceId: string;
   title: string;
   objective: string;
+  emailAddress: string;
   creatorUserId: string;
   openingMessage: string;
   clientMessageId: string;
@@ -169,7 +172,7 @@ export function createDatabase(db: D1DatabaseLike) {
     },
 
     async create(input: CreateWorkstreamInput): Promise<{ workstream: Workstream; messageId: string }> {
-      const workstreamId = newId();
+      const workstreamId = input.id ?? newId();
       const messageId = newId();
       const at = nowIso();
       const uniqueParticipants = [...new Set([input.creatorUserId, ...input.participantUserIds])];
@@ -177,15 +180,16 @@ export function createDatabase(db: D1DatabaseLike) {
         db
           .prepare(
             `INSERT INTO workstreams
-             (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+             (id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
               next_sequence_number, last_activity_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'running', 2, ?, ?, ?)`
+             VALUES (?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, ?, ?, ?)`
           )
           .bind(
             workstreamId,
             input.workspaceId,
             input.title,
             input.objective,
+            input.emailAddress,
             input.creatorUserId,
             at,
             at,
@@ -343,7 +347,7 @@ export function createDatabase(db: D1DatabaseLike) {
     async list(workspaceId: string): Promise<AutomationSummary[]> {
       const result = await db
         .prepare(
-          `SELECT s.id, t.name, t.description, s.scope, s.status,
+          `SELECT s.id, s.email_address, t.name, t.description, s.scope, s.status,
              s.next_run_at, s.last_run_at,
              CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
            FROM automation_subscriptions s
@@ -358,6 +362,7 @@ export function createDatabase(db: D1DatabaseLike) {
         id: String(row.id),
         name: String(row.name),
         description: String(row.description),
+        emailAddress: row.email_address == null ? null : String(row.email_address),
         scope: String(row.scope) as Scope,
         status: String(row.status) as AutomationSummary["status"],
         nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),

@@ -122,7 +122,7 @@ function environment(database: StubDatabase, overrides: Partial<Env> = {}): Env 
     GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
     OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
     SESSION_SIGNING_KEY: "test-session-signing-key-with-enough-entropy",
-    RESEND_FROM_EMAIL: "Avalon <invites@send.with-avalon.com>",
+    RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
     ...overrides,
   } as unknown as Env;
 }
@@ -252,7 +252,7 @@ describe("workspace invitation lifecycle", () => {
     });
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body).toMatchObject({
-      from: "Avalon <invites@send.with-avalon.com>",
+      from: "Avalon <invites@with-avalon.com>",
       to: [invitationRow.email],
     });
     expect(String(body.text)).toContain(result.inviteUrl);

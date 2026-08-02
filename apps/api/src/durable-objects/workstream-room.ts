@@ -34,6 +34,7 @@ interface WorkstreamRow {
   workspace_id: string;
   title: string;
   objective: string;
+  email_address: string | null;
   origin_type: "ad_hoc" | "automation";
   created_by_user_id: string | null;
   automation_subscription_id: string | null;
@@ -578,6 +579,7 @@ export class WorkstreamRoom {
       workspaceId: row.workspace_id,
       title: row.title,
       objective: row.objective,
+      emailAddress: row.email_address,
       originType: row.origin_type,
       originLabel: null,
       createdByUserId: row.created_by_user_id,

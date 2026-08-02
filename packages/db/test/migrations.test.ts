@@ -5,18 +5,56 @@ import { describe, expect, it } from "vitest";
 
 const migrationsDirectory = fileURLToPath(new URL("../migrations/", import.meta.url));
 
-function migrateFreshDatabase(): DatabaseSync {
+function migrateDatabaseThrough(lastMigration?: string): DatabaseSync {
   const database = new DatabaseSync(":memory:");
   const migrationFiles = readdirSync(migrationsDirectory)
     .filter((fileName) => fileName.endsWith(".sql"))
     .sort();
   for (const fileName of migrationFiles) {
     database.exec(readFileSync(new URL(`../migrations/${fileName}`, import.meta.url), "utf8"));
+    if (fileName === lastMigration) break;
   }
   return database;
 }
 
+function migrateFreshDatabase(): DatabaseSync {
+  return migrateDatabaseThrough();
+}
+
 describe("database migrations", () => {
+  it("corrects the pre-release plural work-stream email domain without changing its reserved name", () => {
+    const database = migrateDatabaseThrough("0020_workstream_email_route_lifecycle.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-domain', 'google-domain', 'domain@example.com', 'Domain Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-domain', 'Domain Workspace', 'domain-workspace', 'global', 'user-domain', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, email_address, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-domain', 'workspace-domain', 'Inbox', 'Email this work stream',
+              'bright-steady-clear-otter@automations.with-avalon.com', 'ad_hoc', 'user-domain',
+              'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0021_workstream_email_domain_correction.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT email_address FROM workstreams WHERE id = 'workstream-domain'",
+    ).get()).toEqual({
+      email_address: "bright-steady-clear-otter@automation.with-avalon.com",
+    });
+    expect(() => database.exec(
+      "UPDATE workstreams SET email_address = 'different@automation.with-avalon.com' WHERE id = 'workstream-domain'",
+    )).toThrow(/immutable/u);
+    database.close();
+  });
+
   it("leaves every connector foreign key on the live connector table", () => {
     const database = migrateFreshDatabase();
     const staleReference = database.prepare(
@@ -125,6 +163,261 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT id FROM resource_watches WHERE enabled = 1 AND next_poll_at IS NOT NULL ORDER BY id",
     ).all()).toEqual([{ id: "watch-google" }]);
+    database.close();
+  });
+
+  it("keeps work-stream email addresses immutable and permanently reserves routes", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-email', 'google-email', 'email@example.com', 'Email Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-email', 'Email Workspace', 'email-workspace', 'global', 'user-email', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, email_address, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-email', 'workspace-email', 'Inbox', 'Email this work stream',
+              'bright-steady-clear-otter@automation.with-avalon.com', 'ad_hoc', 'user-email',
+              'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO workstream_email_routes
+        (local_part, region, workspace_id, workstream_id, status, created_at, updated_at)
+      VALUES ('bright-steady-clear-otter', 'global', 'workspace-email', 'workstream-email',
+              'active', '2026-01-01', '2026-01-01');
+    `);
+
+    expect(() => database.exec(
+      "UPDATE workstreams SET email_address = 'different-address@automation.with-avalon.com' WHERE id = 'workstream-email'",
+    )).toThrow(/immutable/u);
+    expect(() => database.exec(`
+      INSERT INTO workstream_email_routes
+        (local_part, region, workspace_id, workstream_id, status, created_at, updated_at)
+      VALUES ('bright-steady-clear-otter', 'global', 'workspace-other', 'workstream-other',
+              'active', '2026-01-01', '2026-01-01');
+    `)).toThrow();
+    expect(() => database.exec(
+      "UPDATE workstream_email_routes SET local_part = 'different-route' WHERE workstream_id = 'workstream-email'",
+    )).toThrow(/immutable/u);
+    expect(() => database.exec(
+      "DELETE FROM workstream_email_routes WHERE workstream_id = 'workstream-email'",
+    )).toThrow(/permanent tombstones/u);
+
+    database.exec("DELETE FROM workstreams WHERE id = 'workstream-email'");
+    expect(database.prepare(
+      "SELECT local_part, workstream_id FROM workstream_email_routes WHERE local_part = 'bright-steady-clear-otter'",
+    ).get()).toEqual({
+      local_part: "bright-steady-clear-otter",
+      workstream_id: "workstream-email",
+    });
+    database.close();
+  });
+
+  it("shares one permanent route namespace between work streams and automations", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-automation-email', 'google-automation-email', 'automation@example.com',
+              'Automation Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-automation-email', 'Automation Email', 'automation-email', 'eu',
+              'user-automation-email', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES ('template-automation-email', 'workspace-automation-email', 'user-automation-email',
+              'Email kickoff', 'Start from email', 'private', 1, '2026-01-01', '2026-01-01');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         required_capabilities_json, expected_outputs_json, default_behavior_json,
+         created_by_user_id, created_at)
+      VALUES ('version-automation-email', 'template-automation-email', 1, 'Process the email',
+              '[]', '[]', '[]', '{}', 'user-automation-email', '2026-01-01');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, connector_bindings_json, overrides_json, status,
+         email_address, email_route_status, created_at, updated_at)
+      VALUES ('subscription-automation-email', 'workspace-automation-email',
+              'template-automation-email', 'version-automation-email', 'personal',
+              'user-automation-email', '{"type":"user","userId":"user-automation-email"}',
+              '{}', '{}', 'active',
+              'bright-steady-clear-otter@automation.with-avalon.com', 'active',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO workstream_email_routes
+        (local_part, region, workspace_id, workstream_id, automation_subscription_id,
+         status, created_at, updated_at)
+      VALUES ('bright-steady-clear-otter', 'eu', 'workspace-automation-email', NULL,
+              'subscription-automation-email', 'active', '2026-01-01', '2026-01-01');
+    `);
+
+    expect(() => database.exec(`
+      INSERT INTO workstream_email_routes
+        (local_part, region, workspace_id, workstream_id, automation_subscription_id,
+         status, created_at, updated_at)
+      VALUES ('BRIGHT-STEADY-CLEAR-OTTER', 'global', 'another-workspace',
+              'another-workstream', NULL, 'active', '2026-01-01', '2026-01-01');
+    `)).toThrow();
+    expect(() => database.exec(
+      "UPDATE automation_subscriptions SET email_address = 'other@automation.with-avalon.com' WHERE id = 'subscription-automation-email'",
+    )).toThrow(/immutable/u);
+    expect(() => database.exec(
+      "UPDATE workstream_email_routes SET automation_subscription_id = 'other' WHERE automation_subscription_id = 'subscription-automation-email'",
+    )).toThrow(/immutable/u);
+    expect(() => database.exec(
+      "DELETE FROM workstream_email_routes WHERE automation_subscription_id = 'subscription-automation-email'",
+    )).toThrow(/permanent tombstones/u);
+    database.close();
+  });
+
+  it("supports atomic expiry and reclamation of regional email-processing leases", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-lease', 'google-lease', 'lease@example.com', 'Lease Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-lease', 'Lease Workspace', 'lease-workspace', 'eu', 'user-lease', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, email_address, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-lease', 'workspace-lease', 'Inbox', 'Email this work stream',
+              'bright-steady-clear-otter@automation.with-avalon.com', 'ad_hoc', 'user-lease',
+              'idle', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO workstream_email_receipts
+        (resend_email_id, workstream_id, workspace_id, svix_id, received_at,
+         lease_token, lease_expires_at)
+      VALUES ('email-lease', 'workstream-lease', 'workspace-lease', 'svix-lease',
+              '2026-08-02T18:00:00.000Z', 'worker-one', '2026-08-02T18:05:00.000Z');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES ('template-lease', 'workspace-lease', 'user-lease', 'Lease automation',
+              'Test email receipt leases', 'private', 1, '2026-01-01', '2026-01-01');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         required_capabilities_json, expected_outputs_json, default_behavior_json,
+         created_by_user_id, created_at)
+      VALUES ('version-lease', 'template-lease', 1, 'Process the email', '[]', '[]',
+              '[]', '{}', 'user-lease', '2026-01-01');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, connector_bindings_json, overrides_json, status,
+         email_address, email_route_status, created_at, updated_at)
+      VALUES ('subscription-lease', 'workspace-lease', 'template-lease', 'version-lease',
+              'personal', 'user-lease', '{"type":"user","userId":"user-lease"}',
+              '{}', '{}', 'active', 'calm-bright-gentle-otter@automation.with-avalon.com',
+              'active', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_email_receipts
+        (resend_email_id, automation_subscription_id, workspace_id, svix_id, received_at,
+         lease_token, lease_expires_at)
+      VALUES ('automation-email-lease', 'subscription-lease', 'workspace-lease',
+              'automation-svix-lease', '2026-08-02T18:00:00.000Z', 'worker-one',
+              '2026-08-02T18:05:00.000Z');
+    `);
+
+    const beforeExpiry = database.prepare(`
+      UPDATE workstream_email_receipts
+      SET lease_token = ?, lease_expires_at = ?
+      WHERE resend_email_id = ? AND workstream_id = ? AND processed_at IS NULL
+        AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+    `).run(
+      "worker-two",
+      "2026-08-02T18:10:00.000Z",
+      "email-lease",
+      "workstream-lease",
+      "2026-08-02T18:04:59.000Z",
+    );
+    expect(beforeExpiry.changes).toBe(0);
+
+    const afterExpiry = database.prepare(`
+      UPDATE workstream_email_receipts
+      SET lease_token = ?, lease_expires_at = ?
+      WHERE resend_email_id = ? AND workstream_id = ? AND processed_at IS NULL
+        AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+    `).run(
+      "worker-two",
+      "2026-08-02T18:10:00.000Z",
+      "email-lease",
+      "workstream-lease",
+      "2026-08-02T18:05:00.000Z",
+    );
+    expect(afterExpiry.changes).toBe(1);
+    expect(database.prepare(`
+      SELECT lease_token, lease_expires_at
+      FROM workstream_email_receipts
+      WHERE resend_email_id = 'email-lease' AND workstream_id = 'workstream-lease'
+    `).get()).toEqual({
+      lease_token: "worker-two",
+      lease_expires_at: "2026-08-02T18:10:00.000Z",
+    });
+
+    const automationBeforeExpiry = database.prepare(`
+      UPDATE automation_email_receipts
+      SET lease_token = ?, lease_expires_at = ?
+      WHERE resend_email_id = ? AND automation_subscription_id = ? AND processed_at IS NULL
+        AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+    `).run(
+      "worker-two",
+      "2026-08-02T18:10:00.000Z",
+      "automation-email-lease",
+      "subscription-lease",
+      "2026-08-02T18:04:59.000Z",
+    );
+    expect(automationBeforeExpiry.changes).toBe(0);
+
+    const automationAfterExpiry = database.prepare(`
+      UPDATE automation_email_receipts
+      SET lease_token = ?, lease_expires_at = ?
+      WHERE resend_email_id = ? AND automation_subscription_id = ? AND processed_at IS NULL
+        AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+    `).run(
+      "worker-two",
+      "2026-08-02T18:10:00.000Z",
+      "automation-email-lease",
+      "subscription-lease",
+      "2026-08-02T18:05:00.000Z",
+    );
+    expect(automationAfterExpiry.changes).toBe(1);
+    expect(database.prepare(`
+      SELECT lease_token, lease_expires_at
+      FROM automation_email_receipts
+      WHERE resend_email_id = 'automation-email-lease'
+        AND automation_subscription_id = 'subscription-lease'
+    `).get()).toEqual({
+      lease_token: "worker-two",
+      lease_expires_at: "2026-08-02T18:10:00.000Z",
+    });
+
+    const claimAutomationEmailBudget = database.prepare(`
+      INSERT INTO automation_email_rate_windows
+        (automation_subscription_id, workspace_id, window_started_at, accepted_count)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(automation_subscription_id, window_started_at) DO UPDATE SET
+        accepted_count = accepted_count + 1
+      WHERE automation_email_rate_windows.accepted_count < ?
+      RETURNING accepted_count
+    `);
+    expect(claimAutomationEmailBudget.get(
+      "subscription-lease",
+      "workspace-lease",
+      "2026-08-02T18:00:00.000Z",
+      2,
+    )).toEqual({ accepted_count: 1 });
+    expect(claimAutomationEmailBudget.get(
+      "subscription-lease",
+      "workspace-lease",
+      "2026-08-02T18:00:00.000Z",
+      2,
+    )).toEqual({ accepted_count: 2 });
+    expect(claimAutomationEmailBudget.get(
+      "subscription-lease",
+      "workspace-lease",
+      "2026-08-02T18:00:00.000Z",
+      2,
+    )).toBeUndefined();
     database.close();
   });
 });

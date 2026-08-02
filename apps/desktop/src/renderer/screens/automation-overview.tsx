@@ -5,11 +5,14 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  CircleAlert,
   CirclePause,
   Clock3,
+  Copy,
   Edit3,
   Ellipsis,
   LoaderCircle,
+  Mail,
   Menu,
   PanelRight,
   Play,
@@ -62,8 +65,19 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const [shareOpen, setShareOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [instructions, setInstructions] = useState('');
+  const [automationEmailCopyState, setAutomationEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => () => closeRail(), [closeRail, id]);
+
+  useEffect(() => {
+    setAutomationEmailCopyState('idle');
+  }, [id]);
+
+  useEffect(() => {
+    if (automationEmailCopyState === 'idle') return;
+    const reset = window.setTimeout(() => setAutomationEmailCopyState('idle'), 2_000);
+    return () => window.clearTimeout(reset);
+  }, [automationEmailCopyState]);
 
   const automation = useQuery({
     queryKey: ['automation', id],
@@ -124,7 +138,17 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   }
 
   const detail = automation.data;
+  const automationEmailAddress = detail.emailAddress;
   const filteredRuns = detail.runs.filter((run) => filter === 'all' || run.triggerType === filter);
+  const copyAutomationEmail = async (): Promise<void> => {
+    if (!automationEmailAddress) return;
+    try {
+      await navigator.clipboard.writeText(automationEmailAddress);
+      setAutomationEmailCopyState('copied');
+    } catch {
+      setAutomationEmailCopyState('failed');
+    }
+  };
 
   return (
     <div className="automation-overview-screen">
@@ -168,6 +192,48 @@ export function AutomationOverviewScreen(): React.JSX.Element {
           <aside className="automation-facts" aria-label="Automation details">
             <section><h2>Status</h2><p className="fact-status"><span className={clsx('switch-visual', detail.status === 'active' && 'is-on')} /><strong>{detail.status[0]!.toUpperCase() + detail.status.slice(1)}</strong></p></section>
             <section><h2>Repeats</h2><p><CalendarClock size={14} />{detail.scheduleSummary ?? detail.triggerSummary}</p></section>
+            {automationEmailAddress && (
+              <section className="automation-email-fact">
+                <h2>Email address</h2>
+                <div className="automation-email-address">
+                  <Mail aria-hidden="true" size={13} />
+                  <span title={automationEmailAddress}>{automationEmailAddress}</span>
+                  <IconButton
+                    className="automation-email-copy"
+                    label={automationEmailCopyState === 'copied'
+                      ? `Automation email address copied ${automationEmailAddress}`
+                      : automationEmailCopyState === 'failed'
+                        ? `Copy failed; retry automation email address ${automationEmailAddress}`
+                        : `Copy automation email address ${automationEmailAddress}`}
+                    onClick={() => void copyAutomationEmail()}
+                    title={automationEmailCopyState === 'copied'
+                      ? 'Copied'
+                      : automationEmailCopyState === 'failed'
+                        ? 'Copy failed — click to retry'
+                        : 'Copy automation email address'}
+                    tooltipSide="right"
+                  >
+                    {automationEmailCopyState === 'copied'
+                      ? <Check aria-hidden="true" size={12} />
+                      : automationEmailCopyState === 'failed'
+                        ? <CircleAlert aria-hidden="true" size={12} />
+                        : <Copy aria-hidden="true" size={12} />}
+                  </IconButton>
+                  <span aria-live="polite" className="sr-only" role="status">
+                    {automationEmailCopyState === 'copied'
+                      ? 'Automation email address copied.'
+                      : automationEmailCopyState === 'failed'
+                        ? 'The automation email address could not be copied.'
+                        : ''}
+                  </span>
+                </div>
+                <small>
+                  {detail.scope === 'you'
+                    ? 'Email this address from your Avalon account email to start a new work stream.'
+                    : 'Email this address from a workspace member email to start a new work stream.'}
+                </small>
+              </section>
+            )}
             <section><h2>Execution</h2><p><Users size={14} />{detail.executionScope}</p><small>{detail.scope === 'you' ? 'Uses your authorized connections' : 'Uses explicitly bound workspace connections'}</small></section>
             <section>
               <h2>Connected capabilities</h2>

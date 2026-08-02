@@ -26,6 +26,12 @@ const workerKeys = [
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "RESEND_RECEIVING_API_KEY",
+  "RESEND_WEBHOOK_SIGNING_SECRET",
+  // Legacy deployment compatibility. New environments use the explicit name above.
+  "RESEND_WEBHOOK_SECRET",
+  "WORKSTREAM_EMAIL_DOMAIN",
+  "WORKSTREAM_EMAIL_ADDRESS_KEY",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
   "GITHUB_APP_ID",
@@ -55,6 +61,7 @@ const workerKeys = [
   "MAX_ATTACHMENT_BYTES",
   "WEBHOOK_REPLAY_WINDOW_SECONDS",
   "PROVIDER_WEBHOOK_MAX_BYTES",
+  "INBOUND_EMAIL_MAX_BYTES",
   "LOG_LEVEL"
 ];
 
@@ -66,6 +73,7 @@ const regionalizableKeys = [
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
+  "RESEND_RECEIVING_API_KEY",
   "GOOGLE_OAUTH_CLIENT_ID",
   "GOOGLE_OAUTH_CLIENT_SECRET",
   "GITHUB_APP_ID",
@@ -86,6 +94,12 @@ const regionalizableKeys = [
   "CONNECTOR_CREDENTIALS_KEY"
 ];
 
+const globalOnlyKeys = new Set([
+  "RESEND_WEBHOOK_SIGNING_SECRET",
+  "RESEND_WEBHOOK_SECRET",
+  "WORKSTREAM_EMAIL_ADDRESS_KEY"
+]);
+
 const safeDefaults = {
   APP_ENV: "development",
   AVALON_DEV_AUTH: "true",
@@ -96,7 +110,8 @@ const safeDefaults = {
   OPENROUTER_FALLBACK_MODELS: "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
-  RESEND_FROM_EMAIL: "Avalon <invites@send.with-avalon.com>",
+  RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
+  WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
   CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
   HARNESS_MAX_MODEL_ITERATIONS: "8",
   HARNESS_MAX_TOOL_CALLS: "24",
@@ -108,6 +123,7 @@ const safeDefaults = {
   MAX_ATTACHMENT_BYTES: "25000000",
   WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
   PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
+  INBOUND_EMAIL_MAX_BYTES: "5000000",
   LOG_LEVEL: "info"
 };
 
@@ -199,7 +215,9 @@ for (const region of ["global", "eu"]) {
     regional.ALLOWED_ORIGINS = safeDefaults.ALLOWED_ORIGINS;
   }
   const serialized = workerKeys
-    .filter((key) => typeof regional[key] === "string" && regional[key].length > 0)
+    .filter((key) => (region === "global" || !globalOnlyKeys.has(key))
+      && typeof regional[key] === "string"
+      && regional[key].length > 0)
     .map((key) => `${key}=${JSON.stringify(regional[key])}`)
     .join("\n");
   await writeFile(regionalTargetPaths[region], `${serialized}\n`, { mode: 0o600 });

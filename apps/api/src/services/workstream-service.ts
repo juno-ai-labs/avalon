@@ -17,6 +17,8 @@ import {
   startWorkstreamWorkflow,
 } from "./integrations";
 import { issueSocketTicket } from "./socket-service";
+import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
+import { ResourceService } from "./resource-service";
 
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -106,7 +108,24 @@ export class WorkstreamService {
     const result = before
       ? await statement.bind(this.auth.workspaceId, before, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
       : await statement.bind(this.auth.workspaceId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
-    const items = (result.results ?? []).map(toWorkstream);
+    const rows = result.results ?? [];
+    const unreconciledAddressRows = rows.filter((row) =>
+      row.email_address == null || row.email_route_status !== "active");
+    if (unreconciledAddressRows.length > 0) {
+      const routes = await new WorkstreamEmailRoutingService(this.env).backfillWorkstreamAddresses(
+        unreconciledAddressRows.map((row) => ({
+          region: this.env.AVALON_REGION,
+          workspaceId: this.auth.workspaceId,
+          workstreamId: String(row.id),
+        })),
+      );
+      const addressesByWorkstreamId = new Map(routes.map((route) => [route.workstreamId, route.emailAddress]));
+      for (const row of unreconciledAddressRows) {
+        row.email_address = addressesByWorkstreamId.get(String(row.id)) ?? null;
+        row.email_route_status = "active";
+      }
+    }
+    const items = rows.map(toWorkstream);
     const hasMore = items.length > limit;
     if (hasMore) items.pop();
     return { items, nextCursor: hasMore ? items.at(-1)?.lastActivityAt ?? null : null };
@@ -115,15 +134,26 @@ export class WorkstreamService {
   async create(input: CreateWorkstreamInput) {
     await this.assertMembersExist(input.participantUserIds);
     const title = input.title ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
+    const workstreamId = newId();
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const routeInput = {
+      region: this.env.AVALON_REGION,
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+    } as const;
+    const emailRoute = await emailRouting.reserve(routeInput);
     const created = await this.database.workstreams.create({
+      id: workstreamId,
       workspaceId: this.auth.workspaceId,
       title,
       objective: input.objective,
+      emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
       openingMessage: input.openingMessage,
       clientMessageId: input.clientMessageId,
       participantUserIds: input.participantUserIds,
     });
+    await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
     if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
@@ -172,19 +202,37 @@ export class WorkstreamService {
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
-    await this.requireWorkstream(id);
+    await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
     const at = nowIso();
     await this.env.DB.prepare(
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
        archived_at = CASE WHEN ? IS NULL THEN archived_at WHEN ? = 1 THEN ? ELSE NULL END,
+       email_route_status = CASE WHEN ? IS NULL THEN email_route_status ELSE 'reserved' END,
        updated_at = ?
        WHERE id = ? AND workspace_id = ?`,
     )
-      .bind(input.title ?? null, input.objective ?? null, input.archived == null ? null : Number(input.archived), Number(input.archived ?? false), at, at, id, this.auth.workspaceId)
+      .bind(
+        input.title ?? null,
+        input.objective ?? null,
+        input.archived == null ? null : Number(input.archived),
+        Number(input.archived ?? false),
+        at,
+        input.archived == null ? null : Number(input.archived),
+        at,
+        id,
+        this.auth.workspaceId,
+      )
       .run();
-    return this.database.workstreams.get(this.auth.workspaceId, id);
+    if (input.archived != null) {
+      await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
+        region: this.env.AVALON_REGION,
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
+      });
+    }
+    return toWorkstream(await this.requireWorkstreamForUpdate(id));
   }
 
   async messages(id: string, limit: number, before?: number) {
@@ -269,6 +317,10 @@ export class WorkstreamService {
 
   async attachResource(id: string, resourceId: string) {
     await this.requireWorkstream(id);
+    // Inbound-email resources inherit work-stream visibility rather than a
+    // connector scope. Authorize the source before allowing an attachment to
+    // share it with another work stream.
+    await new ResourceService(this.env, this.auth).get(resourceId);
     const resource = await this.env.DB.prepare(
       `SELECT r.*, c.scope AS connection_scope, c.owner_user_id
        FROM resources r LEFT JOIN connector_connections c ON c.id = r.connection_id
@@ -414,7 +466,14 @@ export class WorkstreamService {
   }
 
   private async requireWorkstream(id: string) {
-    const workstream = await this.database.workstreams.get(this.auth.workspaceId, id);
+    let workstream = await this.database.workstreams.get(this.auth.workspaceId, id);
+    if (!workstream) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
+      region: this.env.AVALON_REGION,
+      workspaceId: this.auth.workspaceId,
+      workstreamId: id,
+    });
+    workstream = await this.database.workstreams.get(this.auth.workspaceId, id);
     if (!workstream) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     const visible = await this.env.DB.prepare(
       `SELECT 1 FROM workstreams w
@@ -429,6 +488,24 @@ export class WorkstreamService {
     ).bind(id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first();
     if (!visible) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return workstream;
+  }
+
+  private async requireWorkstreamForUpdate(id: string): Promise<Record<string, unknown>> {
+    const row = await this.env.DB.prepare(
+      `SELECT w.*, t.name AS origin_label
+       FROM workstreams w
+       LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
+       LEFT JOIN automation_templates t ON t.id = s.template_id
+       WHERE w.id = ? AND w.workspace_id = ? AND (
+         w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
+         OR EXISTS (
+           SELECT 1 FROM workstream_participants p
+           WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
+         )
+       )`,
+    ).bind(id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
+    if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    return row;
   }
 
   private async persistHumanMessage(
@@ -842,6 +919,7 @@ function safeArtifactFileName(title: string, artifactType: string): string {
 function toWorkstream(row: Record<string, unknown>) {
   return {
     id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""),
+    emailAddress: row.email_address == null ? null : String(row.email_address),
     originType: row.origin_type === "automation" ? "automation" as const : "ad_hoc" as const,
     originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id),
     automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),

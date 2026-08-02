@@ -13,6 +13,7 @@ import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
+import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
@@ -32,6 +33,14 @@ interface IdempotentAutomationRun {
   workflowInstanceId: string | null;
   runStatus: string;
   harnessStatus: string | null;
+  triggerMessageId: string | null;
+}
+
+export interface InboundAutomationOpeningInput {
+  resendEmailId: string;
+  textContent: string;
+  structuredContent: Record<string, unknown>;
+  resourceId: string;
 }
 
 export class AutomationService {
@@ -39,7 +48,7 @@ export class AutomationService {
 
   async list() {
     const result = await this.env.DB.prepare(
-      `SELECT s.id, t.name, t.description, s.scope, s.status,
+      `SELECT s.id, s.email_address, s.email_route_status, t.name, t.description, s.scope, s.status,
          s.next_run_at, s.last_run_at,
          CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
        FROM automation_subscriptions s
@@ -49,10 +58,25 @@ export class AutomationService {
          AND (s.scope = 'workspace' OR s.owner_user_id = ?)
        ORDER BY t.name COLLATE NOCASE`,
     ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
-    return { items: (result.results ?? []).map((row) => ({
+    const rows = result.results ?? [];
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const routesById = new Map(rows.flatMap((row) =>
+      row.email_address == null ? [] : [[String(row.id), String(row.email_address)] as const]));
+    const needsReconciliation = rows.filter((row) => {
+      const desiredStatus = row.status === "active" ? "active" : "disabled";
+      return row.email_address == null || row.email_route_status !== desiredStatus;
+    });
+    for (let offset = 0; offset < needsReconciliation.length; offset += 512) {
+      const inputs = needsReconciliation.slice(offset, offset + 512)
+        .map((row) => this.automationRouteInput(String(row.id)));
+      const routes = await emailRouting.backfillAutomationAddresses(inputs);
+      for (const route of routes) routesById.set(route.automationSubscriptionId, route.emailAddress);
+    }
+    return { items: rows.map((row) => ({
       id: String(row.id),
       name: String(row.name),
       description: String(row.description),
+      emailAddress: routesById.get(String(row.id)) ?? null,
       scope: String(row.scope),
       status: String(row.status),
       nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
@@ -78,6 +102,9 @@ export class AutomationService {
       : { type: "workspace", workspaceId: this.auth.workspaceId };
     const schedules = input.draft.triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
     const nextRunAt = schedules.map((schedule) => schedule.nextRunAt).sort()[0] ?? null;
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const routeInput = this.automationRouteInput(subscriptionId);
+    const emailRoute = await emailRouting.reserveAutomation(routeInput);
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO automation_templates
@@ -96,9 +123,10 @@ export class AutomationService {
         `INSERT INTO automation_subscriptions
          (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
           execution_principal_json, connector_bindings_json, overrides_json, status,
+          email_address, email_route_status,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(input.connectorBindings), nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(input.connectorBindings), emailRoute.emailAddress, nextRunAt, at, at),
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
          (id, workspace_id, automation_subscription_id, schedule_type, rrule,
@@ -106,12 +134,23 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, at, at)),
     ]);
+    let emailRouteNeedsReconciliation = false;
+    try {
+      await emailRouting.activateAutomationRoute(routeInput);
+    } catch (error) {
+      if (!isRecoverableEmailRouteTransition(error)) throw error;
+      emailRouteNeedsReconciliation = true;
+    }
     if (schedules.length > 0) await this.refreshScheduler();
-    return this.get(subscriptionId);
+    return this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
   }
 
-  async get(id: string) {
+  async get(id: string, options: { reconcileEmail?: boolean } = {}) {
     const row = await this.loadSubscription(id);
+    const emailAddress = options.reconcileEmail === false
+      ? row.email_address == null ? null : String(row.email_address)
+      : (await new WorkstreamEmailRoutingService(this.env)
+          .ensureAutomationAddress(this.automationRouteInput(id))).emailAddress;
     const updateAvailable = Number(row.latest_version_number) > Number(row.version_number);
     const [runs, planned, latestVersion] = await Promise.all([
       this.runs(id, 20),
@@ -135,7 +174,7 @@ export class AutomationService {
         : Promise.resolve(null),
     ]);
     return {
-      id: String(row.id), name: String(row.name), description: String(row.description), scope: String(row.scope), status: String(row.status),
+      id: String(row.id), name: String(row.name), description: String(row.description), emailAddress, scope: String(row.scope), status: String(row.status),
       nextRunAt: row.next_run_at == null ? null : String(row.next_run_at), lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
       updateAvailable, templateId: String(row.template_id), templateVersionId: String(row.template_version_id),
       versionNumber: Number(row.version_number), instructions: String(row.instructions), triggers: parseJson(row.trigger_definitions_json, []),
@@ -213,6 +252,27 @@ export class AutomationService {
     return this.createRun(subscription, "manual", null, null, true, idempotencyKey);
   }
 
+  async runFromInboundEmail(id: string, input: InboundAutomationOpeningInput) {
+    const subscription = await this.loadSubscription(id);
+    if (subscription.status !== "active") {
+      throw new ApiError(409, "automation_not_active", "Resume the automation before emailing it");
+    }
+    return this.createRun(
+      subscription,
+      "inbound_email",
+      null,
+      null,
+      true,
+      `resend:${input.resendEmailId}`,
+      {
+        clientMessageId: `resend:${input.resendEmailId}`,
+        textContent: input.textContent,
+        structuredContent: input.structuredContent,
+        resourceId: input.resourceId,
+      },
+    );
+  }
+
   async setPaused(id: string, paused: boolean): Promise<void> {
     const subscription = await this.loadSubscription(id);
     this.assertCanManageSubscription(subscription);
@@ -223,6 +283,15 @@ export class AutomationService {
       this.env.DB.prepare("UPDATE schedules SET enabled = ?, updated_at = ?, version = version + 1 WHERE automation_subscription_id = ?")
         .bind(paused ? 0 : 1, at, id),
     ]);
+    try {
+      await new WorkstreamEmailRoutingService(this.env)
+        .ensureAutomationAddress(this.automationRouteInput(id));
+    } catch (error) {
+      if (!isRecoverableEmailRouteTransition(error)) throw error;
+      // The durable regional lifecycle marker intentionally remains stale.
+      // list/get reconciliation will retry the Global transition without
+      // replaying this idempotent pause/resume mutation.
+    }
     await this.refreshScheduler();
   }
 
@@ -345,14 +414,18 @@ export class AutomationService {
     const at = nowIso();
     const schedules = draft.triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
     const nextRunAt = schedules.map((item) => item.nextRunAt).sort()[0] ?? null;
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const routeInput = this.automationRouteInput(subscriptionId);
+    const emailRoute = await emailRouting.reserveAutomation(routeInput);
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO automation_subscriptions
          (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
           execution_principal_json, connector_bindings_json, overrides_json, status,
+          email_address, email_route_status,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'personal', ?, ?, ?, '{}', 'active', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(input.connectorBindings), nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, 'personal', ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(input.connectorBindings), emailRoute.emailAddress, nextRunAt, at, at),
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
          (id, workspace_id, automation_subscription_id, schedule_type, rrule,
@@ -360,8 +433,15 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, at, at)),
     ]);
+    let emailRouteNeedsReconciliation = false;
+    try {
+      await emailRouting.activateAutomationRoute(routeInput);
+    } catch (error) {
+      if (!isRecoverableEmailRouteTransition(error)) throw error;
+      emailRouteNeedsReconciliation = true;
+    }
     if (schedules.length) await this.refreshScheduler();
-    return this.get(subscriptionId);
+    return this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
   }
 
   async adoptVersion(subscriptionId: string, versionId: string) {
@@ -404,17 +484,33 @@ export class AutomationService {
     activityId: string | null,
     start: boolean,
     idempotencyKey: string | null,
+    openingInput: {
+      clientMessageId: string;
+      textContent: string;
+      structuredContent: Record<string, unknown>;
+      resourceId: string;
+    } | null = null,
   ) {
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const routeInputFor = (workstreamId: string) => ({
+      region: this.env.AVALON_REGION,
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+    } as const);
     if (plannedFor) {
       const existing = await this.env.DB.prepare(
         `SELECT r.id AS run_id, r.workstream_id FROM automation_runs r
          WHERE r.automation_subscription_id = ? AND r.planned_for = ?`,
       ).bind(subscription.id, plannedFor).first<{ run_id: string; workstream_id: string }>();
-      if (existing) return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
+      if (existing) {
+        await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstream_id));
+        return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
+      }
     }
     if (idempotencyKey) {
-      const existing = await this.loadIdempotentRun(String(subscription.id), idempotencyKey);
+      const existing = await this.loadIdempotentRun(String(subscription.id), idempotencyKey, openingInput?.clientMessageId ?? null);
       if (existing) {
+        await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstreamId));
         if (start) await this.recoverIdempotentRun(subscription, existing, triggerType, activityId);
         return this.runResponse(existing, true);
       }
@@ -422,17 +518,20 @@ export class AutomationService {
     const runId = newId();
     const workstreamId = newId();
     const harnessRunId = newId();
+    const triggerMessageId = openingInput ? newId() : null;
     const at = nowIso();
+    const routeInput = routeInputFor(workstreamId);
+    const emailRoute = await emailRouting.reserve(routeInput);
     const principal = parseJson<ExecutionPrincipal>(subscription.execution_principal_json, { type: "user", userId: this.auth.userId });
     try {
       const statements = [
         this.env.DB.prepare(
           `INSERT INTO workstreams
-           (id, workspace_id, title, objective, origin_type, automation_subscription_id,
+           (id, workspace_id, title, objective, email_address, email_route_status, origin_type, automation_subscription_id,
             automation_run_id, planned_for, harness_status, next_sequence_number,
            last_activity_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'automation', ?, ?, ?, ?, 1, ?, ?, ?)`,
-        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), subscription.id, runId, plannedFor, "scheduled", at, at, at),
+           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, at, at, at),
         this.env.DB.prepare(
           `INSERT INTO automation_runs
            (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
@@ -440,6 +539,21 @@ export class AutomationService {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).bind(runId, this.auth.workspaceId, subscription.id, workstreamId, triggerType, activityId, plannedFor, null, "scheduled", idempotencyKey, at),
       ];
+      if (openingInput && triggerMessageId) {
+        statements.push(
+          this.env.DB.prepare(
+            `INSERT INTO messages
+             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+              message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
+             VALUES (?, ?, ?, ?, 'system', NULL, 'system', ?, ?, 1, ?, NULL)`,
+          ).bind(triggerMessageId, openingInput.clientMessageId, this.auth.workspaceId, workstreamId, openingInput.textContent, JSON.stringify(openingInput.structuredContent), at),
+          this.env.DB.prepare(
+            `INSERT INTO workstream_resources
+             (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+             VALUES (?, ?, NULL, 0, 'inbound_email', ?)`,
+          ).bind(workstreamId, openingInput.resourceId, at),
+        );
+      }
       if (start) {
         statements.push(this.env.DB.prepare(
           `INSERT INTO harness_runs
@@ -454,17 +568,22 @@ export class AutomationService {
         const existing = await this.env.DB.prepare(
           `SELECT id AS run_id, workstream_id FROM automation_runs WHERE automation_subscription_id = ? AND planned_for = ?`,
         ).bind(subscription.id, plannedFor).first<{ run_id: string; workstream_id: string }>();
-        if (existing) return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
+        if (existing) {
+          await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstream_id));
+          return { runId: existing.run_id, workstreamId: existing.workstream_id, reused: true };
+        }
       }
       if (idempotencyKey && isConstraintError(error)) {
-        const existing = await this.loadIdempotentRun(String(subscription.id), idempotencyKey);
+        const existing = await this.loadIdempotentRun(String(subscription.id), idempotencyKey, openingInput?.clientMessageId ?? null);
         if (existing) {
+          await emailRouting.ensureWorkstreamAddress(routeInputFor(existing.workstreamId));
           if (start) await this.recoverIdempotentRun(subscription, existing, triggerType, activityId);
           return this.runResponse(existing, true);
         }
       }
       throw error;
     }
+    await emailRouting.activateWorkstreamRoute(routeInput);
     if (start) {
       await this.launchAutomationRun(subscription, {
         runId,
@@ -473,22 +592,25 @@ export class AutomationService {
         workflowInstanceId: null,
         runStatus: "scheduled",
         harnessStatus: "scheduled",
+        triggerMessageId,
       }, triggerType, activityId, principal);
     }
     return { runId, workstreamId, ...(start ? { harnessRunId } : {}), reused: false };
   }
 
-  private async loadIdempotentRun(subscriptionId: string, idempotencyKey: string): Promise<IdempotentAutomationRun | null> {
+  private async loadIdempotentRun(subscriptionId: string, idempotencyKey: string, openingClientMessageId: string | null = null): Promise<IdempotentAutomationRun | null> {
     const row = await this.env.DB.prepare(
       `SELECT r.id AS run_id, r.workstream_id, r.status AS run_status,
        r.workflow_instance_id AS run_workflow_instance_id,
        h.id AS harness_run_id, h.status AS harness_status,
-       h.workflow_instance_id AS harness_workflow_instance_id
+       h.workflow_instance_id AS harness_workflow_instance_id,
+       m.id AS trigger_message_id
        FROM automation_runs r
        LEFT JOIN harness_runs h ON h.workstream_id = r.workstream_id
-       WHERE r.workspace_id = ? AND r.automation_subscription_id = ? AND r.idempotency_key = ?
+       LEFT JOIN messages m ON m.workstream_id = r.workstream_id AND m.client_message_id = ?4
+       WHERE r.workspace_id = ?1 AND r.automation_subscription_id = ?2 AND r.idempotency_key = ?3
        ORDER BY h.created_at DESC LIMIT 1`,
-    ).bind(this.auth.workspaceId, subscriptionId, idempotencyKey).first<{
+    ).bind(this.auth.workspaceId, subscriptionId, idempotencyKey, openingClientMessageId).first<{
       run_id: string;
       workstream_id: string;
       run_status: string;
@@ -496,6 +618,7 @@ export class AutomationService {
       harness_run_id: string | null;
       harness_status: string | null;
       harness_workflow_instance_id: string | null;
+      trigger_message_id: string | null;
     }>();
     if (!row) return null;
     return {
@@ -505,6 +628,7 @@ export class AutomationService {
       workflowInstanceId: row.harness_workflow_instance_id ?? row.run_workflow_instance_id,
       runStatus: row.run_status,
       harnessStatus: row.harness_status,
+      triggerMessageId: row.trigger_message_id ?? null,
     };
   }
 
@@ -554,7 +678,7 @@ export class AutomationService {
       workspaceId: this.auth.workspaceId,
       workstreamId: run.workstreamId,
       harnessRunId: run.harnessRunId,
-      triggerMessageId: null,
+      triggerMessageId: run.triggerMessageId,
       automationSubscriptionId: String(subscription.id),
       activityId,
       executionPrincipal: principal,
@@ -634,6 +758,14 @@ export class AutomationService {
     return row;
   }
 
+  private automationRouteInput(automationSubscriptionId: string) {
+    return {
+      region: this.env.AVALON_REGION,
+      workspaceId: this.auth.workspaceId,
+      automationSubscriptionId,
+    } as const;
+  }
+
   private async refreshScheduler(): Promise<void> {
     const schedulers = durableObjectNamespaceForRegion(this.env.WORKSPACE_SCHEDULERS, this.env.AVALON_REGION, this.env.APP_ENV);
     const id = schedulers.idFromName(`${this.env.AVALON_REGION}:${this.auth.workspaceId}`);
@@ -642,13 +774,52 @@ export class AutomationService {
   }
 }
 
+export async function runAutomationFromInboundEmail(
+  env: Env,
+  input: {
+    workspaceId: string;
+    automationSubscriptionId: string;
+    opening: InboundAutomationOpeningInput;
+  },
+) {
+  const subscription = await env.DB.prepare(
+    `SELECT s.scope, s.owner_user_id, t.owner_user_id AS template_owner_user_id
+     FROM automation_subscriptions s
+     JOIN automation_templates t ON t.id = s.template_id
+     WHERE s.id = ? AND s.workspace_id = ? AND t.archived_at IS NULL`,
+  ).bind(input.automationSubscriptionId, input.workspaceId).first<{
+    scope: Scope;
+    owner_user_id: string | null;
+    template_owner_user_id: string;
+  }>();
+  if (!subscription) throw new ApiError(404, "automation_not_found", "Automation not found");
+  const userId = subscription.owner_user_id ?? subscription.template_owner_user_id;
+  const auth: AuthContext = {
+    sessionId: `inbound-email:${input.opening.resendEmailId}`,
+    userId,
+    workspaceId: input.workspaceId,
+    region: env.AVALON_REGION,
+    role: "owner",
+  };
+  return new AutomationService(env, auth)
+    .runFromInboundEmail(input.automationSubscriptionId, input.opening);
+}
+
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+function isRecoverableEmailRouteTransition(error: unknown): boolean {
+  // Service-binding transport failures are not guaranteed to arrive as an
+  // ApiError. Once regional state has committed, fail open into the durable
+  // reserved marker so list/get reconciliation can finish the transition
+  // without making the client retry and create a duplicate automation.
+  if (!(error instanceof ApiError)) return true;
+  return error.status >= 500 || error.code === "automation_email_route_not_found";
 }
 function toAutomationRun(row: Record<string, unknown>) {
   return { id: String(row.id), automationSubscriptionId: String(row.automation_subscription_id), workstreamId: String(row.workstream_id), triggerType: String(row.trigger_type), plannedFor: row.planned_for == null ? null : String(row.planned_for), startedAt: row.started_at == null ? null : String(row.started_at), completedAt: row.completed_at == null ? null : String(row.completed_at), status: String(row.status), resultSummary: row.result_summary == null ? null : String(row.result_summary), createdAt: String(row.created_at) };
 }
 function toWorkstream(row: Record<string, unknown>) {
-  return { id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""), originType: String(row.origin_type), originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id), automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id), plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status), lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at) };
+  return { id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""), emailAddress: row.email_address == null ? null : String(row.email_address), originType: String(row.origin_type), originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id), automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id), plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status), lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at) };
 }

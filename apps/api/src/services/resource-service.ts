@@ -38,6 +38,37 @@ const ENABLE_RESOURCE_WATCH_SQL = `INSERT INTO resource_watches
     next_poll_at = excluded.next_poll_at,
     updated_at = excluded.updated_at`;
 
+/**
+ * Email received through a work-stream address is scoped to the work stream,
+ * even though it has no connector connection to provide a narrower scope.
+ * Keep this predicate aligned with WorkstreamService.requireWorkstream: an
+ * ad-hoc or workspace-automation work stream is workspace-visible, while a
+ * personal-automation work stream is visible only to its owner/participants.
+ *
+ * Checking the resource identity as well as the attachment relationship keeps
+ * the resource private during the short interval between resource creation and
+ * attachment persistence.
+ */
+const INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.resource_type != 'email' OR EXISTS (
+  SELECT 1
+  FROM workstream_resources email_wr
+  JOIN workstreams email_w ON email_w.id = email_wr.workstream_id
+  LEFT JOIN automation_subscriptions email_s ON email_s.id = email_w.automation_subscription_id
+  WHERE email_wr.resource_id = r.id
+    AND email_w.workspace_id = r.workspace_id
+    AND (
+      email_w.automation_subscription_id IS NULL
+      OR email_s.scope = 'workspace'
+      OR email_s.owner_user_id = ?
+      OR EXISTS (
+        SELECT 1 FROM workstream_participants email_p
+        WHERE email_p.workstream_id = email_w.id
+          AND email_p.user_id = ?
+          AND email_p.removed_at IS NULL
+      )
+    )
+))`;
+
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     COALESCE(MAX(CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END), 0) AS watch_enabled
   FROM resources r
@@ -48,6 +79,7 @@ const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
   LEFT JOIN connector_connections c ON c.id = r.connection_id
   WHERE r.id = ? AND r.workspace_id = ?
     AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
+    AND ${INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL}
   GROUP BY r.id`;
 
 export class ResourceService {
@@ -60,8 +92,14 @@ export class ResourceService {
     const filters = [
       "r.workspace_id = ?",
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
+      INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
     ];
-    const bindings: unknown[] = [this.auth.workspaceId, this.auth.userId];
+    const bindings: unknown[] = [
+      this.auth.workspaceId,
+      this.auth.userId,
+      this.auth.userId,
+      this.auth.userId,
+    ];
 
     if (query) {
       const pattern = `%${escapeLikePattern(query)}%`;
@@ -258,7 +296,13 @@ export class ResourceService {
   private async loadResource(id: string): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
       RESOURCE_WITH_WATCH_STATE_SQL,
-    ).bind(id, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
+    ).bind(
+      id,
+      this.auth.workspaceId,
+      this.auth.userId,
+      this.auth.userId,
+      this.auth.userId,
+    ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
     return row;
   }
@@ -391,6 +435,7 @@ function safeFilename(value: string): string {
 
 export const __resourceServiceTesting = {
   enableResourceWatchSql: ENABLE_RESOURCE_WATCH_SQL,
+  inboundEmailResourceVisibilitySql: INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
   resourceWithWatchStateSql: RESOURCE_WITH_WATCH_STATE_SQL,
   encodeResourceCursor,
   decodeResourceCursor,

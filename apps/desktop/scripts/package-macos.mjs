@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { notarizationCredentialMode, prepareNotarizationEnvironment } from './apple-notarization.mjs';
+import { smokeLaunch } from './launch-smoke.mjs';
 
 const mode = process.argv[2] ?? 'local';
 if (!['local', 'release'].includes(mode)) {
@@ -76,6 +77,9 @@ await mkdir(releaseDirectory, { recursive: true });
 const notarizationSecretDirectory = mode === 'release'
   ? await mkdtemp(join(tmpdir(), 'avalon-notarization-'))
   : undefined;
+const smokeUserDataDirectory = mode === 'local'
+  ? await mkdtemp(join(tmpdir(), 'avalon-local-smoke-user-data-'))
+  : undefined;
 try {
   const builderArgs = [
     'exec',
@@ -103,6 +107,7 @@ try {
     await run(process.execPath, [join(desktopDirectory, 'scripts', 'verify-macos-release.mjs'), stagingDirectory]);
   } else {
     await run(process.execPath, [join(desktopDirectory, 'scripts', 'verify-macos-app.mjs'), mode, appPath]);
+    await smokeLaunch(appPath, smokeUserDataDirectory);
   }
   await publishVerifiedBuild();
   console.log(`Published verified ${mode} build to ${publishedDirectory}`);
@@ -112,5 +117,8 @@ try {
 } finally {
   if (notarizationSecretDirectory) {
     await rm(notarizationSecretDirectory, { recursive: true, force: true });
+  }
+  if (smokeUserDataDirectory) {
+    await rm(smokeUserDataDirectory, { recursive: true, force: true });
   }
 }
