@@ -1,3 +1,5 @@
+@import "tw-fade/css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -1278,8 +1280,8 @@ pre {
 .markdown-body blockquote { border-left: 2px solid #4c4d48; color: #aaa9a2; margin: 16px 0; padding: 1px 0 1px 15px; }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
 .markdown-body hr { background: #3a3b37; border: 0; height: 1px; margin: 22px 0; }
-.markdown-table-scroll { margin: 15px -2px 18px; overflow-x: auto; }
-.markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: 1.45; margin: 0; min-width: 480px; table-layout: fixed; width: calc(100% - 1px); }
+.markdown-table-scroll { --tw-fade-scrollbar-thumb: #3a3b35; --tw-fade-scrollbar-width: 9px; margin: 15px -2px 18px; overflow-x: auto; }
+.markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: 1.45; margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
 .markdown-body th,
 .markdown-body td { background: #282826; border: 0; border-radius: 4px; min-width: 120px; padding: 6px 8px; text-align: left; vertical-align: top; }
 .markdown-body th { background: #323230; color: #dfded9; font-weight: 660; }
