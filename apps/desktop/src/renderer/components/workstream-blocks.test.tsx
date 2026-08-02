@@ -73,9 +73,30 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByRole('link', { name: 'docs/bind.md' })).toHaveAttribute('rel', 'noopener noreferrer');
     expect(screen.getByRole('link', { name: 'docs/bind.md' })).toHaveAttribute('target', '_blank');
     expect(screen.getByText('load_tool_group')).toHaveClass('markdown-inline-code');
+    expect(screen.getByRole('table')).toHaveAttribute('data-column-count', '2');
     expect(screen.getByRole('table').parentElement).toHaveClass('markdown-table-scroll');
     expect(document.querySelector('.markdown-body hr')).toBeInTheDocument();
     expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'ts');
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+  });
+
+  it('tracks the column count so wide tables overflow instead of compressing', () => {
+    const wideTableMessage: Message = {
+      ...baseMessage,
+      id: 'message-wide-table',
+      authorType: 'agent',
+      author: undefined,
+      text: [
+        '| Service | Region | Status | Version | Owner | Last deploy | Requests | Error rate |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| API | US West | Healthy | 2.8.4 | Platform | 12m ago | 48,291 | 0.03% |',
+      ].join('\n'),
+    };
+
+    render(<MessageBlock {...actions} message={wideTableMessage} />);
+
+    const table = screen.getByRole('table');
+    expect(table).toHaveAttribute('data-column-count', '8');
+    expect(table.parentElement).toHaveClass('fade-x', 'fade-scrollbar-safe-x');
   });
 });

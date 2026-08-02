@@ -16,6 +16,7 @@ import {
 import { useState } from 'react';
 import { Highlight, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown from 'react-markdown';
+import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
 import type { ActivitySuggestionData, ElicitationData, Message } from '../lib/types';
@@ -121,6 +122,26 @@ function MarkdownCode({ children, className }: React.ComponentProps<'code'>): Re
   );
 }
 
+function MarkdownTable({ children, node, style, ...props }: React.ComponentProps<'table'> & ExtraProps): React.JSX.Element {
+  const section = node?.children.find((child) => child.type === 'element' && (child.tagName === 'thead' || child.tagName === 'tbody'));
+  const row = section?.type === 'element'
+    ? section.children.find((child) => child.type === 'element' && child.tagName === 'tr')
+    : undefined;
+  const columnCount = row?.type === 'element'
+    ? row.children.filter((child) => child.type === 'element' && (child.tagName === 'th' || child.tagName === 'td')).length
+    : 1;
+  const tableStyle = {
+    ...style,
+    '--markdown-table-columns': Math.max(1, columnCount),
+  } as React.CSSProperties;
+
+  return (
+    <div className="markdown-table-scroll fade-x fade-scrollbar-safe-x">
+      <table {...props} data-column-count={columnCount} style={tableStyle}>{children}</table>
+    </div>
+  );
+}
+
 function MarkdownBody({ children }: { children: string }): React.JSX.Element {
   return (
     <div className="markdown-body">
@@ -129,11 +150,7 @@ function MarkdownBody({ children }: { children: string }): React.JSX.Element {
           a: ({ children: linkChildren, ...props }) => <a {...props} rel="noopener noreferrer" target="_blank">{linkChildren}</a>,
           code: MarkdownCode,
           pre: ({ children: preChildren }) => <>{preChildren}</>,
-          table: ({ children: tableChildren }) => (
-            <div className="markdown-table-scroll">
-              <table>{tableChildren}</table>
-            </div>
-          ),
+          table: MarkdownTable,
         }}
         remarkPlugins={[remarkGfm]}
       >

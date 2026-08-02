@@ -42,6 +42,7 @@
     "react-markdown": "latest",
     "react-router-dom": "latest",
     "remark-gfm": "latest",
+    "tw-fade": "^0.8.0",
     "zod": "catalog:",
     "zustand": "latest"
   },
