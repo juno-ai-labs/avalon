@@ -3,6 +3,8 @@ import { createReadStream } from 'node:fs';
 import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 
+import { compareVersions } from './release-lib.mjs';
+
 function requiredString(value, label) {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`${label} is required`);
@@ -73,8 +75,9 @@ export function createPublishedSiteReleaseConfig(current, options) {
     throw new Error('Site release configuration is invalid');
   }
   const version = requiredString(options.version, 'Release version');
-  if (requiredString(current.version, 'Configured release version') !== version) {
-    throw new Error(`Site release version ${String(current.version)} does not match ${version}`);
+  const currentVersion = requiredString(current.version, 'Configured release version');
+  if (compareVersions(currentVersion, version) > 0) {
+    throw new Error(`Refusing to roll site release back from ${currentVersion} to ${version}`);
   }
   const names = options.artifactNames.map((name) => plainFileName(name, 'Release artifact'));
   const dmg = names.filter((name) => name.endsWith('.dmg'));
