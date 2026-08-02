@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '../lib/types';
 import { MessageBlock } from './workstream-blocks';
@@ -98,5 +98,42 @@ describe('MessageBlock markdown', () => {
     const table = screen.getByRole('table');
     expect(table).toHaveAttribute('data-column-count', '8');
     expect(table.parentElement).toHaveClass('fade-x', 'fade-scrollbar-safe-x');
+  });
+
+  it('renders unsupported fenced languages as plain text without losing their label', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-unsupported-language',
+      authorType: 'agent',
+      author: undefined,
+      text: '```mermaid\ngraph TD; A-->B\n```',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.markdown-code-block')).toHaveAttribute('data-language', 'mermaid');
+    expect(document.querySelector('.prism-code')).toHaveClass('language-plain');
+    expect(screen.getByText('graph TD; A-->B')).toBeVisible();
+  });
+
+  it('keeps code copy retryable when clipboard access is unavailable', async () => {
+    const writeText = vi.fn(async () => Promise.reject(new Error('clipboard unavailable')));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-copy-failure',
+      authorType: 'agent',
+      author: undefined,
+      text: '```ts\nconst ready = true;\n```',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('const ready = true;'));
+    expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
   });
 });

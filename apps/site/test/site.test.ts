@@ -11,6 +11,15 @@ import {
 const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+function unpublishedReleaseFixture(): Record<string, unknown> {
+  return {
+    ...JSON.parse(readProjectFile('release.config.json')) as Record<string, unknown>,
+    published: false,
+    sha256: {},
+    publishedAt: null,
+  };
+}
+
 describe('public Avalon site', () => {
   it('presents Avalon as a desktop product without exposing an app sign-in surface', () => {
     const page = readProjectFile('index.html');
@@ -79,31 +88,35 @@ describe('public Avalon site', () => {
     expect(existsSync(new URL('../public/brand/apple-logo.svg', import.meta.url))).toBe(true);
   });
 
-  it('keeps unsigned preview installers unpublished while retaining the future download destination', () => {
+  it('publishes the verified installer while keeping the source template free of stale release links', () => {
     const page = readProjectFile('index.html');
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
 
-    expect(release.published).toBe(false);
+    expect(release.published).toBe(true);
     expect(release.downloadBaseUrl).toBe('https://downloads.with-avalon.com');
     expect(release.bucket).toBe('avalon-desktop-releases');
     expect(release.prefix).toBe('stable/darwin/arm64');
     expect(release.files).toMatchObject({
-      dmg: 'Avalon-0.1.0-arm64.dmg',
-      zip: 'Avalon-0.1.0-arm64-mac.zip',
+      dmg: 'Avalon-0.1.0-mac-arm64.dmg',
+      zip: 'Avalon-0.1.0-mac-arm64.zip',
     });
-    expect(desktopDmgUrl(release)).toBeNull();
+    expect(desktopDmgUrl(release)).toBe(
+      'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon.dmg',
+    );
     expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
     expect(page).toContain('Downloads opening soon');
-    expect(renderDesktopRelease(page, release)).toContain('Downloads opening soon');
+    expect(renderDesktopRelease(page, release)).toContain('Download Avalon for macOS');
   });
 
   it('renders the immutable DMG object only after a release is published', () => {
     const page = readProjectFile('index.html');
+    const base = unpublishedReleaseFixture();
+    const { dmg } = base.files as { dmg: string };
     const release = parseDesktopReleaseConfig({
-      ...JSON.parse(readProjectFile('release.config.json')) as Record<string, unknown>,
+      ...base,
       published: true,
       sha256: {
-        'Avalon-0.1.0-arm64.dmg': 'a'.repeat(64),
+        [dmg]: 'a'.repeat(64),
         'Avalon.dmg': 'a'.repeat(64),
       },
       publishedAt: '2026-08-02T12:00:00.000Z',
@@ -123,11 +136,11 @@ describe('public Avalon site', () => {
 
   it('rediscovers a promoted canonical release during later site deployments', async () => {
     const page = readProjectFile('index.html');
-    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+    const release = parseDesktopReleaseConfig(unpublishedReleaseFixture());
     const fetchRelease: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith('/latest-mac.yml')) {
-        const manifest = 'version: 0.1.0\nfiles:\n  - url: Avalon-0.1.0-arm64-mac.zip\n';
+        const manifest = 'version: 0.1.0\nfiles:\n  - url: Avalon-0.1.0-mac-arm64.zip\n';
         return new Response(manifest, {
           status: 200,
           headers: { 'content-length': String(new TextEncoder().encode(manifest).byteLength) },
@@ -162,12 +175,12 @@ describe('public Avalon site', () => {
   });
 
   it('keeps a genuinely missing release unpublished but rejects inconsistent promotion state', async () => {
-    const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
+    const release = parseDesktopReleaseConfig(unpublishedReleaseFixture());
     const notFound: typeof fetch = async () => new Response(null, { status: 404 });
     const invalidRange: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith('/latest-mac.yml')) {
-        return new Response('version: 0.1.0\nfiles:\n  - url: Avalon-0.1.0-arm64-mac.zip\n');
+        return new Response('version: 0.1.0\nfiles:\n  - url: Avalon-0.1.0-mac-arm64.zip\n');
       }
       if (init?.method === 'HEAD') {
         return new Response(null, { headers: { 'content-length': '42' } });
@@ -186,7 +199,7 @@ describe('public Avalon site', () => {
   });
 
   it('refuses to activate a release whose object map or verification data is inconsistent', () => {
-    const base = JSON.parse(readProjectFile('release.config.json')) as Record<string, unknown>;
+    const base = unpublishedReleaseFixture();
 
     expect(() => parseDesktopReleaseConfig({
       ...base,
