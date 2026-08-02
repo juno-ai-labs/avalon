@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { Highlight, type Language, type PrismTheme } from 'prism-react-renderer';
+import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -74,16 +74,24 @@ const markdownLanguageAliases: Record<string, Language> = {
 
 function MarkdownCodeBlock({ code, language }: { code: string; language: string }): React.JSX.Element {
   const [copied, setCopied] = useState(false);
-  const highlightedLanguage = markdownLanguageAliases[language] ?? language ?? 'plain';
+  const normalizedLanguage = language.trim().toLowerCase() || 'plain';
+  const requestedLanguage = markdownLanguageAliases[normalizedLanguage] ?? normalizedLanguage;
+  const highlightedLanguage: Language = Prism.languages[requestedLanguage]
+    ? requestedLanguage
+    : 'plain';
 
   const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(code);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1_500);
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1_500);
+    } catch {
+      setCopied(false);
+    }
   };
 
   return (
-    <div className="markdown-code-block" data-language={language || 'plain'}>
+    <div className="markdown-code-block" data-language={normalizedLanguage}>
       <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
         {({ className, getLineProps, getTokenProps, style, tokens }) => (
           <pre className={className} style={style}>
