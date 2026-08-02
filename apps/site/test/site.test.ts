@@ -106,6 +106,7 @@ describe('public Avalon site', () => {
     expect(page).not.toMatch(/href="[^"]+\.(?:dmg|zip)"/i);
     expect(page).toContain('Downloads opening soon');
     expect(renderDesktopRelease(page, release)).toContain('Download Avalon for macOS');
+    expect(renderDesktopRelease(page, release)).not.toContain('Preview 0.1.0');
   });
 
   it('renders the immutable DMG object only after a release is published', () => {

@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { notarytoolCredentialArgs } from './apple-notarization.mjs';
 import { writeBlockmap } from './blockmap.mjs';
-import { AVALON_APPLE_TEAM_ID } from './release-lib.mjs';
+import { AVALON_APPLE_TEAM_ID, sha512File } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -78,24 +78,84 @@ function releaseDate(environment = process.env) {
   return new Date().toISOString();
 }
 
-export function macFeedYaml({ version, zipName, sha512, size, date }) {
-  for (const [label, value] of Object.entries({ version, zipName, sha512, date })) {
+export function macFeedYaml({ version, files, date }) {
+  for (const [label, value] of Object.entries({ version, date })) {
     if (!value || typeof value !== 'string' || value.includes('\n')) {
       throw new Error(`Invalid ${label} for latest-mac.yml`);
     }
   }
-  if (!Number.isSafeInteger(size) || size <= 0) throw new Error('Invalid ZIP size for latest-mac.yml');
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('latest-mac.yml must contain at least one file');
+  }
+  const names = new Set();
+  for (const file of files) {
+    if (
+      !file
+      || typeof file.url !== 'string'
+      || !file.url
+      || file.url !== basename(file.url)
+      || file.url.includes('\n')
+      || typeof file.sha512 !== 'string'
+      || !/^[A-Za-z0-9+/]+={0,2}$/u.test(file.sha512)
+      || !Number.isSafeInteger(file.size)
+      || file.size <= 0
+    ) {
+      throw new Error('Invalid file entry for latest-mac.yml');
+    }
+    if (names.has(file.url)) throw new Error(`Duplicate latest-mac.yml file ${file.url}`);
+    names.add(file.url);
+  }
+  const [primary] = files;
+  if (!primary.url.endsWith('.zip')) throw new Error('latest-mac.yml must be ZIP-primary');
   return [
     `version: ${JSON.stringify(version)}`,
     'files:',
-    `  - url: ${JSON.stringify(zipName)}`,
-    `    sha512: ${JSON.stringify(sha512)}`,
-    `    size: ${size}`,
-    `path: ${JSON.stringify(zipName)}`,
-    `sha512: ${JSON.stringify(sha512)}`,
+    ...files.flatMap((file) => [
+      `  - url: ${JSON.stringify(file.url)}`,
+      `    sha512: ${JSON.stringify(file.sha512)}`,
+      `    size: ${file.size}`,
+    ]),
+    `path: ${JSON.stringify(primary.url)}`,
+    `sha512: ${JSON.stringify(primary.sha512)}`,
     `releaseDate: ${JSON.stringify(date)}`,
     '',
   ].join('\n');
+}
+
+/**
+ * electron-builder writes latest-mac.yml after afterAllArtifactBuild returns.
+ * This must therefore run only after the electron-builder process exits, once
+ * its update-info writer can no longer restore the pre-staple DMG metadata.
+ */
+export async function writeFinalMacFeed(outputDirectory, version, environment = process.env) {
+  const names = (await readdir(outputDirectory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name);
+  const zipNames = names.filter((name) => name.endsWith('.zip'));
+  const dmgNames = names.filter((name) => name.endsWith('.dmg'));
+  if (zipNames.length !== 1 || dmgNames.length !== 1) {
+    throw new Error(`Expected exactly one final ZIP and DMG; found ${zipNames.length} ZIP and ${dmgNames.length} DMG`);
+  }
+  const artifactNames = [zipNames[0], dmgNames[0]];
+  for (const name of artifactNames) {
+    if (!name.includes(version) || !name.includes('arm64')) {
+      throw new Error(`Release artifact must include version ${version} and architecture arm64: ${name}`);
+    }
+  }
+  const files = await Promise.all(artifactNames.map(async (url) => {
+    const path = join(outputDirectory, url);
+    const [sha512, metadata] = await Promise.all([sha512File(path), stat(path)]);
+    return { url, sha512, size: metadata.size };
+  }));
+  const feedPath = join(outputDirectory, 'latest-mac.yml');
+  const temporaryFeedPath = join(outputDirectory, `.latest-mac.${process.pid}.tmp`);
+  await writeFile(temporaryFeedPath, macFeedYaml({
+    version,
+    files,
+    date: releaseDate(environment),
+  }));
+  await rename(temporaryFeedPath, feedPath);
+  return { feedPath, files };
 }
 
 export default async function finalizeMacosRelease(buildResult) {
@@ -154,22 +214,8 @@ export default async function finalizeMacosRelease(buildResult) {
   const zipMetadata = await stat(zipPath);
   if (zipInfo.size !== zipMetadata.size) throw new Error('ZIP blockmap size does not match final ZIP bytes');
 
-  const outputDirectory = dirname(zipPath);
-  const feedPath = join(outputDirectory, 'latest-mac.yml');
-  const temporaryFeedPath = join(outputDirectory, `.latest-mac.${process.pid}.tmp`);
-  await writeFile(
-    temporaryFeedPath,
-    macFeedYaml({
-      version,
-      zipName: basename(zipPath),
-      sha512: zipInfo.sha512,
-      size: zipInfo.size,
-      date: releaseDate(),
-    }),
-  );
-  await rename(temporaryFeedPath, feedPath);
   console.log(
-    `Finalized ${basename(dmgPath)} (${dmgInfo.size} bytes) and ZIP-primary ${basename(feedPath)}`,
+    `Finalized ${basename(dmgPath)} (${dmgInfo.size} bytes) and final-byte differential metadata`,
   );
   return [];
 }
