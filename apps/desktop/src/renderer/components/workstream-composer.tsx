@@ -69,6 +69,7 @@ export function WorkstreamComposer({
   onStop,
 }: WorkstreamComposerProps): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const draftRevisionRef = useRef(0);
   const [text, setText] = useState('');
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
@@ -113,6 +114,7 @@ export function WorkstreamComposer({
     : `${participantNames[0] ?? 'Participants'} +${workstream.participants.length - 1}`;
 
   const updateText = (value: string): void => {
+    draftRevisionRef.current += 1;
     setText(value);
     setSlashDismissed(false);
     setSelectedMentions((current) => current.filter((mention) => value.toLocaleLowerCase().includes(`@${mention.label.toLocaleLowerCase()}`)));
@@ -129,7 +131,21 @@ export function WorkstreamComposer({
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   };
 
+  const restoreDraft = (value: string, mentions: MentionIdentity[], revision: number): void => {
+    if (draftRevisionRef.current !== revision) return;
+    setText(value);
+    setSelectedMentions(mentions);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+      textarea.focus();
+    });
+  };
+
   const beginMention = (): void => {
+    draftRevisionRef.current += 1;
     setText((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
     setMentionQuery('');
     setSlashDismissed(true);
@@ -155,6 +171,7 @@ export function WorkstreamComposer({
   };
 
   const insertMention = (candidate: MentionCandidate): void => {
+    draftRevisionRef.current += 1;
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? text.length;
     const before = text.slice(0, caret);
@@ -191,27 +208,31 @@ export function WorkstreamComposer({
       setPendingConfirmation({ text: trimmed, mentions: [...selectedMentions], members: nonparticipants });
       return;
     }
+    const mentions = [...selectedMentions];
+    const revision = draftRevisionRef.current;
+    resetDraft();
     try {
-      await onSend(trimmed, selectedMentions);
-      resetDraft();
+      await onSend(trimmed, mentions);
     } catch {
-      // The parent keeps the draft in place and surfaces the request error.
+      restoreDraft(trimmed, mentions, revision);
     }
   };
 
   const confirmAddAndSend = async (): Promise<void> => {
     if (!pendingConfirmation) return;
+    const submitted = pendingConfirmation;
+    const revision = draftRevisionRef.current;
     setConfirming(true);
+    setPendingConfirmation(null);
+    resetDraft();
     try {
       await onSend(
-        pendingConfirmation.text,
-        pendingConfirmation.mentions,
-        pendingConfirmation.members.map((member) => member.id),
+        submitted.text,
+        submitted.mentions,
+        submitted.members.map((member) => member.id),
       );
-      setPendingConfirmation(null);
-      resetDraft();
     } catch {
-      // Keep the confirmation and draft available for a retry.
+      restoreDraft(submitted.text, submitted.mentions, revision);
     } finally {
       setConfirming(false);
     }

@@ -2,6 +2,7 @@ import { createRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
+import type { MentionIdentity } from '../lib/api';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { WorkstreamComposer } from './workstream-composer';
 
@@ -26,7 +27,7 @@ const workstream: WorkstreamDetail = {
 };
 
 function renderComposer(
-  onSend = vi.fn(async () => undefined),
+  onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void> = vi.fn(async () => undefined),
   onManageParticipants = vi.fn(),
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
@@ -53,6 +54,51 @@ function renderComposer(
 }
 
 describe('WorkstreamComposer mention confirmation', () => {
+  it('clears immediately while a message is still being sent', async () => {
+    let finishSend: (() => void) | undefined;
+    const onSend = vi.fn(() => new Promise<void>((resolve) => {
+      finishSend = resolve;
+    }));
+    renderComposer(onSend);
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: 'Send this now' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(onSend).toHaveBeenCalledWith('Send this now', []);
+    expect(composer).toHaveValue('');
+    finishSend?.();
+  });
+
+  it('restores a failed message unless the user has started a new draft', async () => {
+    const onSend = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    renderComposer(onSend);
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: 'Please retry me' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(composer).toHaveValue('Please retry me'));
+  });
+
+  it('does not replace a new draft when the previous send fails', async () => {
+    let failSend: ((error: Error) => void) | undefined;
+    const onSend = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      failSend = reject;
+    }));
+    renderComposer(onSend);
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: 'First message' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.change(composer, { target: { value: 'New draft' } });
+    failSend?.(new Error('offline'));
+
+    await waitFor(() => expect(composer).toHaveValue('New draft'));
+  });
+
   it('shows active participants above the composer and opens the real participant action', () => {
     const onManageParticipants = vi.fn();
     renderComposer(undefined, onManageParticipants);
