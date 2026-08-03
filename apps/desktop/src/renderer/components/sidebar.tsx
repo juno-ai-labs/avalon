@@ -13,12 +13,12 @@ import {
   Settings,
   Zap,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { formatRelative, groupWorkstreams } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { useUiStore } from '../lib/ui-store';
+import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { Avatar, Badge, IconButton, StatusDot } from './primitives';
 
 interface SidebarProps {
@@ -143,8 +143,24 @@ function WorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React
 
 export function Sidebar({ workspace, automations, workstreams, loading, onSignOut }: SidebarProps): React.JSX.Element {
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
+  const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
+  const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
+  const [resizing, setResizing] = useState(false);
   const groups = groupWorkstreams(workstreams);
+
+  useEffect(() => {
+    if (!resizing) return undefined;
+
+    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX);
+    const stop = (): void => setResizing(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop, { once: true });
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+  }, [resizing, setSidebarWidth]);
 
   return (
     <>
@@ -152,7 +168,7 @@ export function Sidebar({ workspace, automations, workstreams, loading, onSignOu
         <Menu size={17} />
       </IconButton>
       {sidebarOpen && <button aria-label="Close navigation" className="sidebar-scrim" onClick={() => setSidebarOpen(false)} type="button" />}
-      <aside aria-label="Avalon navigation" className={clsx('sidebar', sidebarOpen && 'is-mobile-open')}>
+      <aside aria-label="Avalon navigation" className={clsx('sidebar', sidebarOpen && 'is-mobile-open', resizing && 'is-resizing')}>
         <div className="sidebar-titlebar window-drag">
           <IconButton className="window-no-drag mobile-only" label="Close navigation" onClick={() => setSidebarOpen(false)}>
             <ChevronsLeft size={16} />
@@ -235,6 +251,24 @@ export function Sidebar({ workspace, automations, workstreams, loading, onSignOu
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
+        <div
+          aria-label="Resize navigation"
+          aria-orientation="vertical"
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuemin={MIN_SIDEBAR_WIDTH}
+          aria-valuenow={sidebarWidth}
+          className="sidebar-resizer"
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
+            if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);
+          }}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setResizing(true);
+          }}
+          role="separator"
+          tabIndex={0}
+        />
       </aside>
     </>
   );
