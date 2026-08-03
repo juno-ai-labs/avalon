@@ -1252,7 +1252,7 @@ pre {
 .member-action-list button:hover { background: var(--raised); }
 .member-picker-row > input { opacity: 0; position: absolute; }
 .member-picker-row > span:not(.avatar),
-.member-action-list button > span { display: flex; flex: 1; flex-direction: column; }
+.member-action-list button > span:not(.avatar) { display: flex; flex: 1; flex-direction: column; }
 .member-picker-row strong,
 .member-action-list strong { font-size: 12px; }
 .member-picker-row small,
