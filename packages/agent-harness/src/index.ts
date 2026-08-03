@@ -9,6 +9,12 @@ import {
   AutomationDraftSchema
 } from "@avalon/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
+import {
+  renderAddressingMessages,
+  renderAutomationCompilerMessages,
+} from "./prompts";
+
+export * from "./prompts";
 
 export interface OpenRouterConfig {
   apiKey: string;
@@ -410,21 +416,12 @@ export async function classifyAddressing(input: {
     ...(input.fetch ? { fetch: input.fetch } : {})
   });
   return client.structured({
-    messages: [
-      {
-        role: "system",
-        content:
-          "Classify whether an inherent workplace agent should act. Human-only social or coordination messages may remain unanswered. Return only the schema."
-      },
-      {
-        role: "user",
-        content: JSON.stringify({
-          message: input.message,
-          activeTask: input.activeTask,
-          connectorMentions: input.connectorMentions ?? []
-        })
-      }
-    ],
+    messages: renderAddressingMessages({
+      message: input.message,
+      activeTask: input.activeTask,
+      connectorMentions: input.connectorMentions ?? [],
+      addressesAvalon: input.addressesAvalon ?? /\bavalon\b/iu.test(input.message),
+    }),
     schemaName: "message_addressing",
     jsonSchema: addressingJsonSchema,
     parse: (value) => AddressingClassificationSchema.parse(value),
@@ -523,17 +520,10 @@ export async function compileAutomation(input: {
     ...(input.fetch ? { fetch: input.fetch } : {})
   });
   return client.structured({
-    messages: [
-      {
-        role: "system",
-        content:
-          "Compile a natural-language Avalon automation. Ask one focused follow-up when required. Never invent credentials or connector access. Calendar triggers require an IANA timezone and RRULE; intervals must be at least 60 seconds. In trigger records, set unused fields to null. Encode deterministic filter objects and defaultBehavior as JSON strings. requiredCapabilities is only for external connector grants and may contain only gmail.read, gmail.draft, gmail.send, calendar.read, calendar.write, drive.read, docs.read, docs.write, sheets.read, sheets.write, web.read, github.metadata.read, github.contents.read, github.issues.read, github.issues.write, github.pull_requests.read, github.pull_requests.write, github.actions.read, github.checks.read, linear.read, linear.issue.create, linear.comment.create, linear.write, notion.read, notion.insert, notion.update, notion.comment.read, or notion.comment.insert. It must be empty when the automation needs only Avalon scheduling, model reasoning, summarization, or writing."
-      },
-      ...(input.currentDraft
-        ? [{ role: "system" as const, content: `Current draft: ${JSON.stringify(input.currentDraft)}` }]
-        : []),
-      ...input.messages
-    ],
+    messages: renderAutomationCompilerMessages({
+      messages: input.messages,
+      currentDraft: input.currentDraft ?? null,
+    }),
     schemaName: "automation_draft",
     jsonSchema: automationJsonSchema,
     parse: (value) => AutomationDraftSchema.parse(normalizeAutomationDraft(value)),
