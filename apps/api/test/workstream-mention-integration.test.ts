@@ -21,6 +21,7 @@ vi.mock("../src/services/mention-email-service", () => ({
 
 import { WorkstreamService } from "../src/services/workstream-service";
 import { sendWorkstreamMentionEmail } from "../src/services/mention-email-service";
+import { classifyWorkstreamMessage, startWorkstreamWorkflow } from "../src/services/integrations";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
@@ -31,6 +32,45 @@ const databases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  vi.clearAllMocks();
+});
+
+describe("work-stream addressing", () => {
+  it("invokes Avalon without classifying when only one participant is active", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const result = await service.createMessage(workstreamId, {
+      text: "Tell me more",
+      clientMessageId: "single-participant-message",
+      mentions: [],
+      confirmedParticipantUserIds: [],
+    });
+
+    expect(result.agentInvoked).toBe(true);
+    expect(result.harnessRunId).toEqual(expect.any(String));
+    expect(classifyWorkstreamMessage).not.toHaveBeenCalled();
+    expect(startWorkstreamWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it("keeps multiplayer classification when more than one participant is active", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const result = await service.createMessage(workstreamId, {
+      text: "This is for Ada",
+      clientMessageId: "multi-participant-message",
+      mentions: [],
+      confirmedParticipantUserIds: [],
+    });
+
+    expect(result.agentInvoked).toBe(false);
+    expect(result.harnessRunId).toBeNull();
+    expect(classifyWorkstreamMessage).toHaveBeenCalledOnce();
+    expect(startWorkstreamWorkflow).not.toHaveBeenCalled();
+  });
 });
 
 describe("work-stream person mention persistence", () => {
@@ -115,6 +155,7 @@ function environment(database: DatabaseSync): Env {
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
+    OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "",
   } as unknown as Env;
@@ -131,7 +172,7 @@ function migratedDatabase(): DatabaseSync {
   return database;
 }
 
-function seed(database: DatabaseSync): void {
+function seed(database: DatabaseSync, includeSecondParticipant = true): void {
   database.prepare(
     `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?)`,
@@ -164,8 +205,15 @@ function seed(database: DatabaseSync): void {
   database.prepare(
     `INSERT INTO workstream_participants
      (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-     VALUES (?, ?, ?, 'creator', ?, NULL), (?, ?, ?, 'explicit', ?, NULL)`,
-  ).run(workstreamId, authorId, authorId, at, workstreamId, personId, authorId, at);
+     VALUES (?, ?, ?, 'creator', ?, NULL)`,
+  ).run(workstreamId, authorId, authorId, at);
+  if (includeSecondParticipant) {
+    database.prepare(
+      `INSERT INTO workstream_participants
+       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+       VALUES (?, ?, ?, 'explicit', ?, NULL)`,
+    ).run(workstreamId, personId, authorId, at);
+  }
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {
