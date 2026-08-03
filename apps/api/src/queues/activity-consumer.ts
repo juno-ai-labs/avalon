@@ -1,4 +1,8 @@
-import { OpenRouterClient } from "@avalon/agent-harness";
+import {
+  OpenRouterClient,
+  renderActivityRoutingMessages,
+  renderSemanticTriggerMessages,
+} from "@avalon/agent-harness";
 import {
   ActivityQueueMessageSchema,
   ActivityRoutingResultSchema,
@@ -470,25 +474,16 @@ async function triggerMatches(
 
   const client = structuredClient(env);
   const result = await client.structured({
-    messages: [
-      {
-        role: "system",
-        content: "Decide whether the compact activity matches the automation condition. Return only the schema."
+    messages: renderSemanticTriggerMessages({
+      condition: trigger.condition,
+      activity: {
+        provider: activity.provider,
+        eventType: activity.event_type,
+        title: activity.title,
+        summary: activity.summary,
+        textSnippet: activity.text_snippet.slice(0, 2_000),
       },
-      {
-        role: "user",
-        content: JSON.stringify({
-          condition: trigger.condition,
-          activity: {
-            provider: activity.provider,
-            eventType: activity.event_type,
-            title: activity.title,
-            summary: activity.summary,
-            textSnippet: activity.text_snippet.slice(0, 2_000)
-          }
-        })
-      }
-    ],
+    }),
     schemaName: "semantic_activity_trigger",
     jsonSchema: semanticTriggerJsonSchema,
     parse: (value) => SemanticTriggerResultSchema.parse(value)
@@ -640,32 +635,22 @@ async function routeContextually(
   if (eligible.length === 0) return;
 
   const result = await structuredClient(env).structured({
-    messages: [
-      {
-        role: "system",
-        content:
-          "Route one compact workplace activity to at most one candidate. Semantic relevance only creates a suggestion; use null for weak matches. Return only the schema."
+    messages: renderActivityRoutingMessages({
+      activity: {
+        provider: activity.provider,
+        eventType: activity.event_type,
+        title: activity.title,
+        summary: activity.summary,
+        textSnippet: activity.text_snippet.slice(0, 2_000),
+        entityKeys: parseStrings(activity.entity_keys_json),
       },
-      {
-        role: "user",
-        content: JSON.stringify({
-          activity: {
-            provider: activity.provider,
-            eventType: activity.event_type,
-            title: activity.title,
-            summary: activity.summary,
-            textSnippet: activity.text_snippet.slice(0, 2_000),
-            entityKeys: parseStrings(activity.entity_keys_json)
-          },
-          candidates: eligible.map((candidate) => ({
-            id: candidate.id,
-            title: candidate.title,
-            objective: candidate.objective.slice(0, 1_000),
-            lastActivityAt: candidate.last_activity_at
-          }))
-        })
-      }
-    ],
+      candidates: eligible.map((candidate) => ({
+        id: candidate.id,
+        title: candidate.title,
+        objective: candidate.objective.slice(0, 1_000),
+        lastActivityAt: candidate.last_activity_at,
+      })),
+    }),
     schemaName: "activity_workstream_route",
     jsonSchema: routingJsonSchema,
     parse: (value) => ActivityRoutingResultSchema.parse(value)
