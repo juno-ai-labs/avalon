@@ -17,12 +17,14 @@ export interface DesktopSession {
     email: string;
     name: string;
     avatarUrl?: string;
+    timezone?: string;
   };
   workspace: {
     id: string;
     name: string;
     region: AvalonRegion;
     role: 'owner' | 'admin' | 'member';
+    timezone?: string;
   } | null;
 }
 

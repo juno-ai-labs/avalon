@@ -9,6 +9,7 @@ import {
   type HarnessEvent,
   type HarnessTool,
   type ModelMessage,
+  type StructuredModelDiagnostic,
 } from "@avalon/agent-harness";
 import type {
   AddressingClassification,
@@ -36,6 +37,7 @@ import {
   FirecrawlClient,
   FirecrawlError,
 } from "../lib/firecrawl";
+import { logStructuredEvent } from "../observability/logger";
 
 const TOOL_REPLAY_MAX_BYTES = 256_000;
 
@@ -69,7 +71,13 @@ export async function classifyWorkstreamMessage(
 
 export async function compileAutomationDraft(
   env: Env,
-  input: { messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null },
+  input: {
+    messages: Array<{ role: "user" | "assistant"; content: string }>;
+    currentDraft?: AutomationDraft | null;
+    defaultTimezones: { personal: string; workspace: string };
+    requestId: string;
+    workspaceId: string;
+  },
 ): Promise<AutomationDraft> {
   return compileAutomation({
     apiKey: env.OPENROUTER_API_KEY,
@@ -77,6 +85,23 @@ export async function compileAutomationDraft(
     fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
     messages: input.messages,
     currentDraft: input.currentDraft ?? null,
+    defaultTimezones: input.defaultTimezones,
+    onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
+      logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
+        request_id: input.requestId,
+        workspace_id: input.workspaceId,
+        stage: diagnostic.stage,
+        schema_name: diagnostic.schemaName,
+        provider: "openrouter",
+        model: diagnostic.model,
+        attempt: diagnostic.attempt,
+        fallback_attempt: diagnostic.fallbackAttempt,
+        repair_attempt: diagnostic.repairAttempt,
+        latency_ms: diagnostic.latencyMs,
+        response_bytes: diagnostic.responseBytes,
+        validation_issues: diagnostic.validationIssues,
+      });
+    },
   });
 }
 
@@ -1286,6 +1311,8 @@ export async function pollConnectorConnection(
     return { activityIds: [], cursor: context.cursor, baseCursorJson, nextPollAt: null };
   }
   const result = await withConnectorCredentialLifecycle(env, context, async () => {
+    const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
+    const signal = AbortSignal.timeout(pollTimeoutMs);
     if (
       adapter.refreshCredentials &&
       typeof context.credentials.expiresAt === "string" &&
@@ -1293,11 +1320,11 @@ export async function pollConnectorConnection(
     ) {
       credentials = await adapter.refreshCredentials(
         context,
-        AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)),
+        signal,
       );
       context.credentials = credentials;
     }
-    return adapter.poll!(context, AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)));
+    return adapter.poll!(context, signal);
   });
   const activityIds = new Set<string>();
   for (const activity of result.activities) {

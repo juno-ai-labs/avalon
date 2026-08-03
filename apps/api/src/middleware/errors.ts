@@ -43,7 +43,7 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     code,
     status,
     error_name: error.name,
-    error_message: error.message,
+    detail_keys: details ? Object.keys(details).slice(0, 25) : [],
   });
 
   return c.json(

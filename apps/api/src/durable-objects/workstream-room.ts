@@ -52,6 +52,7 @@ interface UserRow {
   email: string;
   name: string;
   avatar_url: string | null;
+  timezone: string;
   created_at: string;
 }
 
@@ -77,6 +78,7 @@ function userFromRow(row: UserRow): User {
     email: row.email,
     name: row.name,
     avatarUrl: row.avatar_url,
+    timezone: row.timezone,
     createdAt: row.created_at
   };
 }

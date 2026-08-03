@@ -14,12 +14,13 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 
-const currentUser = { id: 'user-1', name: 'Adam Juhasz', email: 'adam@example.com' };
-const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com' };
+const currentUser = { id: 'user-1', name: 'Adam Juhasz', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
+const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Avalon Studio',
   region: 'global',
+  timezone: 'America/Los_Angeles',
   currentUser,
 };
 

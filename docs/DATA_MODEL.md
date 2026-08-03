@@ -45,7 +45,7 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 3. A human authoring a message or elicitation answer is upserted as a participant in the same operation.
 4. A personal activity is never promoted to workspace scope implicitly.
 5. Repeated provider events, Queue deliveries, alarms, workflow steps, client messages, and tool calls converge on unique keys.
-6. Canonical timestamps are UTC ISO-8601 strings. Calendar intent separately retains its IANA timezone.
+6. Canonical timestamps are UTC ISO-8601 strings. Every user and workspace retains a validated IANA timezone. Calendar intent separately retains its explicit IANA timezone; omitted automation timezones resolve in the order explicit trigger, personal user, then workspace.
 7. R2 objects are addressed through opaque references; raw provider payloads do not enter Queue or Workflow inputs.
 
 ## Migration policy

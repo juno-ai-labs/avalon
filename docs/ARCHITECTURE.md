@@ -34,6 +34,8 @@ flowchart LR
 
 Canonical product state lives in D1. Large activity payloads, uploads, snapshots, and artifacts live in R2 with relational metadata in D1. Durable Objects coordinate ordering, presence, sockets, and alarms but are not canonical stores.
 
+Users and workspaces each own a validated IANA timezone. The desktop detects the local system timezone during native authentication, while browser or unavailable detection falls back to `America/Los_Angeles`. Workspace defaults are `America/Los_Angeles` in Global and `Europe/London` in EU. Automation compilation preserves explicit trigger timezones and otherwise resolves personal or workspace defaults according to scope before final schema validation.
+
 ## Region boundary
 
 Google sign-in has one platform endpoint: the Global control plane at `api.with-avalon.com`. It creates a short-lived, identity-only bootstrap session and then discovers the user's existing workspace memberships and pending invitations in both regions. Only users with neither receive the post-auth workspace-region selector. Existing members activate their workspace directly, while invited users can accept or decline the invitation in its issuing region without a second Google sign-in.

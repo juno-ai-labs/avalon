@@ -65,13 +65,15 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly details?: unknown;
+  readonly requestId?: string;
 
-  constructor(message: string, status: number, code?: string, details?: unknown) {
+  constructor(message: string, status: number, code?: string, details?: unknown, requestId?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
 }
 
@@ -141,6 +143,7 @@ function mapUser(user: WireUser): WorkspaceMember {
     email: user.email,
     name: user.name,
     ...(user.avatarUrl ? { avatarUrl: user.avatarUrl } : {}),
+    timezone: user.timezone,
   };
 }
 
@@ -462,13 +465,14 @@ export class AvalonApi {
   private async throwResponseError(response: Response): Promise<never> {
     const payload: unknown = await response.json().catch(() => null);
     const nested = payload && typeof payload === 'object' && 'error' in payload
-      ? (payload as { error?: { code?: string; message?: string; details?: unknown } }).error
+      ? (payload as { error?: { code?: string; message?: string; details?: unknown; requestId?: string } }).error
       : undefined;
     throw new ApiError(
       nested?.message ?? `Request failed with status ${response.status}`,
       response.status,
       nested?.code,
       nested?.details,
+      nested?.requestId,
     );
   }
 
@@ -509,7 +513,7 @@ export class AvalonApi {
   async getWorkspace(signal?: AbortSignal): Promise<Workspace> {
     const raw = await this.request('/workspace', { schema: WireWorkspaceSchema, signal });
     let currentUser: WorkspaceMember | undefined = this.session?.user
-      ? { ...this.session.user, role: raw.role }
+      ? { ...this.session.user, timezone: this.session.user.timezone ?? 'America/Los_Angeles', role: raw.role }
       : undefined;
     if (!currentUser) {
       const members = await this.getWorkspaceMembers(signal);
@@ -517,7 +521,24 @@ export class AvalonApi {
       currentUser = matched ? { ...matched, role: raw.role } : undefined;
     }
     if (!currentUser) throw new ApiError('The signed-in user is missing from this workspace.', 401, 'session_profile_missing');
-    return { id: raw.id, name: raw.name, region: raw.region, currentUser };
+    return { id: raw.id, name: raw.name, region: raw.region, timezone: raw.timezone, currentUser };
+  }
+
+  async updateMyTimezone(timezone: string): Promise<WorkspaceMember> {
+    const user = await this.request('/workspace/me', {
+      method: 'PATCH',
+      body: { timezone },
+      schema: z.object({
+        id: z.string(), email: z.string(), name: z.string(), avatarUrl: z.string().nullable(),
+        timezone: z.string(), createdAt: z.string(),
+      }),
+    });
+    return mapUser(user);
+  }
+
+  async updateWorkspaceTimezone(timezone: string): Promise<Workspace> {
+    await this.request('/workspace', { method: 'PATCH', body: { timezone }, schema: WireWorkspaceSchema });
+    return this.getWorkspace();
   }
 
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {

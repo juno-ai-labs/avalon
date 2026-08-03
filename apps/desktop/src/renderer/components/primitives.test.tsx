@@ -1,7 +1,7 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it } from 'vitest';
-import { AvalonMark, StatusDot } from './primitives';
+import { describe, expect, it, vi } from 'vitest';
+import { AvalonMark, DropdownSelect, StatusDot } from './primitives';
 
 describe('AvalonMark', () => {
   it('renders the shared mask-backed brand mark without the retired starburst SVG', () => {
@@ -32,5 +32,24 @@ describe('StatusDot', () => {
 
     expect(screen.getByText('Running')).toBeVisible();
     expect(screen.getByText('Running').parentElement).toHaveClass('status-running');
+  });
+});
+
+describe('DropdownSelect', () => {
+  it('renders the secondary settings treatment with an accessible trigger', () => {
+    render(
+      <DropdownSelect
+        ariaLabel="Personal default timezone"
+        onValueChange={vi.fn()}
+        options={[{ label: 'Pacific time', value: 'America/Los_Angeles' }]}
+        value="America/Los_Angeles"
+        variant="secondary"
+      />,
+    );
+
+    const trigger = screen.getByRole('combobox', { name: 'Personal default timezone' });
+    expect(trigger).toHaveClass('dropdown-select-trigger-secondary');
+    fireEvent.click(trigger);
+    expect(screen.getByRole('option', { name: 'Pacific time' })).toBeVisible();
   });
 });

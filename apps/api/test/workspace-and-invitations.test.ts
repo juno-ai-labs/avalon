@@ -571,11 +571,13 @@ describe("desktop login ticket PKCE binding", () => {
     email: "member@example.com",
     user_name: "Member",
     avatar_url: null,
+    user_timezone: "America/Los_Angeles",
     user_created_at: "2026-08-01T00:00:00.000Z",
     workspace_id: invitationRow.workspace_id,
     workspace_name: invitationRow.workspace_name,
     workspace_slug: "avalon-studio",
     workspace_region: "global" as const,
+    workspace_timezone: "America/Los_Angeles",
     workspace_created_at: "2026-08-01T00:00:00.000Z",
     role: "member" as const,
   };

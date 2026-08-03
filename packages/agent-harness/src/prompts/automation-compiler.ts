@@ -34,7 +34,7 @@ const automationCapabilities = [
 
 const SYSTEM_PROMPT = `Compile the conversation into one executable Avalon automation draft.
 
-Work autonomously. Preserve choices already established in the conversation or current draft, infer reasonable defaults, and ask exactly one focused follow-up only when a required timezone, resource identifier, event source, destination, or unsupported scheduling shape prevents execution. Never invent credentials, access, resource IDs, or provider event names.
+Work autonomously. Preserve choices already established in the conversation or current draft, infer reasonable defaults, and ask exactly one focused follow-up only when a required resource identifier, event source, destination, or unsupported scheduling shape prevents execution. Avalon applies the relevant user or workspace default when a calendar timezone is omitted. Never invent credentials, access, resource IDs, or provider event names.
 
 Draft quality:
 - Use a concise, outcome-oriented name and description.

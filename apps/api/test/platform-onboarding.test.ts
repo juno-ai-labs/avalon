@@ -44,6 +44,7 @@ const identity: PlatformIdentity = {
   email: "member@example.com",
   name: "Member",
   avatarUrl: null,
+  timezone: "America/Los_Angeles",
   createdAt: at,
 };
 
@@ -54,6 +55,7 @@ function workspace(region: Region, id: string): Workspace {
     slug: region === "eu" ? "europe-research" : "global-research",
     region,
     role: "member",
+    timezone: region === "eu" ? "Europe/London" : "America/Los_Angeles",
     createdAt: at,
   };
 }
@@ -69,6 +71,7 @@ function session(region: Region, workspaceId: string): Session {
       email: identity.email,
       name: identity.name,
       avatarUrl: null,
+      timezone: "America/Los_Angeles",
       createdAt: at,
     },
     workspace: workspace(region, workspaceId),
@@ -108,6 +111,7 @@ class IdentityDatabase {
               email: identity.email,
               name: identity.name,
               avatar_url: null,
+              timezone: identity.timezone,
               created_at: at,
               platform_user_id: platformUserId,
             } as T;

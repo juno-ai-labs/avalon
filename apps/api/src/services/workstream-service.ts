@@ -580,7 +580,7 @@ export class WorkstreamService {
   private async loadMessageByClientId(workstreamId: string, clientMessageId: string): Promise<Message | null> {
     const row = await this.env.DB.prepare(
       `SELECT m.*, u.email AS author_email, u.name AS author_name,
-         u.avatar_url AS author_avatar_url, u.created_at AS author_created_at,
+         u.avatar_url AS author_avatar_url, u.timezone AS author_timezone, u.created_at AS author_created_at,
          COALESCE((SELECT json_group_array(json_object(
            'type', mm.mention_type,
            'userId', mm.mentioned_user_id,
@@ -610,6 +610,7 @@ export class WorkstreamService {
               email: String(row.author_email),
               name: String(row.author_name),
               avatarUrl: row.author_avatar_url == null ? null : String(row.author_avatar_url),
+              timezone: String(row.author_timezone),
               createdAt: String(row.author_created_at),
             },
           }
@@ -782,7 +783,7 @@ export class WorkstreamService {
        WHERE p.workstream_id = ? AND p.removed_at IS NULL ORDER BY p.joined_at`,
     ).bind(id).all<Record<string, unknown>>();
     return (result.results ?? []).map((row) => ({
-      user: { id: String(row.id), email: String(row.email), name: String(row.name), avatarUrl: row.avatar_url == null ? null : String(row.avatar_url), createdAt: String(row.created_at) },
+      user: { id: String(row.id), email: String(row.email), name: String(row.name), avatarUrl: row.avatar_url == null ? null : String(row.avatar_url), timezone: String(row.timezone), createdAt: String(row.created_at) },
       participationReason: String(row.participation_reason),
       joinedAt: String(row.joined_at),
     }));

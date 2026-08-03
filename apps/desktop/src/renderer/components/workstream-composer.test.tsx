@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { WorkstreamComposer } from './workstream-composer';
 
-const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com' };
-const bob: WorkspaceMember = { id: 'user-2', name: 'Bob Builder', email: 'bob@example.com' };
-const cara: WorkspaceMember = { id: 'user-3', name: 'Cara Chen', email: 'cara@example.com' };
+const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
+const bob: WorkspaceMember = { id: 'user-2', name: 'Bob Builder', email: 'bob@example.com', timezone: 'America/Los_Angeles' };
+const cara: WorkspaceMember = { id: 'user-3', name: 'Cara Chen', email: 'cara@example.com', timezone: 'America/Los_Angeles' };
 
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',

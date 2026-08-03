@@ -94,6 +94,7 @@ function toMessage(row: Record<string, unknown>): Message {
             email: String(row.author_email),
             name: String(row.author_name),
             avatarUrl: row.author_avatar_url == null ? null : String(row.author_avatar_url),
+            timezone: String(row.author_timezone),
             createdAt: String(row.author_created_at)
           }
         }
@@ -304,7 +305,7 @@ export function createDatabase(db: D1DatabaseLike) {
       const row = await db
         .prepare(
           `SELECT m.*, u.email AS author_email, u.name AS author_name,
-             u.avatar_url AS author_avatar_url, u.created_at AS author_created_at,
+             u.avatar_url AS author_avatar_url, u.timezone AS author_timezone, u.created_at AS author_created_at,
              '[]' AS mentions_json
            FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
            WHERE m.workstream_id = ? AND m.client_message_id = ?`
@@ -325,7 +326,7 @@ export function createDatabase(db: D1DatabaseLike) {
       const result = await db
         .prepare(
           `SELECT m.*, u.email AS author_email, u.name AS author_name,
-             u.avatar_url AS author_avatar_url, u.created_at AS author_created_at,
+             u.avatar_url AS author_avatar_url, u.timezone AS author_timezone, u.created_at AS author_created_at,
              COALESCE((SELECT json_group_array(json_object(
                'type', mm.mention_type,
                'userId', mm.mentioned_user_id,

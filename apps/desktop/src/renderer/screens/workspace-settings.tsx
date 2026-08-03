@@ -3,6 +3,7 @@ import {
   Building2,
   CalendarDays,
   Check,
+  Clock3,
   Copy,
   FileText,
   GitBranch,
@@ -26,7 +27,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Avatar, Badge, Button, EmptyState, InlineError } from '../components/primitives';
+import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -60,6 +61,9 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
 ];
 
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
+const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
+  ? Intl.supportedValuesOf('timeZone')
+  : ['America/Los_Angeles', 'Europe/London', 'UTC'];
 
 const connectorProviders = [
   {
@@ -172,6 +176,12 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [createdDelivery, setCreatedDelivery] = useState<'sent' | 'skipped' | null>(null);
   const [copied, setCopied] = useState(false);
+  const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
+  const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
+  const timezoneOptions = useMemo(
+    () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
+    [userTimezone, workspaceTimezone],
+  );
   const isAdmin = workspace.currentUser.role === 'owner' || workspace.currentUser.role === 'admin';
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -219,6 +229,14 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const revokeInvitation = useMutation({
     mutationFn: (id: string) => api!.revokeWorkspaceInvitation(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-invitations'] }),
+  });
+  const updateUserTimezone = useMutation({
+    mutationFn: (timezone: string) => api!.updateMyTimezone(timezone),
+    onSuccess: (user) => setUserTimezone(user.timezone),
+  });
+  const updateWorkspaceTimezone = useMutation({
+    mutationFn: (timezone: string) => api!.updateWorkspaceTimezone(timezone),
+    onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
   });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
@@ -353,6 +371,25 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   <span><strong>{workspace.currentUser.name}</strong><small>{workspace.currentUser.email}</small></span>
                   <Badge className="role-badge">{workspace.currentUser.role}</Badge>
                 </div>
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Preferences</h2></div>
+                <div className="settings-list-card">
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy"><strong>Default timezone</strong><small>Used for your personal automations when no timezone is specified.</small></span>
+                    <DropdownSelect
+                      ariaLabel="Personal default timezone"
+                      disabled={updateUserTimezone.isPending}
+                      onValueChange={(timezone) => {
+                        setUserTimezone(timezone);
+                        updateUserTimezone.mutate(timezone);
+                      }}
+                      options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
+                      value={userTimezone}
+                      variant="secondary"
+                    />
+                  </label>
+                </div>
+                {updateUserTimezone.error && <InlineError>{updateUserTimezone.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Session</h2></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
@@ -366,6 +403,25 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
 
             {activeSection === 'workspace' && (
               <section aria-labelledby="settings-title" className="settings-pane">
+                <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Defaults shared by workspace automations.</p></div>
+                <div className="settings-list-card">
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy"><strong>Default timezone</strong><small>Used when a workspace automation does not specify a timezone.</small></span>
+                    <DropdownSelect
+                      ariaLabel="Workspace default timezone"
+                      disabled={!isAdmin || updateWorkspaceTimezone.isPending}
+                      onValueChange={(timezone) => {
+                        setWorkspaceTimezone(timezone);
+                        updateWorkspaceTimezone.mutate(timezone);
+                      }}
+                      options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
+                      value={workspaceTimezone}
+                      variant="secondary"
+                    />
+                  </label>
+                </div>
+                {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2>Members</h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>

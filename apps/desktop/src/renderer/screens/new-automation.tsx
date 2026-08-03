@@ -16,6 +16,7 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { ApiError } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationDraftResponse, WorkspaceTemplate, WorkstreamConnection } from '../lib/types';
 import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
@@ -395,7 +396,19 @@ export function NewAutomationScreen(): React.JSX.Element {
                   </button>
                 </div>
                 {(compile.error || create.error || connectProvider.error || connections.error) && (
-                  <InlineError>{compile.error?.message ?? create.error?.message ?? connectProvider.error?.message ?? connections.error?.message}</InlineError>
+                  <div className="automation-error-actions">
+                    <InlineError>
+                      {compile.error?.message ?? create.error?.message ?? connectProvider.error?.message ?? connections.error?.message}
+                      {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
+                    </InlineError>
+                    {compile.error && compile.variables?.message && (
+                      <Button onClick={() => compile.mutate(compile.variables!)}>Retry</Button>
+                    )}
+                    {compile.error instanceof ApiError && compile.error.requestId && (() => {
+                      const requestId = compile.error.requestId;
+                      return <Button onClick={() => void desktopBridge().copyText(requestId)}>Copy request ID</Button>;
+                    })()}
+                  </div>
                 )}
                 {draft?.summary && <p className="keep-editing-hint">Keep editing by describing what should change.</p>}
               </div>

@@ -9,7 +9,8 @@ const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Avalon Studio',
   region: 'global',
-  currentUser: { id: 'user-1', name: 'Adam', email: 'adam@example.com' },
+  timezone: 'America/Los_Angeles',
+  currentUser: { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
 };
 
 function workstream(
