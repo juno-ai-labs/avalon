@@ -1224,6 +1224,23 @@ pre {
 .waiting-workstream-source,
 .waiting-workstream-row time { color: #6f6f68; font-size: 10px; white-space: nowrap; }
 .waiting-workstream-row > svg { color: #77766f; }
+.onboarding-checklist { background: #242521; border: 1px solid #3b3c36; border-radius: 14px; margin-top: 46px; max-width: 480px; padding: 22px 22px 20px; }
+.onboarding-checklist > header { align-items: baseline; display: flex; justify-content: space-between; }
+.onboarding-checklist > header h2 { color: var(--ink); font-size: 15px; font-weight: 530; margin: 0; }
+.onboarding-checklist > header span { color: var(--muted); font-size: 12px; }
+.onboarding-progress { background: #11120f; border-radius: 999px; height: 8px; margin: 13px 0 17px; overflow: hidden; }
+.onboarding-progress > span { background: var(--brand); border-radius: inherit; display: block; height: 100%; transition: width 180ms ease; }
+.onboarding-items { display: grid; gap: 2px; }
+.onboarding-items > button { align-items: flex-start; background: transparent; border-radius: 9px; color: var(--ink); display: flex; gap: 12px; padding: 9px 6px; text-align: left; width: 100%; }
+.onboarding-items > button:hover { background: #2b2c28; }
+.onboarding-items > button:focus-visible { box-shadow: inset 0 0 0 1px var(--blue); outline: 0; }
+.onboarding-check { align-items: center; border: 1px solid #50514b; border-radius: 999px; color: #15202a; display: flex; flex: 0 0 auto; height: 24px; justify-content: center; margin-top: 1px; width: 24px; }
+.onboarding-item-copy { display: flex; flex-direction: column; min-width: 0; }
+.onboarding-item-copy strong { font-size: 14px; font-weight: 500; line-height: 1.35; }
+.onboarding-item-copy small { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 2px; }
+.onboarding-items > button.is-complete .onboarding-check { background: var(--brand); border-color: var(--brand); }
+.onboarding-items > button.is-complete strong { color: var(--muted); text-decoration: line-through; }
+.onboarding-items > button.is-complete small { opacity: 0.68; }
 .new-workstream-launcher { margin: 0 auto; max-width: 860px; padding: 12px 34px 28px; width: 100%; }
 .new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: 690px; }
 .participant-modifier,
