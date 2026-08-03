@@ -3,14 +3,26 @@ import { useUiStore } from './ui-store';
 
 describe('context rail state', () => {
   beforeEach(() => {
+    window.localStorage.clear();
     useUiStore.setState({
       sidebarOpen: false,
+      sidebarWidth: 300,
       railOpen: false,
       railVariant: 'context',
       railWidth: 360,
       railExpanded: false,
       inspector: null,
     });
+  });
+
+  it('clamps and persists sidebar resizing', () => {
+    useUiStore.getState().setSidebarWidth(120);
+    expect(useUiStore.getState().sidebarWidth).toBe(260);
+    expect(window.localStorage.getItem('avalon.sidebar-width')).toBe('260');
+
+    useUiStore.getState().setSidebarWidth(900);
+    expect(useUiStore.getState().sidebarWidth).toBe(480);
+    expect(window.localStorage.getItem('avalon.sidebar-width')).toBe('480');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {

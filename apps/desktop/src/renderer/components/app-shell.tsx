@@ -15,6 +15,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
+  const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const automations = useQuery({
     queryKey: ['automations'],
     queryFn: ({ signal }) => api!.getAutomations(signal),
@@ -30,6 +31,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   const shellStyle = {
     '--rail-width': `${railExpanded ? Math.max(520, railWidth) : railWidth}px`,
+    '--sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 
   return (
