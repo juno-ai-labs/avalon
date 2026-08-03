@@ -87,6 +87,7 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [Operations runbook](docs/RUNBOOK.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 - [Monad harness/runtime reuse assessment](docs/MONAD_REUSE.md)
+- [`@juno-ai/bind` migration plan](docs/BIND_MIGRATION.md)
 
 ## Hosted deployment
 

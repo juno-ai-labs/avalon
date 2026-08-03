@@ -4,6 +4,16 @@ An assessment of what Avalon's `packages/agent-harness` and API runtime can take
 from the Monad repository (`juno-ai-labs/monad`), written against Avalon `447c68b`
 and Monad `b1fe057a`.
 
+> **Superseded in part — read [`BIND_MIGRATION.md`](./BIND_MIGRATION.md) for the
+> execution plan.** This document's *reasoning* still holds, but its **tier
+> assignments are stale**. It was written against `@juno-ai/bind@2.0.0`; the
+> published package is now `5.0.0`, and Monad's extraction work has promoted six
+> of the eight sequenced items below from "port the file" or "adopt the design"
+> to plain dependencies — including the streaming watchdog (§3.1), the
+> tool-schema sanitizer (§2.1), the deadline primitives (§2.2), and per-tool
+> batch pooling (§3.3). Treat the tiers here as history and the sequencing table
+> at the end as replaced.
+
 Monad splits its agent stack in two:
 
 - **`packages/bind`** — the extractable harness, published to npm as
