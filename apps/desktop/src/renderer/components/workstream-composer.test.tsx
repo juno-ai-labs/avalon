@@ -28,7 +28,6 @@ const workstream: WorkstreamDetail = {
 
 function renderComposer(
   onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void> = vi.fn(async () => undefined),
-  onManageParticipants = vi.fn(),
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -41,7 +40,6 @@ function renderComposer(
         fileInputRef={createRef<HTMLInputElement>()}
         members={[creator, bob, cara]}
         onAttach={async () => undefined}
-        onManageParticipants={onManageParticipants}
         onSend={onSend}
         onStop={async () => undefined}
         sending={false}
@@ -99,15 +97,11 @@ describe('WorkstreamComposer mention confirmation', () => {
     await waitFor(() => expect(composer).toHaveValue('New draft'));
   });
 
-  it('shows active participants above the composer and opens the real participant action', () => {
-    const onManageParticipants = vi.fn();
-    renderComposer(undefined, onManageParticipants);
+  it('does not repeat participant controls above the in-workstream composer', () => {
+    renderComposer();
 
-    expect(screen.getByLabelText('Work-stream participants')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Manage participants: Adam' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add people' }));
-
-    expect(onManageParticipants).toHaveBeenCalledTimes(2);
+    expect(screen.queryByLabelText('Work-stream participants')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument();
   });
 
   it('filters functional slash commands and opens participant mentions from the keyboard', async () => {

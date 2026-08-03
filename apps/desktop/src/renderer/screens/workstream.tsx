@@ -568,7 +568,6 @@ export function WorkstreamScreen(): React.JSX.Element {
           onAttach={async (file) => {
             await upload.mutateAsync(file);
           }}
-          onManageParticipants={() => setParticipantDialogOpen(true)}
           onSend={sendMessage}
           onStop={async () => {
             await stop.mutateAsync();

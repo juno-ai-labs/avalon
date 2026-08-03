@@ -1,10 +1,10 @@
 import clsx from 'clsx';
-import { ArrowUp, AtSign, LoaderCircle, Paperclip, Plus, Square, UserPlus } from 'lucide-react';
+import { ArrowUp, AtSign, LoaderCircle, Paperclip, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { MentionIdentity } from '../lib/api';
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
-import { Avatar, AvatarStack, Badge, Button, IconButton, InlineError, Modal } from './primitives';
+import { Avatar, Badge, Button, IconButton, InlineError, Modal } from './primitives';
 
 interface MentionCandidate {
   id: string;
@@ -23,7 +23,6 @@ interface WorkstreamComposerProps {
   sending: boolean;
   uploading: boolean;
   error?: string;
-  onManageParticipants: () => void;
   onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void>;
   onAttach: (file: File) => Promise<void>;
   onStop: () => Promise<void>;
@@ -63,7 +62,6 @@ export function WorkstreamComposer({
   sending,
   uploading,
   error,
-  onManageParticipants,
   onSend,
   onAttach,
   onStop,
@@ -108,11 +106,6 @@ export function WorkstreamComposer({
   const visibleCommands = commandQuery === null || slashDismissed
     ? []
     : commands.filter((command) => command.label.includes(commandQuery));
-  const participantNames = workstream.participants.map((participant) => participant.name);
-  const participantSummary = workstream.participants.length <= 2
-    ? participantNames.join(', ')
-    : `${participantNames[0] ?? 'Participants'} +${workstream.participants.length - 1}`;
-
   const updateText = (value: string): void => {
     draftRevisionRef.current += 1;
     setText(value);
@@ -271,25 +264,6 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      <div aria-label="Work-stream participants" className="workstream-composer-modifiers">
-        <button
-          aria-haspopup="dialog"
-          aria-label={participantNames.length > 0
-            ? `Manage participants: ${participantNames.join(', ')}`
-            : 'Manage participants'}
-          className="participant-modifier"
-          onClick={onManageParticipants}
-          type="button"
-        >
-          {workstream.participants.length > 0 && (
-            <span aria-hidden="true"><AvatarStack limit={4} members={workstream.participants} /></span>
-          )}
-          <span>{participantSummary || 'Participants'}</span>
-        </button>
-        <button aria-label="Add people" className="participant-modifier-add" onClick={onManageParticipants} type="button">
-          <Plus aria-hidden="true" size={15} />
-        </button>
-      </div>
       <div className={clsx('workstream-composer', sending && 'is-sending')}>
         <textarea
           aria-label="Message the work stream"
