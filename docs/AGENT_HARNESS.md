@@ -10,9 +10,23 @@ The label is never exposed in the UI.
 
 ## Context
 
-Context is assembled for the current execution principal from automation instructions/overrides, workspace instructions, objective, recent messages plus compact summaries, attached resources, accepted activities, relevant tool results, connector and human mentions, elicitation answers, and any planned-run pre-context.
+Context is assembled for the current execution principal from the work-stream title and objective, recent persisted messages, current and planned execution times, the run reason, and any selected trigger. Automation runs also receive the immutable template name/version, instructions, expected outputs, default behavior, and subscription overrides. An activity that started a run is appended as an explicitly untrusted user-role evidence message rather than being promoted into the system prompt. Inbound email selected as the trigger is handled the same way.
 
-Full workspace history, unrelated resources, and another participant’s private connector data are excluded. Long resources are lazily hydrated and bounded.
+Attached resources are exposed as an authorized index and hydrated lazily through tools. Connector tools and their results remain scoped to the execution principal. Full workspace history, unrelated resources, and another participant's private connector data are excluded.
+
+## Prompt policy
+
+All model prompts are rendered by typed, dependency-free functions in `@avalon/agent-harness`. The fixed platform policy is kept separate from dynamic context and has byte-stable golden coverage. Prompt authority is layered as platform policy, authorized work-stream and automation configuration, current human instructions, then explicitly untrusted provider/resource/tool data. User-authored draft state used by the automation compiler is passed as user-role context and cannot become an extra system instruction.
+
+The work-stream agent is outcome-oriented and maximally autonomous within the runtime's authorization boundary. It acts on clear scoped requests, infers reasonable defaults, batches independent reads, prefers authorized connectors over public web substitutes, produces the requested write or artifact, and verifies material writes when a read-back path exists. It requests structured input only when a required identifier, permission, connection, timezone, or irreversible choice has no safe default. It never treats a proposed, failed, or ambiguous call as success and never retries an ambiguous write.
+
+Interactive multi-round work starts with a short plan and reports only meaningful phase changes. Automation and other headless runs skip progress narration. Every completion leads with the outcome, useful evidence, and any unresolved blocker; private reasoning is never emitted.
+
+## Automation compilation
+
+Natural-language automation creation compiles to the existing validated draft schema. The compiler preserves established draft choices, defaults to personal scope and manual execution when scope or trigger is omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone and use 09:00 in that timezone when a time is reasonably inferable but omitted. Exact provider events use deterministic triggers; meaning-based conditions use semantic triggers rather than invented event names or metadata. Required capabilities are the minimum external connector grants, while scheduling, reasoning, summarization, artifacts, and work-stream replies require none.
+
+The compiler asks one focused follow-up only when a missing timezone, resource identifier, event source, destination, or unsupported scheduling shape prevents an executable draft. It never invents credentials, access, resource IDs, or provider event types, and marks a draft ready only when it can execute as represented.
 
 Every healthy workspace-scoped connector contributes all of its granted tools to every ad-hoc work stream in that workspace. Those calls execute as the workspace principal while retaining the initiating user in the audit trail. Personal connectors remain available only to their owner. Automation runs continue to receive only the connections and capabilities explicitly bound to the subscription.
 
