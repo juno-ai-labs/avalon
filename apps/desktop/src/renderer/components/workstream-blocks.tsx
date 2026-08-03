@@ -420,27 +420,31 @@ export function MessageBlock({ currentUserId, message, onAnswerElicitation, onRe
   const human = message.authorType === 'human';
   const ownHumanMessage = human && currentUserId !== undefined && message.author?.id === currentUserId;
   const humanAuthorName = message.author?.name ?? 'Workspace member';
+  const sending = message.deliveryState === 'sending';
   return (
     <article
-      aria-label={human ? `Message from ${humanAuthorName}` : undefined}
-      aria-busy={message.streaming || undefined}
+      aria-label={sending ? 'Sending message' : human ? `Message from ${humanAuthorName}` : undefined}
+      aria-busy={message.streaming || sending || undefined}
       className={clsx(
         'message-block',
         human ? 'human-message' : 'agent-message',
         human && (ownHumanMessage ? 'own-human-message' : 'coworker-message'),
         message.streaming && 'is-streaming',
+        sending && 'is-sending',
       )}
       id={`message-${message.id}`}
       style={human ? { '--person-accent': personAccent(message.author?.id ?? message.id) } as React.CSSProperties : undefined}
     >
-      {(!human || !ownHumanMessage) && (
+      {!sending && (!human || !ownHumanMessage) && (
         <header>
           {human && <span aria-hidden="true" className="message-author-dot" />}
           <span className="message-author">{human ? humanAuthorName : 'Avalon'}</span>
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         </header>
       )}
-      {message.text && <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>}
+      {sending
+        ? <span aria-hidden="true" className="message-skeleton" />
+        : message.text && <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>}
       {!human && !message.streaming && (
         <footer className="agent-message-actions">
           <button aria-label="Copy response" onClick={() => void navigator.clipboard.writeText(message.text ?? '')} type="button"><Clipboard size={12} /> Copy</button>

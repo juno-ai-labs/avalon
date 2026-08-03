@@ -20,6 +20,22 @@ const actions = {
 };
 
 describe('MessageBlock human identity', () => {
+  it('renders an optimistic turn as a neutral skeleton instead of previewing client text', () => {
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        message={{ ...baseMessage, deliveryState: 'sending', text: 'Client-only mention rendering' }}
+      />,
+    );
+
+    const skeleton = screen.getByLabelText('Sending message');
+    expect(skeleton).toHaveAttribute('aria-busy', 'true');
+    expect(skeleton).toHaveClass('is-sending');
+    expect(skeleton.querySelector('.message-skeleton')).toBeInTheDocument();
+    expect(screen.queryByText('Client-only mention rendering')).not.toBeInTheDocument();
+  });
+
   it('keeps the signed-in person implicit on their own compact prompt', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={baseMessage} />);
 
