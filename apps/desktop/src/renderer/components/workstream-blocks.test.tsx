@@ -42,6 +42,67 @@ describe('MessageBlock human identity', () => {
 });
 
 describe('MessageBlock markdown', () => {
+  it('renders person links as non-navigating chips resolved from mention metadata', () => {
+    const personId = '00000000-0000-7000-8000-000000000042';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention',
+      authorType: 'agent',
+      author: undefined,
+      text: `Ask [@Spoofed label](person:${personId}) for a review.`,
+      mentions: [{
+        type: 'person',
+        personId,
+        displayName: 'Ada Lovelace',
+        avatarUrl: 'https://example.com/ada.png',
+        startOffset: 4,
+        endOffset: 65,
+      }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    const chip = screen.getByText('@Ada Lovelace').closest('.mention-chip');
+    expect(chip).toHaveAttribute('data-person-id', personId);
+    expect(chip?.tagName).toBe('SPAN');
+    expect(screen.queryByRole('link', { name: '@Ada Lovelace' })).not.toBeInTheDocument();
+    expect(screen.queryByText('@Spoofed label')).not.toBeInTheDocument();
+    expect(chip?.querySelector('img')).toHaveAttribute('src', 'https://example.com/ada.png');
+  });
+
+  it('keeps person Markdown inert when authoritative mention metadata is absent', () => {
+    const personId = '00000000-0000-7000-8000-000000000043';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-person-mention-fallback',
+      authorType: 'agent',
+      author: undefined,
+      text: `Ask [@Grace Hopper](person:${personId}).`,
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(screen.getByText('@Grace Hopper')).toHaveClass('mention-text-fallback');
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '@Grace Hopper' })).not.toBeInTheDocument();
+  });
+
+  it('does not treat legacy mention links as person chips', () => {
+    const personId = '00000000-0000-7000-8000-000000000044';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-legacy-mention',
+      authorType: 'agent',
+      author: undefined,
+      text: `Ask [@Legacy](mention:${personId}).`,
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
+    expect(screen.getByText('@Legacy').closest('a')).toHaveAttribute('href', '');
+  });
+
   it('renders GFM structure with external links, inline code, tables, and highlighted code blocks', () => {
     const markdownMessage: Message = {
       ...baseMessage,

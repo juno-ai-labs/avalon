@@ -1,9 +1,11 @@
-import type { ConnectorError } from "@avalon/connectors";
+import type { ConnectorConnectionContext, ConnectorError } from "@avalon/connectors";
 import type { Scope } from "@avalon/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { decryptString, encryptString } from "../src/lib/crypto";
+import { webhookIngestionRoutes } from "../src/routes/connections";
 import {
+  __providerWebhookTesting,
   ProviderWebhookService,
   type ProviderWebhookRawBody,
   type ProviderWebhookServiceOptions,
@@ -777,6 +779,167 @@ describe("provider-wide webhook ingestion", () => {
     expect(database.activities).toHaveLength(1);
     expect(database.activities[0]?.eventType).toBe("linear.oauth_app.revoked");
     expect(queue.messages).toHaveLength(1);
+  });
+
+  it("records Linear team-access changes without forcing OAuth reconnect", async () => {
+    const database = new FakeDatabase();
+    database.connections.push(await connection({
+      id: CONNECTION_ONE,
+      workspaceId: WORKSPACE_ONE,
+      provider: "linear",
+      providerAccountId: "linear-org-1",
+      scope: "workspace",
+      credentials: { organizationId: "linear-org-1" },
+    }));
+    const bucket = new FakeBucket();
+    const queue = new FakeQueue();
+    const service = serviceFor(database, bucket, queue);
+    const deliveryId = "00000000-0000-4000-8000-000000000032";
+    const rawBody = JSON.stringify({
+      action: "teamAccessChanged",
+      type: "PermissionChange",
+      organizationId: "linear-org-1",
+      webhookId: "linear-webhook-permissions",
+      webhookTimestamp: NOW,
+      createdAt: new Date(NOW).toISOString(),
+      data: { id: "team-1", name: "Core" },
+    });
+    const headers = new Headers({
+      "linear-delivery": deliveryId,
+      "linear-event": "PermissionChange",
+      "linear-signature": await hmacHex(LINEAR_SECRET, rawBody),
+      "linear-timestamp": String(NOW),
+    });
+
+    await expect(service.ingestLinear(rawBody, headers)).resolves.toMatchObject({
+      accepted: true,
+      duplicate: false,
+      activityCount: 1,
+    });
+    expect(database.connections[0]).toMatchObject({ status: "healthy", error_json: null });
+    expect(database.activities[0]?.eventType).toBe("linear.permission_change.team_access_changed");
+  });
+
+  it("routes native Linear sessions only to the matching app identity and capability", () => {
+    const base: ConnectorConnectionContext = {
+      id: CONNECTION_ONE,
+      workspaceId: WORKSPACE_ONE,
+      scope: "workspace",
+      ownerUserId: null,
+      grantedScopes: ["linear.read", "linear.agent"],
+      credentials: { appUserId: "linear-app-user-1" },
+      cursor: {},
+      config: {},
+    };
+    expect(__providerWebhookTesting.linearAgentConnectionMatches(base, "linear-app-user-1")).toBe(true);
+    expect(__providerWebhookTesting.linearAgentConnectionMatches(
+      { ...base, grantedScopes: ["linear.read"] },
+      "linear-app-user-1",
+    )).toBe(false);
+    expect(__providerWebhookTesting.linearAgentConnectionMatches(base, "different-app-user")).toBe(false);
+  });
+
+  it("acknowledges stale Linear agent subscriptions without starting work while disabled", async () => {
+    const database = new FakeDatabase();
+    database.connections.push(await connection({
+      id: CONNECTION_ONE,
+      workspaceId: WORKSPACE_ONE,
+      provider: "linear",
+      providerAccountId: "linear-org-1",
+      scope: "workspace",
+      credentials: { organizationId: "linear-org-1", appUserId: "linear-app-user-1" },
+    }));
+    const bucket = new FakeBucket();
+    const queue = new FakeQueue();
+    const service = serviceFor(database, bucket, queue);
+    const deliveryId = "00000000-0000-4000-8000-000000000034";
+    const rawBody = JSON.stringify({
+      action: "created",
+      type: "AgentSessionEvent",
+      appUserId: "linear-app-user-1",
+      oauthClientId: "linear-oauth-client-1",
+      organizationId: "linear-org-1",
+      webhookId: "linear-agent-webhook-1",
+      webhookTimestamp: NOW,
+      createdAt: new Date(NOW).toISOString(),
+      agentSession: {
+        id: "linear-session-1",
+        appUserId: "linear-app-user-1",
+        organizationId: "linear-org-1",
+        status: "pending",
+        type: "delegation",
+        createdAt: new Date(NOW).toISOString(),
+        updatedAt: new Date(NOW).toISOString(),
+      },
+      promptContext: "Investigate the issue",
+    });
+    const headers = new Headers({
+      "linear-delivery": deliveryId,
+      "linear-event": "AgentSessionEvent",
+      "linear-signature": await hmacHex(LINEAR_SECRET, rawBody),
+      "linear-timestamp": String(NOW),
+    });
+
+    await expect(service.ingestLinear(rawBody, headers)).resolves.toEqual({
+      accepted: true,
+      duplicate: false,
+      activityCount: 0,
+    });
+    expect(database.receipts.size).toBe(0);
+    expect(database.activities).toHaveLength(0);
+    expect(bucket.puts).toHaveLength(0);
+    expect(queue.messages).toHaveLength(0);
+  });
+
+  it("acknowledges every accepted Linear delivery with HTTP 200", async () => {
+    const database = new FakeDatabase();
+    database.connections.push(await connection({
+      id: CONNECTION_ONE,
+      workspaceId: WORKSPACE_ONE,
+      provider: "linear",
+      providerAccountId: "linear-org-1",
+      scope: "workspace",
+      credentials: { organizationId: "linear-org-1" },
+    }));
+    const at = Date.now();
+    const rawBody = JSON.stringify({
+      action: "create",
+      type: "Issue",
+      organizationId: "linear-org-1",
+      webhookId: "linear-webhook-route",
+      webhookTimestamp: at,
+      createdAt: new Date(at).toISOString(),
+      data: { id: "issue-route", identifier: "AVA-99", title: "Acknowledge me" },
+    });
+    const response = await webhookIngestionRoutes.request(
+      "https://api.avalon.example/linear",
+      {
+        method: "POST",
+        headers: {
+          "linear-delivery": "00000000-0000-4000-8000-000000000033",
+          "linear-event": "Issue",
+          "linear-signature": await hmacHex(LINEAR_SECRET, rawBody),
+          "linear-timestamp": String(at),
+        },
+        body: rawBody,
+      },
+      {
+        DB: database as unknown as D1Database,
+        PAYLOADS: new FakeBucket() as unknown as R2Bucket,
+        ACTIVITY_QUEUE: new FakeQueue() as unknown as Queue,
+        AVALON_REGION: "global",
+        PUBLIC_API_BASE_URL: "https://api.avalon.example",
+        LINEAR_INGRESS_BASE_URL: "https://linear.with-avalon.com",
+        LINEAR_WEBHOOK_SECRET: LINEAR_SECRET,
+        CONNECTOR_CREDENTIALS_KEY: ENCRYPTION_KEY,
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+        WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
+        PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
+      } as Env,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ accepted: true, duplicate: false });
   });
 
   it("recovers an unqueued lifecycle activity after its connection leaves healthy status", async () => {

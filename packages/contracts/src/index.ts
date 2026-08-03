@@ -129,6 +129,8 @@ export const MentionSchema = z.object({
   type: z.enum(["person", "connector"]),
   userId: IdSchema.nullable(),
   connectorType: z.string().max(80).nullable(),
+  displayName: z.string().min(1).max(180).nullable().optional(),
+  avatarUrl: z.string().url().nullable().optional(),
   startOffset: z.number().int().nonnegative(),
   endOffset: z.number().int().positive()
 });
@@ -580,9 +582,72 @@ export const ToolDefinitionSchema = z.object({
   idempotency: z.enum(["safe", "provider_key", "record_before_execute"])
 });
 
-export const ConnectorManifestSchema = z.object({
+/**
+ * Connector surfaces are composable. A provider such as Linear can expose its
+ * ordinary resources and tools while also hosting Avalon as a native agent.
+ * Legacy manifests omit this field and normalize to the resource surface.
+ */
+export const ConnectorSurfaceSchema = z.enum(["resource", "native_agent"]);
+
+export const NativeAgentInvocationModeSchema = z.enum([
+  "delegation",
+  "mention",
+  "follow_up"
+]);
+
+export const NativeAgentActivityKindSchema = z.enum([
+  "thought",
+  "action",
+  "elicitation",
+  "response",
+  "error"
+]);
+
+export const ConnectorSurfaceMaturitySchema = z.enum(["stable", "preview"]);
+export const ConnectorSurfaceRuntimeStatusSchema = z.enum(["protocol_only", "operational"]);
+export const NativeAgentSessionOwnershipSchema = z.enum([
+  "single_connection_per_provider_account",
+  "connection_scoped"
+]);
+
+export const NativeAgentSurfaceSchema = z.object({
+  capability: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  invocationModes: z.array(NativeAgentInvocationModeSchema).min(1),
+  activityKinds: z.array(NativeAgentActivityKindSchema).min(1),
+  supportsCancellation: z.boolean(),
+  supportsExternalLinks: z.boolean(),
+  supportsPlans: z.boolean(),
+  supportsProactiveSessions: z.boolean().default(false),
+  maturity: ConnectorSurfaceMaturitySchema.default("stable"),
+  /** Protocol support may ship before the coordinating runtime is safe to enable. */
+  runtimeStatus: ConnectorSurfaceRuntimeStatusSchema,
+  /** How provider-native sessions select one authorized Avalon connection. */
+  sessionOwnership: NativeAgentSessionOwnershipSchema,
+  /** Maximum time the provider allows before the signed webhook is acknowledged. */
+  webhookResponseDeadlineMs: z.number().int().positive().max(60_000).optional(),
+  /** Maximum time before the connector must publish activity or an external URL. */
+  sessionAcknowledgementDeadlineMs: z.number().int().positive().max(60_000).optional()
+});
+
+export const ConnectorCapabilityKindSchema = z.enum(["tool", "native_agent"]);
+
+/**
+ * Authorization is capability based, including capabilities that do not map
+ * to an agent tool. This lets native provider identities participate in OAuth
+ * grants without inventing a callable tool solely to make them selectable.
+ */
+export const ConnectorCapabilitySchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  kind: ConnectorCapabilityKindSchema,
+  description: z.string().min(1).optional()
+});
+
+const ConnectorManifestBaseSchema = z.object({
   type: z.string().min(1),
   displayName: z.string().min(1),
+  surfaces: z.array(ConnectorSurfaceSchema).min(1).default(["resource"]),
+  nativeAgent: NativeAgentSurfaceSchema.optional(),
+  capabilities: z.array(ConnectorCapabilitySchema).default([]),
   supportedScopes: z.array(ScopeSchema),
   oauthRequired: z.boolean(),
   activityTypes: z.array(z.string()),
@@ -591,6 +656,85 @@ export const ConnectorManifestSchema = z.object({
   supportsWatches: z.boolean(),
   supportsPolling: z.boolean(),
   supportsWebhooks: z.boolean()
+});
+
+export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((manifest, context) => {
+  const declaresNativeAgent = manifest.surfaces.includes("native_agent");
+  if (declaresNativeAgent && !manifest.nativeAgent) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A native-agent connector must declare its native agent capabilities",
+      path: ["nativeAgent"]
+    });
+  }
+  if (!declaresNativeAgent && manifest.nativeAgent) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Native agent capabilities require the native_agent surface",
+      path: ["surfaces"]
+    });
+  }
+  const capabilityIds = new Set<string>();
+  for (const [index, capability] of manifest.capabilities.entries()) {
+    if (capabilityIds.has(capability.id)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate connector capability: ${capability.id}`,
+        path: ["capabilities", index, "id"]
+      });
+    }
+    capabilityIds.add(capability.id);
+  }
+  const descriptorById = new Map(manifest.capabilities.map((capability) => [capability.id, capability]));
+  for (const tool of manifest.tools) {
+    const descriptor = descriptorById.get(tool.capability);
+    if (descriptor && descriptor.kind !== "tool") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Tool capability ${tool.capability} must use kind tool`,
+        path: ["capabilities"]
+      });
+    }
+  }
+  const declaresNativeAgentCapability = manifest.capabilities.some(
+    (capability) => capability.kind === "native_agent"
+  );
+  if (declaresNativeAgent && !declaresNativeAgentCapability) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A native-agent connector must declare an authorizable native-agent capability",
+      path: ["capabilities"]
+    });
+  }
+  if (!declaresNativeAgent && declaresNativeAgentCapability) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Native-agent capabilities require the native_agent surface",
+      path: ["capabilities"]
+    });
+  }
+  if (manifest.nativeAgent) {
+    const capability = manifest.capabilities.find(
+      (candidate) => candidate.id === manifest.nativeAgent?.capability
+    );
+    if (!capability || capability.kind !== "native_agent") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Native-agent surface capability ${manifest.nativeAgent.capability} must name a native_agent capability`,
+        path: ["nativeAgent", "capability"]
+      });
+    }
+  }
+}).transform((manifest) => {
+  const declaredIds = new Set(manifest.capabilities.map((capability) => capability.id));
+  const inferredToolCapabilities = manifest.tools
+    .filter((tool) => !declaredIds.has(tool.capability))
+    .filter((tool, index, tools) => tools.findIndex((candidate) => candidate.capability === tool.capability) === index)
+    .map((tool) => ({ id: tool.capability, kind: "tool" as const }));
+  return {
+    ...manifest,
+    capabilities: [...manifest.capabilities, ...inferredToolCapabilities]
+  };
 });
 
 export type Region = z.infer<typeof RegionSchema>;
@@ -632,4 +776,15 @@ export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInp
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
 export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;
 export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
+export type ConnectorSurface = z.infer<typeof ConnectorSurfaceSchema>;
+export type NativeAgentInvocationMode = z.infer<typeof NativeAgentInvocationModeSchema>;
+export type NativeAgentActivityKind = z.infer<typeof NativeAgentActivityKindSchema>;
+export type ConnectorSurfaceMaturity = z.infer<typeof ConnectorSurfaceMaturitySchema>;
+export type ConnectorSurfaceRuntimeStatus = z.infer<typeof ConnectorSurfaceRuntimeStatusSchema>;
+export type NativeAgentSessionOwnership = z.infer<typeof NativeAgentSessionOwnershipSchema>;
+export type NativeAgentSurface = z.infer<typeof NativeAgentSurfaceSchema>;
+export type ConnectorCapabilityKind = z.infer<typeof ConnectorCapabilityKindSchema>;
+export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
+/** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */
+export type ConnectorManifestInput = z.input<typeof ConnectorManifestSchema>;
 export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;

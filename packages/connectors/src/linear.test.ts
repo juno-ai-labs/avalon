@@ -1,13 +1,17 @@
 import { NormalizedActivitySchema } from "@avalon/contracts";
 import { describe, expect, it } from "vitest";
 import {
+  canPersonalLinearConnectionAccessWebhook,
   createLinearConnector,
+  LinearAgentOAuthScopes,
   LinearCapabilities,
   normalizeLinearWebhook,
+  type LinearConnectorConfig,
+  type VerifiedLinearWebhook,
   verifyLinearWebhook,
 } from "./linear";
 import type { FetchLike } from "./provider-utils";
-import type { ConnectorConnectionContext } from "./types";
+import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
 
 const AVALON_WORKSPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AVALON_CONNECTION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -34,6 +38,7 @@ describe("Linear connector", () => {
             viewer: {
               id: "app-user-1",
               name: "Avalon",
+              app: true,
               organization: { id: "linear-org-1", name: "Acme", urlKey: "acme" },
             },
           },
@@ -45,23 +50,151 @@ describe("Linear connector", () => {
     const authorization = await adapter.beginAuthorization!({
       state: "s".repeat(32),
       codeChallenge: "c".repeat(43),
-      scopes: ["issues:create"],
+      scopes: ["issues:create", ...LinearAgentOAuthScopes],
+      connectionScope: "workspace",
     });
     const url = new URL(authorization.url);
     expect(url.searchParams.get("actor")).toBe("app");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(url.searchParams.get("scope")?.split(",")).toEqual(["read", "issues:create"]);
+    expect(url.searchParams.get("scope")?.split(",")).toEqual([
+      "read",
+      "issues:create",
+      ...LinearAgentOAuthScopes,
+    ]);
+    expect(adapter.manifest).toMatchObject({
+      supportedScopes: ["personal", "workspace"],
+      surfaces: ["resource", "native_agent"],
+      capabilities: [{ id: LinearCapabilities.agent, kind: "native_agent" }],
+      nativeAgent: {
+        capability: LinearCapabilities.agent,
+        invocationModes: ["delegation", "mention", "follow_up"],
+        activityKinds: ["thought", "action", "elicitation", "response", "error"],
+        supportsCancellation: true,
+        supportsExternalLinks: true,
+        supportsPlans: true,
+        supportsProactiveSessions: true,
+        maturity: "preview",
+        runtimeStatus: "protocol_only",
+        sessionOwnership: "single_connection_per_provider_account",
+        webhookResponseDeadlineMs: 5_000,
+        sessionAcknowledgementDeadlineMs: 10_000,
+      },
+    });
+    expect(connectorCapabilitySupportsScope(adapter, LinearCapabilities.read, "personal")).toBe(true);
+    expect(connectorCapabilitySupportsScope(adapter, LinearCapabilities.agent, "personal")).toBe(false);
+    expect(connectorCapabilitySupportsScope(adapter, LinearCapabilities.agent, "workspace")).toBe(true);
+    expect(adapter.nativeAgent?.capability).toBe(LinearCapabilities.agent);
+    const resourceOnlyAuthorization = await adapter.beginAuthorization!({
+      state: "r".repeat(32),
+      codeChallenge: "d".repeat(43),
+      scopes: ["issues:create"],
+      connectionScope: "workspace",
+    });
+    expect(new URL(resourceOnlyAuthorization.url).searchParams.get("scope")?.split(",")).toEqual([
+      "read",
+      "issues:create",
+    ]);
 
     await expect(adapter.handleAuthorizationCallback!({
       code: "authorization-code",
       codeVerifier: "v".repeat(43),
+      connectionScope: "workspace",
     })).resolves.toMatchObject({
       accessToken: "linear-access",
       refreshToken: "linear-refresh",
+      oauthActor: "app",
       appUserId: "app-user-1",
       organizationId: "linear-org-1",
       providerAccountId: "linear-org-1",
       providerAccountName: "Acme",
+    });
+  });
+
+  it("uses a user actor for personal OAuth and records the authorized human separately", async () => {
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/oauth/token") return jsonResponse({
+        access_token: "personal-access",
+        refresh_token: "personal-refresh",
+        expires_in: 3600,
+        scope: "read,write",
+      });
+      if (url.pathname === "/graphql") return jsonResponse({
+        data: {
+          viewer: {
+            id: "linear-user-1",
+            name: "Ada Lovelace",
+            email: "ada@example.com",
+            app: false,
+            organization: { id: "linear-org-1", name: "Acme", urlKey: "acme" },
+          },
+        },
+      });
+      throw new Error(`Unexpected Linear URL: ${url}`);
+    };
+    const adapter = linearAdapter(fetcher);
+    const authorization = await adapter.beginAuthorization!({
+      state: "p".repeat(32),
+      codeChallenge: "c".repeat(43),
+      scopes: ["write"],
+      connectionScope: "personal",
+    });
+    const authorizationUrl = new URL(authorization.url);
+    expect(authorizationUrl.searchParams.get("actor")).toBe("user");
+    expect(authorization.state).toEqual({ connectionScope: "personal" });
+    const credentials = await adapter.handleAuthorizationCallback!({
+      code: "personal-code",
+      codeVerifier: "v".repeat(43),
+      connectionScope: "personal",
+    });
+    expect(credentials).toMatchObject({
+      oauthActor: "user",
+      authorizedUserId: "linear-user-1",
+      authorizedUserName: "Ada Lovelace",
+      authorizedUserEmail: "ada@example.com",
+      organizationId: "linear-org-1",
+      providerAccountId: "linear-org-1",
+      providerAccountName: "Ada Lovelace · Acme",
+    });
+    expect(credentials).not.toHaveProperty("appUserId");
+  });
+
+  it("requires trusted connection scope and keeps native-agent OAuth workspace-only", async () => {
+    const adapter = linearAdapter(async () => { throw new Error("OAuth validation should not fetch"); });
+    await expect(adapter.beginAuthorization!({
+      state: "s".repeat(32),
+      codeChallenge: "c".repeat(43),
+      scopes: ["read"],
+    })).rejects.toThrow(/connectionScope/i);
+    await expect(adapter.beginAuthorization!({
+      state: "s".repeat(32),
+      codeChallenge: "c".repeat(43),
+      scopes: ["read", ...LinearAgentOAuthScopes],
+      connectionScope: "personal",
+    })).rejects.toThrow(/workspace-scoped/i);
+    await expect(adapter.handleAuthorizationCallback!({
+      code: "authorization-code",
+      codeVerifier: "v".repeat(43),
+    })).rejects.toThrow(/connectionScope/i);
+  });
+
+  it("preserves personal actor and user identity when rotating OAuth credentials", async () => {
+    const adapter = linearAdapter(async (input) => {
+      expect(requestUrl(input).pathname).toBe("/oauth/token");
+      return jsonResponse({
+        access_token: "rotated-personal-access",
+        refresh_token: "rotated-personal-refresh",
+        expires_in: 3600,
+        scope: "read",
+      });
+    });
+    const connection = personalLinearConnection([LinearCapabilities.read]);
+    await expect(adapter.refreshCredentials!(connection, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+      accessToken: "rotated-personal-access",
+      refreshToken: "rotated-personal-refresh",
+      oauthActor: "user",
+      authorizedUserId: "linear-user-1",
+      organizationId: "linear-org-1",
     });
   });
 
@@ -102,6 +235,59 @@ describe("Linear connector", () => {
     expect(connection.credentials).toMatchObject({ accessToken: "new-access", refreshToken: "new-refresh" });
   });
 
+  it("allows only the owning Avalon user to execute tools through a personal Linear connection", async () => {
+    let graphqlCalls = 0;
+    const adapter = linearAdapter(async () => {
+      graphqlCalls += 1;
+      return jsonResponse({
+        data: { teams: { nodes: [{ id: "team-1", name: "Core" }], pageInfo: { hasNextPage: false } } },
+      });
+    });
+    const connection = personalLinearConnection([LinearCapabilities.read]);
+    await expect(adapter.executeTool("linear.list_teams", {}, {
+      connection,
+      principal: { type: "user", userId: "avalon-user-1" },
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toMatchObject({ summary: "Listed Linear teams" });
+    expect(graphqlCalls).toBe(1);
+
+    await expect(adapter.executeTool("linear.list_teams", {}, {
+      connection,
+      principal: { type: "user", userId: "another-user" },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toThrow(/another principal/i);
+    await expect(adapter.executeTool("linear.list_teams", {}, {
+      connection,
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toThrow(/another principal/i);
+    expect(graphqlCalls).toBe(1);
+  });
+
+  it("allows personal resource hydration and health checks while rejecting native-agent execution", async () => {
+    const adapter = linearAdapter(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string };
+      if (request.query.includes("AvalonReadDocument")) return jsonResponse({
+        data: { document: { id: "document-1", title: "Personal plan" } },
+      });
+      if (request.query.includes("AvalonLinearHealth")) return jsonResponse({ data: { viewer: { id: "linear-user-1" } } });
+      throw new Error(`Unexpected query: ${request.query}`);
+    });
+    const connection = personalLinearConnection([LinearCapabilities.read, LinearCapabilities.agent]);
+    await expect(adapter.hydrateResource!(connection, {
+      resource_type: "linear_document",
+      provider_resource_id: "document-1",
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ id: "document-1", title: "Personal plan" });
+    await expect(adapter.healthCheck(connection)).resolves.toEqual({
+      ok: true,
+      message: "Linear authorization is healthy",
+    });
+    await expect(adapter.nativeAgent!.execute({}, {
+      connection,
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toThrow(/workspace scope/i);
+  });
+
   it("hydrates provider resources into bounded agent context", async () => {
     const fetcher: FetchLike = async (_input, init) => {
       const request = JSON.parse(String(init?.body)) as { query: string };
@@ -119,6 +305,135 @@ describe("Linear connector", () => {
     }, AbortSignal.timeout(1_000));
     expect(hydrated).toMatchObject({ id: "document-1", title: "Design" });
     expect((hydrated as { content: string }).content).toHaveLength(40_000);
+  });
+
+  it("hydrates project updates as their own resource type", async () => {
+    const fetcher: FetchLike = async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      expect(request.query).toContain("AvalonReadProjectUpdate");
+      expect(request.variables).toEqual({ id: "update-1" });
+      return jsonResponse({
+        data: {
+          projectUpdate: {
+            id: "update-1",
+            body: "On track",
+            project: { id: "project-1", name: "Launch" },
+          },
+        },
+      });
+    };
+    const adapter = linearAdapter(fetcher);
+    await expect(adapter.hydrateResource!(linearConnection([]), {
+      resource_type: "linear_project_update",
+      provider_resource_id: "update-1",
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+      id: "update-1",
+      body: "On track",
+      project: { id: "project-1" },
+    });
+  });
+
+  it("uses Linear's canonical stateId field when updating workflow state", async () => {
+    let variables: Record<string, unknown> | null = null;
+    const fetcher: FetchLike = async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      expect(request.query).toContain("AvalonUpdateIssue");
+      variables = request.variables;
+      return jsonResponse({
+        data: {
+          issueUpdate: {
+            success: true,
+            issue: { id: "issue-1", identifier: "AVA-1", title: "Ship" },
+          },
+        },
+      });
+    };
+    const adapter = linearAdapter(fetcher);
+    await adapter.executeTool("linear.update_issue", {
+      issueId: "issue-1",
+      stateId: "state-started",
+    }, {
+      connection: linearConnection([LinearCapabilities.write]),
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    });
+    expect(variables).toEqual({ id: "issue-1", input: { stateId: "state-started" } });
+    const updateSchema = adapter.manifest.tools.find((tool) => tool.name === "linear.update_issue")?.inputSchema;
+    expect(updateSchema).toMatchObject({
+      properties: { stateId: expect.any(Object) },
+    });
+    expect((updateSchema as { properties: Record<string, unknown> }).properties).not.toHaveProperty("statusId");
+  });
+
+  it("proves personal webhook visibility against the signed resource or parent and fails closed", async () => {
+    const queries: string[] = [];
+    const fetcher: FetchLike = async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: { id: string } };
+      queries.push(request.query);
+      if (request.query.includes("resource: comment")) return jsonResponse({
+        data: { resource: null },
+        errors: [{ message: "Comment was removed", extensions: { code: "ENTITY_NOT_FOUND" } }],
+      });
+      if (request.query.includes("resource: issue") && request.variables.id === "issue-1") {
+        return jsonResponse({ data: { resource: { id: "issue-1" } } });
+      }
+      return jsonResponse({ data: { resource: null } });
+    };
+    const connection = personalLinearConnection([LinearCapabilities.read]);
+    const verified = verifiedLinearEvent("Comment", {
+      id: "comment-1",
+      issueId: "issue-1",
+    });
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(fetcher),
+      connection,
+      verified,
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toBe(true);
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toContain("resource: comment");
+    expect(queries[1]).toContain("resource: issue");
+
+    const queryCount = queries.length;
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(fetcher),
+      connection,
+      verified: verifiedLinearEvent("AgentSessionEvent", { id: "session-1" }),
+    })).resolves.toBe(false);
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(fetcher),
+      connection,
+      verified: { ...verifiedLinearEvent("Issue", { id: "issue-1" }), organizationId: "another-org" },
+    })).resolves.toBe(false);
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(fetcher),
+      connection,
+      verified: verifiedLinearEvent("Initiative", { id: "initiative-1" }),
+    })).resolves.toBe(false);
+    expect(queries).toHaveLength(queryCount);
+
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(fetcher),
+      connection,
+      verified: verifiedLinearEvent("Issue", { id: "issue-2" }),
+    })).resolves.toBe(false);
+    expect(queries).toHaveLength(queryCount + 1);
+  });
+
+  it("normalizes pre-filtered personal resource events but rejects native-agent events", () => {
+    const connection = personalLinearConnection([LinearCapabilities.read]);
+    expect(normalizeLinearWebhook(
+      connection,
+      verifiedLinearEvent("Issue", { id: "issue-1", identifier: "AVA-1" }),
+    )).toMatchObject({
+      connectionScope: "personal",
+      connectionOwnerUserId: "avalon-user-1",
+      eventType: "linear.issue.remove",
+    });
+    expect(() => normalizeLinearWebhook(
+      connection,
+      verifiedLinearEvent("AgentSessionEvent", { id: "session-1" }),
+    )).toThrow(/workspace-only/i);
   });
 
   it("verifies the exact raw webhook and normalizes only the installed organization", async () => {
@@ -157,6 +472,7 @@ describe("Linear connector", () => {
       resourceType: "linear_issue",
       providerResourceId: "issue-1",
       payloadRef: "r2://payload/linear",
+      dedupeKey: "linear:11111111-1111-4111-8111-111111111111",
     });
     expect(() => NormalizedActivitySchema.parse({ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", ...activity })).not.toThrow();
 
@@ -171,16 +487,171 @@ describe("Linear connector", () => {
       now,
     })).rejects.toThrow(/signature/i);
   });
+
+  it("uses each Linear-Delivery as the idempotency key", () => {
+    const event = {
+      type: "Issue",
+      action: "update",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      data: { id: "issue-1", identifier: "AVA-42" },
+    };
+    const first = normalizeLinearWebhook(linearConnection([]), {
+      deliveryId: "11111111-1111-4111-8111-111111111111",
+      eventName: "Issue",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      bodyHash: "hash-1",
+      event,
+    });
+    const second = normalizeLinearWebhook(linearConnection([]), {
+      deliveryId: "22222222-2222-4222-8222-222222222222",
+      eventName: "Issue",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      bodyHash: "hash-2",
+      event,
+    });
+    expect(first.dedupeKey).toBe("linear:11111111-1111-4111-8111-111111111111");
+    expect(second.dedupeKey).toBe("linear:22222222-2222-4222-8222-222222222222");
+  });
+
+  it("canonicalizes special actions and exposes top-level permission relationships", () => {
+    const activity = normalizeLinearWebhook(linearConnection([]), {
+      deliveryId: "33333333-3333-4333-8333-333333333333",
+      eventName: "PermissionChange",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      bodyHash: "a".repeat(64),
+      event: {
+        type: "PermissionChange",
+        action: "teamAccessChanged",
+        organizationId: "linear-org-1",
+        webhookId: "webhook-1",
+        webhookTimestamp: 1_788_000_000_000,
+        appUserId: "app-user-1",
+        addedTeamIds: ["team-1"],
+        removedTeamIds: ["team-2"],
+      },
+    });
+    expect(activity.eventType).toBe("linear.permission_change.team_access_changed");
+    expect(activity.entityKeys).toEqual(expect.arrayContaining(["app-user-1", "team-1", "team-2"]));
+  });
+
+  it("models project updates independently and links them to the parent project", () => {
+    const activity = normalizeLinearWebhook(linearConnection([]), {
+      deliveryId: "44444444-4444-4444-8444-444444444444",
+      eventName: "ProjectUpdate",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      bodyHash: "hash",
+      event: {
+        type: "ProjectUpdate",
+        action: "create",
+        organizationId: "linear-org-1",
+        webhookId: "webhook-1",
+        webhookTimestamp: 1_788_000_000_000,
+        data: {
+          id: "update-1",
+          body: "On track",
+          projectId: "project-1",
+          project: { id: "project-1", name: "Launch" },
+        },
+      },
+    });
+    expect(activity).toMatchObject({
+      eventType: "linear.project_update.create",
+      resourceType: "linear_project_update",
+      providerResourceId: "update-1",
+    });
+    expect(activity.entityKeys).toContain("project-1");
+  });
+
+  it("preserves native-agent session context as a first-class inbound activity", () => {
+    const activity = normalizeLinearWebhook(linearConnection([LinearCapabilities.agent]), {
+      deliveryId: "55555555-5555-4555-8555-555555555555",
+      eventName: "AgentSessionEvent",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      bodyHash: "a".repeat(64),
+      event: {
+        type: "AgentSessionEvent",
+        action: "created",
+        appUserId: "app-user-1",
+        oauthClientId: "linear-client",
+        organizationId: "linear-org-1",
+        webhookId: "webhook-1",
+        webhookTimestamp: 1_788_000_000_000,
+        createdAt: "2026-08-29T18:40:00.000Z",
+        promptContext: "Investigate the failing deployment and report back.",
+        agentSession: {
+          id: "session-1",
+          appUserId: "app-user-1",
+          organizationId: "linear-org-1",
+          status: "pending",
+          type: "delegated",
+          createdAt: "2026-08-29T18:40:00.000Z",
+          updatedAt: "2026-08-29T18:40:00.000Z",
+          issueId: "issue-1",
+          issue: {
+            id: "issue-1",
+            identifier: "AVA-42",
+            teamId: "team-1",
+            title: "Fix deployment",
+            url: "https://linear.app/acme/issue/AVA-42",
+            team: { id: "team-1" },
+          },
+          creatorId: "user-1",
+          creator: {
+            id: "user-1",
+            name: "Ada",
+            email: "ada@example.com",
+            url: "https://linear.app/acme/profiles/ada",
+          },
+        },
+      },
+    }, "r2://payload/linear-agent");
+    expect(activity).toMatchObject({
+      eventType: "linear.agent_session_event.created",
+      resourceType: null,
+      providerResourceId: "session-1",
+      title: "Linear agent created: AVA-42: Fix deployment",
+      summary: "Investigate the failing deployment and report back.",
+      payloadRef: "r2://payload/linear-agent",
+      metadata: {
+        surface: "native_agent",
+        agentSessionId: "session-1",
+        stopRequested: false,
+      },
+    });
+    expect(activity.entityKeys).toEqual(expect.arrayContaining([
+      "linear-org-1", "app-user-1", "session-1", "issue-1", "AVA-42",
+    ]));
+    expect(() => NormalizedActivitySchema.parse({
+      id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      ...activity,
+    })).not.toThrow();
+  });
 });
 
 function linearAdapter(fetcher: FetchLike) {
-  return createLinearConnector({
+  return createLinearConnector(linearConfig(fetcher));
+}
+
+function linearConfig(fetcher: FetchLike): LinearConnectorConfig {
+  return {
     clientId: "linear-client",
     clientSecret: "linear-secret",
     redirectUri: "https://api.avalon.test/connections/linear/callback",
     fetch: fetcher,
     now: () => 1_788_000_000_000,
-  });
+  };
 }
 
 function linearConnection(grantedScopes: string[]): ConnectorConnectionContext {
@@ -198,6 +669,41 @@ function linearConnection(grantedScopes: string[]): ConnectorConnectionContext {
     },
     cursor: {},
     config: { region: "global" },
+  };
+}
+
+function personalLinearConnection(grantedScopes: string[]): ConnectorConnectionContext {
+  return {
+    ...linearConnection(grantedScopes),
+    scope: "personal",
+    ownerUserId: "avalon-user-1",
+    credentials: {
+      ...linearConnection(grantedScopes).credentials,
+      oauthActor: "user",
+      authorizedUserId: "linear-user-1",
+    },
+  };
+}
+
+function verifiedLinearEvent(
+  eventName: string,
+  data: Record<string, unknown>,
+): VerifiedLinearWebhook {
+  return {
+    deliveryId: "99999999-9999-4999-8999-999999999999",
+    eventName,
+    organizationId: "linear-org-1",
+    webhookId: "webhook-1",
+    webhookTimestamp: 1_788_000_000_000,
+    bodyHash: "a".repeat(64),
+    event: {
+      type: eventName,
+      action: "remove",
+      organizationId: "linear-org-1",
+      webhookId: "webhook-1",
+      webhookTimestamp: 1_788_000_000_000,
+      data,
+    },
   };
 }
 

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonApi } from './api';
 import type { Message } from './types';
 import {
+  insertMessage,
   mergeCanonicalTranscript,
   nextTranscriptSequence,
   SOCKET_STABLE_CONNECTION_MS,
@@ -96,6 +97,61 @@ describe('useWorkstreamSocket', () => {
     };
 
     expect(nextTranscriptSequence([pendingHuman])).toBe(9);
+  });
+
+  it('reconciles the persisted realtime echo with its optimistic human message', () => {
+    const clientMessageId = 'client-message-one';
+    const pendingHuman: Message = {
+      id: clientMessageId,
+      clientMessageId,
+      workstreamId: 'workstream-one',
+      sequenceNumber: 8,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'One more question.',
+      createdAt: '2026-07-31T19:20:00.000Z',
+      deliveryState: 'sending',
+    };
+    const persistedHuman: Message = {
+      ...pendingHuman,
+      id: 'persisted-message-one',
+      sequenceNumber: 9,
+      createdAt: '2026-07-31T19:20:01.000Z',
+      deliveryState: undefined,
+    };
+
+    expect(insertMessage([pendingHuman], persistedHuman)).toEqual([persistedHuman]);
+    expect(insertMessage([pendingHuman, persistedHuman], persistedHuman)).toEqual([persistedHuman]);
+    expect(mergeCanonicalTranscript([pendingHuman], [persistedHuman])).toEqual([persistedHuman]);
+  });
+
+  it('retains an unmatched optimistic human message during a canonical refresh', () => {
+    const pendingHuman: Message = {
+      id: 'client-message-two',
+      clientMessageId: 'client-message-two',
+      workstreamId: 'workstream-one',
+      sequenceNumber: 10,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'Still being sent.',
+      createdAt: '2026-07-31T19:20:02.000Z',
+      deliveryState: 'sending',
+    };
+    const canonicalHuman: Message = {
+      id: 'persisted-message-one',
+      clientMessageId: 'client-message-one',
+      workstreamId: 'workstream-one',
+      sequenceNumber: 9,
+      authorType: 'human',
+      messageType: 'text',
+      text: 'Already sent.',
+      createdAt: '2026-07-31T19:20:01.000Z',
+    };
+
+    expect(mergeCanonicalTranscript([pendingHuman], [canonicalHuman])).toEqual([
+      canonicalHuman,
+      pendingHuman,
+    ]);
   });
 
   it('keeps observed tool order before the canonical assistant response across REST refreshes', async () => {

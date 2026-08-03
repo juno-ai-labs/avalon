@@ -67,14 +67,22 @@ const detail = {
 
 const message = {
   id: messageId,
-  clientMessageId: null,
+  clientMessageId: 'client-message-one',
   workspaceId,
   workstreamId,
   author: { type: 'human' as const, user },
   messageType: 'text' as const,
-  textContent: 'Please investigate this.',
+  textContent: `Please ask [@Adam](person:${userId}).`,
   structuredContent: null,
-  mentions: [],
+  mentions: [{
+    type: 'person' as const,
+    userId,
+    connectorType: null,
+    displayName: 'Adam',
+    avatarUrl: 'https://example.com/adam.png',
+    startOffset: 11,
+    endOffset: 31,
+  }],
   sequenceNumber: 4,
   createdAt: timestamp,
   editedAt: null,
@@ -127,9 +135,18 @@ describe('Avalon API wire adapter', () => {
     });
     expect(mapMessage(message)).toMatchObject({
       id: messageId,
+      clientMessageId: 'client-message-one',
       authorType: 'human',
       author: { id: userId, name: 'Adam' },
-      text: 'Please investigate this.',
+      text: `Please ask [@Adam](person:${userId}).`,
+      mentions: [{
+        type: 'person',
+        personId: userId,
+        displayName: 'Adam',
+        avatarUrl: 'https://example.com/adam.png',
+        startOffset: 11,
+        endOffset: 31,
+      }],
       sequenceNumber: 4,
     });
     expect(mapResource(resource)).toMatchObject({

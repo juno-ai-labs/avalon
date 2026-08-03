@@ -8,7 +8,11 @@ import { newId, nowIso } from "@avalon/db";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { randomToken, sha256 } from "../lib/crypto";
-import { sendWorkspaceInvitationEmail, type InvitationEmailDelivery } from "./invitation-email-service";
+import {
+  sendWorkspaceInvitationEmail,
+  sendWorkspaceInvitationResolutionEmail,
+  type InvitationEmailDelivery,
+} from "./invitation-email-service";
 
 interface InvitationRow {
   id: string;
@@ -18,6 +22,7 @@ interface InvitationRow {
   email: string;
   role: WorkspaceInvitationRole;
   invited_by_name: string;
+  invited_by_email: string;
   expires_at: string;
   accepted_at: string | null;
   accepted_by_user_id: string | null;
@@ -37,6 +42,7 @@ export interface ResolvedInvitation {
 
 const invitationSelect = `SELECT i.id, i.workspace_id, w.name AS workspace_name,
   w.region AS workspace_region, i.email, i.role, inviter.name AS invited_by_name,
+  inviter.email AS invited_by_email,
   i.expires_at, i.accepted_at, i.accepted_by_user_id, i.revoked_at, i.created_at
   FROM workspace_invitations i
   JOIN workspaces w ON w.id = i.workspace_id
@@ -105,7 +111,7 @@ export async function resolveInvitationToken(env: Env, token: string): Promise<R
 export async function acceptInvitationForUser(
   env: Env,
   invitationId: string,
-  user: { id: string; email: string },
+  user: { id: string; email: string; name?: string },
 ): Promise<string> {
   const invitation = await loadInvitationById(env, invitationId);
   if (!invitation || invitation.revoked_at || Date.parse(invitation.expires_at) <= Date.now()) {
@@ -158,13 +164,74 @@ export async function acceptInvitationForUser(
          joined_at = COALESCE(workspace_members.joined_at, excluded.joined_at)`,
     ).bind(user.id, acceptedAt, invitation.id, acceptedAt, user.id),
   ]);
-  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+  const transitioned = Number(results[0]?.meta?.changes ?? 0) === 1;
+  if (!transitioned) {
     const raced = await loadInvitationById(env, invitation.id);
     if (raced?.accepted_by_user_id !== user.id) {
       throw new ApiError(409, "invitation_already_used", "This invitation has already been accepted");
     }
   }
+  if (transitioned) {
+    await notifyInvitationResolution(env, invitation, user, "accepted");
+  }
   return invitation.workspace_id;
+}
+
+export async function declineInvitationForUser(
+  env: Env,
+  invitationId: string,
+  user: { id: string; email: string; name?: string },
+): Promise<void> {
+  const invitation = await loadInvitationById(env, invitationId);
+  if (!invitation || invitationStatus(invitation) !== "pending") {
+    throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+  }
+  if (invitation.workspace_region !== env.AVALON_REGION) {
+    throw new ApiError(409, "region_mismatch", "This invitation belongs to another data region");
+  }
+  if (user.email.trim().toLowerCase() !== invitation.email.trim().toLowerCase()) {
+    throw new ApiError(403, "invitation_email_mismatch", `Sign in with ${invitation.email} to decline this invitation`);
+  }
+
+  const at = nowIso();
+  const result = await env.DB.prepare(
+    `UPDATE workspace_invitations SET revoked_at = ?
+     WHERE id = ? AND email = ? COLLATE NOCASE
+       AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+  )
+    .bind(at, invitationId, user.email, at)
+    .run();
+  if (Number(result.meta.changes ?? 0) !== 1) {
+    throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+  }
+  await notifyInvitationResolution(env, invitation, user, "declined");
+}
+
+async function notifyInvitationResolution(
+  env: Env,
+  invitation: InvitationRow,
+  user: { email: string; name?: string },
+  outcome: "accepted" | "declined",
+): Promise<void> {
+  try {
+    await sendWorkspaceInvitationResolutionEmail(env, {
+      id: invitation.id,
+      outcome,
+      recipientEmail: invitation.invited_by_email,
+      workspaceName: invitation.workspace_name,
+      inviteeEmail: user.email,
+      ...(user.name ? { inviteeName: user.name } : {}),
+      role: invitation.role,
+      region: invitation.workspace_region,
+    });
+  } catch (error) {
+    console.warn("Invitation resolution email delivery failed", {
+      invitationId: invitation.id,
+      outcome,
+      region: invitation.workspace_region,
+      reason: error instanceof ApiError ? error.code : "unknown_error",
+    });
+  }
 }
 
 export class WorkspaceService {
@@ -307,9 +374,9 @@ export class WorkspaceService {
 
   async acceptInvitation(token: string): Promise<void> {
     const invitation = await resolveInvitationToken(this.env, token);
-    const user = await this.env.DB.prepare("SELECT id, email FROM users WHERE id = ?")
+    const user = await this.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?")
       .bind(this.auth.userId)
-      .first<{ id: string; email: string }>();
+      .first<{ id: string; email: string; name: string }>();
     if (!user) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
     await acceptInvitationForUser(this.env, invitation.id, user);
   }
@@ -390,17 +457,7 @@ export class WorkspaceOnboardingService {
   async declineInvitation(invitationId: string): Promise<void> {
     this.requireUnboundSession();
     const user = await this.loadUser();
-    const at = nowIso();
-    const result = await this.env.DB.prepare(
-      `UPDATE workspace_invitations SET revoked_at = ?
-       WHERE id = ? AND email = ? COLLATE NOCASE
-         AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
-    )
-      .bind(at, invitationId, user.email, at)
-      .run();
-    if (Number(result.meta.changes ?? 0) === 0) {
-      throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
-    }
+    await declineInvitationForUser(this.env, invitationId, user);
   }
 
   private requireUnboundSession(): void {
@@ -409,10 +466,10 @@ export class WorkspaceOnboardingService {
     }
   }
 
-  private async loadUser(): Promise<{ id: string; email: string }> {
-    const user = await this.env.DB.prepare("SELECT id, email FROM users WHERE id = ?")
+  private async loadUser(): Promise<{ id: string; email: string; name: string }> {
+    const user = await this.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?")
       .bind(this.auth.userId)
-      .first<{ id: string; email: string }>();
+      .first<{ id: string; email: string; name: string }>();
     if (!user) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
     return user;
   }

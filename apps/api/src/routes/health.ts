@@ -52,6 +52,25 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),
     message: c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL ? "configured" : "not configured",
   };
+  const linearValues = [
+    c.env.LINEAR_OAUTH_CLIENT_ID?.trim(),
+    c.env.LINEAR_OAUTH_CLIENT_SECRET?.trim(),
+    c.env.LINEAR_WEBHOOK_SECRET?.trim(),
+  ];
+  const anyLinearConfigured = linearValues.some(Boolean);
+  const linearIdentityConfigured = linearValues.every(Boolean);
+  const linearRoutingConfigured = c.env.AVALON_REGION === "global"
+    ? typeof c.env.EU_LINEAR_BRIDGE?.ingestLinear === "function"
+    : typeof c.env.GLOBAL_LINEAR_ROUTER?.registerLinearRoute === "function"
+      && typeof c.env.GLOBAL_LINEAR_ROUTER?.setLinearRouteStatus === "function";
+  checks.linear = {
+    ok: linearIdentityConfigured && linearRoutingConfigured,
+    message: !linearIdentityConfigured
+      ? "OAuth or webhook identity is not configured"
+      : linearRoutingConfigured
+        ? "one public app and regional router configured"
+        : "regional router binding unavailable",
+  };
   try {
     const registry = await new WorkstreamEmailRoutingService(c.env).ping();
     checks.workstreamEmailRegistry = {
@@ -90,6 +109,7 @@ healthRoutes.get("/", async (c) => {
     checks.workstreamEmailRegistry,
   ];
   if (c.env.APP_ENV === "production") required.push(checks.inboundEmail);
+  if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
   return c.json({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }, ok ? 200 : 503);
 });

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  assertMinorReleaseVersion,
+  assertNextMinorReleaseVersion,
   assertReleaseTag,
   compareVersions,
   normalizeReleasePrefix,
@@ -15,10 +17,21 @@ import {
 } from './release-lib.mjs';
 
 test('release tag must exactly match both package versions', () => {
-  assert.equal(assertReleaseTag('v1.2.3-beta.1', '1.2.3-beta.1', '1.2.3-beta.1'), '1.2.3-beta.1');
-  assert.throws(() => assertReleaseTag('1.2.3', '1.2.3', '1.2.3'), /v<semver>/u);
-  assert.throws(() => assertReleaseTag('v1.2.3', '1.2.2', '1.2.3'), /Root package/u);
-  assert.throws(() => assertReleaseTag('v1.2.3', '1.2.3', '1.2.2'), /Desktop package/u);
+  assert.equal(assertReleaseTag('v1.2.0', '1.2.0', '1.2.0'), '1.2.0');
+  assert.throws(() => assertReleaseTag('1.2.0', '1.2.0', '1.2.0'), /v<semver>/u);
+  assert.throws(() => assertReleaseTag('v1.2.0', '1.1.0', '1.2.0'), /Root package/u);
+  assert.throws(() => assertReleaseTag('v1.2.0', '1.2.0', '1.1.0'), /Desktop package/u);
+  assert.throws(() => assertReleaseTag('v1.2.1', '1.2.1', '1.2.1'), /patch 0/u);
+  assert.throws(() => assertReleaseTag('v1.2.0-beta.1', '1.2.0-beta.1', '1.2.0-beta.1'), /stable minor/u);
+});
+
+test('release versions advance exactly one minor and reset patch to zero', () => {
+  assert.equal(assertMinorReleaseVersion('0.2.0'), '0.2.0');
+  assert.equal(assertNextMinorReleaseVersion('0.1.5', '0.2.0'), '0.2.0');
+  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '0.1.6'), /patch 0/u);
+  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '0.2.1'), /patch 0/u);
+  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '0.3.0'), /must be 0\.2\.0/u);
+  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '1.0.0'), /must be 0\.2\.0/u);
 });
 
 test('semantic versions compare with prerelease precedence', () => {

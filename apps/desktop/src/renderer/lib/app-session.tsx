@@ -253,6 +253,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = `/workstreams/${workstreamId}`;
         return;
       }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'settings' && deepLink.pathname === '/workspace') {
+        setDeepLinkError(null);
+        void desktopBridge().openSettings();
+        return;
+      }
       if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
         const token = deepLink.searchParams.get('token');
         const inviteRegion = deepLink.searchParams.get('region');

@@ -661,7 +661,11 @@ function emitDeepLink(rawUrl: string): void {
       && deepLink.pathname === '/accept'
       && deepLink.searchParams.get('token') !== null
       && (deepLink.searchParams.get('region') === 'global' || deepLink.searchParams.get('region') === 'eu');
-    if (!isAuthentication && !isWorkstream && !isInvitation) return;
+    const isSettings = deepLink.protocol === `${customProtocol}:`
+      && deepLink.hostname === 'settings'
+      && deepLink.pathname === '/workspace'
+      && deepLink.search === '';
+    if (!isAuthentication && !isWorkstream && !isInvitation && !isSettings) return;
     sendDeepLink(deepLink.toString());
   } catch {
     // Ignore malformed protocol payloads from the operating system.

@@ -3,6 +3,10 @@ import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboa
 import type { GitHubRegionalBridgeRpcBinding } from "./services/github-routing-service";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
 import type { InboundEmailRegionalRpcBinding } from "./services/resend-inbound-email-service";
+import type {
+  GlobalLinearRouterRpcBinding,
+  LinearRegionalBridgeRpcBinding,
+} from "./services/linear-routing-service";
 
 export interface Env {
   DB: D1Database;
@@ -15,7 +19,9 @@ export interface Env {
   EU_IDENTITY_BRIDGE?: RegionalIdentityBridgeRpcBinding;
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
+  EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
+  GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   AVALON_REGION: Region;
@@ -26,6 +32,7 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   DESKTOP_DEEP_LINK_URI: string;
   GITHUB_INGRESS_BASE_URL?: string;
+  LINEAR_INGRESS_BASE_URL?: string;
 
   OPENROUTER_API_KEY: string;
   OPENROUTER_PRIMARY_MODEL: string;
@@ -35,6 +42,7 @@ export interface Env {
   FIRECRAWL_API_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
+  RESEND_NOTIFICATION_FROM_EMAIL?: string;
   RESEND_RECEIVING_API_KEY?: string;
   RESEND_WEBHOOK_SIGNING_SECRET?: string;
   RESEND_WEBHOOK_SECRET?: string;
@@ -52,6 +60,7 @@ export interface Env {
   LINEAR_OAUTH_CLIENT_ID?: string;
   LINEAR_OAUTH_CLIENT_SECRET?: string;
   LINEAR_WEBHOOK_SECRET?: string;
+  LINEAR_NATIVE_AGENT_ENABLED?: string;
   NOTION_OAUTH_CLIENT_ID?: string;
   NOTION_OAUTH_CLIENT_SECRET?: string;
   NOTION_INTEGRATION_ID?: string;
@@ -127,4 +136,10 @@ export function assertRegion(value: string): Region {
     throw new Error(`Unsupported Avalon region: ${value}`);
   }
   return value;
+}
+
+export function linearNativeAgentEnabled(
+  env: Pick<Env, "LINEAR_NATIVE_AGENT_ENABLED">,
+): boolean {
+  return env.LINEAR_NATIVE_AGENT_ENABLED === "true";
 }

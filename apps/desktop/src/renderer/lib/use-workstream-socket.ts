@@ -73,13 +73,21 @@ export function orderTranscript(messages: Message[]): Message[] {
   return [...messages].sort(compareMessages);
 }
 
+function isSameLogicalMessage(left: Message, right: Message): boolean {
+  if (left.id === right.id) return true;
+  if (left.clientMessageId && (
+    left.clientMessageId === right.id
+    || left.clientMessageId === right.clientMessageId
+  )) return true;
+  return Boolean(right.clientMessageId && right.clientMessageId === left.id);
+}
+
 export function insertMessage(messages: Message[] | undefined, message: Message): Message[] {
   const existing = messages ?? [];
-  const index = existing.findIndex((candidate) => candidate.id === message.id);
-  const next = index === -1
-    ? [...existing, message]
-    : existing.map((candidate, candidateIndex) => candidateIndex === index ? message : candidate);
-  return orderTranscript(next);
+  return orderTranscript([
+    ...existing.filter((candidate) => !isSameLogicalMessage(candidate, message)),
+    message,
+  ]);
 }
 
 /**
@@ -100,7 +108,8 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
   const pendingHumanMessages = (previous ?? []).filter((message) =>
     message.authorType === 'human'
     && message.deliveryState === 'sending'
-    && !canonicalIds.has(message.id),
+    && !canonicalIds.has(message.id)
+    && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
   );
   return orderTranscript([...canonical, ...realtimeTools, ...pendingHumanMessages]);
 }

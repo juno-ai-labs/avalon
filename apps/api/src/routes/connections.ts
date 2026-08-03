@@ -15,6 +15,10 @@ import {
   isSharedGitHubIngress,
 } from "../services/github-routing-service";
 import { ProviderWebhookService } from "../services/provider-webhook-service";
+import {
+  isSharedLinearIngress,
+  LinearRoutingService,
+} from "../services/linear-routing-service";
 
 const idParam = z.object({ id: IdSchema });
 const googleStart = z.object({
@@ -33,8 +37,14 @@ const googleStart = z.object({
   ])).min(1),
 });
 const linearStart = z.object({
-  scope: z.literal("workspace"),
-  capabilities: z.array(z.enum(["linear.read", "linear.issue.create", "linear.comment.create", "linear.write"])).min(1),
+  scope: ScopeSchema,
+  capabilities: z.array(z.enum([
+    "linear.read",
+    "linear.issue.create",
+    "linear.comment.create",
+    "linear.write",
+    "linear.agent",
+  ])).min(1),
 });
 const notionStart = z.object({
   scope: z.literal("personal"),
@@ -138,11 +148,14 @@ webhookIngestionRoutes.post("/github", async (c) => {
   return c.json(result, result.duplicate ? 200 : 202);
 });
 webhookIngestionRoutes.post("/linear", async (c) => {
-  const result = await new ProviderWebhookService(c.env).ingestLinear(
-    new Uint8Array(await c.req.arrayBuffer()),
-    c.req.raw.headers,
-  );
-  return c.json(result, result.duplicate ? 200 : 202);
+  const rawBody = new Uint8Array(await c.req.arrayBuffer());
+  const result = isSharedLinearIngress(c.env, c.req.url)
+    ? await new LinearRoutingService(c.env).ingestLinear(rawBody, c.req.raw.headers)
+    : await new ProviderWebhookService(c.env).ingestLinear(rawBody, c.req.raw.headers);
+  // Linear treats every non-200 response as a failed delivery and retries it.
+  // A verified delivery has been durably recorded before this returns, so both
+  // first deliveries and duplicates must be acknowledged with an exact 200.
+  return c.json(result, 200);
 });
 webhookIngestionRoutes.post("/notion", async (c) => {
   const result = await new ProviderWebhookService(c.env).ingestNotion(

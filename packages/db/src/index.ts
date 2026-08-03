@@ -330,9 +330,13 @@ export function createDatabase(db: D1DatabaseLike) {
                'type', mm.mention_type,
                'userId', mm.mentioned_user_id,
                'connectorType', mm.connector_type,
+               'displayName', mentioned_person.name,
+               'avatarUrl', mentioned_person.avatar_url,
                'startOffset', mm.start_offset,
                'endOffset', mm.end_offset
-             )) FROM message_mentions mm WHERE mm.message_id = m.id), '[]') AS mentions_json
+             )) FROM message_mentions mm
+               LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
+               WHERE mm.message_id = m.id), '[]') AS mentions_json
            FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
            WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.sequence_number < ?
            ORDER BY m.sequence_number DESC LIMIT ?`

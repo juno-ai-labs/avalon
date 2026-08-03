@@ -283,12 +283,22 @@ export function mapMessage(message: WireMessage): Message {
       : message.messageType;
   return {
     id: message.id,
+    ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
     sequenceNumber: message.sequenceNumber,
     authorType: message.author.type === 'human' ? 'human' : message.author.type,
     ...(message.author.type === 'human' ? { author: mapUser(message.author.user) } : {}),
     messageType,
     text: message.textContent,
+    mentions: message.mentions.map((mention) => ({
+      type: mention.type,
+      ...(mention.userId ? { personId: mention.userId } : {}),
+      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+      ...(mention.displayName ? { displayName: mention.displayName } : {}),
+      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
+      startOffset: mention.startOffset,
+      endOffset: mention.endOffset,
+    })),
     createdAt: message.createdAt,
     ...(invocation.success ? { toolEvent: mapToolInvocation(invocation.data) } : {}),
     ...(message.messageType === 'artifact'
