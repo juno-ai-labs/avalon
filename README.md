@@ -86,8 +86,6 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [End-to-end verification](docs/E2E.md)
 - [Operations runbook](docs/RUNBOOK.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
-- [Monad harness/runtime reuse assessment](docs/MONAD_REUSE.md)
-- [Bounding agent chains with `@juno-ai/bind`](docs/BIND_MIGRATION.md)
 - [PRD: adopting Monad's harness & orchestration model](docs/PRDs/2026-08-03_todo_monad-runtime-and-orchestration-adoption/prd.md)
 
 ## Hosted deployment
