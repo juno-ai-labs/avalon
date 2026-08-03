@@ -20,10 +20,18 @@ export function parseVersion(version) {
   };
 }
 
+export function assertMinorReleaseVersion(version) {
+  const parsed = parseVersion(version);
+  if (parsed.patch !== 0 || parsed.prerelease.length > 0) {
+    throw new Error(`Avalon releases must use a stable minor version with patch 0; received ${version}`);
+  }
+  return version;
+}
+
 export function assertReleaseTag(tag, rootVersion, desktopVersion) {
   if (!tag?.startsWith('v')) throw new Error(`Release tag must have the form v<semver>; received ${tag || '(empty)'}`);
   const taggedVersion = tag.slice(1);
-  parseVersion(taggedVersion);
+  assertMinorReleaseVersion(taggedVersion);
   if (rootVersion !== taggedVersion) {
     throw new Error(`Root package version ${rootVersion} does not match tag ${tag}`);
   }
@@ -57,6 +65,18 @@ export function compareVersions(left, right) {
     return aPart < bPart ? -1 : 1;
   }
   return 0;
+}
+
+export function assertNextMinorReleaseVersion(currentVersion, nextVersion) {
+  const current = parseVersion(currentVersion);
+  assertMinorReleaseVersion(nextVersion);
+  const expectedVersion = `${current.major}.${current.minor + 1}.0`;
+  if (nextVersion !== expectedVersion) {
+    throw new Error(
+      `Next Avalon release after ${currentVersion} must be ${expectedVersion}; received ${nextVersion}`,
+    );
+  }
+  return nextVersion;
 }
 
 function yamlScalar(value) {

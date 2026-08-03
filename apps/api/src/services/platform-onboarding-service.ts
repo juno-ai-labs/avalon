@@ -13,7 +13,7 @@ import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { AuthService } from "./auth-service";
-import { acceptInvitationForUser } from "./workspace-service";
+import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 
 const platformIdentitySchema = z.object({
   platformUserId: z.string().uuid(),
@@ -320,6 +320,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const acceptedWorkspaceId = await acceptInvitationForUser(this.env, input.invitationId, {
       id: user.id,
       email: input.identity.email,
+      name: input.identity.name,
     });
     if (acceptedWorkspaceId !== input.workspaceId) {
       throw new ApiError(409, "invitation_workspace_mismatch", "The invitation changed while it was being accepted");
@@ -330,16 +331,12 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
 
   async decline(rawInput: RegionalDeclineInput): Promise<{ ok: true }> {
     const input = regionalDeclineSchema.parse(rawInput);
-    await this.ensureRegionalUser(input.identity);
-    const at = nowIso();
-    const result = await this.env.DB.prepare(
-      `UPDATE workspace_invitations SET revoked_at = ?
-       WHERE id = ? AND email = ? COLLATE NOCASE
-         AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
-    ).bind(at, input.invitationId, input.identity.email, at).run();
-    if (Number(result.meta.changes ?? 0) === 0) {
-      throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
-    }
+    const user = await this.ensureRegionalUser(input.identity);
+    await declineInvitationForUser(this.env, input.invitationId, {
+      id: user.id,
+      email: input.identity.email,
+      name: input.identity.name,
+    });
     return { ok: true };
   }
 

@@ -24,6 +24,7 @@ const bridge = vi.hoisted(() => ({
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
   openExternal: vi.fn(),
+  openSettings: vi.fn(),
   refreshSession: vi.fn(),
 }));
 
@@ -248,5 +249,25 @@ describe('single-platform desktop identity routing', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['automation'] });
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
     invalidate.mockRestore();
+  });
+
+  it('opens the desktop settings window from a notification deep link', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    bridge.openSettings.mockResolvedValueOnce(undefined);
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    act(() => deepLinkListener?.('avalon://settings/workspace'));
+
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 });

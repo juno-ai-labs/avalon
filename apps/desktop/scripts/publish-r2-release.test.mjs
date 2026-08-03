@@ -11,24 +11,24 @@ const execFileAsync = promisify(execFile);
 const publisherPath = new URL('./publish-r2-release.mjs', import.meta.url);
 const version = '0.1.0';
 
-async function createFixture() {
+async function createFixture({ releaseVersion = version, currentVersion = releaseVersion } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'avalon-r2-publisher-test-'));
   const releaseDirectory = join(directory, 'release');
   await mkdir(releaseDirectory);
   const artifacts = {
-    [`Avalon-${version}-arm64.dmg`]: 'not-a-real-dmg',
-    [`Avalon-${version}-arm64.dmg.blockmap`]: 'dmg-blockmap',
-    [`Avalon-${version}-arm64-mac.zip`]: 'not-a-real-zip',
-    [`Avalon-${version}-arm64-mac.zip.blockmap`]: 'zip-blockmap',
+    [`Avalon-${releaseVersion}-arm64.dmg`]: 'not-a-real-dmg',
+    [`Avalon-${releaseVersion}-arm64.dmg.blockmap`]: 'dmg-blockmap',
+    [`Avalon-${releaseVersion}-arm64-mac.zip`]: 'not-a-real-zip',
+    [`Avalon-${releaseVersion}-arm64-mac.zip.blockmap`]: 'zip-blockmap',
   };
   await Promise.all(Object.entries(artifacts).map(([name, contents]) => (
     writeFile(join(releaseDirectory, name), contents, 'utf8')
   )));
-  const zipName = `Avalon-${version}-arm64-mac.zip`;
+  const zipName = `Avalon-${releaseVersion}-arm64-mac.zip`;
   const zipBytes = Buffer.from(artifacts[zipName]);
   const zipSha512 = createHash('sha512').update(zipBytes).digest('base64');
   await writeFile(join(releaseDirectory, 'latest-mac.yml'), [
-    `version: ${version}`,
+    `version: ${releaseVersion}`,
     'files:',
     `  - url: ${zipName}`,
     `    sha512: ${zipSha512}`,
@@ -40,7 +40,7 @@ async function createFixture() {
   const configPath = join(directory, 'release.config.json');
   const config = {
     published: false,
-    version,
+    version: currentVersion,
     platform: 'macOS',
     architecture: 'Apple silicon',
     downloadBaseUrl: 'https://downloads.with-avalon.com',
@@ -104,6 +104,27 @@ test('live publishing requires an exact version confirmation before cloud creden
         encoding: 'utf8',
       }),
       (error) => String(error.stderr).includes(`Pass --confirm ${version}`),
+    );
+    assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('dry-run rejects a release that does not advance exactly one minor version', async () => {
+  const fixture = await createFixture({ currentVersion: '0.1.5', releaseVersion: '0.1.6' });
+  try {
+    await assert.rejects(
+      execFileAsync(process.execPath, [
+        publisherPath.pathname,
+        '--dry-run',
+        '--release-dir', fixture.releaseDirectory,
+        '--site-config', fixture.configPath,
+      ], {
+        env: environmentWithoutReleaseCredentials(),
+        encoding: 'utf8',
+      }),
+      (error) => String(error.stderr).includes('patch 0'),
     );
     assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);
   } finally {

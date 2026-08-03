@@ -197,6 +197,97 @@ describe("API security utilities", () => {
     )).not.toThrow();
   });
 
+  it("requires Linear to grant both resource and native-agent permissions", () => {
+    expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
+      ["linear.read", "linear.agent"],
+      { providerScopes: ["read", "app:assignable", "app:mentionable"] },
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
+      ["linear.read", "linear.agent"],
+      { providerScopes: ["read", "app:assignable"] },
+    )).toThrow(/app:mentionable/u);
+    expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
+      ["linear.issue.create"],
+      { providerScopes: ["read"] },
+    )).toThrow(/issues:create/u);
+  });
+
+  it("keeps Linear native-agent authorization behind the regional runtime gate", () => {
+    expect(() => __connectionServiceTesting.assertLinearNativeAgentCapabilityEnabled(
+      ["linear.read", "linear.agent"],
+      {},
+      "protocol_only",
+    )).toThrow(/not operational/u);
+    expect(() => __connectionServiceTesting.assertLinearNativeAgentCapabilityEnabled(
+      ["linear.read", "linear.agent"],
+      { LINEAR_NATIVE_AGENT_ENABLED: "true" },
+      "protocol_only",
+    )).toThrow(/not operational/u);
+    expect(() => __connectionServiceTesting.assertLinearNativeAgentCapabilityEnabled(
+      ["linear.read", "linear.agent"],
+      {},
+      "operational",
+    )).toThrow(/not enabled/u);
+    expect(() => __connectionServiceTesting.assertLinearNativeAgentCapabilityEnabled(
+      ["linear.read", "linear.agent"],
+      { LINEAR_NATIVE_AGENT_ENABLED: "true" },
+      "operational",
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertLinearNativeAgentCapabilityEnabled(
+      ["linear.read"],
+      {},
+      "protocol_only",
+    )).not.toThrow();
+  });
+
+  it("keeps Linear native-agent capabilities workspace-owned", () => {
+    expect(() => __connectionServiceTesting.assertLinearScopeCapabilities(
+      "personal",
+      ["linear.read", "linear.agent"],
+    )).toThrow(/workspace connection/u);
+    expect(() => __connectionServiceTesting.assertLinearScopeCapabilities(
+      "personal",
+      ["linear.read", "linear.issue.create"],
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertLinearScopeCapabilities(
+      "workspace",
+      ["linear.read", "linear.agent"],
+    )).not.toThrow();
+  });
+
+  it("keeps a personal Linear reconnect bound to the same human identity", () => {
+    expect(() => __connectionServiceTesting.assertSameLinearPersonalIdentity(
+      { authorizedUserId: "linear-user-1" },
+      { authorizedUserId: "linear-user-1" },
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertSameLinearPersonalIdentity(
+      { authorizedUserId: "linear-user-1" },
+      { authorizedUserId: "linear-user-2" },
+    )).toThrow(/same personal Linear user/u);
+    expect(() => __connectionServiceTesting.assertSameLinearPersonalIdentity(
+      {},
+      {},
+    )).toThrow(/personal user identity/u);
+  });
+
+  it("keeps a workspace Linear reconnect bound to the same app identity", () => {
+    expect(() => __connectionServiceTesting.assertSameLinearWorkspaceIdentity(
+      { appUserId: "linear-app-1" },
+      { appUserId: "linear-app-1" },
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertSameLinearWorkspaceIdentity(
+      { appUserId: "linear-app-1" },
+      { appUserId: "linear-app-2" },
+    )).toThrow(/same Linear application identity/u);
+  });
+
+  it("recognizes the D1 uniqueness failure used for Linear identity races", () => {
+    expect(__connectionServiceTesting.isUniqueConstraintError(
+      new Error("D1_ERROR: UNIQUE constraint failed: connector_connections.workspace_id"),
+    )).toBe(true);
+    expect(__connectionServiceTesting.isUniqueConstraintError(new Error("network unavailable"))).toBe(false);
+  });
+
   it("persists credentials mutated by a reactive connector refresh with connection-bound encryption", async () => {
     const updates: Array<{ sql: string; values: unknown[] }> = [];
     const database = {

@@ -17,6 +17,10 @@ import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
 } from "./services/github-routing-service";
+import {
+  isAllowedLinearIngressRoute,
+  isSharedLinearIngress,
+} from "./services/linear-routing-service";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -26,6 +30,18 @@ export function createApp(): Hono<HonoAppEnv> {
     if (
       isSharedGitHubIngress(c.env, c.req.url)
       && !isAllowedGitHubIngressRoute(c.req.method, new URL(c.req.url).pathname)
+    ) {
+      return c.json({
+        error: {
+          code: "not_found",
+          message: "The requested API route does not exist",
+          requestId: c.get("requestId") ?? null,
+        },
+      }, 404);
+    }
+    if (
+      isSharedLinearIngress(c.env, c.req.url)
+      && !isAllowedLinearIngressRoute(c.req.method, new URL(c.req.url).pathname)
     ) {
       return c.json({
         error: {

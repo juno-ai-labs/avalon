@@ -42,9 +42,20 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
   const query = c.req.valid("query");
   return c.json(await new WorkstreamService(c.env, getAuth(c)).messages(c.req.valid("param").id, query.limit, query.before));
 });
-workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).createMessage(c.req.valid("param").id, c.req.valid("json")), 201),
-);
+workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
+  const defer = (promise: Promise<unknown>): void => {
+    try {
+      c.executionCtx.waitUntil(promise);
+    } catch {
+      // Node-based route tests do not provide a Workers ExecutionContext. The
+      // promise is already guarded by the service and may finish normally.
+      void promise;
+    }
+  };
+  const result = await new WorkstreamService(c.env, getAuth(c), defer)
+    .createMessage(c.req.valid("param").id, c.req.valid("json"));
+  return c.json(result, 201);
+});
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).addParticipant(c.req.valid("param").id, c.req.valid("json").userId), 201),
 );

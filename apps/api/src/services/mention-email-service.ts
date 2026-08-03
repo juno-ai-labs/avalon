@@ -1,0 +1,189 @@
+import type { Region } from "@avalon/contracts";
+
+import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
+
+const RESEND_EMAILS_URL = "https://api.resend.com/emails";
+const MAX_RESEND_RESPONSE_BYTES = 32_000;
+const MAX_MESSAGE_EXCERPT_LENGTH = 320;
+
+export interface WorkstreamMentionEmail {
+  messageId: string;
+  recipientUserId: string;
+  recipientEmail: string;
+  recipientName: string;
+  authorName: string;
+  workspaceName: string;
+  workstreamId: string;
+  workstreamTitle: string;
+  workstreamEmailAddress: string | null;
+  messageText: string;
+  region: Region;
+}
+
+export type MentionEmailDelivery = "sent" | "skipped";
+
+export async function sendWorkstreamMentionEmail(
+  env: Env,
+  input: WorkstreamMentionEmail,
+  request: typeof fetch = fetch,
+): Promise<MentionEmailDelivery> {
+  // Local and test traffic must never send transactional email through a
+  // developer's production Resend account.
+  if (env.APP_ENV !== "production") return "skipped";
+
+  const apiKey = env.RESEND_API_KEY?.trim();
+  const from = env.RESEND_NOTIFICATION_FROM_EMAIL?.trim() || env.RESEND_FROM_EMAIL?.trim();
+  if (!apiKey || !from) {
+    throw new ApiError(
+      503,
+      "mention_email_unavailable",
+      "Mention email is temporarily unavailable",
+    );
+  }
+
+  const authorName = singleLine(input.authorName);
+  const workspaceName = singleLine(input.workspaceName);
+  const workstreamTitle = singleLine(input.workstreamTitle);
+  const recipientName = singleLine(input.recipientName);
+  const excerpt = messageExcerpt(input.messageText);
+  const workstreamUrl = `avalon://workstreams/${encodeURIComponent(input.workstreamId)}`;
+  const replyTo = input.workstreamEmailAddress?.trim() || null;
+  const subject = `${authorName} mentioned you in ${workstreamTitle}`;
+  const text = [
+    recipientName ? `Hi ${recipientName},` : "You were mentioned in Avalon.",
+    "",
+    `${authorName} mentioned you in "${workstreamTitle}" in ${workspaceName}.`,
+    ...(excerpt ? ["", `"${excerpt}"`] : []),
+    "",
+    `Open in Avalon: ${workstreamUrl}`,
+    ...(replyTo ? ["", "Reply to this email to continue the work stream."] : []),
+  ].join("\n");
+
+  let response: Response;
+  try {
+    response = await request(RESEND_EMAILS_URL, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+        "idempotency-key": `avalon-workstream-mention/${input.messageId}/${input.recipientUserId}`,
+        "user-agent": "avalon-worker/0.1",
+      },
+      body: JSON.stringify({
+        from,
+        to: [input.recipientEmail],
+        subject,
+        html: mentionEmailHtml({
+          authorName,
+          workspaceName,
+          workstreamTitle,
+          recipientName,
+          excerpt,
+          workstreamUrl,
+          replyTo,
+        }),
+        text,
+        ...(replyTo ? { reply_to: replyTo } : {}),
+        tags: [
+          { name: "category", value: "workstream_mention" },
+          { name: "region", value: input.region },
+        ],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    throw mentionEmailFailed();
+  }
+
+  let body: string;
+  try {
+    body = await boundedResponseText(response);
+  } catch {
+    throw mentionEmailFailed();
+  }
+  if (!response.ok) throw mentionEmailFailed();
+  try {
+    const parsed = JSON.parse(body) as { id?: unknown };
+    if (typeof parsed.id !== "string" || parsed.id.length === 0 || parsed.id.length > 200) {
+      throw new Error("invalid Resend response");
+    }
+  } catch {
+    throw mentionEmailFailed();
+  }
+  return "sent";
+}
+
+async function boundedResponseText(response: Response): Promise<string> {
+  const body = await response.text();
+  if (body.length > MAX_RESEND_RESPONSE_BYTES) throw mentionEmailFailed();
+  return body;
+}
+
+function mentionEmailFailed(): ApiError {
+  return new ApiError(502, "mention_email_failed", "The mention email could not be sent");
+}
+
+function messageExcerpt(value: string): string {
+  const normalized = singleLine(value.replace(
+    /\[@((?:\\.|[^\]])+)\]\(person:[0-9a-f-]{36}\)/giu,
+    (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
+  ));
+  if (normalized.length <= MAX_MESSAGE_EXCERPT_LENGTH) return normalized;
+  return `${normalized.slice(0, MAX_MESSAGE_EXCERPT_LENGTH - 1).trimEnd()}…`;
+}
+
+function mentionEmailHtml(input: {
+  authorName: string;
+  workspaceName: string;
+  workstreamTitle: string;
+  recipientName: string;
+  excerpt: string;
+  workstreamUrl: string;
+  replyTo: string | null;
+}): string {
+  const authorName = escapeHtml(input.authorName);
+  const workspaceName = escapeHtml(input.workspaceName);
+  const workstreamTitle = escapeHtml(input.workstreamTitle);
+  const recipientName = escapeHtml(input.recipientName);
+  const excerpt = escapeHtml(input.excerpt);
+  const workstreamUrl = escapeHtml(input.workstreamUrl);
+  const greeting = recipientName ? `Hi ${recipientName},` : "You were mentioned in Avalon.";
+  const quote = excerpt
+    ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CEDC00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${excerpt}</td></tr>`
+    : "";
+  const reply = input.replyTo
+    ? `<tr><td style="padding-top:18px;font-size:13px;line-height:1.6;color:#8f948b">Reply to this email to continue the work stream.</td></tr>`
+    : "";
+  return `<!doctype html>
+<html lang="en">
+  <body style="margin:0;background:#10130f;color:#f2f3ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
+          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CEDC00">Avalon</td></tr>
+          <tr><td><h1 style="margin:18px 0 12px;font-size:26px;line-height:1.25;color:#f2f3ec">You were mentioned</h1></td></tr>
+          <tr><td style="padding-bottom:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${greeting}<br><strong style="color:#f2f3ec">${authorName}</strong> mentioned you in <strong style="color:#f2f3ec">${workstreamTitle}</strong> in ${workspaceName}.</td></tr>
+          ${quote}
+          <tr><td style="padding-top:28px"><a href="${workstreamUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Avalon</a></td></tr>
+          ${reply}
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'"]/gu, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#39;",
+    '"': "&quot;",
+  })[character] ?? character);
+}
+
+function singleLine(value: string): string {
+  return value.replace(/[\r\n\t]+/gu, " ").replace(/\s{2,}/gu, " ").trim();
+}

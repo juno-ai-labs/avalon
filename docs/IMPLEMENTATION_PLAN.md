@@ -41,7 +41,7 @@
 - [x] Add the connector adapter contract and execution-principal enforcement.
 - [x] Add one incremental Google OAuth adapter with separate Mail + Calendar and Drive + Docs + Sheets capability presets.
 - [x] Add real Gmail, Calendar, and Drive reads; Gmail and Calendar writes; native bounded Docs/Sheets reads and writes; and Drive change-token normalization for Drive, Docs, and Sheets activity.
-- [x] Add one smart-routed public GitHub App plus regional Linear OAuth and Notion connection adapters with bounded agent tools, resource hydration, credential lifecycle, and signed inbound events.
+- [x] Add one smart-routed public GitHub App, one smart-routed public Linear app with a first-class resource surface and feature-gated `protocol_only` native-agent surface, and regional Notion connection adapters with bounded tools, resource hydration, credential lifecycle, and signed inbound events.
 - [x] Replace model-native web discovery with bounded Firecrawl search and page-fetch tools and regional usage accounting.
 - [x] Add HMAC generic webhooks, web monitoring, R2 snapshots, normalized activities, Queue ingestion, and deduplication.
 - [x] Add direct watches/triggers and deterministic-then-LLM contextual routing with accept/dismiss feedback.
@@ -56,7 +56,7 @@
 - [ ] Enable the expanded Google APIs, complete consent-screen verification and any required restricted-scope security assessment, and pass both Google preset acceptance flows with a provider test account.
 - [x] Deploy regional GitHub, Linear, and Notion callbacks, webhook ingestion, provider manifests, and Firecrawl secrets.
 - [x] Register the one public GitHub App, install its regional Worker secrets, and verify its registration ping through smart ingress.
-- [ ] Register the provider-owned Global/EU Linear and Notion apps and install their generated Worker secrets.
+- [ ] Register the one public Linear app and the provider-owned Global/EU Notion apps, then install their generated Worker secrets.
 - [ ] Complete the human test-account identity, invitation, and connector acceptance flow.
 
 ## Release gates

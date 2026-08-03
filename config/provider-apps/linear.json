@@ -3,16 +3,17 @@
   "schemaVersion": "1.0.0",
   "distribution": "public",
   "display": {
-    "description": "Connect workspace issues, projects, comments, and events to Avalon EU.",
+    "description": "Bring Linear issues, projects, documents, and updates into Avalon workstreams.",
     "iconUrl": "https://with-avalon.com/brand/avalon-mark.png"
   },
   "developer": {
-    "name": "Avalon"
+    "name": "Juno AI Labs"
   },
   "oauth": {
-    "client_name": "Avalon EU",
+    "client_name": "Avalon",
     "client_uri": "https://with-avalon.com",
     "redirect_uris": [
+      "https://api.with-avalon.com/connections/linear/callback",
       "https://eu.api.with-avalon.com/connections/linear/callback"
     ],
     "grant_types": [
@@ -21,13 +22,19 @@
   },
   "webhook": {
     "enabled": true,
-    "url": "https://eu.api.with-avalon.com/ingest/linear",
+    "url": "https://linear.with-avalon.com/ingest/linear",
     "resourceTypes": [
       "Issue",
       "Comment",
+      "Attachment",
+      "IssueLabel",
+      "Reaction",
       "Project",
       "ProjectUpdate",
+      "ProjectLabel",
+      "Cycle",
       "Document",
+      "User",
       "OAuthAuthorization",
       "PermissionChange"
     ]

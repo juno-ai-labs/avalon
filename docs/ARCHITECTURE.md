@@ -79,7 +79,7 @@ Connector adapters expose typed authorization, polling, webhook normalization, h
 
 - One Google connector family presented as Mail + Calendar and Drive + Docs + Sheets presets, with incremental OAuth scopes, refresh handling, native Docs/Sheets APIs, and bounded read/write tools.
 - One public GitHub App with installation tokens, expiring user authorization, a signature-verifying smart ingress, regional fanout, resource discovery, and normalized repository activity.
-- Public Linear and Notion integrations with regional OAuth callbacks and signed regional webhook ingestion.
+- One public Linear app with Global and EU OAuth callbacks, app-actor attribution, a signature-verifying smart ingress, regional fanout, a first-class resource surface, and a feature-gated `protocol_only` native-agent surface; plus a separate public Notion integration with regional callbacks and signed regional webhook ingestion.
 - Signed generic webhooks with HMAC, timestamp, replay, schema, and deduplication checks.
 - Web monitoring with conditional requests, bounded fetches, content hashing, readable text extraction, and R2 snapshots.
 

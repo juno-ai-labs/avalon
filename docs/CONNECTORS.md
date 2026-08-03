@@ -44,9 +44,13 @@ The agent can list repositories and commits, read files, inspect and create/upda
 
 ## Linear
 
-Linear uses public OAuth applications with PKCE and `actor=app`. A workspace install grants `read`, `issues:create`, `comments:create`, and `write` only as requested. The agent can search/read issues and projects, list teams, create/update issues, and create comments.
+Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Avalon owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants only `app:assignable` and `app:mentionable`, while resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams, create/update issues, and create comments.
 
-Linear's app-provisioned organization webhook is timestamp/signature verified, replay bounded, normalized, deduplicated, and routed through the regional activity queue.
+Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning Global/EU workspace app connection, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Personal connections support interactive tools and scheduled queries but do not yet consume organization-wide real-time deliveries; that prevents private-team events from crossing user boundaries before durable per-resource authorization is available. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
+
+The native-agent surface is a control-plane protocol, not a model-callable tool. `ConnectorAdapter.nativeAgent` supplies the typed invocation and outbound protocol facet; the manifest separately records `runtimeStatus`. Linear is currently `protocol_only`: the provider schemas and GraphQL operations exist, but the coordinating session-to-workstream runtime is deliberately not advertised as operational. Its descriptor records preview maturity, delegation/mention/follow-up invocation, authored activity kinds, cancellation, links, plans, proactive sessions, Linear's five-second webhook response deadline, and the ten-second first-activity deadline.
+
+Native sessions are additionally matched by organization, granted `linear.agent` capability, and the signed event's `appUserId`; a resource-only connection never receives a delegation. Desktop authorization requests `linear.agent` only when `VITE_LINEAR_NATIVE_AGENT_ENABLED=true`, and the API independently requires both `LINEAR_NATIVE_AGENT_ENABLED=true` and an `operational` connector runtime. Keep the flags off and the runtime `protocol_only` until the fast durable inbox, unique native-session ownership, session/run mapping, cancellation coordinator, durable activity outbox, and timing acceptance suite are complete.
 
 ## Notion
 

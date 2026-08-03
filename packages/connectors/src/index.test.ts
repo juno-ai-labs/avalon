@@ -3,6 +3,9 @@ import { NormalizedActivitySchema } from "@avalon/contracts";
 import {
   __testing,
   assertPrincipalAccess,
+  connectorSupportsSurface,
+  ConnectorRegistry,
+  createGenericWebhookConnector,
   createGoogleConnector,
   CredentialCipher,
   pollWebMonitor,
@@ -11,6 +14,51 @@ import {
 } from "./index";
 
 describe("connectors", () => {
+  it("normalizes legacy manifests before exposing connector surfaces", () => {
+    const registry = new ConnectorRegistry([createGenericWebhookConnector()]);
+    const manifest = registry.get("generic_webhook").manifest;
+    expect(manifest.surfaces).toEqual(["resource"]);
+    expect(connectorSupportsSurface(manifest, "resource")).toBe(true);
+    expect(connectorSupportsSurface(manifest, "native_agent")).toBe(false);
+  });
+
+  it("requires a native-agent manifest surface to have a matching protocol facet", () => {
+    expect(() => new ConnectorRegistry([{
+      manifest: {
+        type: "missing-native-protocol",
+        displayName: "Missing native protocol",
+        surfaces: ["resource", "native_agent"],
+        capabilities: [{ id: "provider.agent", kind: "native_agent" }],
+        nativeAgent: {
+          capability: "provider.agent",
+          invocationModes: ["delegation"],
+          activityKinds: ["response", "error"],
+          supportsCancellation: true,
+          supportsExternalLinks: true,
+          supportsPlans: false,
+          supportsProactiveSessions: false,
+          maturity: "preview",
+          runtimeStatus: "protocol_only",
+          sessionOwnership: "single_connection_per_provider_account",
+        },
+        supportedScopes: ["workspace"],
+        oauthRequired: true,
+        activityTypes: [],
+        resourceTypes: [],
+        tools: [],
+        supportsWatches: false,
+        supportsPolling: false,
+        supportsWebhooks: true,
+      },
+      async executeTool(name) {
+        throw new Error(`Unexpected tool ${name}`);
+      },
+      async healthCheck() {
+        return { ok: true, message: "Configured" };
+      },
+    }])).toThrow(/without a protocol adapter/u);
+  });
+
   it("does not let another user borrow a personal connection", () => {
     expect(() =>
       assertPrincipalAccess(

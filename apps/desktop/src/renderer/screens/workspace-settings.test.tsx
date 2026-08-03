@@ -113,6 +113,122 @@ describe('Workspace settings', () => {
     expect(openExternal).toHaveBeenCalledTimes(2);
   });
 
+  it('offers personal and workspace Linear authorization without granting agent identity personally', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const linearCard = (await screen.findByText('Linear')).closest('article');
+    expect(linearCard).not.toBeNull();
+    fireEvent.click(within(linearCard!).getByRole('button', { name: 'Connect for me' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'linear',
+      'you',
+      ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
+    ));
+
+    await waitFor(() => expect(within(linearCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(linearCard!).getByRole('button', { name: 'Connect workspace' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
+      'linear',
+      'workspace',
+      ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
+    ));
+  });
+
+  it.each(['healthy', 'reconnect_required'] as const)(
+    'disables duplicate workspace authorization for an existing %s Linear installation',
+    async (status) => {
+      api.getConnections.mockResolvedValue([{
+        id: '00000000-0000-7000-8000-000000000011',
+        connectorType: 'linear',
+        scope: 'workspace',
+        displayName: 'Linear · Avalon',
+        capabilities: ['linear.read'],
+        status,
+      }]);
+
+      renderSettings();
+      openSettingsSection('Connections');
+
+      const linearCard = (await screen.findByText('Linear')).closest('article');
+      expect(linearCard).not.toBeNull();
+      expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect workspace' });
+      await waitFor(() => expect(workspaceButton).toBeDisabled());
+      expect(workspaceButton).toHaveAttribute(
+        'title',
+        'A Linear workspace connection is already installed. Manage it below.',
+      );
+      fireEvent.click(workspaceButton);
+      expect(api.startProviderConnection).not.toHaveBeenCalled();
+    },
+  );
+
+  it('allows a replacement workspace authorization after the existing connection is disabled', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000012',
+      connectorType: 'linear',
+      scope: 'workspace',
+      displayName: 'Linear · Avalon',
+      capabilities: ['linear.read'],
+      status: 'disabled',
+    }]);
+
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const linearCard = (await screen.findByText('Linear')).closest('article');
+    expect(linearCard).not.toBeNull();
+    const workspaceButton = within(linearCard!).getByRole('button', { name: 'Connect workspace' });
+    await waitFor(() => expect(workspaceButton).toBeEnabled());
+    fireEvent.click(workspaceButton);
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'linear',
+      'workspace',
+      ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
+    ));
+  });
+
+  it('uses provider-level workspace connection detection without blocking personal authorization', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000013',
+      connectorType: 'google',
+      scope: 'workspace',
+      displayName: 'Google Workspace · Avalon',
+      capabilities: ['gmail.read', 'calendar.read'],
+      status: 'healthy',
+    }, {
+      id: '00000000-0000-7000-8000-000000000014',
+      connectorType: 'linear',
+      scope: 'you',
+      displayName: 'Linear · Adam',
+      capabilities: ['linear.read'],
+      status: 'healthy',
+    }]);
+
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const driveCard = (await screen.findByText('Google Drive + Docs + Sheets')).closest('article');
+    expect(driveCard).not.toBeNull();
+    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' })).toBeDisabled());
+    expect(within(driveCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+
+    const linearCard = screen.getByText('Linear').closest('article');
+    expect(linearCard).not.toBeNull();
+    expect(within(linearCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled();
+  });
+
+  it('lets members connect Linear personally without offering a workspace installation', async () => {
+    renderSettings({ ...workspace, currentUser: member });
+    openSettingsSection('Connections');
+
+    const linearCard = (await screen.findByText('Linear')).closest('article');
+    expect(linearCard).not.toBeNull();
+    expect(within(linearCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+    expect(within(linearCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
+  });
+
   it('shows existing Google connections in the connection list', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000010',

@@ -1,9 +1,11 @@
 import {
   ConnectorError,
+  connectorCapabilitySupportsScope,
   createWebhookSecret,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
   GoogleCapabilityScopes,
+  LinearCapabilityScopes,
   verifyGenericWebhook,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
@@ -17,12 +19,13 @@ import type {
 import { newId, nowIso } from "@avalon/db";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { numericEnv } from "../env";
+import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv, githubConnectorConfig } from "../lib/connector-registry";
 import { decryptString, encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
+import { LinearRoutingService } from "./linear-routing-service";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 type CreateMonitorInput = z.infer<typeof CreateWebMonitorRequestSchema>;
@@ -56,12 +59,7 @@ export interface GitHubSetupResult {
 }
 
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
-  linear: {
-    "linear.read": ["read"],
-    "linear.issue.create": ["issues:create"],
-    "linear.comment.create": ["comments:create"],
-    "linear.write": ["write"],
-  },
+  linear: LinearCapabilityScopes,
   notion: {
     "notion.read": ["notion.read"],
     "notion.insert": ["notion.insert"],
@@ -235,10 +233,23 @@ export class ConnectionService {
     if (!adapter.manifest.supportedScopes.includes(input.scope)) {
       throw new ApiError(422, "invalid_connector_scope", `${adapter.manifest.displayName} does not support ${input.scope} connections`);
     }
-    const supported = new Set(adapter.manifest.tools.map((tool) => tool.capability));
+    const supported = new Set(adapter.manifest.capabilities.map((capability) => capability.id));
     const capabilities = [...new Set(input.capabilities)];
-    if (!capabilities.length || capabilities.some((capability) => !supported.has(capability))) {
+    if (
+      !capabilities.length
+      || capabilities.some((capability) =>
+        !supported.has(capability)
+        || !connectorCapabilitySupportsScope(adapter, capability, input.scope))
+    ) {
       throw new ApiError(422, "invalid_connector_capabilities", `Choose supported ${adapter.manifest.displayName} capabilities`);
+    }
+    if (provider === "linear") {
+      assertLinearScopeCapabilities(input.scope, capabilities);
+      assertLinearNativeAgentCapabilityEnabled(
+        capabilities,
+        this.env,
+        adapter.manifest.nativeAgent?.runtimeStatus,
+      );
     }
     const verifier = randomToken(64);
     const challenge = await sha256(verifier);
@@ -268,6 +279,7 @@ export class ConnectionService {
     const authorization = await adapter.beginAuthorization?.({
       state,
       codeChallenge: challenge,
+      connectionScope: input.scope,
       scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
     });
     if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
@@ -521,12 +533,28 @@ export class ConnectionService {
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
     ) as { provider: OAuthConnectorProvider; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
     if (stateData.provider !== provider) throw new ApiError(401, "invalid_oauth_state", "The connector provider does not match this authorization");
+    await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
     const adapter = this.registry().get(provider);
-    const incomingCredentials = await adapter.handleAuthorizationCallback?.({ code, codeVerifier: stateData.verifier });
+    if (provider === "linear") {
+      assertLinearScopeCapabilities(stateData.scope, stateData.capabilities);
+      assertLinearNativeAgentCapabilityEnabled(
+        stateData.capabilities,
+        this.env,
+        adapter.manifest.nativeAgent?.runtimeStatus,
+      );
+    }
+    const incomingCredentials = await adapter.handleAuthorizationCallback?.({
+      code,
+      codeVerifier: stateData.verifier,
+      connectionScope: stateData.scope,
+    });
     if (!incomingCredentials) throw new ApiError(502, "connector_token_exchange_failed", `${adapter.manifest.displayName} did not return connector credentials`);
+    if (provider === "linear") {
+      assertLinearCapabilitiesGranted(stateData.capabilities, incomingCredentials);
+    }
     const providerAccountId = stringField(incomingCredentials, "providerAccountId");
     if (!providerAccountId) throw new ApiError(502, "connector_identity_missing", `${adapter.manifest.displayName} did not return a stable account identity`);
-    const connectionId = stateData.connectionId ?? newId();
+    let connectionId = stateData.connectionId ?? newId();
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
     if (stateData.connectionId) {
@@ -541,11 +569,40 @@ export class ConnectionService {
         throw new ApiError(409, "connector_account_mismatch", `Reconnect the same ${adapter.manifest.displayName} account`);
       }
       existingCredentials = (await this.context(existing)).credentials;
+    } else if (provider === "linear") {
+      // Starting "Connect" twice for the same Linear identity should repair the
+      // existing authorization rather than create two competing webhook/tool
+      // identities for one person or workspace.
+      existing = await this.env.DB.prepare(
+        `SELECT * FROM connector_connections
+         WHERE workspace_id = ? AND connector_type = 'linear' AND scope = ?
+           AND provider_account_id = ? AND status <> 'disabled'
+           AND ((scope = 'personal' AND owner_user_id = ?)
+             OR (scope = 'workspace' AND owner_user_id IS NULL))
+         ORDER BY created_at LIMIT 1`,
+      ).bind(
+        row.workspace_id,
+        stateData.scope,
+        providerAccountId,
+        row.user_id,
+      ).first<StoredConnection>();
+      if (existing) {
+        connectionId = existing.id;
+        existingCredentials = (await this.context(existing)).credentials;
+      }
+    }
+    if (provider === "linear" && stateData.scope === "personal") {
+      assertSameLinearPersonalIdentity(existingCredentials, incomingCredentials);
+    } else if (provider === "linear") {
+      assertSameLinearWorkspaceIdentity(existingCredentials, incomingCredentials);
     }
     const credentials = { ...existingCredentials, ...incomingCredentials, providerAccountId };
     const encrypted = await encryptString(JSON.stringify(credentials), this.env.CONNECTOR_CREDENTIALS_KEY, connectionId);
     const at = nowIso();
-    const label = stringField(credentials, "providerAccountName") ?? stringField(credentials, "workspaceName") ?? providerAccountId;
+    const label = stringField(credentials, "connectionDisplayName")
+      ?? stringField(credentials, "providerAccountName")
+      ?? stringField(credentials, "workspaceName")
+      ?? providerAccountId;
     const displayName = `${adapter.manifest.displayName} · ${label}`.slice(0, 180);
     if (existing) {
       await this.env.DB.prepare(
@@ -566,28 +623,64 @@ export class ConnectionService {
         provider,
       ).run();
     } else {
-      await this.env.DB.prepare(
-        `INSERT INTO connector_connections
-         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
-          encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          status, cursor_json, config_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
-      ).bind(
-        connectionId,
-        row.workspace_id,
-        provider,
-        stateData.scope,
-        stateData.scope === "personal" ? row.user_id : null,
-        providerAccountId,
-        displayName,
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(stateData.capabilities),
-        JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
-        at,
-        at,
-      ).run();
+      try {
+        await this.env.DB.prepare(
+          `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
+            encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
+            status, cursor_json, config_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
+        ).bind(
+          connectionId,
+          row.workspace_id,
+          provider,
+          stateData.scope,
+          stateData.scope === "personal" ? row.user_id : null,
+          providerAccountId,
+          displayName,
+          encrypted.ciphertext,
+          encrypted.iv,
+          Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+          JSON.stringify(stateData.capabilities),
+          JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
+          at,
+          at,
+        ).run();
+      } catch (error) {
+        if (provider === "linear" && isUniqueConstraintError(error)) {
+          throw new ApiError(
+            409,
+            "linear_connection_exists",
+            `This ${stateData.scope} Linear identity is already connected`,
+          );
+        }
+        throw error;
+      }
+    }
+    if (provider === "linear" && stateData.scope === "workspace") {
+      try {
+        await new LinearRoutingService(this.env).registerConnection({
+          organizationId: providerAccountId,
+          region: this.env.AVALON_REGION,
+          workspaceId: String(row.workspace_id),
+          connectionId,
+        });
+      } catch (error) {
+        await this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = 'linear'`,
+        ).bind(
+          JSON.stringify({
+            code: "linear_route_registration_failed",
+            message: "The shared Linear webhook route could not be registered",
+            retryable: true,
+          }),
+          nowIso(),
+          connectionId,
+          row.workspace_id,
+        ).run();
+        throw error;
+      }
     }
     await this.recordConnectionAudit(
       String(row.workspace_id),
@@ -639,6 +732,25 @@ export class ConnectionService {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
       result = { ok: false, message: error.message, reconnectRequired: true };
     }
+    if (result.ok && connection.connector_type === "linear" && connection.scope === "workspace") {
+      const organizationId = connection.provider_account_id == null
+        ? null
+        : String(connection.provider_account_id);
+      if (!organizationId) {
+        result = { ok: false, message: "The Linear organization identity is missing", reconnectRequired: true };
+      } else {
+        try {
+          await new LinearRoutingService(this.env).registerConnection({
+            organizationId,
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            connectionId: connection.id,
+          });
+        } catch {
+          result = { ok: false, message: "The shared Linear webhook route could not be registered" };
+        }
+      }
+    }
     if (JSON.stringify(context.credentials) !== before) {
       await this.persistCredentials(connection, context.credentials);
     }
@@ -683,6 +795,30 @@ export class ConnectionService {
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
       await this.refreshScheduler(connection.workspace_id);
+      if (
+        connection.connector_type === "linear"
+        && connection.scope === "workspace"
+        && connection.provider_account_id
+      ) {
+        try {
+          await new LinearRoutingService(this.env).setConnectionStatus({
+            organizationId: String(connection.provider_account_id),
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            connectionId: connection.id,
+            status: "disabled",
+          });
+        } catch (error) {
+          // The regional connection is already disabled and cannot consume the
+          // event. Keep teardown recoverable; reconciliation can retire the
+          // opaque Global route later without restoring credentials.
+          console.warn("Linear route deactivation failed", {
+            region: this.env.AVALON_REGION,
+            connection_id: connection.id,
+            reason: error instanceof Error ? error.message : "unknown route error",
+          });
+        }
+      }
       await this.recordConnectionAudit(
         connection.workspace_id,
         this.requireAuth().userId,
@@ -844,6 +980,27 @@ export class ConnectionService {
     ).bind(nowIso(), state, provider, purpose, this.env.AVALON_REGION, nowIso()).first<Record<string, unknown>>();
     if (!row) throw new ApiError(401, "invalid_oauth_state", "The connector authorization is invalid or expired");
     return row;
+  }
+
+  private async assertOAuthStatePrincipalAllowed(
+    state: Record<string, unknown>,
+    scope: Scope,
+  ): Promise<void> {
+    const workspaceId = stringField(state, "workspace_id");
+    const userId = stringField(state, "user_id");
+    if (!workspaceId || !userId) {
+      throw new ApiError(401, "invalid_oauth_state", "The connector authorization is missing its workspace principal");
+    }
+    const membership = await this.env.DB.prepare(
+      `SELECT role, status FROM workspace_members
+       WHERE workspace_id = ? AND user_id = ?`,
+    ).bind(workspaceId, userId).first<{ role: string; status: string }>();
+    if (!membership || membership.status !== "active") {
+      throw new ApiError(403, "workspace_membership_required", "Your workspace membership is no longer active");
+    }
+    if (scope === "workspace" && membership.role !== "owner" && membership.role !== "admin") {
+      throw new ApiError(403, "workspace_admin_required", "Workspace connections require an administrator");
+    }
   }
 
   private async upsertGitHubRepositoryResources(
@@ -1204,9 +1361,121 @@ function assertGoogleCapabilitiesGranted(
   }
 }
 
+function assertLinearCapabilitiesGranted(
+  capabilities: string[],
+  credentials: Record<string, unknown>,
+): void {
+  const granted = new Set(arrayField(credentials, "providerScopes"));
+  if (granted.size === 0) {
+    throw new ApiError(
+      502,
+      "linear_scope_response_missing",
+      "Linear did not report which connector permissions were granted; restart the connection",
+    );
+  }
+  const required = new Set([
+    "read",
+    ...capabilities.flatMap((capability) => providerCapabilityScopes.linear[capability] ?? []),
+  ]);
+  const missing = [...required].filter((scope) => !granted.has(scope));
+  if (missing.length > 0) {
+    throw new ApiError(
+      403,
+      "linear_scopes_not_granted",
+      `Linear access was not granted for: ${missing.join(", ")}. Restart the connection and approve those permissions.`,
+    );
+  }
+}
+
+function assertLinearScopeCapabilities(scope: Scope, capabilities: string[]): void {
+  if (scope === "personal" && capabilities.includes("linear.agent")) {
+    throw new ApiError(
+      422,
+      "linear_agent_workspace_required",
+      "Linear delegation and mentions require a workspace connection",
+    );
+  }
+}
+
+function assertSameLinearPersonalIdentity(
+  existingCredentials: Record<string, unknown>,
+  incomingCredentials: Record<string, unknown>,
+): void {
+  const incomingUserId = stringField(incomingCredentials, "authorizedUserId");
+  if (!incomingUserId) {
+    throw new ApiError(
+      502,
+      "connector_identity_missing",
+      "Linear did not return the authorized personal user identity",
+    );
+  }
+  const existingUserId = stringField(existingCredentials, "authorizedUserId");
+  if (existingUserId && existingUserId !== incomingUserId) {
+    throw new ApiError(
+      409,
+      "connector_account_mismatch",
+      "Reconnect the same personal Linear user",
+    );
+  }
+}
+
+function assertSameLinearWorkspaceIdentity(
+  existingCredentials: Record<string, unknown>,
+  incomingCredentials: Record<string, unknown>,
+): void {
+  const incomingAppUserId = stringField(incomingCredentials, "appUserId");
+  if (!incomingAppUserId) {
+    throw new ApiError(
+      502,
+      "connector_identity_missing",
+      "Linear did not return the authorized workspace app identity",
+    );
+  }
+  const existingAppUserId = stringField(existingCredentials, "appUserId");
+  if (existingAppUserId && existingAppUserId !== incomingAppUserId) {
+    throw new ApiError(
+      409,
+      "connector_account_mismatch",
+      "Reconnect the same Linear application identity",
+    );
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return error instanceof Error && /unique constraint failed|constraint_unique/iu.test(error.message);
+}
+
+function assertLinearNativeAgentCapabilityEnabled(
+  capabilities: string[],
+  env: Pick<Env, "LINEAR_NATIVE_AGENT_ENABLED">,
+  runtimeStatus: "protocol_only" | "operational" | undefined = "protocol_only",
+): void {
+  if (!capabilities.includes("linear.agent")) return;
+  if (runtimeStatus !== "operational") {
+    throw new ApiError(
+      409,
+      "linear_native_agent_protocol_only",
+      "Linear's native-agent protocol is implemented, but its coordinating Avalon runtime is not operational yet",
+    );
+  }
+  if (!linearNativeAgentEnabled(env)) {
+    throw new ApiError(
+      409,
+      "linear_native_agent_unavailable",
+      "Linear delegation and mentions are still in preview and are not enabled for this Avalon environment",
+    );
+  }
+}
+
 export const __connectionServiceTesting = {
   reconcileGoogleAccount,
   googleConnectionDisplayName,
   googleProviderScopesForCapabilities,
   assertGoogleCapabilitiesGranted,
+  assertLinearCapabilitiesGranted,
+  assertLinearScopeCapabilities,
+  assertSameLinearPersonalIdentity,
+  assertSameLinearWorkspaceIdentity,
+  isUniqueConstraintError,
+  assertLinearNativeAgentCapabilityEnabled,
 };

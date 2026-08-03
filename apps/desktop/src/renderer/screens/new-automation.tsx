@@ -209,7 +209,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   const connectProvider = useMutation({
     mutationFn: async (input: { provider: ConnectableProvider; capabilities: string[] }) => {
       const requestedScope = draft?.summary?.scope ?? 'you';
-      const scope = input.provider === 'linear' ? 'workspace' : input.provider === 'notion' ? 'you' : requestedScope;
+      const scope = input.provider === 'notion' ? 'you' : requestedScope;
       const url = await api!.startProviderConnection(input.provider, scope, input.capabilities);
       await desktopBridge().openExternal(url);
     },

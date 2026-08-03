@@ -235,6 +235,29 @@ describe("connector tools selected for harness runs", () => {
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([OWNER_CONNECTION_ID]));
   });
 
+  it("prefers the user's personal identity over a workspace identity for ad-hoc tools", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null, GOOGLE_WORKSPACE_CAPABILITIES, "2026-07-01T00:00:00.000Z"),
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID, GOOGLE_WORKSPACE_CAPABILITIES, "2026-08-01T00:00:00.000Z"),
+    ]);
+
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+
+    expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+    expect(new Set(selected.connectionByTool.values())).toEqual(new Set([OWNER_CONNECTION_ID]));
+  });
+
+  it("prefers an explicitly attached workspace identity over the user's personal identity", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID),
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+    ], [], [WORKSPACE_CONNECTION_ID]);
+
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+
+    expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
+  });
+
   it("limits automation tools to capabilities explicitly bound to a connection", async () => {
     const database = new ToolSelectionDatabase(
       [connection(WORKSPACE_CONNECTION_ID, "workspace", null)],

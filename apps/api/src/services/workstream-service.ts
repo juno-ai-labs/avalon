@@ -5,12 +5,18 @@ import type {
   CreateWorkstreamRequestSchema,
   Message,
   UpdateWorkstreamRequestSchema,
+  Workstream,
   WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import {
+  isCanonicalPersonMention,
+  prepareMentionMarkdown,
+  type MentionPerson,
+} from "../lib/message-mentions";
 import {
   classifyWorkstreamMessage,
   publishWorkstreamEvent,
@@ -19,6 +25,7 @@ import {
 import { issueSocketTicket } from "./socket-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
+import { sendWorkstreamMentionEmail } from "./mention-email-service";
 
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -84,7 +91,11 @@ function json<T>(value: unknown, fallback: T): T {
 export class WorkstreamService {
   private readonly database;
 
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {
+  constructor(
+    private readonly env: Env,
+    private readonly auth: AuthContext,
+    private readonly defer?: (promise: Promise<unknown>) => void,
+  ) {
     this.database = createDatabase(env.DB);
   }
 
@@ -249,7 +260,19 @@ export class WorkstreamService {
     if (replayed) {
       return { message: replayed, agentInvoked: false, harnessRunId: null };
     }
-    const personIds = [...new Set(input.mentions.filter((mention) => mention.type === "person" && mention.userId).map((mention) => mention.userId!))];
+    const personIds = [...new Set(input.mentions
+      .filter((mention) => mention.type === "person" && mention.userId)
+      .map((mention) => mention.userId!))];
+    const mentionPeople = await this.loadMentionPeople(personIds);
+    if (mentionPeople.size !== personIds.length) {
+      throw new ApiError(422, "invalid_workspace_member", "A mentioned person is not an active workspace member");
+    }
+    const preparedMention = prepareMentionMarkdown(input.text, input.mentions, mentionPeople);
+    const preparedInput: CreateMessageInput = {
+      ...input,
+      text: preparedMention.text,
+      mentions: preparedMention.mentions,
+    };
     const unconfirmed = await this.nonParticipantIds(id, personIds.filter((userId) => !input.confirmedParticipantUserIds.includes(userId)));
     if (unconfirmed.length > 0) {
       const people = await this.memberNames(unconfirmed);
@@ -258,7 +281,7 @@ export class WorkstreamService {
       });
     }
     await this.assertMembersExist(input.confirmedParticipantUserIds);
-    const persisted = await this.persistHumanMessage(id, input);
+    const persisted = await this.persistHumanMessage(id, preparedInput);
     if (!persisted.inserted) {
       return { message: persisted.message, agentInvoked: false, harnessRunId: null };
     }
@@ -268,9 +291,9 @@ export class WorkstreamService {
         this.database.workstreams.addParticipant(this.auth.workspaceId, id, userId, this.auth.userId, "explicit"),
       ),
     );
-    if (input.mentions.length > 0) {
+    if (preparedInput.mentions.length > 0) {
       await this.env.DB.batch(
-        input.mentions.map((mention) =>
+        preparedInput.mentions.map((mention) =>
           this.env.DB.prepare(
             `INSERT OR IGNORE INTO message_mentions
              (message_id, mention_type, mentioned_user_id, connector_type, start_offset, end_offset)
@@ -279,8 +302,12 @@ export class WorkstreamService {
         ),
       );
     }
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: { ...message, mentions: input.mentions } });
-    const connectorMentions = input.mentions.filter((mention) => mention.type === "connector" && mention.connectorType).map((mention) => mention.connectorType!);
+    const messageWithMentions = { ...message, mentions: preparedInput.mentions };
+    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
+    this.scheduleMentionNotifications(messageWithMentions, workstream);
+    const connectorMentions = preparedInput.mentions
+      .filter((mention) => mention.type === "connector" && mention.connectorType)
+      .map((mention) => mention.connectorType!);
     const classification = await classifyWorkstreamMessage(this.env, {
       message: input.text,
       activeTask: workstream.harnessStatus === "running" || workstream.harnessStatus === "needs_input",
@@ -291,7 +318,7 @@ export class WorkstreamService {
       classification.classification === "both" ||
       (classification.classification === "uncertain" && (workstream.harnessStatus === "running" || connectorMentions.length > 0));
     const harnessRunId = shouldInvoke ? await this.launchHarness(id, message.id, "human_message") : null;
-    return { message: { ...message, mentions: input.mentions }, agentInvoked: shouldInvoke, harnessRunId };
+    return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
   }
 
   async addParticipant(id: string, userId: string) {
@@ -558,9 +585,13 @@ export class WorkstreamService {
            'type', mm.mention_type,
            'userId', mm.mentioned_user_id,
            'connectorType', mm.connector_type,
+           'displayName', mentioned_person.name,
+           'avatarUrl', mentioned_person.avatar_url,
            'startOffset', mm.start_offset,
            'endOffset', mm.end_offset
-         )) FROM message_mentions mm WHERE mm.message_id = m.id), '[]') AS mentions_json
+         )) FROM message_mentions mm
+           LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
+           WHERE mm.message_id = m.id), '[]') AS mentions_json
        FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
        WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.client_message_id = ?`,
     ).bind(this.auth.workspaceId, workstreamId, clientMessageId).first<Record<string, unknown>>();
@@ -642,6 +673,88 @@ export class WorkstreamService {
       `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active' AND user_id IN (${placeholders})`,
     ).bind(this.auth.workspaceId, ...unique).all<{ user_id: string }>();
     if ((result.results?.length ?? 0) !== unique.length) throw new ApiError(422, "invalid_workspace_member", "A selected participant is not an active workspace member");
+  }
+
+  private async loadMentionPeople(ids: string[]): Promise<Map<string, MentionPerson>> {
+    if (ids.length === 0) return new Map();
+    const unique = [...new Set(ids)];
+    const placeholders = unique.map(() => "?").join(",");
+    const result = await this.env.DB.prepare(
+      `SELECT u.id, u.name, u.avatar_url
+       FROM users u JOIN workspace_members wm ON wm.user_id = u.id
+       WHERE wm.workspace_id = ? AND wm.status = 'active' AND u.id IN (${placeholders})`,
+    ).bind(this.auth.workspaceId, ...unique).all<{
+      id: string;
+      name: string;
+      avatar_url: string | null;
+    }>();
+    return new Map((result.results ?? []).map((row) => [row.id, {
+      id: row.id,
+      name: row.name,
+      avatarUrl: row.avatar_url,
+    }]));
+  }
+
+  private scheduleMentionNotifications(message: Message, workstream: Workstream): void {
+    const task = this.sendMentionNotifications(message, workstream).catch((error: unknown) => {
+      console.warn("Mention email delivery failed", {
+        messageId: message.id,
+        region: this.env.AVALON_REGION,
+        reason: error instanceof ApiError ? error.code : "unknown_error",
+      });
+    });
+    if (this.defer) {
+      this.defer(task);
+      return;
+    }
+    void task;
+  }
+
+  private async sendMentionNotifications(message: Message, workstream: Workstream): Promise<void> {
+    const author = message.author;
+    if (author.type !== "human") return;
+    const result = await this.env.DB.prepare(
+      `SELECT mm.mentioned_user_id AS person_id, mm.start_offset, mm.end_offset,
+         u.email, u.name, ws.name AS workspace_name
+       FROM message_mentions mm
+       JOIN messages m ON m.id = mm.message_id
+       JOIN users u ON u.id = mm.mentioned_user_id
+       JOIN workspace_members wm ON wm.workspace_id = m.workspace_id AND wm.user_id = u.id
+       JOIN workspaces ws ON ws.id = m.workspace_id
+       WHERE mm.message_id = ? AND mm.mention_type = 'person'
+         AND wm.status = 'active' AND u.id <> ?
+       ORDER BY mm.start_offset`,
+    ).bind(message.id, this.auth.userId).all<{
+      person_id: string;
+      start_offset: number;
+      end_offset: number;
+      email: string;
+      name: string;
+      workspace_name: string;
+    }>();
+    const recipients = new Map<string, NonNullable<typeof result.results>[number]>();
+    for (const row of result.results ?? []) {
+      if (!isCanonicalPersonMention(message.textContent, {
+        type: "person",
+        userId: row.person_id,
+        startOffset: Number(row.start_offset),
+        endOffset: Number(row.end_offset),
+      })) continue;
+      recipients.set(row.person_id, row);
+    }
+    await Promise.all([...recipients.values()].map((recipient) => sendWorkstreamMentionEmail(this.env, {
+      messageId: message.id,
+      recipientUserId: recipient.person_id,
+      recipientEmail: recipient.email,
+      recipientName: recipient.name,
+      authorName: author.user.name,
+      workspaceName: recipient.workspace_name,
+      workstreamId: message.workstreamId,
+      workstreamTitle: String(workstream.title),
+      workstreamEmailAddress: workstream.emailAddress,
+      messageText: message.textContent,
+      region: this.env.AVALON_REGION,
+    })));
   }
 
   private async nonParticipantIds(workstreamId: string, ids: string[]): Promise<string[]> {

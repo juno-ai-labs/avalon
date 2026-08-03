@@ -2,6 +2,7 @@ import type { NormalizedActivity, ToolDefinition } from "@avalon/contracts";
 import { z } from "zod";
 import {
   base64,
+  booleanValue,
   isRecord,
   jsonHeaders,
   numberValue,
@@ -19,6 +20,12 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./types";
+import {
+  createLinearNativeAgentProtocol,
+  linearAgentInvocation,
+  parseVerifiedLinearAgentSessionEvent,
+  type LinearAgentProtocolCommand,
+} from "./linear-agent";
 
 const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
 const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";
@@ -27,6 +34,7 @@ const LINEAR_RESPONSE_BYTES = 512_000;
 const LINEAR_TEXT_CHARS = 40_000;
 const LINEAR_WEBHOOK_BYTES = 1_000_000;
 const LINEAR_WEBHOOK_REPLAY_WINDOW_MS = 60_000;
+const LINEAR_ENTITY_KEY_LIMIT = 128;
 
 export interface LinearConnectorConfig {
   clientId: string;
@@ -41,19 +49,24 @@ export const LinearCapabilities = {
   issueCreate: "linear.issue.create",
   commentCreate: "linear.comment.create",
   write: "linear.write",
+  agent: "linear.agent",
 } as const;
+
+/** Scopes that make an app-actor installation participate as a native Linear agent. */
+export const LinearAgentOAuthScopes = ["app:assignable", "app:mentionable"] as const;
 
 export const LinearCapabilityScopes = {
   [LinearCapabilities.read]: ["read"],
   [LinearCapabilities.issueCreate]: ["issues:create"],
   [LinearCapabilities.commentCreate]: ["comments:create"],
   [LinearCapabilities.write]: ["write"],
+  [LinearCapabilities.agent]: LinearAgentOAuthScopes,
 } as const;
 
 const linearTools: ToolDefinition[] = [
   {
     name: "linear.search_issues",
-    description: "Search recent Linear issues by title in the installed workspace.",
+    description: "Search recent Linear issues by title using the authorized Linear connection.",
     capability: LinearCapabilities.read,
     mode: "read",
     idempotency: "safe",
@@ -78,7 +91,7 @@ const linearTools: ToolDefinition[] = [
   },
   {
     name: "linear.list_teams",
-    description: "List teams available to the installed Linear app.",
+    description: "List teams available to the authorized Linear identity.",
     capability: LinearCapabilities.read,
     mode: "read",
     idempotency: "safe",
@@ -102,7 +115,7 @@ const linearTools: ToolDefinition[] = [
   },
   {
     name: "linear.create_issue",
-    description: "Create an issue in a Linear team as the installed Avalon app.",
+    description: "Create an issue in a Linear team as the authorized Linear identity.",
     capability: LinearCapabilities.issueCreate,
     mode: "write",
     idempotency: "record_before_execute",
@@ -122,7 +135,7 @@ const linearTools: ToolDefinition[] = [
   },
   {
     name: "linear.update_issue",
-    description: "Update selected fields on an existing Linear issue as the installed Avalon app.",
+    description: "Update selected fields on an existing Linear issue as the authorized Linear identity.",
     capability: LinearCapabilities.write,
     mode: "write",
     idempotency: "record_before_execute",
@@ -133,7 +146,7 @@ const linearTools: ToolDefinition[] = [
         issueId: { type: "string", minLength: 1, maxLength: 200 },
         title: { type: "string", minLength: 1, maxLength: 500 },
         description: { type: ["string", "null"], maxLength: 40_000 },
-        statusId: { type: ["string", "null"], maxLength: 200 },
+        stateId: { type: ["string", "null"], maxLength: 200 },
         assigneeId: { type: ["string", "null"], maxLength: 200 },
         projectId: { type: ["string", "null"], maxLength: 200 },
         priority: { type: ["integer", "null"], minimum: 0, maximum: 4 },
@@ -145,7 +158,7 @@ const linearTools: ToolDefinition[] = [
   },
   {
     name: "linear.create_comment",
-    description: "Add a comment to a Linear issue as the installed Avalon app.",
+    description: "Add a comment to a Linear issue as the authorized Linear identity.",
     capability: LinearCapabilities.commentCreate,
     mode: "write",
     idempotency: "record_before_execute",
@@ -183,7 +196,7 @@ const updateIssueSchema = z.object({
   issueId: idSchema,
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(40_000).nullable().optional(),
-  statusId: idSchema.nullable().optional(),
+  stateId: idSchema.nullable().optional(),
   assigneeId: idSchema.nullable().optional(),
   projectId: idSchema.nullable().optional(),
   priority: z.number().int().min(0).max(4).nullable().optional(),
@@ -192,6 +205,19 @@ const updateIssueSchema = z.object({
   message: "Choose at least one issue field to update",
 });
 const createCommentSchema = z.object({ issueId: idSchema, body: z.string().min(1).max(40_000) });
+
+const authorizationInputSchema = z.object({
+  state: z.string().min(20).max(2_000),
+  codeChallenge: z.string().min(20).max(256),
+  scopes: z.array(z.string().trim().min(1).max(100)).min(1).max(30),
+  connectionScope: z.enum(["personal", "workspace"]),
+}).strict();
+
+const authorizationCallbackSchema = z.object({
+  code: z.string().min(1).max(2_000),
+  codeVerifier: z.string().min(20).max(256),
+  connectionScope: z.enum(["personal", "workspace"]),
+}).strict();
 
 const issueFields = `
   id identifier title description priority dueDate url createdAt updatedAt canceledAt completedAt
@@ -210,55 +236,19 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
   const refresh = async (
     connection: ConnectorConnectionContext,
     signal: AbortSignal,
-  ): Promise<Record<string, unknown>> => {
-    const refreshToken = credentialString(connection, "refreshToken");
-    try {
-      const payload = await providerJson(fetcher, LINEAR_TOKEN_URL, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: config.clientId,
-          client_secret: config.clientSecret,
-        }),
-        signal,
-      }, LINEAR_RESPONSE_BYTES);
-      return {
-        ...connection.credentials,
-        ...normalizeToken(payload, now()),
-      };
-    } catch (error) {
-      if (isRefreshRejected(error)) {
-        throw new ConnectorError("unauthorized", "The Linear refresh token is no longer valid", {
-          status: isRecord(error.details) ? error.details.status : 401,
-          reconnectRequired: true,
-          reason: "refresh_rejected",
-        });
-      }
-      throw error;
-    }
-  };
+  ): Promise<Record<string, unknown>> => refreshLinearCredentials(
+    config,
+    fetcher,
+    now(),
+    connection,
+    signal,
+  );
 
   const withAccess = async <T>(
     connection: ConnectorConnectionContext,
     signal: AbortSignal,
     operation: (token: string) => Promise<T>,
-  ): Promise<T> => {
-    const expiration = stringValue(connection.credentials, "expiresAt");
-    if (expiration && Date.parse(expiration) <= now() + 60_000) {
-      connection.credentials = await refresh(connection, signal);
-    }
-    let token = credentialString(connection, "accessToken");
-    try {
-      return await operation(token);
-    } catch (error) {
-      if (!isProviderUnauthorized(error)) throw error;
-      connection.credentials = await refresh(connection, signal);
-      token = credentialString(connection, "accessToken");
-      return operation(token);
-    }
-  };
+  ): Promise<T> => withLinearAccess(config, fetcher, now, connection, signal, operation);
 
   const graphql = async (
     connection: ConnectorConnectionContext,
@@ -305,32 +295,99 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
     manifest: {
       type: "linear",
       displayName: "Linear",
-      supportedScopes: ["workspace"],
+      surfaces: ["resource", "native_agent"],
+      capabilities: [{
+        id: LinearCapabilities.agent,
+        kind: "native_agent",
+        description: "Delegate and mention Avalon in Linear, then continue the work through native agent sessions.",
+      }],
+      nativeAgent: {
+        capability: LinearCapabilities.agent,
+        invocationModes: ["delegation", "mention", "follow_up"],
+        activityKinds: ["thought", "action", "elicitation", "response", "error"],
+        supportsCancellation: true,
+        supportsExternalLinks: true,
+        supportsPlans: true,
+        supportsProactiveSessions: true,
+        maturity: "preview",
+        runtimeStatus: "protocol_only",
+        sessionOwnership: "single_connection_per_provider_account",
+        webhookResponseDeadlineMs: 5_000,
+        sessionAcknowledgementDeadlineMs: 10_000,
+      },
+      supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
       activityTypes: [
         "linear.issue.create", "linear.issue.update", "linear.issue.remove",
         "linear.comment.create", "linear.comment.update", "linear.comment.remove",
+        "linear.attachment.create", "linear.attachment.update", "linear.attachment.remove",
+        "linear.issue_label.create", "linear.issue_label.update", "linear.issue_label.remove",
+        "linear.reaction.create", "linear.reaction.remove",
         "linear.project.create", "linear.project.update", "linear.project.remove",
         "linear.project_update.create", "linear.project_update.update", "linear.project_update.remove",
+        "linear.project_label.create", "linear.project_label.update", "linear.project_label.remove",
+        "linear.cycle.create", "linear.cycle.update", "linear.cycle.remove",
         "linear.document.create", "linear.document.update", "linear.document.remove",
-        "linear.oauth_app.revoked", "linear.permission_change.update",
+        "linear.user.create", "linear.user.update", "linear.user.remove",
+        "linear.oauth_app.revoked", "linear.permission_change.team_access_changed",
+        "linear.agent_session_event.created", "linear.agent_session_event.prompted",
       ],
-      resourceTypes: ["linear_issue", "linear_comment", "linear_project", "linear_document"],
+      resourceTypes: [
+        "linear_issue",
+        "linear_comment",
+        "linear_attachment",
+        "linear_issue_label",
+        "linear_project",
+        "linear_project_update",
+        "linear_project_label",
+        "linear_cycle",
+        "linear_document",
+        "linear_user",
+      ],
       tools: linearTools,
       supportsWatches: true,
       supportsPolling: false,
       supportsWebhooks: true,
     },
 
+    capabilityConnectionScopes: {
+      [LinearCapabilities.agent]: ["workspace"],
+    },
+
+    nativeAgent: {
+      capability: LinearCapabilities.agent,
+      parseInvocation: linearAgentInvocation,
+      async execute(command, context) {
+        assertWorkspaceConnection(context.connection);
+        if (!context.connection.grantedScopes.includes(LinearCapabilities.agent)) {
+          throw new ConnectorError(
+            "unsupported_capability",
+            `The Linear connection has not granted ${LinearCapabilities.agent}`,
+          );
+        }
+        const protocol = createLinearNativeAgentProtocol(
+          (document, variables, signal) => graphql(
+            context.connection,
+            signal ?? context.signal,
+            document,
+            variables,
+          ),
+        );
+        return protocol.execute(command as LinearAgentProtocolCommand, context.signal);
+      },
+    },
+
     async beginAuthorization(input) {
-      const parsed = z.object({
-        state: z.string().min(20),
-        codeChallenge: z.string().min(20),
-        scopes: z.array(z.string().min(1)).min(1),
-      }).parse(input);
+      const parsed = authorizationInputSchema.parse(input);
       const scopes = [...new Set(["read", ...parsed.scopes])];
       if (scopes.some((scope) => scope === "admin" || !supportedLinearScopes.has(scope))) {
         throw new ConnectorError("unsupported_capability", "The requested Linear OAuth scope is not supported");
+      }
+      if (parsed.connectionScope === "personal" && LinearAgentOAuthScopes.some((scope) => scopes.includes(scope))) {
+        throw new ConnectorError(
+          "unsupported_capability",
+          `${LinearCapabilities.agent} requires a workspace-scoped Linear app connection`,
+        );
       }
       const url = new URL("https://linear.app/oauth/authorize");
       url.searchParams.set("client_id", config.clientId);
@@ -338,14 +395,14 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       url.searchParams.set("response_type", "code");
       url.searchParams.set("scope", scopes.join(","));
       url.searchParams.set("state", parsed.state);
-      url.searchParams.set("actor", "app");
+      url.searchParams.set("actor", parsed.connectionScope === "workspace" ? "app" : "user");
       url.searchParams.set("code_challenge", parsed.codeChallenge);
       url.searchParams.set("code_challenge_method", "S256");
-      return { url: url.toString() };
+      return { url: url.toString(), state: { connectionScope: parsed.connectionScope } };
     },
 
     async handleAuthorizationCallback(input) {
-      const parsed = z.object({ code: z.string().min(1), codeVerifier: z.string().min(20) }).parse(input);
+      const parsed = authorizationCallbackSchema.parse(input);
       const payload = await providerJson(fetcher, LINEAR_TOKEN_URL, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
@@ -361,22 +418,57 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       const credentials = normalizeToken(payload, now());
       const identity = await linearGraphql(fetcher, String(credentials.accessToken), `
         query AvalonLinearIdentity {
-          viewer { id name organization { id name urlKey } }
+          viewer { id name email app organization { id name urlKey } }
         }
       `, {}, AbortSignal.timeout(15_000));
-      const viewer = requiredRecord(identity, "viewer", "Linear did not return the installed app identity");
-      const organization = requiredRecord(viewer, "organization", "Linear did not return the installed organization");
+      const viewer = requiredRecord(identity, "viewer", "Linear did not return the authorized identity");
+      const viewerId = requiredString(viewer, "id", "Linear did not return an authorized user ID");
+      const viewerIsApp = booleanValue(viewer, "app");
+      if (viewerIsApp == null) {
+        throw new ConnectorError("provider_error", "Linear did not identify whether the authorized actor is an app or user");
+      }
+      const expectedAppActor = parsed.connectionScope === "workspace";
+      if (viewerIsApp !== expectedAppActor) {
+        throw new ConnectorError(
+          "unauthorized",
+          `Linear returned a ${viewerIsApp ? "workspace app" : "personal user"} actor for a ${parsed.connectionScope} connection`,
+          { reconnectRequired: true, reason: "oauth_actor_mismatch" },
+        );
+      }
+      const providerScopes = Array.isArray(credentials.providerScopes)
+        ? credentials.providerScopes.filter((scope): scope is string => typeof scope === "string")
+        : [];
+      if (parsed.connectionScope === "personal" && LinearAgentOAuthScopes.some((scope) => providerScopes.includes(scope))) {
+        throw new ConnectorError(
+          "unsupported_capability",
+          `${LinearCapabilities.agent} cannot be granted to a personal Linear connection`,
+        );
+      }
+      const organization = requiredRecord(viewer, "organization", "Linear did not return the authorized organization");
       const organizationId = requiredString(organization, "id", "Linear did not return an organization ID");
       const organizationName = stringValue(organization, "name") ?? organizationId;
-      return {
+      const commonCredentials = {
         ...credentials,
-        appUserId: requiredString(viewer, "id", "Linear did not return the installed app user ID"),
-        appUserName: stringValue(viewer, "name"),
+        oauthActor: expectedAppActor ? "app" : "user",
         organizationId,
         organizationName,
         organizationUrlKey: stringValue(organization, "urlKey"),
+      };
+      if (expectedAppActor) return {
+        ...commonCredentials,
+        appUserId: viewerId,
+        appUserName: stringValue(viewer, "name"),
         providerAccountId: organizationId,
         providerAccountName: organizationName,
+      };
+      const authorizedUserName = stringValue(viewer, "name") ?? viewerId;
+      return {
+        ...commonCredentials,
+        authorizedUserId: viewerId,
+        authorizedUserName,
+        authorizedUserEmail: stringValue(viewer, "email"),
+        providerAccountId: organizationId,
+        providerAccountName: `${authorizedUserName} · ${organizationName}`,
       };
     },
 
@@ -398,11 +490,25 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
     },
 
     async hydrateResource(connection, resource, signal) {
-      assertWorkspaceConnection(connection);
+      assertLinearConnection(connection);
       const resourceId = z.string().min(1).max(200).parse(resource.provider_resource_id);
       const resourceType = z.string().parse(resource.resource_type);
       if (resourceType === "linear_issue") return readIssue(connection, resourceId, signal);
       if (resourceType === "linear_project") return readProject(connection, resourceId, signal);
+      if (resourceType === "linear_project_update") {
+        const data = await graphql(connection, signal, `
+          query AvalonReadProjectUpdate($id: String!) {
+            projectUpdate(id: $id) {
+              id body health url createdAt updatedAt editedAt
+              project { id name url }
+              user { id name }
+            }
+          }
+        `, { id: resourceId });
+        const projectUpdate = recordValue(data, "projectUpdate");
+        if (!projectUpdate) throw new ConnectorError("provider_error", "Linear did not return the requested project update");
+        return boundLinearValue(projectUpdate);
+      }
       if (resourceType === "linear_document") {
         const data = await graphql(connection, signal, `
           query AvalonReadDocument($id: String!) {
@@ -423,11 +529,55 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         if (!comment) throw new ConnectorError("provider_error", "Linear did not return the requested comment");
         return boundLinearValue(comment);
       }
+      if (resourceType === "linear_attachment") {
+        const data = await graphql(connection, signal, `
+          query AvalonReadAttachment($id: String!) {
+            attachment(id: $id) {
+              id title subtitle url bodyData sourceType metadata createdAt updatedAt
+              creator { id name }
+              issue { id identifier title url }
+            }
+          }
+        `, { id: resourceId });
+        return boundLinearValue(requiredRecord(data, "attachment", "Linear did not return the requested attachment"));
+      }
+      if (resourceType === "linear_issue_label") {
+        const data = await graphql(connection, signal, `
+          query AvalonReadIssueLabel($id: String!) {
+            issueLabel(id: $id) { id name description color isGroup createdAt updatedAt team { id key name } }
+          }
+        `, { id: resourceId });
+        return boundLinearValue(requiredRecord(data, "issueLabel", "Linear did not return the requested issue label"));
+      }
+      if (resourceType === "linear_project_label") {
+        const data = await graphql(connection, signal, `
+          query AvalonReadProjectLabel($id: String!) {
+            projectLabel(id: $id) { id name description color isGroup createdAt updatedAt team { id key name } }
+          }
+        `, { id: resourceId });
+        return boundLinearValue(requiredRecord(data, "projectLabel", "Linear did not return the requested project label"));
+      }
+      if (resourceType === "linear_cycle") {
+        const data = await graphql(connection, signal, `
+          query AvalonReadCycle($id: String!) {
+            cycle(id: $id) { id name number description startsAt endsAt completedAt createdAt updatedAt team { id key name } }
+          }
+        `, { id: resourceId });
+        return boundLinearValue(requiredRecord(data, "cycle", "Linear did not return the requested cycle"));
+      }
+      if (resourceType === "linear_user") {
+        const data = await graphql(connection, signal, `
+          query AvalonReadUser($id: String!) {
+            user(id: $id) { id name displayName email url description active admin app createdAt updatedAt }
+          }
+        `, { id: resourceId });
+        return boundLinearValue(requiredRecord(data, "user", "Linear did not return the requested user"));
+      }
       throw new ConnectorError("unsupported_capability", `Linear cannot hydrate resource type ${resourceType}`);
     },
 
     async executeTool(name, rawArgs, context) {
-      assertWorkspaceConnection(context.connection);
+      assertLinearConnection(context.connection);
       assertPrincipalAccess(context.connection, context.principal);
       const definition = linearTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
@@ -535,10 +685,10 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
 
     async healthCheck(connection) {
       if (!connection) return { ok: true, message: "Linear OAuth is configured" };
-      assertWorkspaceConnection(connection);
+      assertLinearConnection(connection);
       const data = await graphql(connection, AbortSignal.timeout(15_000), "query AvalonLinearHealth { viewer { id } }");
       const viewer = recordValue(data, "viewer");
-      return viewer?.id ? { ok: true, message: "Linear authorization is healthy" } : { ok: false, message: "Linear did not return an app identity" };
+      return viewer?.id ? { ok: true, message: "Linear authorization is healthy" } : { ok: false, message: "Linear did not return an authorized identity" };
     },
   };
 }
@@ -563,6 +713,68 @@ export interface VerifiedLinearWebhook {
   webhookTimestamp: number;
   bodyHash: string;
   event: Record<string, unknown>;
+}
+
+export interface PersonalLinearWebhookAccessInput {
+  config: LinearConnectorConfig;
+  connection: ConnectorConnectionContext;
+  verified: VerifiedLinearWebhook;
+  signal?: AbortSignal;
+}
+
+/**
+ * Proves that a personal Linear token can read the signed webhook's resource.
+ *
+ * Linear app webhooks are organization-wide, while personal tokens may expose
+ * only a subset of teams. Callers must therefore run this check before routing
+ * an organization webhook to a personal connection. App lifecycle and native
+ * agent events intentionally have no personal fan-out path.
+ */
+export async function canPersonalLinearConnectionAccessWebhook(
+  input: PersonalLinearWebhookAccessInput,
+): Promise<boolean> {
+  try {
+    assertLinearConnection(input.connection);
+  } catch {
+    return false;
+  }
+  if (input.connection.scope !== "personal") return false;
+  if (stringValue(input.connection.credentials, "oauthActor") !== "user"
+    || !stringValue(input.connection.credentials, "authorizedUserId")) return false;
+  const configuredOrganization = stringValue(input.connection.credentials, "organizationId")
+    ?? stringValue(input.connection.config, "organizationId");
+  if (!configuredOrganization || configuredOrganization !== input.verified.organizationId) return false;
+
+  const candidates = personalLinearWebhookAccessCandidates(input.verified);
+  if (!candidates.length) return false;
+  const fetcher = input.config.fetch ?? globalThis.fetch;
+  const now = input.config.now ?? Date.now;
+  const signal = input.signal ?? AbortSignal.timeout(15_000);
+  assertConfig(input.config);
+
+  for (const candidate of candidates) {
+    try {
+      const data = await withLinearAccess(
+        input.config,
+        fetcher,
+        now,
+        input.connection,
+        signal,
+        (token) => linearGraphql(fetcher, token, `
+          query AvalonPersonalWebhookAccess($id: String!) {
+            resource: ${candidate.field}(id: $id) { id }
+          }
+        `, { id: candidate.id }, signal),
+      );
+      if (recordValue(data, "resource")) return true;
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof ConnectorError && error.code === "unauthorized") return false;
+      // Deleted child resources commonly return a provider-level not-found
+      // error. Continue to a signed parent relationship when one exists.
+    }
+  }
+  return false;
 }
 
 export async function verifyLinearWebhook(input: VerifyLinearWebhookInput): Promise<VerifiedLinearWebhook> {
@@ -612,13 +824,24 @@ export function normalizeLinearWebhook(
   verified: VerifiedLinearWebhook,
   payloadRef: string | null = null,
 ): Omit<NormalizedActivity, "id"> {
-  assertWorkspaceConnection(connection);
+  assertLinearConnection(connection);
+  const normalizedEventName = toSnakeCase(verified.eventName);
+  if (connection.scope === "personal" && (
+    normalizedEventName.startsWith("agent_")
+    || normalizedEventName.startsWith("oauth_app")
+    || normalizedEventName.startsWith("permission_change")
+  )) {
+    throw new ConnectorError("unauthorized", "Linear app lifecycle and native-agent events are workspace-only");
+  }
   const configuredOrganization = stringValue(connection.credentials, "organizationId") ?? stringValue(connection.config, "organizationId");
   if (configuredOrganization && configuredOrganization !== verified.organizationId) {
     throw new ConnectorError("unauthorized", "The Linear webhook does not belong to this installed organization");
   }
   const event = verified.event;
-  const action = (stringValue(event, "action") ?? "update").toLowerCase();
+  if (verified.eventName === "AgentSessionEvent") {
+    return normalizeLinearAgentSessionEvent(connection, verified, payloadRef);
+  }
+  const action = canonicalLinearAction(event);
   const type = toSnakeCase(verified.eventName);
   const data = recordValue(event, "data") ?? {};
   const actor = recordValue(event, "actor") ?? {};
@@ -628,7 +851,7 @@ export function normalizeLinearWebhook(
   const text = stringValue(data, "body") ?? stringValue(data, "description") ?? stringValue(data, "content") ?? "";
   const occurredAt = validIso(stringValue(event, "createdAt")) ?? new Date(verified.webhookTimestamp).toISOString();
   const eventType = `linear.${type}.${action}`;
-  const entityKeys = [resourceId, stringValue(data, "identifier"), url, verified.organizationId].filter((value): value is string => Boolean(value));
+  const entityKeys = linearEntityKeys(data, event, resourceId, url, verified.organizationId);
   return {
     workspaceId: connection.workspaceId,
     region: regionFromConnection(connection),
@@ -644,14 +867,14 @@ export function normalizeLinearWebhook(
     subject: data,
     occurredAt,
     receivedAt: new Date().toISOString(),
-    title: `Linear ${humanize(type)} ${action}: ${label}`.slice(0, 500),
-    summary: truncateText(text || `${label} was ${action}d in Linear`, 1_000).text,
+    title: `Linear ${humanize(type)} ${humanize(action)}: ${label}`.slice(0, 500),
+    summary: truncateText(text || `${label} · ${humanize(action)} in Linear`, 1_000).text,
     textSnippet: truncateText(text, 4_000).text,
     payloadRef,
     visibility: { scope: connection.scope, organizationId: verified.organizationId },
     targetUserIds: [],
     entityKeys,
-    dedupeKey: `${verified.webhookId}:${action}:${resourceId ?? verified.deliveryId}`,
+    dedupeKey: `linear:${verified.deliveryId}`,
     rawContentHash: verified.bodyHash,
     metadata: {
       deliveryId: verified.deliveryId,
@@ -662,6 +885,252 @@ export function normalizeLinearWebhook(
       updatedFrom: recordValue(event, "updatedFrom") ?? {},
     },
   };
+}
+
+function normalizeLinearAgentSessionEvent(
+  connection: ConnectorConnectionContext,
+  verified: VerifiedLinearWebhook,
+  payloadRef: string | null,
+): Omit<NormalizedActivity, "id"> {
+  const event = parseVerifiedLinearAgentSessionEvent(verified).event;
+  const session = event.agentSession;
+  const issue = session.issue ?? null;
+  const promptContent = event.agentActivity?.content ?? null;
+  const prompt = event.action === "created"
+    ? event.promptContext ?? ""
+    : stringValue(promptContent ?? {}, "body") ?? "";
+  const actor = event.agentActivity?.user ?? session.creator ?? {};
+  const label = issue
+    ? `${issue.identifier}: ${issue.title}`
+    : session.summary ?? `session ${session.id}`;
+  const entityKeys = new Set<string>([
+    verified.organizationId,
+    event.appUserId,
+    session.id,
+  ]);
+  for (const value of [
+    session.issueId,
+    session.commentId,
+    session.sourceCommentId,
+    session.url,
+    issue?.identifier,
+    issue?.url,
+    event.agentActivity?.id,
+    event.agentActivity?.sourceCommentId,
+  ]) {
+    if (value) entityKeys.add(value);
+  }
+  const occurredAt = validIso(event.agentActivity?.createdAt ?? event.createdAt)
+    ?? new Date(verified.webhookTimestamp).toISOString();
+  return {
+    workspaceId: connection.workspaceId,
+    region: regionFromConnection(connection),
+    connectionId: connection.id,
+    connectionScope: connection.scope,
+    connectionOwnerUserId: connection.ownerUserId,
+    provider: "linear",
+    providerEventId: verified.deliveryId,
+    eventType: `linear.agent_session_event.${event.action}`,
+    resourceType: null,
+    providerResourceId: session.id,
+    actor,
+    subject: {
+      id: session.id,
+      status: session.status,
+      type: session.type,
+      issueId: session.issueId ?? null,
+      commentId: session.commentId ?? null,
+      sourceCommentId: session.sourceCommentId ?? null,
+      issue: issue ? {
+        id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        url: issue.url,
+      } : null,
+      activity: event.agentActivity ? {
+        id: event.agentActivity.id,
+        signal: event.agentActivity.signal ?? null,
+        content: boundLinearValue(event.agentActivity.content),
+      } : null,
+    },
+    occurredAt,
+    receivedAt: new Date().toISOString(),
+    title: `Linear agent ${event.action}: ${label}`.slice(0, 500),
+    summary: truncateText(prompt || `${label} · ${event.action} in Linear`, 1_000).text,
+    textSnippet: truncateText(prompt, 4_000).text,
+    payloadRef,
+    visibility: { scope: connection.scope, organizationId: verified.organizationId },
+    targetUserIds: [],
+    entityKeys: [...entityKeys].slice(0, LINEAR_ENTITY_KEY_LIMIT),
+    dedupeKey: `linear:${verified.deliveryId}`,
+    rawContentHash: verified.bodyHash,
+    metadata: {
+      surface: "native_agent",
+      deliveryId: verified.deliveryId,
+      webhookId: verified.webhookId,
+      organizationId: verified.organizationId,
+      appUserId: event.appUserId,
+      agentSessionId: session.id,
+      action: event.action,
+      stopRequested: event.agentActivity?.signal === "stop",
+      guidanceCount: event.guidance?.length ?? 0,
+      previousCommentCount: event.previousComments?.length ?? 0,
+    },
+  };
+}
+
+type LinearWebhookAccessField =
+  | "attachment"
+  | "comment"
+  | "cycle"
+  | "document"
+  | "issue"
+  | "issueLabel"
+  | "project"
+  | "projectLabel"
+  | "projectUpdate"
+  | "team"
+  | "user";
+
+interface LinearWebhookAccessCandidate {
+  field: LinearWebhookAccessField;
+  id: string;
+}
+
+function personalLinearWebhookAccessCandidates(
+  verified: VerifiedLinearWebhook,
+): LinearWebhookAccessCandidate[] {
+  const eventType = toSnakeCase(verified.eventName);
+  if (eventType.startsWith("agent_")
+    || eventType.startsWith("oauth_app")
+    || eventType.startsWith("permission_change")) return [];
+  const data = recordValue(verified.event, "data") ?? {};
+  const candidates: LinearWebhookAccessCandidate[] = [];
+  const seen = new Set<string>();
+  const add = (field: LinearWebhookAccessField, value: string | null) => {
+    if (!value || candidates.length >= 8) return;
+    const key = `${field}:${value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push({ field, id: value });
+  };
+  const relationId = (scalarKey: string, recordKey = scalarKey.replace(/Id$/u, "")): string | null =>
+    stringValue(data, scalarKey)
+      ?? stringValue(recordValue(data, recordKey) ?? {}, "id")
+      ?? stringValue(verified.event, scalarKey)
+      ?? stringValue(recordValue(verified.event, recordKey) ?? {}, "id");
+  const resourceId = stringValue(data, "id");
+
+  switch (eventType) {
+    case "issue":
+      add("issue", resourceId);
+      add("team", relationId("teamId"));
+      break;
+    case "comment":
+      add("comment", resourceId);
+      add("issue", relationId("issueId"));
+      break;
+    case "attachment":
+      add("attachment", resourceId);
+      add("issue", relationId("issueId"));
+      break;
+    case "issue_label":
+      add("issueLabel", resourceId);
+      add("team", relationId("teamId"));
+      break;
+    case "reaction":
+      add("comment", relationId("commentId"));
+      add("issue", relationId("issueId"));
+      break;
+    case "project":
+      add("project", resourceId);
+      add("team", relationId("teamId"));
+      if (Array.isArray(data.teamIds)) {
+        for (const teamId of data.teamIds) add("team", typeof teamId === "string" ? teamId : null);
+      }
+      break;
+    case "project_update":
+      add("projectUpdate", resourceId);
+      add("project", relationId("projectId"));
+      break;
+    case "project_label":
+      add("projectLabel", resourceId);
+      add("team", relationId("teamId"));
+      break;
+    case "cycle":
+      add("cycle", resourceId);
+      add("team", relationId("teamId"));
+      break;
+    case "document":
+      add("document", resourceId);
+      add("project", relationId("projectId"));
+      break;
+    case "user":
+      add("user", resourceId);
+      break;
+    default:
+      return [];
+  }
+  return candidates;
+}
+
+async function refreshLinearCredentials(
+  config: LinearConnectorConfig,
+  fetcher: FetchLike,
+  now: number,
+  connection: ConnectorConnectionContext,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const refreshToken = credentialString(connection, "refreshToken");
+  try {
+    const payload = await providerJson(fetcher, LINEAR_TOKEN_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+      }),
+      signal,
+    }, LINEAR_RESPONSE_BYTES);
+    return {
+      ...connection.credentials,
+      ...normalizeToken(payload, now),
+    };
+  } catch (error) {
+    if (isRefreshRejected(error)) {
+      throw new ConnectorError("unauthorized", "The Linear refresh token is no longer valid", {
+        status: isRecord(error.details) ? error.details.status : 401,
+        reconnectRequired: true,
+        reason: "refresh_rejected",
+      });
+    }
+    throw error;
+  }
+}
+
+async function withLinearAccess<T>(
+  config: LinearConnectorConfig,
+  fetcher: FetchLike,
+  now: () => number,
+  connection: ConnectorConnectionContext,
+  signal: AbortSignal,
+  operation: (token: string) => Promise<T>,
+): Promise<T> {
+  const expiration = stringValue(connection.credentials, "expiresAt");
+  if (expiration && Date.parse(expiration) <= now() + 60_000) {
+    connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
+  }
+  let token = credentialString(connection, "accessToken");
+  try {
+    return await operation(token);
+  } catch (error) {
+    if (!isProviderUnauthorized(error)) throw error;
+    connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
+    token = credentialString(connection, "accessToken");
+    return operation(token);
+  }
 }
 
 async function linearGraphql(
@@ -731,8 +1200,25 @@ function assertConfig(config: LinearConnectorConfig): void {
 }
 
 function assertWorkspaceConnection(connection: ConnectorConnectionContext): void {
-  if (connection.scope !== "workspace" || connection.ownerUserId !== null) {
+  assertLinearConnection(connection);
+  if (connection.scope !== "workspace") {
     throw new ConnectorError("unauthorized", "Linear app connections must use Avalon workspace scope");
+  }
+}
+
+function assertLinearConnection(connection: ConnectorConnectionContext): void {
+  if (connection.scope === "workspace" && connection.ownerUserId !== null) {
+    throw new ConnectorError("unauthorized", "A workspace Linear connection cannot have a user owner");
+  }
+  if (connection.scope === "personal" && !connection.ownerUserId) {
+    throw new ConnectorError("unauthorized", "A personal Linear connection must have a user owner");
+  }
+  const oauthActor = stringValue(connection.credentials, "oauthActor");
+  if (oauthActor && oauthActor !== (connection.scope === "workspace" ? "app" : "user")) {
+    throw new ConnectorError("unauthorized", "The Linear OAuth actor does not match the connection scope", {
+      reconnectRequired: true,
+      reason: "oauth_actor_mismatch",
+    });
   }
 }
 
@@ -787,10 +1273,77 @@ function humanize(value: string): string {
   return value.replaceAll("_", " ");
 }
 
+function canonicalLinearAction(event: Record<string, unknown>): string {
+  const action = toSnakeCase(stringValue(event, "action") ?? "");
+  return action || "update";
+}
+
 function linearResourceType(type: string): string | null {
-  if (["issue", "comment", "project", "document"].includes(type)) return `linear_${type}`;
-  if (type === "project_update") return "linear_project";
+  if ([
+    "issue",
+    "comment",
+    "attachment",
+    "issue_label",
+    "project",
+    "project_label",
+    "cycle",
+    "document",
+    "user",
+  ].includes(type)) return `linear_${type}`;
+  if (type === "project_update") return "linear_project_update";
   return null;
+}
+
+function linearEntityKeys(
+  data: Record<string, unknown>,
+  event: Record<string, unknown>,
+  resourceId: string | null,
+  url: string | null,
+  organizationId: string,
+): string[] {
+  const keys = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === "string" && value.length > 0) keys.add(value);
+  };
+  const addRecordIdentity = (value: Record<string, unknown> | null) => {
+    if (!value) return;
+    add(stringValue(value, "id"));
+    add(stringValue(value, "identifier"));
+    add(stringValue(value, "url"));
+  };
+
+  add(resourceId);
+  add(stringValue(data, "identifier"));
+  add(url);
+  add(organizationId);
+
+  // Linear webhook payloads use scalar relationship IDs, not a uniform parent object.
+  // Keeping those IDs as entity keys lets a watched issue/project receive related
+  // comments, project updates, documents, reactions, and child-entity changes.
+  for (const field of [
+    "issueId", "projectId", "projectUpdateId", "documentId", "documentContentId",
+    "initiativeId", "initiativeUpdateId", "cycleId", "teamId", "parentId",
+    "commentId", "sourceCommentId", "resourceFolderId",
+  ]) add(stringValue(data, field));
+
+  for (const field of [
+    "issue", "project", "projectUpdate", "document", "cycle", "team", "parent", "comment",
+  ]) addRecordIdentity(recordValue(data, field));
+
+  for (const field of ["labelIds", "teamIds"]) {
+    const values = data[field];
+    if (Array.isArray(values)) for (const value of values) add(value);
+  }
+
+  // PermissionChange is an event payload rather than a data-change payload, so its
+  // team relationships live at the top level.
+  add(stringValue(event, "appUserId"));
+  for (const field of ["addedTeamIds", "removedTeamIds"]) {
+    const values = event[field];
+    if (Array.isArray(values)) for (const value of values) add(value);
+  }
+
+  return [...keys].slice(0, LINEAR_ENTITY_KEY_LIMIT);
 }
 
 function validIso(value: string | null): string | null {
