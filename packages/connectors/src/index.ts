@@ -2850,6 +2850,7 @@ export async function pollWebMonitor(input: {
   phrase?: string | null;
   maxBytes?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
   now?: Date;
 }): Promise<WebMonitorResult> {
@@ -2859,9 +2860,11 @@ export async function pollWebMonitor(input: {
   });
   if (input.previous.etag) headers.set("If-None-Match", input.previous.etag);
   if (input.previous.lastModified) headers.set("If-Modified-Since", input.previous.lastModified);
+  const timeout = AbortSignal.timeout(input.timeoutMs ?? 15_000);
+  const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   const { response, finalUrl } = await fetchWithSafeRedirects(url, input.fetch ?? globalThis.fetch, {
     headers,
-    signal: AbortSignal.timeout(input.timeoutMs ?? 15_000)
+    signal,
   });
   const fetchedAt = (input.now ?? new Date()).toISOString();
   if (response.status === 304) {
@@ -2932,14 +2935,14 @@ export function createWebMonitorConnector(fetcher = globalThis.fetch): Connector
       supportsWebhooks: false
     },
     async poll(connection, signal) {
-      void signal;
       const url = z.string().url().parse(connection.config.url);
       const intervalSeconds = z.number().int().min(300).parse(connection.config.intervalSeconds ?? 3600);
       const result = await pollWebMonitor({
         url,
         previous: connection.cursor as WebMonitorState,
         phrase: typeof connection.config.phrase === "string" ? connection.config.phrase : null,
-        fetch: fetcher
+        fetch: fetcher,
+        signal,
       });
       const activities: Omit<NormalizedActivity, "id">[] = [];
       if (result.changed && result.snapshot) {

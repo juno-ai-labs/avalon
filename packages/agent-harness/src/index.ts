@@ -9,6 +9,7 @@ import {
   AutomationDraftSchema
 } from "@avalon/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { z } from "zod";
 import {
   renderAddressingMessages,
   renderAutomationCompilerMessages,
@@ -34,6 +35,18 @@ export interface ModelMessage {
   tool_call_id?: string;
   tool_calls?: ModelToolCall[];
 }
+
+export type StructuredModelDiagnostic = {
+  stage: "model_request" | "model_response" | "normalize" | "validate" | "repair" | "complete";
+  schemaName: string;
+  model: string;
+  attempt: number;
+  fallbackAttempt: number;
+  repairAttempt: number;
+  latencyMs?: number;
+  responseBytes?: number;
+  validationIssues?: Array<{ path: string; code: string }>;
+};
 
 export interface ModelToolCall {
   id: string;
@@ -105,20 +118,33 @@ export class OpenRouterClient {
     parse: (value: unknown) => T;
     model?: string;
     signal?: AbortSignal | undefined;
+    onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   }): Promise<T> {
     const models = uniqueModels(input.model
       ? [input.model]
       : [this.config.primaryModel, ...(this.config.fallbackModels ?? [])]);
     let lastError: unknown;
-    for (const model of models) {
+    let repaired = false;
+    for (const [fallbackAttempt, model] of models.entries()) {
+      let repairMessages: ModelMessage[] | null = null;
+      let repairAttempt = 0;
       for (let attempt = 0; attempt <= this.sameModelRetries(); attempt += 1) {
         try {
+          const startedAt = Date.now();
+          await input.onDiagnostic?.({
+            stage: "model_request",
+            schemaName: input.schemaName,
+            model,
+            attempt,
+            fallbackAttempt,
+            repairAttempt,
+          });
           const response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
             headers: this.headers(),
             body: JSON.stringify({
               model,
-              messages: input.messages,
+              messages: repairMessages ?? input.messages,
               stream: false,
               response_format: {
                 type: "json_schema",
@@ -145,7 +171,94 @@ export class OpenRouterClient {
           }
           const content = payload?.choices?.[0]?.message?.content;
           if (!content) throw new OpenRouterError("OpenRouter returned no structured content");
-          return input.parse(JSON.parse(content) as unknown);
+          await input.onDiagnostic?.({
+            stage: "model_response",
+            schemaName: input.schemaName,
+            model,
+            attempt,
+            fallbackAttempt,
+            repairAttempt,
+            latencyMs: Date.now() - startedAt,
+            responseBytes: new TextEncoder().encode(content).byteLength,
+          });
+          let parsedJson: unknown;
+          try {
+            parsedJson = JSON.parse(content) as unknown;
+          } catch {
+            if (!repaired) {
+              repaired = true;
+              repairAttempt = 1;
+              const validationIssues = [{ path: "$", code: "invalid_json" }];
+              repairMessages = [
+                ...input.messages,
+                {
+                  role: "user",
+                  content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
+                },
+              ];
+              await input.onDiagnostic?.({
+                stage: "repair",
+                schemaName: input.schemaName,
+                model,
+                attempt,
+                fallbackAttempt,
+                repairAttempt,
+                validationIssues,
+              });
+              attempt -= 1;
+              continue;
+            }
+            throw new OpenRouterError("OpenRouter returned invalid structured JSON");
+          }
+          await input.onDiagnostic?.({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
+          try {
+            const parsed = input.parse(parsedJson);
+            await input.onDiagnostic?.({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
+            await input.onDiagnostic?.({ stage: "complete", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
+            return parsed;
+          } catch (error) {
+            if (error instanceof z.ZodError && !repaired) {
+              repaired = true;
+              const validationIssues = error.issues.slice(0, 25).map((issue) => ({
+                path: issue.path.map(String).join("."),
+                code: issue.code,
+              }));
+              repairAttempt = 1;
+              repairMessages = [
+                ...input.messages,
+                {
+                  role: "user",
+                  content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
+                },
+              ];
+              await input.onDiagnostic?.({
+                stage: "repair",
+                schemaName: input.schemaName,
+                model,
+                attempt,
+                fallbackAttempt,
+                repairAttempt,
+                validationIssues,
+              });
+              attempt -= 1;
+              continue;
+            }
+            if (error instanceof z.ZodError) {
+              await input.onDiagnostic?.({
+                stage: "validate",
+                schemaName: input.schemaName,
+                model,
+                attempt,
+                fallbackAttempt,
+                repairAttempt,
+                validationIssues: error.issues.slice(0, 25).map((issue) => ({
+                  path: issue.path.map(String).join("."),
+                  code: issue.code,
+                })),
+              });
+            }
+            throw error;
+          }
         } catch (error) {
           if (input.signal?.aborted) throw error;
           const disposition = openRouterFailureDisposition(error);
@@ -510,6 +623,8 @@ export async function compileAutomation(input: {
   fallbackModels?: string[];
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   currentDraft?: AutomationDraft | null;
+  defaultTimezones?: { personal: string; workspace: string };
+  onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
 }): Promise<AutomationDraft> {
@@ -526,16 +641,22 @@ export async function compileAutomation(input: {
     }),
     schemaName: "automation_draft",
     jsonSchema: automationJsonSchema,
-    parse: (value) => AutomationDraftSchema.parse(normalizeAutomationDraft(value)),
+    parse: (value) => AutomationDraftSchema.parse(normalizeAutomationDraft(value, input.defaultTimezones)),
+    ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
     ...(input.signal ? { signal: input.signal } : {})
   });
 }
 
-function normalizeAutomationDraft(value: unknown): unknown {
+function normalizeAutomationDraft(
+  value: unknown,
+  defaultTimezones?: { personal: string; workspace: string },
+): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
+  const scope = draft.suggestedScope === "workspace" ? "workspace" : "personal";
+  const defaultTimezone = defaultTimezones?.[scope];
   const triggers = Array.isArray(draft.triggers)
-    ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger))
+    ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger, defaultTimezone))
     : draft.triggers;
   return {
     ...draft,
@@ -544,14 +665,21 @@ function normalizeAutomationDraft(value: unknown): unknown {
   };
 }
 
-function normalizeAutomationTrigger(value: unknown): unknown {
+function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const trigger = value as Record<string, unknown>;
   switch (trigger.type) {
     case "manual":
       return { type: "manual" };
     case "calendar":
-      return { type: "calendar", rrule: trigger.rrule, timezone: trigger.timezone, summary: trigger.summary };
+      return {
+        type: "calendar",
+        rrule: trigger.rrule,
+        timezone: typeof trigger.timezone === "string" && trigger.timezone.trim()
+          ? trigger.timezone
+          : defaultTimezone,
+        summary: trigger.summary,
+      };
     case "interval":
       return { type: "interval", intervalSeconds: trigger.intervalSeconds, summary: trigger.summary };
     case "connector_activity":

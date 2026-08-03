@@ -59,7 +59,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "b2a4afc8a9777568de58f442414493bdbdeb45a4be5ca0b042f9b90244995555",
+        hash: "671d0fe9887ff9e8040bab3271bbe42c58c127e174d6342c746be3ccc90c7c30",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -70,7 +70,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "1f89aeb3b7d8044b6c18fa26247fc2ff4b908d6a5f6dbe15bd551a13de56ccd8",
+        hash: "87cd7974af6f0e994be1f29e96d1974441e1aaa22946115c30328e66913f9925",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({

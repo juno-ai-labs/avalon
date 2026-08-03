@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated dependencies, build artifacts, release bundles, and local tool state"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)out/''',
+  '''(^|/)dist/''',
+  '''(^|/)release/''',
+  '''(^|/)coverage/''',
+  '''(^|/)\.wrangler/''',
+  '''(^|/)\.vite/''',
+  '''(^|/)\.turbo/''',
+  '''(^|/)\.pnpm-store/''',
+]

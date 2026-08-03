@@ -1,4 +1,5 @@
 import {
+  IanaTimezoneSchema,
   PendingWorkspaceInvitationSchema,
   SessionSchema,
   WorkspaceSchema,
@@ -21,6 +22,7 @@ const platformIdentitySchema = z.object({
   email: z.string().email().max(254),
   name: z.string().min(1).max(255),
   avatarUrl: z.string().url().nullable(),
+  timezone: IanaTimezoneSchema,
   createdAt: z.string().datetime({ offset: true }),
 });
 
@@ -199,6 +201,7 @@ function mapWorkspace(row: Record<string, unknown>): Workspace {
     slug: row.slug,
     region: row.region,
     role: row.role,
+    timezone: row.timezone,
     createdAt: row.created_at,
   });
 }
@@ -233,7 +236,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const user = await this.ensureRegionalUser(identity);
     const [workspaceResult, invitationResult] = await Promise.all([
       this.env.DB.prepare(
-        `SELECT w.id, w.name, w.slug, w.region, w.created_at, m.role
+        `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role
          FROM workspace_members m
          JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ? AND m.status = 'active' AND w.region = ?
@@ -289,9 +292,18 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       const slug = `${slugBase}-${input.workspaceId.slice(0, 8)}`;
       await this.env.DB.batch([
         this.env.DB.prepare(
-          `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(input.workspaceId, input.name, slug, this.env.AVALON_REGION, user.id, at, at),
+          `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          input.workspaceId,
+          input.name,
+          slug,
+          this.env.AVALON_REGION,
+          this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+          user.id,
+          at,
+          at,
+        ),
         this.env.DB.prepare(
           `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
            SELECT ?, ?, 'owner', 'active', ?
@@ -382,14 +394,15 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     try {
       await this.env.DB.prepare(
         `INSERT INTO users
-         (id, google_subject, email, name, avatar_url, created_at, updated_at, platform_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, google_subject, email, name, avatar_url, timezone, created_at, updated_at, platform_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
         identity.googleSubject,
         identity.email,
         identity.name,
         identity.avatarUrl,
+        identity.timezone,
         at,
         at,
         identity.platformUserId,
@@ -662,7 +675,7 @@ export class PlatformOnboardingService {
 
   private async loadPlatformIdentity(): Promise<PlatformIdentity> {
     const row = await this.env.DB.prepare(
-      `SELECT id, google_subject, email, name, avatar_url, created_at, platform_user_id
+      `SELECT id, google_subject, email, name, avatar_url, timezone, created_at, platform_user_id
        FROM users WHERE id = ?`,
     ).bind(this.auth.userId).first<{
       id: string;
@@ -670,6 +683,7 @@ export class PlatformOnboardingService {
       email: string;
       name: string;
       avatar_url: string | null;
+      timezone: string;
       created_at: string;
       platform_user_id: string | null;
     }>();
@@ -695,6 +709,7 @@ export class PlatformOnboardingService {
       email: row.email,
       name: row.name,
       avatarUrl: row.avatar_url,
+      timezone: row.timezone,
       createdAt: row.created_at,
     });
   }

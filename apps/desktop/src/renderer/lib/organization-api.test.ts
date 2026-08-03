@@ -142,6 +142,7 @@ describe('organization and invitation API routing', () => {
       slug: 'europe-research',
       region: 'eu',
       role: 'admin',
+      timezone: 'Europe/London',
       createdAt: timestamp,
     }));
     vi.stubGlobal('fetch', fetchMock);

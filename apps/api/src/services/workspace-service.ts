@@ -239,7 +239,7 @@ export class WorkspaceService {
 
   async getWorkspace() {
     const row = await this.env.DB.prepare(
-      `SELECT w.id, w.name, w.slug, w.region, w.created_at, m.role
+      `SELECT w.id, w.name, w.slug, w.region, w.timezone, w.created_at, m.role
        FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id
        WHERE w.id = ? AND m.user_id = ? AND m.status = 'active'`,
     )
@@ -251,14 +251,41 @@ export class WorkspaceService {
       name: String(row.name),
       slug: String(row.slug),
       region: String(row.region),
+      timezone: String(row.timezone),
       role: String(row.role),
       createdAt: String(row.created_at),
     };
   }
 
+  async updateMyTimezone(timezone: string) {
+    await this.env.DB.prepare("UPDATE users SET timezone = ?, updated_at = ? WHERE id = ?")
+      .bind(timezone, nowIso(), this.auth.userId)
+      .run();
+    const row = await this.env.DB.prepare(
+      "SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?",
+    ).bind(this.auth.userId).first<Record<string, unknown>>();
+    if (!row) throw new ApiError(404, "user_not_found", "User not found");
+    return {
+      id: String(row.id),
+      email: String(row.email),
+      name: String(row.name),
+      avatarUrl: row.avatar_url == null ? null : String(row.avatar_url),
+      timezone: String(row.timezone),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  async updateWorkspaceTimezone(timezone: string) {
+    this.requireAdmin();
+    await this.env.DB.prepare("UPDATE workspaces SET timezone = ?, updated_at = ? WHERE id = ?")
+      .bind(timezone, nowIso(), this.auth.workspaceId)
+      .run();
+    return this.getWorkspace();
+  }
+
   async listMembers() {
     const result = await this.env.DB.prepare(
-      `SELECT u.id, u.email, u.name, u.avatar_url, u.created_at, m.role, m.status, m.joined_at
+      `SELECT u.id, u.email, u.name, u.avatar_url, u.timezone, u.created_at, m.role, m.status, m.joined_at
        FROM workspace_members m JOIN users u ON u.id = m.user_id
        WHERE m.workspace_id = ? AND m.status != 'suspended'
        ORDER BY u.name COLLATE NOCASE`,
@@ -271,6 +298,7 @@ export class WorkspaceService {
         email: String(row.email),
         name: String(row.name),
         avatarUrl: row.avatar_url == null ? null : String(row.avatar_url),
+        timezone: String(row.timezone),
         createdAt: String(row.created_at),
       },
       role: String(row.role),
@@ -428,9 +456,18 @@ export class WorkspaceOnboardingService {
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare(
-        `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(workspaceId, normalized, slug, this.env.AVALON_REGION, this.auth.userId, at, at),
+        `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        workspaceId,
+        normalized,
+        slug,
+        this.env.AVALON_REGION,
+        this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+        this.auth.userId,
+        at,
+        at,
+      ),
       this.env.DB.prepare(
         `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
          VALUES (?, ?, 'owner', 'active', ?)`,

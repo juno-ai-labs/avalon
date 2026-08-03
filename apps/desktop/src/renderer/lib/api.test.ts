@@ -22,6 +22,7 @@ const user = {
   email: 'adam@example.com',
   name: 'Adam',
   avatarUrl: null,
+  timezone: 'America/Los_Angeles',
   createdAt: timestamp,
 };
 

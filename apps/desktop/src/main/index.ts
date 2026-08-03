@@ -34,6 +34,7 @@ import type {
 } from '../common/desktop';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
+import { normalizeLegacyStoredSession } from './stored-session';
 import {
   initializeAutoUpdate,
   type AutoUpdateController,
@@ -93,6 +94,7 @@ function publicSession(value: WireSession): DesktopSession {
       id: value.user.id,
       email: value.user.email,
       name: value.user.name,
+      timezone: value.user.timezone,
       ...(value.user.avatarUrl ? { avatarUrl: value.user.avatarUrl } : {}),
     },
     workspace: value.workspace
@@ -101,6 +103,7 @@ function publicSession(value: WireSession): DesktopSession {
           name: value.workspace.name,
           region: value.workspace.region,
           role: value.workspace.role,
+          timezone: value.workspace.timezone,
         }
       : null,
   };
@@ -146,8 +149,12 @@ async function loadStoredSession(): Promise<WireSession | null> {
   try {
     const encrypted = await readFile(sessionFilePath());
     const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
-    const validated = SessionSchema.safeParse(parsed);
+    const normalized = normalizeLegacyStoredSession(parsed);
+    const validated = SessionSchema.safeParse(normalized);
     if (!validated.success) return null;
+    if (normalized !== parsed) {
+      await writeFile(sessionFilePath(), safeStorage.encryptString(JSON.stringify(validated.data)), { mode: 0o600 });
+    }
     inMemorySession = validated.data;
     return validated.data;
   } catch {
@@ -286,6 +293,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     region: candidate.region,
     attemptId: candidate.attemptId,
     codeVerifier: attempt.verifier,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Los_Angeles',
   });
   if (session.workspace) {
     throw new Error('Avalon sign-in returned a workspace before platform discovery');

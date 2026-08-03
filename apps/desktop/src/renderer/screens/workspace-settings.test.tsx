@@ -36,12 +36,13 @@ vi.mock('../lib/app-session', () => ({
 }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText, openExternal }) }));
 
-const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', role: 'owner' };
-const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', role: 'member' };
+const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' };
+const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles', role: 'member' };
 const workspace: Workspace = {
   id: 'workspace-1',
   name: 'Avalon Studio',
   region: 'eu',
+  timezone: 'Europe/London',
   currentUser: owner,
 };
 const invitation: WorkspaceInvitation = {

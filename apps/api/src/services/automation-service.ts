@@ -7,7 +7,8 @@ import type {
   TriggerDefinitionSchema,
   WorkstreamWorkflowInput,
 } from "@avalon/contracts";
-import type { z } from "zod";
+import { z } from "zod";
+import { OpenRouterError } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -85,8 +86,40 @@ export class AutomationService {
     })) };
   }
 
-  async compile(input: { messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null }) {
-    return compileAutomationDraft(this.env, input);
+  async compile(
+    input: { messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null },
+    requestId: string,
+  ) {
+    const defaults = await this.env.DB.prepare(
+      `SELECT u.timezone AS user_timezone, w.timezone AS workspace_timezone
+       FROM users u JOIN workspaces w ON w.id = ?
+       WHERE u.id = ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{
+      user_timezone: string;
+      workspace_timezone: string;
+    }>();
+    if (!defaults) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
+    try {
+      return await compileAutomationDraft(this.env, {
+        ...input,
+        requestId,
+        workspaceId: this.auth.workspaceId,
+        defaultTimezones: {
+          personal: defaults.user_timezone,
+          workspace: defaults.workspace_timezone,
+        },
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError || (error instanceof OpenRouterError && /structured JSON/iu.test(error.message))) {
+        const validationIssues = error instanceof z.ZodError
+          ? error.issues.slice(0, 25).map((issue) => ({ path: issue.path.map(String).join("."), code: issue.code }))
+          : [{ path: "$", code: "invalid_json" }];
+        throw new ApiError(502, "model_output_invalid", "Avalon could not validate the automation draft", {
+          validationIssues,
+        });
+      }
+      throw error;
+    }
   }
 
   async create(input: CreateAutomationInput) {

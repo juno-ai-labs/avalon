@@ -13,12 +13,21 @@ export const HarnessStatusSchema = z.enum([
   "idle"
 ]);
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
+export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}, "Timezone must be a supported IANA timezone");
 
 export const UserSchema = z.object({
   id: IdSchema,
   email: z.string().email(),
   name: z.string().min(1),
   avatarUrl: z.string().url().nullable(),
+  timezone: IanaTimezoneSchema,
   createdAt: TimestampSchema
 });
 
@@ -28,6 +37,7 @@ export const WorkspaceSchema = z.object({
   slug: z.string().min(2).max(80),
   region: RegionSchema,
   role: MemberRoleSchema,
+  timezone: IanaTimezoneSchema,
   createdAt: TimestampSchema
 });
 
@@ -285,7 +295,7 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("calendar"),
     rrule: z.string().min(1),
-    timezone: z.string().min(1),
+    timezone: IanaTimezoneSchema,
     summary: z.string().min(1)
   }),
   z.object({
@@ -396,10 +406,13 @@ export const DesktopExchangeRequestSchema = z.object({
   ticket: z.string().min(20).max(500),
   region: RegionSchema,
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
-  codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u)
+  codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
+  timezone: IanaTimezoneSchema.default("America/Los_Angeles")
 });
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
+export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+export const UpdateWorkspaceTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
 
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
