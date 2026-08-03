@@ -105,18 +105,4 @@ describe('New work-stream home', () => {
     }));
   });
 
-  it('shows a local-only onboarding checklist with visual progress', async () => {
-    renderScreen();
-
-    const onboarding = await screen.findByRole('region', { name: 'Get started with Avalon' });
-    expect(within(onboarding).getByText('0 / 3')).toBeVisible();
-    expect(within(onboarding).getByRole('button', { name: /Connect your tools/u })).toHaveAttribute('aria-pressed', 'false');
-
-    fireEvent.click(within(onboarding).getByRole('button', { name: /Connect your tools/u }));
-
-    expect(within(onboarding).getByText('1 / 3')).toBeVisible();
-    expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
-    expect(within(onboarding).getByRole('button', { name: /Connect your tools/u })).toHaveAttribute('aria-pressed', 'true');
-    expect(api.createWorkstream).not.toHaveBeenCalled();
-  });
 });

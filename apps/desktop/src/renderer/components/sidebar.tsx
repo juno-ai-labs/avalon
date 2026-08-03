@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import {
   ChevronDown,
   ChevronsLeft,
+  Check,
   CirclePause,
   GitBranch,
   LogOut,
@@ -12,6 +13,7 @@ import {
   Settings,
   Zap,
 } from 'lucide-react';
+import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { formatRelative, groupWorkstreams } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -25,6 +27,77 @@ interface SidebarProps {
   workstreams: WorkstreamSummary[];
   loading?: boolean;
   onSignOut: () => void;
+}
+
+const onboardingItems = [
+  {
+    id: 'connect-tools',
+    title: 'Connect your tools',
+    description: 'Bring Linear, GitHub, and Google Workspace into Avalon',
+  },
+  {
+    id: 'create-automation',
+    title: 'Create your first automation',
+    description: 'Schedule a recurring brief, monitor, or follow-up',
+  },
+  {
+    id: 'invite-teammate',
+    title: 'Invite a teammate',
+    description: 'Work together in a shared work stream',
+  },
+] as const;
+
+function OnboardingChecklist(): React.JSX.Element {
+  const [completed, setCompleted] = useState<Set<string>>(new Set());
+  const completedCount = completed.size;
+
+  return (
+    <section className="onboarding-checklist" aria-labelledby="onboarding-checklist-heading">
+      <header>
+        <h2 id="onboarding-checklist-heading">Get started with Avalon</h2>
+        <span>{completedCount} / {onboardingItems.length}</span>
+      </header>
+      <div
+        aria-label={`${completedCount} of ${onboardingItems.length} onboarding steps complete`}
+        aria-valuemax={onboardingItems.length}
+        aria-valuemin={0}
+        aria-valuenow={completedCount}
+        className="onboarding-progress"
+        role="progressbar"
+      >
+        <span style={{ width: `${(completedCount / onboardingItems.length) * 100}%` }} />
+      </div>
+      <div className="onboarding-items">
+        {onboardingItems.map((item) => {
+          const isComplete = completed.has(item.id);
+          return (
+            <button
+              aria-pressed={isComplete}
+              className={isComplete ? 'is-complete' : undefined}
+              key={item.id}
+              onClick={() => {
+                setCompleted((current) => {
+                  const next = new Set(current);
+                  if (next.has(item.id)) next.delete(item.id);
+                  else next.add(item.id);
+                  return next;
+                });
+              }}
+              type="button"
+            >
+              <span aria-hidden="true" className="onboarding-check">
+                {isComplete && <Check size={12} strokeWidth={2.5} />}
+              </span>
+              <span className="onboarding-item-copy">
+                <strong>{item.title}</strong>
+                <small>{item.description}</small>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 function AutomationRow({ automation }: { automation: AutomationSummary }): React.JSX.Element {
@@ -130,6 +203,8 @@ export function Sidebar({ workspace, automations, workstreams, loading, onSignOu
             )}
           </section>
         </nav>
+
+        <OnboardingChecklist />
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
