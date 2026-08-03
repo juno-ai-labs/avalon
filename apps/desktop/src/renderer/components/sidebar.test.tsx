@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -30,6 +30,27 @@ function workstream(
 }
 
 describe('Sidebar work-stream markers', () => {
+  it('anchors a local-only onboarding checklist above the account footer', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const sidebar = screen.getByRole('complementary', { name: 'Avalon navigation' });
+    const onboarding = within(sidebar).getByRole('region', { name: 'Get started with Avalon' });
+    const account = within(sidebar).getByRole('button', { name: /AdamAvalon Studio/u });
+    expect(onboarding.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(onboarding).getByText('0 / 3')).toBeVisible();
+
+    fireEvent.click(within(onboarding).getByRole('button', { name: /Connect your tools/u }));
+
+    expect(within(onboarding).getByText('1 / 3')).toBeVisible();
+    expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
+  });
+
   it('uses the compact status-dot pattern and an origin glyph for completed automation work', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
