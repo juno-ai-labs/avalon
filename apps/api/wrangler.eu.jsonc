@@ -7,6 +7,7 @@
   "preview_urls": false,
   "vars": {
     "APP_ENV": "production",
+    "APP_VERSION": "0.3.0",
     "AVALON_REGION": "eu",
     "AVALON_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://eu.api.with-avalon.com",
@@ -27,6 +28,7 @@
     "HARNESS_MAX_TOOL_CALLS": "24",
     "HARNESS_MAX_WALL_CLOCK_MS": "240000",
     "TOOL_DEFAULT_TIMEOUT_MS": "30000",
+    "CONNECTOR_POLL_TIMEOUT_MS": "20000",
     "HARNESS_MAX_CONTEXT_BYTES": "200000",
     "WEB_SEARCH_MAX_RESULTS": "8",
     "WEB_FETCH_MAX_BYTES": "2000000",

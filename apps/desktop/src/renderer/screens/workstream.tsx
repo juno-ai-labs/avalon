@@ -42,6 +42,7 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
     id: session.user.id,
     name: session.user.name,
     email: session.user.email,
+    timezone: session.user.timezone ?? 'America/Los_Angeles',
     ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
     role: session.workspace.role,
   };

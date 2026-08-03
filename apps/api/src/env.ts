@@ -24,6 +24,8 @@ export interface Env {
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
+  APP_VERSION?: string;
+  BUILD_SHA?: string;
   AVALON_REGION: Region;
   AVALON_DEV_AUTH?: string;
   PUBLIC_API_BASE_URL: string;
@@ -74,6 +76,7 @@ export interface Env {
   HARNESS_MAX_TOOL_CALLS: string;
   HARNESS_MAX_WALL_CLOCK_MS: string;
   TOOL_DEFAULT_TIMEOUT_MS: string;
+  CONNECTOR_POLL_TIMEOUT_MS?: string;
   HARNESS_MAX_CONTEXT_BYTES: string;
   WEB_SEARCH_MAX_RESULTS: string;
   WEB_FETCH_MAX_BYTES: string;
@@ -116,6 +119,7 @@ export function numericEnv(
     | "HARNESS_MAX_TOOL_CALLS"
     | "HARNESS_MAX_WALL_CLOCK_MS"
     | "TOOL_DEFAULT_TIMEOUT_MS"
+    | "CONNECTOR_POLL_TIMEOUT_MS"
     | "HARNESS_MAX_CONTEXT_BYTES"
     | "WEB_SEARCH_MAX_RESULTS"
     | "WEB_FETCH_MAX_BYTES"

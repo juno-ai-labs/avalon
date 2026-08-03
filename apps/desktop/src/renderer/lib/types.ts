@@ -8,6 +8,7 @@ export interface WorkspaceMember {
   name: string;
   email: string;
   avatarUrl?: string;
+  timezone: string;
   role?: string;
 }
 
@@ -15,6 +16,7 @@ export interface Workspace {
   id: string;
   name: string;
   region: Region;
+  timezone: string;
   currentUser: WorkspaceMember;
 }
 

@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { logStructuredEvent } from "../observability/logger";
 import {
   advanceOwningPollTarget,
   commitConnectorCursor,
@@ -39,9 +40,9 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
     const input = ConnectorPollWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
 
-    await step.do("load-connector-poll-state", async (): Promise<string> => {
+    const connection = await step.do("load-connector-poll-state", async (): Promise<{ id: string; provider: string }> => {
       const connection = await this.env.DB.prepare(
-        `SELECT c.id, c.cursor_json
+        `SELECT c.id, c.connector_type, c.cursor_json
            FROM connector_connections c
           WHERE c.id = ?2
             AND c.workspace_id = ?3
@@ -61,20 +62,69 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
           LIMIT 1`
       )
         .bind(input.pollScheduleId, input.connectionId, input.workspaceId)
-        .first<{ id: string; cursor_json: string }>();
+        .first<{ id: string; connector_type: string; cursor_json: string }>();
       if (!connection) throw new Error("connector_poll_not_authorized");
-      return connection.id;
+      return { id: connection.id, provider: connection.connector_type };
     });
 
-    const result = await step.do("poll-and-persist-provider-page", async (): Promise<StoredPollResult> => {
-      const parsed = PollResultSchema.parse(await pollConnectorConnection(this.env, input));
-      return {
-        activityIds: parsed.activityIds,
-        cursorJson: JSON.stringify(parsed.cursor),
-        baseCursorJson: parsed.baseCursorJson,
-        nextPollAt: parsed.nextPollAt ? new Date(parsed.nextPollAt).toISOString() : null
-      };
-    });
+    let result: StoredPollResult;
+    try {
+      result = await step.do(
+        "poll-and-persist-provider-page",
+        {
+          retries: { limit: 3, delay: "2 seconds", backoff: "exponential" },
+          timeout: "25 seconds",
+        },
+        async (context): Promise<StoredPollResult> => {
+          const startedAt = Date.now();
+          logStructuredEvent(this.env, "info", "connector_poll_attempt", {
+            workspace_id: input.workspaceId,
+            connection_id: input.connectionId,
+            provider: connection.provider,
+            poll_schedule_id: input.pollScheduleId,
+            workflow_step: "poll-and-persist-provider-page",
+            attempt: context.attempt,
+          });
+          const parsed = PollResultSchema.parse(await pollConnectorConnection(this.env, input));
+          logStructuredEvent(this.env, "info", "connector_poll_attempt_completed", {
+            workspace_id: input.workspaceId,
+            connection_id: input.connectionId,
+            provider: connection.provider,
+            poll_schedule_id: input.pollScheduleId,
+            workflow_step: "poll-and-persist-provider-page",
+            attempt: context.attempt,
+            duration_ms: Date.now() - startedAt,
+            activity_count: parsed.activityIds.length,
+          });
+          return {
+            activityIds: parsed.activityIds,
+            cursorJson: JSON.stringify(parsed.cursor),
+            baseCursorJson: parsed.baseCursorJson,
+            nextPollAt: parsed.nextPollAt ? new Date(parsed.nextPollAt).toISOString() : null
+          };
+        },
+      );
+    } catch (error) {
+      const at = new Date().toISOString();
+      const timedOut = error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError");
+      const code = timedOut ? "connector_poll_timeout" : "connector_poll_failed";
+      const message = timedOut ? "Connector poll timed out" : "Connector poll failed after retries";
+      await this.env.DB.prepare(
+        `UPDATE connector_connections
+         SET status = 'error', error_json = ?, updated_at = ?
+         WHERE id = ? AND workspace_id = ?`,
+      ).bind(JSON.stringify({ code, message }), at, input.connectionId, input.workspaceId).run();
+      logStructuredEvent(this.env, "error", code, {
+        workspace_id: input.workspaceId,
+        connection_id: input.connectionId,
+        provider: connection.provider,
+        poll_schedule_id: input.pollScheduleId,
+        workflow_step: "poll-and-persist-provider-page",
+        error_name: error instanceof Error ? error.name : "Error",
+        terminal_outcome: timedOut ? "degraded_timeout" : "degraded_error",
+      });
+      throw error;
+    }
 
     await step.do("enqueue-normalized-activities", async () => {
       for (let offset = 0; offset < result.activityIds.length; offset += 100) {

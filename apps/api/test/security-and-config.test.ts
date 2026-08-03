@@ -46,8 +46,24 @@ describe("API security utilities", () => {
 
   it("redacts nested credential-like fields from structured logs", () => {
     expect(
-      redact({ connection: { refreshToken: "secret", displayName: "Google" }, authorization: "Bearer x" }),
-    ).toEqual({ connection: { refreshToken: "[REDACTED]", displayName: "Google" }, authorization: "[REDACTED]" });
+      redact({
+        connection: { refreshToken: "secret", displayName: "Google" },
+        authorization: "Bearer x",
+        prompt: "private instructions",
+        emailBody: "private email",
+        connectorContent: "private provider data",
+        fileContent: "private file",
+        modelContext: "private context",
+      }),
+    ).toEqual({
+      connection: { refreshToken: "[REDACTED]", displayName: "Google" },
+      authorization: "[REDACTED]",
+      prompt: "[REDACTED]",
+      emailBody: "[REDACTED]",
+      connectorContent: "[REDACTED]",
+      fileContent: "[REDACTED]",
+      modelContext: "[REDACTED]",
+    });
   });
 
   it("binds suggested provider resources to their originating connection", () => {

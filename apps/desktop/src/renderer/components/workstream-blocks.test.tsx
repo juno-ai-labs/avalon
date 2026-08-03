@@ -8,7 +8,7 @@ const baseMessage: Message = {
   workstreamId: 'workstream-one',
   sequenceNumber: 1,
   authorType: 'human',
-  author: { id: 'user-adam', name: 'Adam', email: 'adam@example.com' },
+  author: { id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
   messageType: 'text',
   text: 'Please investigate this.',
   createdAt: '2026-07-31T19:20:00.000Z',
@@ -31,7 +31,7 @@ describe('MessageBlock human identity', () => {
     const coworkerMessage: Message = {
       ...baseMessage,
       id: 'message-sam',
-      author: { id: 'user-sam', name: 'Sam', email: 'sam@example.com' },
+      author: { id: 'user-sam', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles' },
     };
     render(<MessageBlock {...actions} currentUserId="user-adam" message={coworkerMessage} />);
 

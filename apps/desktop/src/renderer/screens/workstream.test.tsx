@@ -90,6 +90,7 @@ describe('workspaceMemberFromSession', () => {
       email: 'current@example.com',
       avatarUrl: 'https://example.com/current.png',
       role: 'member',
+      timezone: 'America/Los_Angeles',
     });
   });
 });

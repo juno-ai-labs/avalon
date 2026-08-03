@@ -142,6 +142,70 @@ describe("agent harness", () => {
     expect(messages.at(-1)).toEqual({ role: "user", content: "Run it every morning in Pacific time." });
   });
 
+  it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
+    const baseDraft = {
+      name: "Daily summary",
+      description: "Create a daily summary.",
+      instructions: "Summarize changes.",
+      requiredCapabilities: [],
+      expectedOutputs: ["Summary"],
+      defaultBehavior: "{}",
+      followUpQuestion: null,
+      ready: true,
+    };
+    const responses = [
+      { ...baseDraft, suggestedScope: "personal", triggers: [{ type: "calendar", rrule: "FREQ=DAILY", timezone: null, summary: "Daily" }] },
+      { ...baseDraft, suggestedScope: "workspace", triggers: [{ type: "calendar", rrule: "FREQ=DAILY", timezone: "", summary: "Daily" }] },
+      { ...baseDraft, suggestedScope: "workspace", triggers: [{ type: "calendar", rrule: "FREQ=DAILY", timezone: "Asia/Tokyo", summary: "Daily" }] },
+    ];
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: JSON.stringify(responses.shift()) } }],
+    })) as typeof fetch;
+    const defaults = { personal: "America/New_York", workspace: "Europe/London" };
+
+    await expect(compileAutomation({ apiKey: "key", model: "model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
+      .resolves.toMatchObject({ triggers: [{ timezone: "America/New_York" }] });
+    await expect(compileAutomation({ apiKey: "key", model: "model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
+      .resolves.toMatchObject({ triggers: [{ timezone: "Europe/London" }] });
+    await expect(compileAutomation({ apiKey: "key", model: "model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
+      .resolves.toMatchObject({ triggers: [{ timezone: "Asia/Tokyo" }] });
+  });
+
+  it("repairs invalid structured output once using validation paths only", async () => {
+    const valid = {
+      name: "Daily summary",
+      description: "Create a daily summary.",
+      instructions: "Summarize changes.",
+      triggers: [{ type: "manual" }],
+      requiredCapabilities: [],
+      expectedOutputs: ["Summary"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      ready: true,
+    };
+    const bodies: Array<Record<string, unknown>> = [];
+    const diagnostics: string[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({ choices: [{ message: { content: JSON.stringify(bodies.length === 1 ? { ...valid, name: "" } : valid) } }] });
+    }) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "Create it" }],
+      fetch: fetcher,
+      onDiagnostic: (event) => { diagnostics.push(event.stage); },
+    })).resolves.toMatchObject({ name: "Daily summary" });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(diagnostics).toContain("repair");
+    const repairMessages = bodies[1]!.messages as Array<{ content: string }>;
+    expect(repairMessages.at(-1)!.content).toContain("name");
+    expect(repairMessages.at(-1)!.content).not.toContain("Create it");
+  });
+
   it("canonicalizes tool inputs for stable hashes", () => {
     expect(__testing.canonicalJson({ b: 2, a: { z: 1, y: 0 } })).toBe(
       '{"a":{"y":0,"z":1},"b":2}'

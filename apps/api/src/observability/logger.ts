@@ -1,8 +1,9 @@
 import type { Context } from "hono";
 import type { HonoAppEnv } from "../env";
+import type { Env } from "../env";
 
 const REDACTED = "[REDACTED]";
-const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|email_body|file_content|model_context/i;
+const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|prompt|email_?body|connector_?content|file_?content|model_?context/i;
 
 export function redact(value: unknown, depth = 0): unknown {
   if (depth > 6) return "[TRUNCATED]";
@@ -25,17 +26,30 @@ export function logEvent(
   event: string,
   fields: Record<string, unknown> = {},
 ): void {
-  const configured = c.env.LOG_LEVEL ?? "info";
+  const auth = c.get("auth");
+  logStructuredEvent(c.env, level, event, {
+    request_id: c.get("requestId"),
+    workspace_id: auth?.workspaceId,
+    ...fields,
+  });
+}
+
+export function logStructuredEvent(
+  env: Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">,
+  level: "debug" | "info" | "warn" | "error",
+  event: string,
+  fields: Record<string, unknown> = {},
+): void {
+  const configured = env.LOG_LEVEL ?? "info";
   const rank = { debug: 0, info: 1, warn: 2, error: 3 } as const;
   if (rank[level] < rank[configured]) return;
-  const auth = c.get("auth");
   const entry = redact({
     timestamp: new Date().toISOString(),
     level,
     event,
-    request_id: c.get("requestId"),
-    workspace_id: auth?.workspaceId,
-    region: c.env.AVALON_REGION,
+    region: env.AVALON_REGION,
+    app_version: env.APP_VERSION ?? "unknown",
+    build_sha: env.BUILD_SHA ?? null,
     ...fields,
   });
   const serialized = JSON.stringify(entry);

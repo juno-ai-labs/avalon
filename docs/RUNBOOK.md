@@ -100,6 +100,7 @@ For ordinary releases after both entrypoints exist:
 11. Connect **Google Drive + Docs + Sheets** and verify a Drive read, native Docs read/write, and native Sheets read/write against disposable fixtures.
 12. Establish the Drive poll baseline, change the test Doc and Sheet, poll again, and confirm `docs.document_changed` and `sheets.spreadsheet_changed` arrive through Drive change-token polling.
 13. Create an automation, run it manually, and verify that a single work stream and run record are reused across a retry.
+14. After every successful deployment, run the configured Gitleaks gate, commit the complete verified release transaction, and push the authorized current branch. A deployment is not complete until its source and release metadata are present on the remote. Never stage `.env.local`, generated release bundles, dependency directories, or local Cloudflare state.
 
 Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers after the infrastructure prerequisites are satisfied. Do not mark Google capabilities release-ready until the provider credentials and APIs are configured, provider verification is complete where required, and steps 9–12 pass. A failed regional health check blocks desktop distribution for that region.
 
@@ -135,6 +136,31 @@ The hosted Global identity callback must use `PUBLIC_WEB_BASE_URL=https://with-a
 - Monitor reconnect rate, `resync_required` rate, rejected socket origins, active connections, and messages per room. A rise in reconnects or resyncs is an availability signal, not a reason to retain unbounded replay state.
 
 Cloudflare can terminate long-lived connections during network deployments, so recovery—not socket immortality—is the contract. Verify that a forced disconnect reconnects with a cursor, replays only newer events when available, and refreshes REST state when the room replies `resync_required`.
+
+## Timezones
+
+- Store only supported IANA names. Existing users and Global workspaces are migrated to `America/Los_Angeles`; existing EU workspaces are migrated to `Europe/London`.
+- Electron supplies the Mac timezone during ticket exchange. Browser and undetected clients use `America/Los_Angeles`.
+- New Global workspaces default to `America/Los_Angeles`; new EU workspaces default to `Europe/London`.
+- Owners and admins may change the workspace timezone. Every user may change their personal timezone.
+- Calendar automation precedence is explicit trigger timezone, then the initiating user's timezone for personal scope, then the workspace timezone for workspace scope.
+
+## Observability views and retention
+
+Workers Logs remain at full invocation and head sampling. In Cloudflare Workers & Pages → Observability → Query Builder, save these standard views for each regional API:
+
+| View | Filters |
+| --- | --- |
+| Failures | `level = error` |
+| Invalid model output | `event = request_failed` and `code = model_output_invalid` |
+| Slow inference | `event = automation_compiler`, `stage = model_response`, and `latency_ms > 10000` |
+| Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
+
+Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
+
+Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only.
+
+Connector polls have a 20-second adapter cancellation deadline inside a 25-second Workflow step. The step uses three exponentially backed-off retries. A terminal timeout or provider failure moves the connection into a deterministic degraded/error state and emits only structured, redacted metadata; it must never leave the workflow waiting indefinitely.
 
 ## Incident response
 

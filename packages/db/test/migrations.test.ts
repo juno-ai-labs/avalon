@@ -22,6 +22,37 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("sets fixed timezone defaults with one migration", () => {
+    const database = migrateDatabaseThrough("0024_linear_connection_identity_uniqueness.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-global', 'google-global', 'global@example.com', 'Global User', '2026-01-01', '2026-01-01'),
+        ('user-eu', 'google-eu', 'eu@example.com', 'EU User', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES
+        ('workspace-global', 'Global', 'global', 'global', 'user-global', '2026-01-01', '2026-01-01'),
+        ('workspace-eu', 'EU', 'eu', 'eu', 'user-eu', '2026-01-01', '2026-01-01');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0025_user_workspace_timezones.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare("SELECT id, timezone FROM users ORDER BY id").all()).toEqual([
+      { id: "user-eu", timezone: "America/Los_Angeles" },
+      { id: "user-global", timezone: "America/Los_Angeles" },
+    ]);
+    expect(database.prepare("SELECT id, timezone FROM workspaces ORDER BY id").all()).toEqual([
+      { id: "workspace-eu", timezone: "Europe/London" },
+      { id: "workspace-global", timezone: "America/Los_Angeles" },
+    ]);
+    database.close();
+  });
+
   it("corrects the pre-release plural work-stream email domain without changing its reserved name", () => {
     const database = migrateDatabaseThrough("0020_workstream_email_route_lifecycle.sql");
     database.exec(`

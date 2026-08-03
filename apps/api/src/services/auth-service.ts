@@ -37,11 +37,13 @@ interface IdentityRow {
   email: string;
   user_name: string;
   avatar_url: string | null;
+  user_timezone: string;
   user_created_at: string;
   workspace_id: string | null;
   workspace_name: string | null;
   workspace_slug: string | null;
   workspace_region: Region | null;
+  workspace_timezone: string | null;
   workspace_created_at: string | null;
   role: "owner" | "admin" | "member" | null;
 }
@@ -184,10 +186,18 @@ export class AuthService {
          ON CONFLICT(id) DO UPDATE SET updated_at = excluded.updated_at`,
       ).bind(DEVELOPMENT_USER_ID, at, at),
       this.env.DB.prepare(
-        `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-         VALUES (?, ?, 'avalon-development', ?, ?, ?, ?)
+        `INSERT INTO workspaces (id, name, slug, region, timezone, created_by_user_id, created_at, updated_at)
+         VALUES (?, ?, 'avalon-development', ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`,
-      ).bind(DEVELOPMENT_WORKSPACE_ID, workspaceName.trim(), this.env.AVALON_REGION, DEVELOPMENT_USER_ID, at, at),
+      ).bind(
+        DEVELOPMENT_WORKSPACE_ID,
+        workspaceName.trim(),
+        this.env.AVALON_REGION,
+        this.env.AVALON_REGION === "eu" ? "Europe/London" : "America/Los_Angeles",
+        DEVELOPMENT_USER_ID,
+        at,
+        at,
+      ),
       this.env.DB.prepare(
         `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
          VALUES (?, ?, 'owner', 'active', ?)
@@ -289,6 +299,7 @@ export class AuthService {
     region: Region;
     attemptId: string;
     codeVerifier: string;
+    timezone?: string;
   }): Promise<Session> {
     if (input.region !== this.env.AVALON_REGION) {
       throw new ApiError(409, "region_mismatch", "The login ticket belongs to another region");
@@ -309,6 +320,9 @@ export class AuthService {
       // verifier, mirroring RFC 7636 authorization-code redemption semantics.
       throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
     }
+    await this.env.DB.prepare("UPDATE users SET timezone = ?, updated_at = ? WHERE id = ?")
+      .bind(input.timezone ?? "America/Los_Angeles", nowIso(), claimed.user_id)
+      .run();
     const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
     return this.createSession(identity);
   }
@@ -420,12 +434,12 @@ export class AuthService {
   private async loadIdentity(userId: string, workspaceId: string | null): Promise<IdentityRow> {
     if (!workspaceId) {
       const user = await this.env.DB.prepare(
-        `SELECT id AS user_id, email, name AS user_name, avatar_url,
+        `SELECT id AS user_id, email, name AS user_name, avatar_url, timezone AS user_timezone,
            created_at AS user_created_at
          FROM users WHERE id = ?`,
       )
         .bind(userId)
-        .first<Pick<IdentityRow, "user_id" | "email" | "user_name" | "avatar_url" | "user_created_at">>();
+        .first<Pick<IdentityRow, "user_id" | "email" | "user_name" | "avatar_url" | "user_timezone" | "user_created_at">>();
       if (!user) throw new ApiError(401, "identity_not_found", "The signed-in user no longer exists");
       return {
         ...user,
@@ -433,14 +447,16 @@ export class AuthService {
         workspace_name: null,
         workspace_slug: null,
         workspace_region: null,
+        workspace_timezone: null,
         workspace_created_at: null,
         role: null,
       };
     }
     const row = await this.env.DB.prepare(
       `SELECT u.id AS user_id, u.email, u.name AS user_name, u.avatar_url,
+         u.timezone AS user_timezone,
          u.created_at AS user_created_at, w.id AS workspace_id, w.name AS workspace_name,
-         w.slug AS workspace_slug, w.region AS workspace_region,
+         w.slug AS workspace_slug, w.region AS workspace_region, w.timezone AS workspace_timezone,
          w.created_at AS workspace_created_at, m.role
        FROM users u JOIN workspace_members m ON m.user_id = u.id
        JOIN workspaces w ON w.id = m.workspace_id
@@ -498,16 +514,18 @@ export class AuthService {
         email: identity.email,
         name: identity.user_name,
         avatarUrl: identity.avatar_url,
+        timezone: identity.user_timezone,
         createdAt: identity.user_created_at,
       },
       workspace: identity.workspace_id && identity.workspace_name && identity.workspace_slug
-        && identity.workspace_region && identity.role && identity.workspace_created_at
+        && identity.workspace_region && identity.workspace_timezone && identity.role && identity.workspace_created_at
         ? {
             id: identity.workspace_id,
             name: identity.workspace_name,
             slug: identity.workspace_slug,
             region: identity.workspace_region,
             role: identity.role,
+            timezone: identity.workspace_timezone,
             createdAt: identity.workspace_created_at,
           }
         : null,

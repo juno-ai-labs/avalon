@@ -168,7 +168,7 @@ describe('useWorkstreamSocket', () => {
       workstreamId,
       sequenceNumber: 17,
       authorType: 'human',
-      author: { id: 'user-one', name: 'Adam', email: 'adam@example.com' },
+      author: { id: 'user-one', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
       messageType: 'text',
       text: 'Investigate this.',
       createdAt: '2026-07-31T19:20:00.000Z',

@@ -17,7 +17,9 @@ const updateBody = z.object({ name: z.string().min(1).max(140).optional(), descr
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) => c.json(await new AutomationService(c.env, getAuth(c)).list()));
-automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).compile(c.req.valid("json"))));
+automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => c.json(
+  await new AutomationService(c.env, getAuth(c)).compile(c.req.valid("json"), c.get("requestId")),
+));
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).create(c.req.valid("json")), 201));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).get(c.req.valid("param").id)));
 automationRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", updateBody), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))));
