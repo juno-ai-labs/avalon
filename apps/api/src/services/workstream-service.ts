@@ -308,15 +308,19 @@ export class WorkstreamService {
     const connectorMentions = preparedInput.mentions
       .filter((mention) => mention.type === "connector" && mention.connectorType)
       .map((mention) => mention.connectorType!);
-    const classification = await classifyWorkstreamMessage(this.env, {
-      message: input.text,
-      activeTask: workstream.harnessStatus === "running" || workstream.harnessStatus === "needs_input",
-      connectorMentions,
-    });
-    const shouldInvoke =
-      classification.classification === "agent_action" ||
-      classification.classification === "both" ||
-      (classification.classification === "uncertain" && (workstream.harnessStatus === "running" || connectorMentions.length > 0));
+    const participantCount = await this.activeParticipantCount(id);
+    let shouldInvoke = participantCount === 1;
+    if (!shouldInvoke) {
+      const classification = await classifyWorkstreamMessage(this.env, {
+        message: input.text,
+        activeTask: workstream.harnessStatus === "running" || workstream.harnessStatus === "needs_input",
+        connectorMentions,
+      });
+      shouldInvoke =
+        classification.classification === "agent_action" ||
+        classification.classification === "both" ||
+        (classification.classification === "uncertain" && (workstream.harnessStatus === "running" || connectorMentions.length > 0));
+    }
     const harnessRunId = shouldInvoke ? await this.launchHarness(id, message.id, "human_message") : null;
     return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
   }
@@ -787,6 +791,15 @@ export class WorkstreamService {
       participationReason: String(row.participation_reason),
       joinedAt: String(row.joined_at),
     }));
+  }
+
+  private async activeParticipantCount(id: string): Promise<number> {
+    const row = await this.env.DB.prepare(
+      `SELECT COUNT(*) AS participant_count
+       FROM workstream_participants
+       WHERE workstream_id = ? AND removed_at IS NULL`,
+    ).bind(id).first<{ participant_count: number }>();
+    return Number(row?.participant_count ?? 0);
   }
 
   private async loadViewers(id: string): Promise<unknown[]> {
