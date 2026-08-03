@@ -472,6 +472,31 @@ pre {
   z-index: 30;
 }
 
+.sidebar.is-resizing { user-select: none; }
+.sidebar-resizer {
+  bottom: 0;
+  cursor: col-resize;
+  position: absolute;
+  right: -5px;
+  top: 48px;
+  width: 10px;
+  z-index: 3;
+}
+.sidebar-resizer::after {
+  background: transparent;
+  border-radius: 2px;
+  bottom: 8px;
+  content: '';
+  position: absolute;
+  right: 4px;
+  top: 8px;
+  transition: background 120ms;
+  width: 2px;
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.sidebar.is-resizing .sidebar-resizer::after { background: #65665e; }
+
 .sidebar-titlebar {
   align-items: flex-end;
   display: flex;
@@ -1758,6 +1783,7 @@ pre {
 
 @media (max-width: 920px) {
   :root { --sidebar-width: 0px; }
+  .workspace-shell { --sidebar-width: 0px !important; }
   .main-pane { margin-left: 0; }
   .sidebar { box-shadow: 12px 0 40px rgba(0,0,0,.35); transform: translateX(-100%); transition: transform 160ms ease; width: 300px; z-index: 70; }
   .sidebar.is-mobile-open { transform: translateX(0); }
@@ -1765,6 +1791,7 @@ pre {
   .mobile-only,
   .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
+  .sidebar-resizer { display: none; }
   .inspector-rail { max-width: calc(100vw - 16px); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }

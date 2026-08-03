@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
+import { useUiStore } from '../lib/ui-store';
 import { Sidebar } from './sidebar';
 
 const workspace: Workspace = {
@@ -30,6 +31,31 @@ function workstream(
 }
 
 describe('Sidebar work-stream markers', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+  });
+
+  it('resizes from the keyboard and exposes its constrained width', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+
+    fireEvent.keyDown(resizer, { key: 'ArrowRight' });
+    expect(resizer).toHaveAttribute('aria-valuenow', '316');
+    expect(window.localStorage.getItem('avalon.sidebar-width')).toBe('316');
+
+    fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+  });
+
   it('anchors a local-only onboarding checklist above the account footer', () => {
     render(
       <MemoryRouter>
