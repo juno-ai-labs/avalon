@@ -1,388 +1,352 @@
-# Migrating Avalon's harness onto `@juno-ai/bind`
+# Bounding Avalon's agent chains with `@juno-ai/bind`
 
-An execution plan for replacing hand-rolled internals of
-`packages/agent-harness` with the published `@juno-ai/bind` package.
+Applying Monad's orchestration learnings to Avalon's harness-run graph.
 
-Written against Avalon `d99a127` ("Publish Avalon 0.2.0 and prepare 0.3.0") and
-`@juno-ai/bind@5.0.0` on npm.
+Written against Avalon `d99a127` and **`@juno-ai/bind@6.0.0`**.
 
-Companion to [`MONAD_REUSE.md`](./MONAD_REUSE.md), which assessed *what* is worth
-sharing. This document is the *how*. Read the assessment for the reasoning behind
-each item; read this one for the order, the gates, and the traps.
+Supersedes an earlier draft of this file that planned a phase-by-phase swap of
+harness *internals* (watchdog, deadline, schema sanitizer). That work is still
+worth doing and is tracked separately in [`MONAD_REUSE.md`](./MONAD_REUSE.md);
+it is not what this document is about. This one is about orchestration: what
+starts a run, what a run is allowed to start, and what stops the graph running
+away.
 
 ---
 
-## What changed since the assessment
+## The finding
 
-`MONAD_REUSE.md` was written against `@juno-ai/bind@2.0.0` and sorted its
-findings into three tiers: adopt as a dependency, port the file, adopt the
-design. Monad's extraction work has since collapsed most of that distinction.
-**Six of the eight sequenced items are now a dependency rather than a port or a
-re-implementation:**
+**Avalon has run lineage with no bound on it, and a feedback cycle that nothing
+counts.**
 
-| Assessment item | Assessment said | In `5.0.0` today |
+`harness_runs` already carries `parent_harness_run_id`
+(`packages/db/migrations/0001_initial.sql:288`) and `launchHarness` already
+accepts a parent (`apps/api/src/services/workstream-service.ts:627`). What is
+missing is everything that makes a parent pointer useful: no depth, no chain
+root, no admission check anywhere. A `grep` for depth/chain/spawn concepts
+across `apps/` and `packages/` returns nothing.
+
+That would be latent if runs could only be started by people. They cannot. The
+cycle is:
+
+```
+harness run
+  → agent calls a connector WRITE tool     (github.issues.create, linear.create_comment,
+                                            notion.create_comment, google.gmail.send, …)
+  → provider emits a webhook               (github.issue.opened, github.issue_comment.created, …)
+  → Avalon records an activity             (activities row, processing_status='pending')
+  → activity-consumer matches automations  (connector_activity / semantic_activity triggers)
+  → WORKSTREAM_LOOP_WORKFLOW.create        (apps/api/src/queues/activity-consumer.ts:596)
+  → harness run
+```
+
+Every arrow exists today. The write tools and the emitted event types line up
+one-to-one on every major connector — `github.issues.create` produces
+`github.issue.opened`; `linear.create_comment` produces a Linear comment
+webhook; `notion.create_comment` produces a Notion comment activity;
+`google.gmail.send` produces a Gmail message activity. `connector_activity` and
+`semantic_activity` triggers exist to watch exactly those
+(`activity-consumer.ts:457`, `:468`).
+
+Nothing in that loop counts hops. The only guard on the activity path is
+`dedupe_key` / `raw_content_hash` (`integrations.ts:1424-1474`), which prevents
+the *same* activity being processed twice — it says nothing about a genuinely
+new activity the agent itself just caused. Each new comment is a new activity
+with a new hash.
+
+**Status of this claim:** the cycle is structurally reachable in the default
+configuration — Avalon contributes every granted tool of every healthy workspace
+connector to every work stream, so the write tools are present whenever the
+connector is. I am reporting a verified structural cycle, not an observed
+incident. Before building anything, run the query in "Phase 0" to find out
+whether it has already happened.
+
+## Why the cheap fix does not work
+
+The obvious mitigation is echo suppression: `activities.actor_json` exists
+(`0001_initial.sql:112`), so drop any activity whose actor is Avalon.
+
+**It cannot be made to work, and the reason is worth stating because it is the
+argument for doing the chain properly.** Avalon does not have its own identity
+at the provider. Connector writes go through per-connection stored OAuth
+credentials — the *user's* grant. The agent's Linear comment is authored by the
+user's Linear account and is byte-identical in `actor_json` to the same user
+typing that comment by hand. Suppressing by actor suppresses the user's genuine
+actions, which is a worse bug than the one it fixes.
+
+You cannot filter the cycle by who. You have to bound it by how far.
+
+---
+
+## What Monad learned, and how each piece maps
+
+Monad's chains are internal — a run spawns a run, and the spawn site knows its
+parent. Avalon's cycle leaves the process, goes through a third party, and comes
+back. That difference changes one thing (§3 below) and nothing else: the graph
+is the same graph, and `admitChildRun` judges it the same way.
+
+**`6.0.0` is the first release that can express Avalon's rules.** `5.0.0` shipped
+four `ChainRule` kinds; `6.0.0` adds `pair_seen` and `tenant_rate`, which are
+precisely the two Avalon needs — repeat-pair suppression and a workspace-level
+rate ceiling on the human-triggered case. Pin `6.0.0` exactly, not `^6.0.0`:
+bind's version stamps the *next major* of the public mirror, so a major bump
+carries no breakage signal and semver ranges are uninformative.
+
+### 1. Lineage is three columns, not one
+
+Monad carries `chain_depth`, `chain_root_run_id`, `chain_parent_run_id`. Avalon
+has only the parent, and **the parent alone cannot bound a chain — only a hop.**
+
+The rule that is easy to get backwards, and which `descendChain` encodes:
+**null means me.** A root run's root and parent are both `null`, because a
+chain's origin has no id to point at until its own row exists. Read any chain's
+root as `rootRunId ?? runId`. Adopting the *parent's* id as the root at every
+level instead makes each generation its own chain, and every per-chain bound
+then counts the wrong set and silently never fires. Monad states this as an
+invariant because getting it wrong produces a system that looks bounded and is
+not.
+
+### 2. Admit before the run exists, never after
+
+> *A chain bounded only once its runs are on the queue is not bounded, it is
+> billed.*
+
+`admitChildRun` judges counts the host supplies and returns a decision; it does
+no I/O. In Avalon it goes **before** the `INSERT INTO harness_runs` in
+`launchHarness` (`workstream-service.ts:633`) and **before**
+`WORKSTREAM_LOOP_WORKFLOW.create` in the activity consumer
+(`activity-consumer.ts:596`).
+
+### 3. The Avalon-only problem: the parent link is not automatic
+
+This is the one place Monad's design does not transfer directly. In Monad the
+spawning code knows the parent run. In Avalon, by the time the webhook comes
+back the causal link is gone — the activity knows which provider resource
+changed, and nothing knows which run changed it.
+
+So the chain needs a **provenance carry**: when a connector write succeeds,
+record `(provider, provider_resource_id) → harness_run_id`, and have the
+activity consumer look up that mapping to find the parent run before it starts a
+new one. The hook already exists — `tool_invocations.provider_operation_id`
+(`0001_initial.sql:310`) is written on every tool invocation and is where the
+provider's resource identifier belongs.
+
+Without this, every automation-started run looks like a root and every chain
+bound reads depth 0 forever. **This phase is load-bearing: the admission checks
+in §2 are decoration until provenance works.** It is also the phase most likely
+to be partially correct — a provider that reports a different resource id on the
+webhook than it returned on the write breaks the join for that connector alone,
+silently. Build it connector by connector with a test per connector, and treat
+an unresolvable parent as depth 0 plus a metric, not as an error.
+
+### 4. Omit-vs-sentinel: two failures that must not be conflated
+
+- A rule whose measurement came back **broken** (`NaN`, negative) **refuses** —
+  every comparison is false against `NaN`, so the naive reading of a broken
+  count is an unbounded chain.
+- A rule the host **could not measure at all** (the D1 query threw) is expressed
+  by **omitting it from the array**, which admits.
+
+Passing `NaN` to mean "unknown" collapses the two and turns a transient D1 blip
+into every agent in the workspace refusing to run. The judgement is the host's:
+decide it in the `catch` at each call site by choosing whether to append the
+rule. Monad's tenant rate limit fails open this way, with a test pinning it.
+
+### 5. `retryable` is worth more in Avalon than it is in Monad
+
+`admitChildRun` returns `rule` (which bound fired) and `retryable` (whether
+waiting could change the answer). Monad **drops** `retryable` — nothing
+downstream of its activation pipeline waits, so the field has no reader there.
+
+Avalon is different, and this is a genuine improvement rather than a port.
+Cloudflare Queues retry with a delay, and the activity consumer already uses it:
+`message.retry({ delaySeconds: 30 })` at `activity-consumer.ts:199`. So the
+mapping is direct and useful:
+
+| Refusal | Rules | Queue action |
 |---|---|---|
-| §3.1 Streaming idle watchdog | adopt the design, implement it yourself | `createStreamWatchdog` — `bind/completion` |
-| §2.1 `sanitize-tool-schema.ts` | port the 683-line file | `sanitizeToolSchema` — `bind/tools` |
-| §2.2 Deadline / failure classification / heartbeat | port the file | `createRunDeadline`, `classifyRunFailure`, `createCoalescedHeartbeat` — `bind/run` |
-| §3.3 Per-tool-name concurrency cap | adopt the design | `runToolCallsPooledByTool` — `bind/run` |
-| §1.1 `RunStats` / `StopReason` | dependency | unchanged — `bind/contracts` |
-| §1.2 Routing / breaker | dependency | unchanged — `bind/routing` |
+| `retryable: true` | `pair_cooldown`, `tenant_rate`, `tenant_ceiling` | `message.retry({ delaySeconds })` — the bound clears on its own |
+| `retryable: false` | `depth`, `chain_budget`, `pair_seen` | ack and record; retrying burns the budget for no chance of success |
 
-The practical consequence: this migration is mostly **add one dependency and
-delete code**, not a port. Verified against the published tarball, not the Monad
-source tree.
+Retrying a non-retryable refusal is the failure mode to avoid: a `depth` refusal
+retried every 30 s costs a queue slot forever and can never succeed.
 
-## Scope decision: take the primitives, keep the loop
+### 6. The depth-0 case is unbounded and needs its own rule
 
-`bind` also exports `runToolLoop`, its own iteration engine. **Avalon should not
-adopt it**, now or as part of this work.
+Monad's depth, pair, and budget rules only guard `chain_depth > 0`. The
+human-triggered case — a message flood, a single mention fanning out — was
+unbounded until a separate per-tenant rate limit was added. Avalon's equivalent
+is `tenant_rate` over the workspace: count every harness run the workspace
+created in a rolling window and refuse new depth-0 starts past a ceiling
+generous enough to trip only on a runaway.
 
-- `runToolLoop` is typed in OpenAI SDK types throughout and carries concepts
-  Avalon has no equivalent of — plugin activation, transcript compaction, a
-  two-kind `suspend` directive.
-- Avalon's loop carries two things `runToolLoop` does not: `halt: "needs_input"`
-  elicitation, and idempotent tool replay keyed by
-  `(harnessRunId, turn, tool position)` + canonical input hash.
+### 7. Human input resets the chain
 
-Replacing the loop is a rewrite with a net feature loss. Replacing what the loop
-*calls* is a migration. This plan does only the latter: `runHarness` stays
-Avalon's, and every phase swaps a helper underneath it.
+A human message resets the chain to depth 0, so people can always re-engage
+after a chain is capped. Avalon can already express this: `launchHarness` takes
+an `origin`, and `human_message` / `opening_message` / `elicitation_answer` are
+exactly the origins that should reset, while automation origins descend.
 
-`@avalon/agent-harness` also stays the public face. Both consumers —
-`apps/api/src/services/integrations.ts:269` and
-`apps/api/src/queues/activity-consumer.ts:710` — keep importing from it, so
-phases 1–4 change no code outside `packages/agent-harness/`.
+### 8. The decision is the harness's; the measurement is the host's
+
+Monad's `circuit-breakers.ts` is now a pure measurement layer — it runs the
+queries and hands `admitChildRun` a `ChainRule[]`. Avalon's equivalent runs D1
+queries and does the same. Keep the comparisons out of it; that is the whole
+point.
 
 ---
 
-## Prerequisite: republish `bind`
+## Mistakes Monad made — do not re-make them
 
-Two things this plan wants are on Monad `main` (as of `e390032`) but **not** in
-published `5.0.0`:
+These are all bugs Monad shipped and has since fixed. Each is cheap to avoid up
+front and expensive to find later.
 
-- `parseToolCallArguments` / `toolCallArgumentsAbsent` (`bind/completion`) —
-  phase 7 below.
-- The `pair_seen` and `tenant_rate` `ChainRule` variants (`bind/run`) — not used
-  by this plan; noted so the version delta is complete.
+**One decider, from day one.** Monad ended up with the same depth comparison
+hand-rolled at *three* entry points, free to drift, and nothing noticed until a
+review. Avalon has two entry points today (`launchHarness`, the activity
+consumer) and §3 adds a third code path. Route all of them through
+`admitChildRun` immediately — the cost of consolidating later is a review that
+finds it.
 
-Someone has to cut a release from Monad `main` (`scripts/publish-bind.ts`).
-Phases 0–6 do not depend on it and can start immediately.
+**Ordering becomes load-bearing the moment you derive a span.** Monad's
+cooldown query used an unordered `LIMIT 1`. That was harmless while the query
+only tested *existence*, and became wrong the instant `msSinceLastSpawn` was
+derived from the returned row — an arbitrary match reports the wrong elapsed
+time, and it errs toward **admitting**, because an older row inside the window
+looks like more time has passed. Any Avalon cooldown query needs
+`ORDER BY created_at DESC, id DESC` — the id breaks a same-timestamp tie so the
+pick is total.
+
+**Sample the clock once.** Monad took `Date.now()` twice — once for the window
+bound, once for the elapsed span. A row that barely satisfied
+`created_at >= cutoff` could, milliseconds later, evaluate as outside the window
+and admit. One `now`, used for both.
+
+**Decide the free rule before spending queries — and mind the cleanup path.**
+Monad's refactor lost a short-circuit: depth was decided before any query, and
+after the change a throw in a *later* count aborted the whole call instead of
+returning the refusal, which skipped the caller's cleanup and stranded a
+pre-created run in `pending` until a reaper found it. Avalon has the identical
+shape: `launchHarness` inserts the row, then starts the workflow, with a `catch`
+that marks it `failed` (`workstream-service.ts:658-661`). Evaluate the DB-free
+depth rule first and return on it.
+
+**Depth 0 is not depth `-1`.** `admitChildRun` counts from the *parent*, so a
+host that stores the child's depth passes `depth - 1`. At depth 0 that is `-1`,
+which trips the negative-measurement guard and refuses **every root run**. Omit
+the depth rule entirely at depth 0 rather than inventing a parent. Monad shipped
+this and caught it only because a test ran against a real database — the
+in-memory path hid it.
+
+**Refusal strings reach people.** Monad's original pair-cooldown message
+interpolated both agents' user ids and the thread id, and that string surfaced
+to every member who could read the thread. `bind`'s refusals are worded without
+identifiers for this reason. Whatever Avalon does with `admission.reason`,
+assume a person reads it — and branch on `admission.rule`, never on the prose.
 
 ---
 
-## Phase 0 — land the dependency
+## Phases
 
+### Phase 0 — measure before building
+
+Do not skip this. It decides how much of the rest is urgent.
+
+```sql
+-- How deep do existing chains actually go?
+WITH RECURSIVE chain(id, root, depth) AS (
+  SELECT id, id, 0 FROM harness_runs WHERE parent_harness_run_id IS NULL
+  UNION ALL
+  SELECT r.id, c.root, c.depth + 1
+    FROM harness_runs r JOIN chain c ON r.parent_harness_run_id = c.id
+)
+SELECT depth, COUNT(*) FROM chain GROUP BY depth ORDER BY depth DESC;
+
+-- Automation-started runs per workspace per hour — the depth-0 ceiling's input.
+SELECT workspace_id, substr(created_at, 1, 13) AS hour, COUNT(*)
+  FROM harness_runs WHERE origin NOT IN ('human_message','opening_message','elicitation_answer')
+ GROUP BY 1, 2 HAVING COUNT(*) > 20 ORDER BY 3 DESC;
 ```
-pnpm --filter @avalon/agent-harness add @juno-ai/bind@5.0.0
-pnpm --filter @avalon/agent-harness add -D openai
+
+The first tells you whether chains exist at all today (they may not, since
+nothing sets the parent except elicitation answers). The second sizes
+`tenant_rate` from real traffic instead of a guess. **Set every limit from these
+numbers, not from Monad's** — Monad's 5 / 500 / 100-per-30 s were tuned against
+a different workload.
+
+### Phase 1 — lineage columns
+
+One migration, `0025_harness_run_chain_lineage.sql` (next free prefix; `0024` is
+the highest committed). Keep it to **one file** — the columns, the backfill, and
+the index are one coherent change and belong in one transaction.
+
+```sql
+ALTER TABLE harness_runs ADD COLUMN chain_depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE harness_runs ADD COLUMN chain_root_run_id TEXT REFERENCES harness_runs(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS harness_runs_chain_idx ON harness_runs(chain_root_run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS harness_runs_workspace_created_idx ON harness_runs(workspace_id, created_at DESC);
 ```
 
-**Pin exactly — no caret.** `bind`'s version stamps the *next major* of whatever
-the public mirror already published, so a major bump does not signal a breaking
-change and semver ranges carry no information. Read the diff on every upgrade.
+Idempotency: SQLite has no `ADD COLUMN IF NOT EXISTS`, so guard each `ALTER` on
+`pragma_table_info` or accept that the runner records applied migrations and
+never re-runs one. Existing rows correctly default to depth 0 with a null root —
+"null means me" makes that the right reading of history rather than a lie.
 
-**Why `openai` as a devDependency.** Six of `bind`'s `.d.ts` files reference
-OpenAI SDK types (`transcript/validate`, `routing/attempt-errors`,
-`completion/defects`, `loop/tool-loop`, `run/tool-batch`, `contracts/turn`).
-Avalon's `skipLibCheck: true` means those references won't fail the build on
-their own, but any Avalon code that *names* one of those types would infer
-`any`. A types-only devDependency costs nothing at runtime: the published
-package contains **zero** runtime `openai` imports — verified by grepping every
-`.js` in the tarball, where the only hit is a comment.
+Wire `descendChain` / `rootChain` from `@juno-ai/bind/run` into `launchHarness`
+so the three columns are written together and cannot disagree.
 
-**Workers compatibility.** The published JavaScript uses exactly two platform
-APIs: `AbortSignal.any` and `setTimeout`. No Node builtins, no `process`, no
-`crypto.subtle`. `unrefTimer` duck-types `timer.unref` before calling it, so it
-is a no-op on `workerd` rather than a crash. Total package size 516 KB across
-all nine subpaths; import from the subpath (`@juno-ai/bind/completion`), not the
-root, so unused modules stay out of the bundle.
+### Phase 2 — admission at both entry points
 
-**Gate:** `pnpm typecheck && pnpm build` green, and a recorded `wrangler` bundle
-size delta for `apps/api`. If the delta is larger than the modules actually
-imported, the subpath imports are wrong.
+A measurement module (`apps/api/src/services/chain-safety.ts`) that runs D1
+counts and returns `admitChildRun(rules)`. Both `launchHarness` and the activity
+consumer call it before creating anything.
 
----
+Rules, in evaluation order (first refusal wins, so this order chooses which
+reason a person sees):
 
-## Phase 1 — the streaming idle watchdog
+| Rule | Measurement | Refuses when |
+|---|---|---|
+| `depth` | `chain_depth - 1` (omit at depth 0) | the chain has gone as many hops as allowed |
+| `pair_seen` | a prior run in this chain with the same `(automation, workstream)` | this pair already ran once in this chain |
+| `chain_budget` | `COUNT(*)` over `chain_root_run_id` | the chain has spent its total run budget |
+| `pair_cooldown` | `now - most recent matching run` | the same pair ran within the cooldown |
 
-**This is the only phase that fixes a live availability bug.** Do it first.
+Per §4, each measurement's `catch` decides omit-or-refuse explicitly.
 
-Avalon's stream read loop (`packages/agent-harness/src/index.ts:279-285`) is an
-unguarded `while (true) { await reader.read() }`. The `fetch` carries only
-`input.signal`. A provider that opens the stream and then stalls is bounded only
-by `HARNESS_MAX_WALL_CLOCK_MS`, which defaults to **240,000 ms**
-(`apps/api/src/services/integrations.ts:278`).
+### Phase 3 — provenance carry
 
-Wire `createStreamWatchdog` into `streamModel`: pass `watchdog.signal` to the
-`fetch`, call `watchdog.open()` once the response is established, classify each
-chunk, and consult `watchdog.stall()` in the `catch` before `dispose()` in a
-`finally`.
+The load-bearing one (§3). Record the provider resource id on write, resolve it
+on the way back in, use it as `parent_harness_run_id`. Per connector, with a
+test per connector, and an unresolvable parent means depth 0 plus a metric —
+never a thrown error.
 
-**The chunk classification is the part to get right.** The tight inter-chunk
-budget is **answer-gated, not output-gated**. Monad originally armed it on any
-output token including reasoning deltas, and a reasoning model that streams
-reasoning then pauses several seconds while composing its answer tripped the 5 s
-budget and failed roughly half of one tenant's turns. Avalon's parser already
-reads `choice.delta.content` and `choice.delta.tool_calls`
-(`index.ts:259-260`), so the mapping is direct:
+### Phase 4 — workspace rate ceiling
 
-- `content` / `tool_calls` present → `"answer"`
-- a reasoning delta present (`reasoning_content` ?? `reasoning`; providers
-  disagree on the name and it is off-spec either way) → `"reasoning"`
-- otherwise → `"none"`
+`tenant_rate` over the workspace, sized from Phase 0's second query, on the
+depth-0 path only. Fails **open** (§4): a D1 error omits the rule.
 
-**Two distinct wins, worth separating so the change is not oversold.** Avalon
-sets `emitted = true` on the first text or tool-call byte and then rethrows
-without falling back (`index.ts:178`, `185`) — correct, since replaying could
-duplicate visible output or provider writes.
+### Phase 5 — refusal → queue disposition
 
-- **Stream opens, no token ever arrives.** `emitted` is still `false`, so the
-  120 s time-to-first-token budget fires *and* fallback is still available. This
-  turns a 240 s hang into a retry that can succeed.
-- **Stall mid-generation.** `emitted` is `true`, so the no-replay rule still
-  applies and the run still fails. The win is 5 s instead of 240 s, not a
-  recovery.
+Map `retryable` onto `message.retry` vs ack (§5), and surface `rule` in the
+work-stream event so a person sees why the agent stopped rather than silence.
 
-**Config invariant, learned the hard way in Monad:** never set
-`HARNESS_MAX_WALL_CLOCK_MS` below the time-to-first-token budget. At the
-defaults there is no conflict (TTFT 120 s < wall clock 240 s < absolute cap
-600 s), but lowering the wall clock past 120 s makes the run deadline preempt
-the watchdog, and the stall is then classified as a deadline rather than a
-retriable transport failure. Monad shipped exactly this bug and fixed it by
-deriving the request timeout from `DEFAULT_TIME_TO_FIRST_TOKEN_MS` instead of
-writing a literal. Derive it or assert it at startup.
-
-**Gate:** a test that opens a stream, emits nothing, and asserts the run fails
-in ~TTFT rather than at the wall clock — driven by an injected clock, not a real
-sleep.
+**Ordering.** Phase 0 gates everything. Phases 1 → 2 are strictly sequential.
+Phase 3 can be built in parallel with 2 but makes 2 *effective*, so neither is
+finished without the other. Phases 4 and 5 are independent of 3.
 
 ---
-
-## Phase 2 — deadline and failure classification
-
-Replace, all inside `runHarness`:
-
-| Delete | With |
-|---|---|
-| the inline `setTimeout` deadline (`index.ts:689-692`) | `createRunDeadline` |
-| `abortSource` + `markExternalAbort` (`index.ts:684-688`, `834`) | `RunDeadline.timedOut` |
-| `finishAbort` (`index.ts:729-732`) | `classifyRunFailure` |
-| `combineSignals` (`index.ts:1087-1092`) | `RunDeadline.withExternal` |
-
-Roughly 25 lines deleted for a like-for-like swap. The invariant both sides
-already hold, and which must survive: **a combined external abort must not read
-as a timeout** — that is what separates a user cancellation from a deadline.
-`bind` encodes it in `timedOut`, which stays false when only the external signal
-fires.
-
-Carry Monad's ownership rule verbatim: whoever classifies the outcome creates
-and owns the deadline and disposes it in a `finally`; a callee handed a deadline
-must not dispose it. `runHarness` is that owner today and stays it.
-
-**Gate:** `index.test.ts:241-258` already pins deadline-vs-cancellation in one test —
-`maxWallClockMs: 5` must yield `failure.kind: "deadline"`, an external abort must
-yield `status: "stopped"` with no `failure`. It must stay green **untouched** — if
-it needs editing, the swap was not like-for-like.
-
----
-
-## Phase 3 — tool-schema sanitization
-
-Apply `sanitizeToolSchema` where `modelTools` is built (`index.ts:696-703`).
-One call site; 683 lines of transform logic arrive as a dependency.
-
-The assessment measured Avalon's exposure against a default model of
-`google/gemini-2.5-flash-lite`, whose function-declaration schema is a strict
-OpenAPI 3.0 subset requiring a scalar `type`:
-
-- **22 type-array occurrences** across connector schemas, e.g.
-  `startCursor: { type: ["string", "null"] }` in `notion.query_data_source`.
-- **45 `additionalProperties: false` occurrences** — xAI/Grok via OpenRouter
-  rejects the boolean form on a nested object schema with a hard 400.
-
-The amplifier is what makes this worth doing before it bites: **strict
-validators reject the entire request — every tool — on the first violation.**
-One bad schema breaks the whole toolset.
-
-**Honest caveat:** the assessment reported a matching construct *signature*, not
-an observed Avalon failure. This phase should therefore include a diff of every
-connector schema before and after sanitization, committed as a fixture. To
-convert "probable" to "known", port Monad's gated live-inference regression
-suite (`server/agents/tools/__tests__/tool-schema-model-compat.test.ts`, gated
-on `RUN_OPENROUTER_EVALS=1`) alongside it.
-
-**Gate:** the before/after fixture diff is reviewed by a human. A sanitizer that
-changes nothing means it is wired up wrong; a sanitizer that changes something
-unexpected is a finding.
-
----
-
-## Phase 4 — batch pooling
-
-Replace the `Promise.allSettled` over all reads (`index.ts:791-793`) with
-`runToolCallsPooledByTool`: 5 concurrent calls per *tool name*, full fan-out
-across different tools, results returned in input order.
-
-Avalon today has no cap — ten `notion.search` calls in one turn all fire at
-once, saturating one downstream service.
-
-Two behaviours to preserve deliberately, not incidentally:
-
-1. **Original-call-order transcript append.** Already correct
-   (`appendToolResultsInOriginalOrder`, `index.ts:981`). `bind`'s pooling
-   returns results in input order, so this composes — but assert it.
-2. **Rejection handling.** Avalon currently *throws* on a rejected read
-   (`index.ts:796`). `bind` returns `PromiseSettledResult`s and leaves the
-   decision to the caller. Keep throwing, or synthesize an error tool message —
-   but do not silently drop, or the next request carries an unanswered
-   `tool_call_id` and the provider rejects the whole transcript.
-
-**Gate:** a test asserting 10 same-tool calls never exceed 5 in flight, and that
-a rejected read still produces a paired `tool` message or a thrown run failure.
-
----
-
-## Phase 5 — `RunStats` and `StopReason`
-
-The first phase whose effects cross the package boundary. Everything before it
-is internal to `packages/agent-harness/`.
-
-`emptyRunStats` / `accumulateTurn` / `accumulateToolCall` replace the four
-hand-rolled folds at `index.ts:995-1043`. The two shapes are already
-near-identical — eight fields, same names, same semantics, arrived at
-independently — and `bind` is a strict superset (`costCents`).
-
-Take `StopReason` with them. Avalon's `HarnessOutcome.status`
-(`completed | needs_input | failed | stopped`) folds "hit `maxIterations`" and
-"a tool threw" into the same `failed` plus a `HarnessFailure.code`
-discriminator; `bind`'s `done | suspended | iteration_limit | deadline |
-aborted` decomposes it properly.
-
-**This is a breaking change to `HarnessOutcome`.** Before starting, audit what
-consumes it: `apps/api/src/services/integrations.ts` at minimum, plus anything
-persisted to `harness_runs` or emitted over the work-stream event channel to the
-desktop client. If the status string reaches the desktop wire protocol, this
-phase needs an expand/contract split across two releases — emit both, migrate
-readers, then drop the old field.
-
-**Do not skip the audit and assume it is internal.** That is the one place in
-this plan where a wrong assumption ships a client-visible regression.
-
----
-
-## Phase 6 — attempt classification and the circuit breaker
-
-Avalon has **no circuit breaker**: a dead provider is retried on every run.
-
-Adopt `classifyAttemptError` + `failureDisposition` + `createCircuitBreaker`
-standalone. These need no `RoutePlan` and no planner adapter.
-
-`classifyAttemptError` takes two host ports. Avalon's existing
-`openRouterFailureDisposition` (`index.ts:312-325`) maps onto them almost
-directly:
-
-- `asTransportFailure` — recognize `OpenRouterError` and report its status.
-- `categorizeStatus` — override the neutral HTTP mapping where OpenRouter
-  disagrees with it.
-
-Two properties to carry over, both of which Avalon lacks today and would
-otherwise have to rediscover:
-
-- **A malformed prompt must not open the circuit.** Request-shaped rejections (a
-  400, a moderation refusal) traverse to another model but record no breaker
-  failure — the endpoint is healthy. Without that, one user's flagged prompt
-  degrades the shared endpoint for everyone.
-- **Breaker keys must be per-credential and secret-free.** Avalon is heading
-  toward per-workspace connector credentials; pass an opaque `credentialScope`
-  tag so one workspace's revoked key never opens the circuit for others, and
-  never key material.
-
-One footgun found empirically in Monad: `APIUserAbortError.name` is `"Error"`,
-not `"APIUserAbortError"`. Any abort detection that matches on the class name
-silently fails. `bind` exposes `isAbortByName` and an `isAbort` port for this.
-
-**Gate:** a test that a 400 traverses without opening the breaker, and that a
-500 opens it after the configured consecutive-failure count.
-
----
-
-## Phase 7 — tool-argument parsing *(blocked on republish)*
-
-Replace `JSON.parse(call.function.arguments || "{}")` (`index.ts:888`) with
-`parseToolCallArguments`.
-
-Avalon's `|| "{}"` already handles the empty-string zero-argument case — the
-same bug Monad shipped and fixed, avoided here by luck or care. What `bind` adds:
-
-- **Whitespace-only arguments.** `"  " || "{}"` is `"  "`, which is truthy, so
-  it reaches `JSON.parse` and throws. A provider that pads its zero-arg payload
-  currently kills a perfectly good call and burns a recovery turn.
-- **Valid JSON that is not an object** — `null`, `[]`, `42` — is refused
-  *before* dispatch rather than handed to a tool that fails its own validation
-  afterward. That ordering matters for any tool whose side effect precedes its
-  validation.
-
-Blocked until `bind` is republished from Monad `main`.
-
----
-
-## Deferred, with a trigger
-
-**Full route planning** (`buildRoutePlan` / `executeRoutePlan`). Requires a
-`PlannerTransport` adapter and canonical `vendor/slug` model ids. Avalon is
-OpenRouter-only, so every model stage would carry exactly one provider
-candidate — real adapter work for no behaviour change.
-
-**Trigger to revisit:** the first time Avalon wants two providers for one model,
-or wants provider pinning per workspace. Until then phase 6 delivers the
-resilience without the adapter.
-
----
-
-## Sequencing
-
-| # | Phase | Touches | Effort | Independent? |
-|---|---|---|---|---|
-| 0 | Land the dependency | `package.json` | S | — |
-| 1 | Streaming watchdog | `streamModel` | S | yes |
-| 2 | Deadline + classification | `runHarness` | S | yes |
-| 3 | Schema sanitization | `modelTools` build | S | yes |
-| 4 | Batch pooling | read phase | S | yes |
-| 5 | `RunStats` + `StopReason` | **crosses into `apps/api`** | M | no — audit first |
-| 6 | Breaker + classification | `OpenRouterClient` | M | yes |
-| 7 | Tool-argument parsing | `executeToolCall` | S | **blocked** |
-
-Phases 1–4 are internal to `packages/agent-harness/`, change no `apps/api` code,
-and are independently revertible. They can land in any order or in parallel.
-Phase 5 is the first one that needs a consumer audit. Phase 7 needs a bind
-release.
-
-Suggested first PR: **phases 0 + 1**, because the watchdog is the only live bug
-and the dependency is worthless without a first consumer.
-
-## What should flow the other way
-
-Avalon's side-effect idempotency model has no `bind` equivalent and is arguably
-better than Monad's receipt table: a stable invocation id derived from
-`(harnessRunId, turn, tool position)` (`stableHarnessToolCallId`,
-`index.ts:852`), a canonical input hash (`canonicalToolInputHash`,
-`index.ts:1111`), `record_before_execute` for non-idempotent writes, and an
-explicit `ambiguous` status for uncertain outcomes.
-
-It is already written for `workerd` — `crypto.subtle`, no Node crypto — which
-means it clears `bind`'s portability fence as-is. Worth proposing as a
-contribution once phases 0–4 have established the dependency in both directions.
 
 ## Open questions
 
-1. **Does `HarnessOutcome.status` reach the desktop client?** Determines whether
-   phase 5 is a one-PR change or an expand/contract across two releases. Answer
-   this before starting phase 5, not during it.
-2. **Who owns the `bind` release cadence?** Phase 7 is blocked on a republish,
-   and Avalon will keep hitting this. Either Avalon gets a way to request a cut,
-   or it pins and waits.
-3. **Does Avalon want `bind`'s tool/plugin contracts when they land?**
-   `ToolPlugin` / `ToolContext` are slated to move into the package. If they are
-   close, Avalon's `HarnessTool` / `HarnessToolContext` (`index.ts:593-611`)
-   should be reviewed against them before diverging further.
+1. **Do chains exist in production today?** Phase 0's first query answers it. If
+   the answer is "only elicitation answers", the cycle is real but cold, and
+   this becomes preventive work with a calmer schedule rather than a fix.
+2. **Does every write connector return a resource id that matches the one its
+   webhook reports?** Phase 3 is only as good as that join. Unknown per
+   connector until tested; assume at least one does not.
+3. **What should a refused automation run look like to a person?** Monad posts
+   the message and suppresses only the trigger. Avalon's equivalent — show the
+   activity, skip the run, say why — needs a product decision before Phase 5.
+4. **Should the provenance model flow back into `bind`?** Avalon's cycle through
+   a third party is a shape Monad does not have. If Phase 3's
+   `(provider, resource) → run` resolution generalizes, it is a candidate
+   contribution — `bind` currently assumes the spawn site knows its parent.
