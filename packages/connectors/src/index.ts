@@ -1,10 +1,17 @@
-import type { ConnectorManifest, NormalizedActivity, ToolDefinition } from "@avalon/contracts";
+import {
+  ConnectorManifestSchema,
+  type ConnectorManifest,
+  type ConnectorSurface,
+  type NormalizedActivity,
+  type ToolDefinition,
+} from "@avalon/contracts";
 import { z } from "zod";
 import {
   assertPrincipalAccess,
   ConnectorError,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
+  type ResolvedConnectorAdapter,
 } from "./types";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
@@ -12,12 +19,18 @@ import { createNotionConnector, type NotionConnectorConfig } from "./notion";
 
 export {
   assertPrincipalAccess,
+  connectorCapabilitySupportsScope,
   ConnectorError,
   type ConnectorAdapter,
+  type ConnectorAuthorizationCallbackInput,
+  type ConnectorAuthorizationInput,
   type ConnectorConnectionContext,
   type ConnectorPollResult,
+  type ResolvedConnectorAdapter,
   type ConnectorToolContext,
   type ConnectorToolResult,
+  type ConnectorNativeAgentAdapter,
+  type ConnectorNativeAgentExecutionContext,
 } from "./types";
 export {
   createGitHubConnector,
@@ -43,15 +56,54 @@ export {
   type VerifyGitHubWebhookInput,
 } from "./github";
 export {
+  canPersonalLinearConnectionAccessWebhook,
   createLinearConnector,
   verifyLinearWebhook,
   normalizeLinearWebhook,
   LinearCapabilities,
   LinearCapabilityScopes,
+  LinearAgentOAuthScopes,
   type LinearConnectorConfig,
+  type PersonalLinearWebhookAccessInput,
   type VerifyLinearWebhookInput,
   type VerifiedLinearWebhook,
 } from "./linear";
+export {
+  createLinearNativeAgentProtocol,
+  createLinearAgentActivity,
+  executeLinearAgentGraphql,
+  isLinearAgentStopRequest,
+  linearAgentActivity,
+  linearAgentInvocation,
+  LinearAgentActivityContentSchema,
+  LinearAgentActivityCreateInputSchema,
+  LinearAgentActionContentSchema,
+  LinearAgentElicitationContentSchema,
+  LinearAgentErrorContentSchema,
+  LinearAgentExternalUrlSchema,
+  LinearAgentPlanStepSchema,
+  LinearAgentResponseContentSchema,
+  LinearAgentSessionEventSchema,
+  LinearAgentThoughtContentSchema,
+  LinearNativeAgentProtocolDescriptor,
+  parseLinearAgentSessionEvent,
+  parseVerifiedLinearAgentSessionEvent,
+  updateLinearAgentSession,
+  VerifiedLinearAgentSessionEventSchema,
+  type LinearAgentActivityContent,
+  type LinearAgentActivityCreateInput,
+  type LinearAgentActivityResult,
+  type LinearAgentExternalUrl,
+  type LinearAgentGraphqlExecutor,
+  type LinearAgentInvocation,
+  type LinearAgentPlanStep,
+  type LinearAgentProtocolCommand,
+  type LinearAgentProtocolResult,
+  type LinearAgentSessionEvent,
+  type LinearAgentSessionResult,
+  type LinearNativeAgentProtocol,
+  type VerifiedLinearAgentSessionEvent,
+} from "./linear-agent";
 export {
   createNotionConnector,
   verifyNotionWebhook,
@@ -2961,18 +3013,55 @@ export function createGenericWebhookConnector(): ConnectorAdapter {
 }
 
 export class ConnectorRegistry {
-  private readonly adapters = new Map<string, ConnectorAdapter>();
+  private readonly adapters = new Map<string, ResolvedConnectorAdapter>();
 
   constructor(adapters: ConnectorAdapter[]) {
     for (const adapter of adapters) {
-      if (this.adapters.has(adapter.manifest.type)) {
-        throw new ConnectorError("invalid_configuration", `Duplicate connector type: ${adapter.manifest.type}`);
+      const manifest = ConnectorManifestSchema.parse(adapter.manifest);
+      if (this.adapters.has(manifest.type)) {
+        throw new ConnectorError("invalid_configuration", `Duplicate connector type: ${manifest.type}`);
       }
-      this.adapters.set(adapter.manifest.type, adapter);
+      if (manifest.surfaces.includes("native_agent")) {
+        if (!adapter.nativeAgent) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} declares a native-agent surface without a protocol adapter`,
+          );
+        }
+        if (adapter.nativeAgent.capability !== manifest.nativeAgent?.capability) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} native-agent capability does not match its manifest`,
+          );
+        }
+      } else if (adapter.nativeAgent) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          `Connector ${manifest.type} has a native-agent protocol adapter without a native-agent surface`,
+        );
+      }
+      if (adapter.capabilityConnectionScopes) {
+        const declaredCapabilities = new Set(manifest.capabilities.map((capability) => capability.id));
+        for (const [capability, scopes] of Object.entries(adapter.capabilityConnectionScopes)) {
+          if (!declaredCapabilities.has(capability)) {
+            throw new ConnectorError(
+              "invalid_configuration",
+              `Connector ${manifest.type} narrows an undeclared capability: ${capability}`,
+            );
+          }
+          if (!scopes.length || scopes.some((scope) => !manifest.supportedScopes.includes(scope))) {
+            throw new ConnectorError(
+              "invalid_configuration",
+              `Connector ${manifest.type} has invalid connection scopes for capability ${capability}`,
+            );
+          }
+        }
+      }
+      this.adapters.set(manifest.type, { ...adapter, manifest });
     }
   }
 
-  get(type: string): ConnectorAdapter {
+  get(type: string): ResolvedConnectorAdapter {
     const adapter = this.adapters.get(type);
     if (!adapter) throw new ConnectorError("unsupported_capability", `Connector is unavailable: ${type}`);
     return adapter;
@@ -2981,6 +3070,13 @@ export class ConnectorRegistry {
   list(): ConnectorManifest[] {
     return [...this.adapters.values()].map((adapter) => adapter.manifest);
   }
+}
+
+export function connectorSupportsSurface(
+  manifest: ConnectorManifest,
+  surface: ConnectorSurface,
+): boolean {
+  return manifest.surfaces.includes(surface);
 }
 
 export function createConnectorRegistry(input: {

@@ -5,7 +5,9 @@ import {
   ClientSocketEventSchema,
   CreateWorkspaceInvitationRequestSchema,
   BackgroundTaskSchema,
+  ConnectorManifestSchema,
   HarnessRunMetadataSchema,
+  MentionSchema,
   RefreshRequestSchema,
   WorkstreamArtifactSchema,
   WorkstreamWorkflowInputSchema
@@ -14,6 +16,22 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("carries authoritative person presentation metadata with a mention", () => {
+    expect(MentionSchema.parse({
+      type: "person",
+      userId: id,
+      connectorType: null,
+      displayName: "Ada Lovelace",
+      avatarUrl: "https://example.com/ada.png",
+      startOffset: 4,
+      endOffset: 17
+    })).toMatchObject({
+      type: "person",
+      displayName: "Ada Lovelace",
+      avatarUrl: "https://example.com/ada.png"
+    });
+  });
+
   it("keeps Queue payloads opaque", () => {
     const value = ActivityQueueMessageSchema.parse({
       region: "eu",
@@ -115,5 +133,124 @@ describe("boundary contracts", () => {
     expect(RefreshRequestSchema.safeParse({ refreshToken: "a".repeat(64) }).success).toBe(true);
     expect(RefreshRequestSchema.safeParse({ refreshToken: "a".repeat(501) }).success).toBe(false);
     expect(RefreshRequestSchema.safeParse({ refreshToken: `${"a".repeat(63)}!` }).success).toBe(false);
+  });
+
+  it("normalizes legacy connectors to the resource surface", () => {
+    const manifest = ConnectorManifestSchema.parse({
+      type: "legacy",
+      displayName: "Legacy connector",
+      supportedScopes: ["workspace"],
+      oauthRequired: false,
+      activityTypes: [],
+      resourceTypes: ["legacy_resource"],
+      tools: [],
+      supportsWatches: false,
+      supportsPolling: false,
+      supportsWebhooks: false
+    });
+    expect(manifest.surfaces).toEqual(["resource"]);
+    expect(manifest.capabilities).toEqual([]);
+    expect(manifest.nativeAgent).toBeUndefined();
+  });
+
+  it("requires native-agent declarations to be complete and explicit", () => {
+    const base = {
+      type: "agent-provider",
+      displayName: "Agent provider",
+      supportedScopes: ["workspace"] as const,
+      oauthRequired: true,
+      activityTypes: [],
+      resourceTypes: [],
+      tools: [],
+      supportsWatches: false,
+      supportsPolling: false,
+      supportsWebhooks: true
+    };
+    expect(ConnectorManifestSchema.safeParse({
+      ...base,
+      surfaces: ["resource", "native_agent"],
+      capabilities: [{ id: "provider.agent", kind: "native_agent" }]
+    }).success).toBe(false);
+    expect(ConnectorManifestSchema.safeParse({
+      ...base,
+      capabilities: [{ id: "provider.agent", kind: "native_agent" }],
+      nativeAgent: {
+        capability: "provider.agent",
+        invocationModes: ["delegation"],
+        activityKinds: ["response", "error"],
+        supportsCancellation: true,
+        supportsExternalLinks: true,
+        supportsPlans: false,
+        runtimeStatus: "protocol_only",
+        sessionOwnership: "single_connection_per_provider_account"
+      }
+    }).success).toBe(false);
+    expect(ConnectorManifestSchema.parse({
+      ...base,
+      surfaces: ["resource", "native_agent"],
+      capabilities: [{ id: "provider.agent", kind: "native_agent" }],
+      nativeAgent: {
+        capability: "provider.agent",
+        invocationModes: ["delegation", "mention", "follow_up"],
+        activityKinds: ["thought", "action", "elicitation", "response", "error"],
+        supportsCancellation: true,
+        supportsExternalLinks: true,
+        supportsPlans: true,
+        supportsProactiveSessions: true,
+        maturity: "preview",
+        runtimeStatus: "protocol_only",
+        sessionOwnership: "single_connection_per_provider_account",
+        webhookResponseDeadlineMs: 5_000,
+        sessionAcknowledgementDeadlineMs: 10_000
+      }
+    })).toMatchObject({
+      surfaces: ["resource", "native_agent"],
+      nativeAgent: {
+        maturity: "preview",
+        runtimeStatus: "protocol_only",
+        sessionOwnership: "single_connection_per_provider_account",
+        supportsProactiveSessions: true,
+        webhookResponseDeadlineMs: 5_000,
+        sessionAcknowledgementDeadlineMs: 10_000
+      }
+    });
+    expect(ConnectorManifestSchema.safeParse({
+      ...base,
+      surfaces: ["resource", "native_agent"],
+      capabilities: [{ id: "provider.other_agent", kind: "native_agent" }],
+      nativeAgent: {
+        capability: "provider.agent",
+        invocationModes: ["delegation"],
+        activityKinds: ["response", "error"],
+        supportsCancellation: true,
+        supportsExternalLinks: true,
+        supportsPlans: false,
+        runtimeStatus: "protocol_only",
+        sessionOwnership: "single_connection_per_provider_account"
+      }
+    }).success).toBe(false);
+  });
+
+  it("promotes legacy tool grants into manifest-level capability descriptors", () => {
+    const manifest = ConnectorManifestSchema.parse({
+      type: "tool-provider",
+      displayName: "Tool provider",
+      supportedScopes: ["workspace"],
+      oauthRequired: true,
+      activityTypes: [],
+      resourceTypes: [],
+      tools: [{
+        name: "provider.search",
+        description: "Search provider resources.",
+        inputSchema: { type: "object" },
+        capability: "provider.read",
+        mode: "read",
+        idempotency: "safe"
+      }],
+      supportsWatches: false,
+      supportsPolling: false,
+      supportsWebhooks: false
+    });
+    expect(manifest.capabilities).toEqual([{ id: "provider.read", kind: "tool" }]);
   });
 });

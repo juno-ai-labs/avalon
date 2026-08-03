@@ -4,6 +4,7 @@ import { sha256 } from "../src/lib/crypto";
 import { AuthService, __authServiceTesting } from "../src/services/auth-service";
 import {
   acceptInvitationForUser,
+  declineInvitationForUser,
   previewInvitation,
   WorkspaceOnboardingService,
   WorkspaceService,
@@ -95,6 +96,7 @@ const invitationRow = {
   email: "invitee@example.com",
   role: "member" as const,
   invited_by_name: "Adam",
+  invited_by_email: "adam@example.com",
   expires_at: "2026-08-08T00:00:00.000Z",
   accepted_at: null,
   accepted_by_user_id: null,
@@ -138,8 +140,8 @@ describe("workspace invitation lifecycle", () => {
     vi.setSystemTime(new Date("2026-08-01T01:00:00.000Z"));
     const database = new StubDatabase(({ sql }) => {
       if (sql.includes("WHERE i.token_hash = ?")) return invitationRow;
-      if (sql === "SELECT id, email FROM users WHERE id = ?") {
-        return { id: ownerAuth.userId, email: "wrong@example.com" };
+      if (sql === "SELECT id, email, name FROM users WHERE id = ?") {
+        return { id: ownerAuth.userId, email: "wrong@example.com", name: "Wrong User" };
       }
       if (sql.includes("WHERE i.id = ?")) return invitationRow;
       return undefined;
@@ -192,6 +194,141 @@ describe("workspace invitation lifecycle", () => {
       { id: ownerAuth.userId, email: invitationRow.email },
     )).rejects.toMatchObject({ status: 409, code: "workspace_membership_conflict" });
     expect(database.batches).toHaveLength(0);
+  });
+
+  it("emails the original inviter once after an invitation is accepted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-01T01:00:00.000Z"));
+    const database = new StubDatabase(({ sql }) => {
+      if (sql.includes("WHERE i.id = ?")) return invitationRow;
+      if (sql.includes("FROM workspace_members") && sql.includes("workspace_id != ?")) return null;
+      return undefined;
+    });
+    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "accepted-email-id" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", resend);
+
+    await expect(acceptInvitationForUser(
+      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      invitationRow.id,
+      { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee <Team>" },
+    )).resolves.toBe(invitationRow.workspace_id);
+
+    expect(resend).toHaveBeenCalledTimes(1);
+    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.headers).toMatchObject({
+      "idempotency-key": `avalon-workspace-invitation/${invitationRow.id}/accepted`,
+    });
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      to: [invitationRow.invited_by_email],
+      subject: "Invitee <Team> accepted your invitation to Avalon Studio",
+      tags: [
+        { name: "category", value: "workspace_invitation_accepted" },
+        { name: "region", value: "global" },
+      ],
+    });
+    expect(String(body.html)).toContain("Invitee &lt;Team&gt;");
+    expect(String(body.html)).not.toContain("Invitee <Team>");
+  });
+
+  it("does not resend an acceptance notification when the same user replays acceptance", async () => {
+    const accepted = {
+      ...invitationRow,
+      accepted_at: "2026-08-01T01:00:00.000Z",
+      accepted_by_user_id: ownerAuth.userId,
+    };
+    const database = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? accepted : undefined);
+    const resend = vi.fn();
+    vi.stubGlobal("fetch", resend);
+
+    await expect(acceptInvitationForUser(
+      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      invitationRow.id,
+      { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
+    )).resolves.toBe(invitationRow.workspace_id);
+    expect(resend).not.toHaveBeenCalled();
+    expect(database.batches).toHaveLength(0);
+  });
+
+  it("keeps acceptance successful when its notification email fails", async () => {
+    const database = new StubDatabase(({ sql }) => {
+      if (sql.includes("WHERE i.id = ?")) return invitationRow;
+      if (sql.includes("FROM workspace_members") && sql.includes("workspace_id != ?")) return null;
+      return undefined;
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("provider unavailable", { status: 503 })));
+
+    await expect(acceptInvitationForUser(
+      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      invitationRow.id,
+      { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
+    )).resolves.toBe(invitationRow.workspace_id);
+    expect(database.batches).toHaveLength(1);
+  });
+
+  it("emails the original inviter once after an invitation is declined", async () => {
+    const database = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? invitationRow : undefined);
+    const resend = vi.fn(async () => new Response(JSON.stringify({ id: "declined-email-id" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", resend);
+
+    await expect(declineInvitationForUser(
+      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      invitationRow.id,
+      { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
+    )).resolves.toBeUndefined();
+
+    expect(resend).toHaveBeenCalledTimes(1);
+    const [, init] = resend.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.headers).toMatchObject({
+      "idempotency-key": `avalon-workspace-invitation/${invitationRow.id}/declined`,
+    });
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      to: [invitationRow.invited_by_email],
+      subject: "Invitee declined your invitation to Avalon Studio",
+      tags: [
+        { name: "category", value: "workspace_invitation_declined" },
+        { name: "region", value: "global" },
+      ],
+    });
+  });
+
+  it("keeps decline successful when its notification email fails", async () => {
+    const database = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? invitationRow : undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("provider unavailable", { status: 503 })));
+
+    await expect(declineInvitationForUser(
+      environment(database, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      invitationRow.id,
+      { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
+    )).resolves.toBeUndefined();
+    expect(database.runs).toHaveLength(1);
+  });
+
+  it("does not send a decline notification for invalid terminal invitations or administrator revocation", async () => {
+    const revoked = { ...invitationRow, revoked_at: "2026-08-01T01:00:00.000Z" };
+    const declinedDatabase = new StubDatabase(({ sql }) => sql.includes("WHERE i.id = ?") ? revoked : undefined);
+    const resend = vi.fn();
+    vi.stubGlobal("fetch", resend);
+
+    await expect(declineInvitationForUser(
+      environment(declinedDatabase, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      invitationRow.id,
+      { id: ownerAuth.userId, email: invitationRow.email, name: "Invitee" },
+    )).rejects.toMatchObject({ status: 404, code: "invitation_invalid" });
+
+    const revokeDatabase = new StubDatabase(() => undefined);
+    await expect(new WorkspaceService(
+      environment(revokeDatabase, { APP_ENV: "production", RESEND_API_KEY: "re_test_send_only" }),
+      ownerAuth,
+    ).revokeInvitation(invitationRow.id)).resolves.toBeUndefined();
+    expect(resend).not.toHaveBeenCalled();
   });
 
   it("reissues duplicate pending invitations and returns a fragment-protected web link", async () => {
@@ -387,8 +524,8 @@ describe("identity-first workspace onboarding", () => {
 
   it("accepts a matching invitation and binds all unbound regional sessions", async () => {
     const database = new StubDatabase(({ sql }) => {
-      if (sql === "SELECT id, email FROM users WHERE id = ?") {
-        return { id: identityAuth.userId, email: invitationRow.email };
+      if (sql === "SELECT id, email, name FROM users WHERE id = ?") {
+        return { id: identityAuth.userId, email: invitationRow.email, name: "Invitee" };
       }
       if (sql.includes("WHERE i.id = ?")) return invitationRow;
       if (sql.includes("FROM workspace_members") && sql.includes("workspace_id != ?")) return null;
@@ -405,9 +542,10 @@ describe("identity-first workspace onboarding", () => {
 
   it("declines a matching invitation without creating membership", async () => {
     const database = new StubDatabase(({ sql }) => {
-      if (sql === "SELECT id, email FROM users WHERE id = ?") {
-        return { id: identityAuth.userId, email: invitationRow.email };
+      if (sql === "SELECT id, email, name FROM users WHERE id = ?") {
+        return { id: identityAuth.userId, email: invitationRow.email, name: "Invitee" };
       }
+      if (sql.includes("WHERE i.id = ?")) return invitationRow;
       return undefined;
     });
 

@@ -1,5 +1,6 @@
 import type {
   ConnectorManifest,
+  ConnectorManifestInput,
   ExecutionPrincipal,
   NormalizedActivity,
   Scope,
@@ -34,10 +35,53 @@ export interface ConnectorPollResult {
   nextPollAt?: string;
 }
 
+export interface ConnectorNativeAgentExecutionContext {
+  connection: ConnectorConnectionContext;
+  signal: AbortSignal;
+}
+
+/**
+ * Provider-native agent operations live in the connector control plane. They
+ * are intentionally separate from model-callable tools and are dispatched by
+ * a session coordinator only after provider routing and authorization checks.
+ */
+export interface ConnectorNativeAgentAdapter<
+  Invocation = unknown,
+  Command = unknown,
+  Result = unknown,
+> {
+  capability: string;
+  parseInvocation(payload: unknown): Invocation;
+  execute(
+    command: Command,
+    context: ConnectorNativeAgentExecutionContext,
+  ): Promise<Result>;
+}
+
+export interface ConnectorAuthorizationInput extends Record<string, unknown> {
+  /**
+   * The Avalon connection scope selected before leaving for the provider.
+   * Providers with multiple OAuth actor types must use this trusted value rather
+   * than inferring identity or ownership from requested provider scopes.
+   */
+  connectionScope?: Scope;
+}
+
+export interface ConnectorAuthorizationCallbackInput extends Record<string, unknown> {
+  /** The connection scope recovered from Avalon's sealed OAuth state. */
+  connectionScope?: Scope;
+}
+
 export interface ConnectorAdapter {
-  manifest: ConnectorManifest;
-  beginAuthorization?(input: Record<string, unknown>): Promise<{ url: string; state?: Record<string, unknown> }>;
-  handleAuthorizationCallback?(input: Record<string, unknown>): Promise<Record<string, unknown>>;
+  manifest: ConnectorManifestInput;
+  /**
+   * Optional per-capability narrowing of the connector-wide supported scopes.
+   * Omitted capabilities inherit `manifest.supportedScopes`.
+   */
+  capabilityConnectionScopes?: Readonly<Record<string, readonly Scope[]>>;
+  nativeAgent?: ConnectorNativeAgentAdapter;
+  beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
+  handleAuthorizationCallback?(input: ConnectorAuthorizationCallbackInput): Promise<Record<string, unknown>>;
   refreshCredentials?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<Record<string, unknown>>;
   revoke?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<void>;
   poll?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<ConnectorPollResult>;
@@ -45,6 +89,24 @@ export interface ConnectorAdapter {
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
   healthCheck(connection?: ConnectorConnectionContext): Promise<{ ok: boolean; message: string }>;
 }
+
+export function connectorCapabilitySupportsScope(
+  adapter: Pick<ConnectorAdapter, "manifest" | "capabilityConnectionScopes">,
+  capability: string,
+  scope: Scope,
+): boolean {
+  const declared = (adapter.manifest.capabilities ?? []).some((candidate) => candidate.id === capability)
+    || adapter.manifest.tools.some((tool) => tool.capability === capability);
+  if (!declared) return false;
+  const supportedScopes = adapter.capabilityConnectionScopes?.[capability]
+    ?? adapter.manifest.supportedScopes;
+  return supportedScopes.includes(scope);
+}
+
+/** An adapter whose compatibility defaults and cross-field invariants were validated. */
+export type ResolvedConnectorAdapter = Omit<ConnectorAdapter, "manifest"> & {
+  manifest: ConnectorManifest;
+};
 
 export class ConnectorError extends Error {
   constructor(

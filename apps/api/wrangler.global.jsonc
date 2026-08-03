@@ -13,6 +13,8 @@
     "EU_PUBLIC_API_BASE_URL": "https://eu.api.with-avalon.com",
     "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
+    "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
+    "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "google/gemini-2.5-flash-lite",
@@ -47,7 +49,8 @@
   ],
   "routes": [
     { "pattern": "api.with-avalon.com", "custom_domain": true },
-    { "pattern": "github.with-avalon.com", "custom_domain": true }
+    { "pattern": "github.with-avalon.com", "custom_domain": true },
+    { "pattern": "linear.with-avalon.com", "custom_domain": true }
   ],
   "services": [
     {
@@ -64,6 +67,11 @@
       "binding": "EU_INBOUND_EMAIL_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "InboundEmailRegionalBridge"
+    },
+    {
+      "binding": "EU_LINEAR_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "LinearRegionalBridge"
     }
   ],
   "r2_buckets": [

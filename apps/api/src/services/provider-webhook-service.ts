@@ -8,6 +8,7 @@ import {
   canGitHubPersonalConnectionAccessRepository,
   ConnectorError,
   discoverGitHubWebhookResources,
+  LinearNativeAgentProtocolDescriptor,
   normalizeGitHubWebhook,
   normalizeLinearWebhook,
   normalizeNotionWebhook,
@@ -24,7 +25,7 @@ import {
 } from "@avalon/connectors";
 import { newId, nowIso } from "@avalon/db";
 import type { Env } from "../env";
-import { numericEnv } from "../env";
+import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { decryptString, encryptString, timingSafeEqualText } from "../lib/crypto";
 
 export type ProviderWebhookRawBody = string | Uint8Array | ArrayBuffer;
@@ -195,7 +196,23 @@ export class ProviderWebhookService {
           numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
         maxBytes: this.maxBytes(),
       });
+      if (
+        verified.eventName === "AgentSessionEvent"
+        && (
+          !linearNativeAgentEnabled(this.env)
+          || LinearNativeAgentProtocolDescriptor.runtimeStatus !== "operational"
+        )
+      ) {
+        // Linear exposes its Agent Session UI as soon as this event type is
+        // subscribed. A stale preview subscription must still receive an exact
+        // success response without starting work until the regional runtime is
+        // explicitly enabled.
+        return { accepted: true, duplicate: false, activityCount: 0 };
+      }
       const lifecycle = linearLifecycle(verified);
+      const linearAgentAppUserId = verified.eventName === "AgentSessionEvent"
+        ? stringValue(verified.event, "appUserId")
+        : null;
       return this.ingestVerified({
         provider: "linear",
         deliveryId: verified.deliveryId,
@@ -206,6 +223,13 @@ export class ProviderWebhookService {
         raw,
         normalize: (connection, payloadRef) =>
           normalizeLinearWebhook(connection, verified, payloadRef),
+        ...(linearAgentAppUserId
+          ? {
+              filterConnections: async (connections: ConnectorConnectionContext[]) =>
+                connections.filter((connection) =>
+                  linearAgentConnectionMatches(connection, linearAgentAppUserId)),
+            }
+          : {}),
         ...(lifecycle
           ? {
               lifecycle: (connection: ConnectorConnectionContext) => ({
@@ -1108,14 +1132,13 @@ function linearLifecycle(
       },
     };
   }
-  if (verified.eventName === "PermissionChange" && action === "update") {
+  if (verified.eventName === "PermissionChange" && action === "teamaccesschanged") {
     return {
-      status: "needs_reconnect",
-      error: {
-        code: "linear_permissions_changed",
-        message: "Review and reconnect this Linear organization's permissions",
-        reconnectRequired: true,
-      },
+      // Linear team-access changes do not revoke the OAuth grant. Keep the
+      // connection live so the next provider read reconciles the accessible
+      // catalog instead of forcing an unnecessary reauthorization.
+      status: "healthy",
+      error: null,
     };
   }
   return null;
@@ -1135,6 +1158,15 @@ function notionConnectionMatches(
     && botId !== null
     && verified.accessibleBotIds.includes(botId)
     && integrationId === verified.integrationId;
+}
+
+function linearAgentConnectionMatches(
+  connection: ConnectorConnectionContext,
+  appUserId: string,
+): boolean {
+  return connection.scope === "workspace"
+    && connection.grantedScopes.includes("linear.agent")
+    && stringValue(connection.credentials, "appUserId") === appUserId;
 }
 
 function resultChanges(result: D1Result<unknown> | undefined): number {
@@ -1184,4 +1216,5 @@ export const __providerWebhookTesting = {
   githubLifecycle,
   linearLifecycle,
   notionConnectionMatches,
+  linearAgentConnectionMatches,
 };

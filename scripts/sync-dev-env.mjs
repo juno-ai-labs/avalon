@@ -43,6 +43,7 @@ const workerKeys = [
   "LINEAR_OAUTH_CLIENT_ID",
   "LINEAR_OAUTH_CLIENT_SECRET",
   "LINEAR_WEBHOOK_SECRET",
+  "LINEAR_NATIVE_AGENT_ENABLED",
   "NOTION_OAUTH_CLIENT_ID",
   "NOTION_OAUTH_CLIENT_SECRET",
   "NOTION_INTEGRATION_ID",
@@ -66,9 +67,9 @@ const workerKeys = [
 ];
 
 // Provider values may be supplied once as KEY or overridden per region for
-// providers that use regional registrations. GitHub intentionally uses the
-// unsuffixed values in both Workers because Avalon operates one public App with
-// a smart, installation-aware ingress.
+// providers that use regional registrations. GitHub and Linear intentionally
+// use one identity in both Workers because each operates one public App behind
+// a smart, account-aware ingress.
 const regionalizableKeys = [
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
@@ -112,6 +113,7 @@ const safeDefaults = {
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
   RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
   WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
+  LINEAR_NATIVE_AGENT_ENABLED: "false",
   CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
   HARNESS_MAX_MODEL_ITERATIONS: "8",
   HARNESS_MAX_TOOL_CALLS: "24",
@@ -166,14 +168,17 @@ const existingRegional = {
   eu: { ...legacyExisting, ...await readEnvFile(regionalTargetPaths.eu) }
 };
 
-const sharedGitHubKeys = [
+const sharedPublicAppKeys = [
   "GITHUB_APP_ID",
   "GITHUB_APP_CLIENT_ID",
   "GITHUB_APP_CLIENT_SECRET",
   "GITHUB_APP_SLUG",
-  "GITHUB_WEBHOOK_SECRET"
+  "GITHUB_WEBHOOK_SECRET",
+  "LINEAR_OAUTH_CLIENT_ID",
+  "LINEAR_OAUTH_CLIENT_SECRET",
+  "LINEAR_WEBHOOK_SECRET"
 ];
-const sharedGitHubValues = Object.fromEntries(sharedGitHubKeys.map((key) => [
+const sharedPublicAppValues = Object.fromEntries(sharedPublicAppKeys.map((key) => [
   key,
   local[key]
     || local[`${key}_GLOBAL`]
@@ -194,11 +199,11 @@ for (const region of ["global", "eu"]) {
   };
   for (const key of regionalizableKeys) {
     const regionalKey = `${key}_${region.toUpperCase()}`;
-    if (!key.startsWith("GITHUB_") && typeof local[regionalKey] === "string") {
+    if (!key.startsWith("GITHUB_") && !key.startsWith("LINEAR_") && typeof local[regionalKey] === "string") {
       regional[key] = local[regionalKey];
     }
   }
-  Object.assign(regional, sharedGitHubValues);
+  Object.assign(regional, sharedPublicAppValues);
   // A single GitHub App may issue independent private keys to each regional
   // Worker. An unsuffixed key remains the convenient development default.
   regional.GITHUB_APP_PRIVATE_KEY = local.GITHUB_APP_PRIVATE_KEY

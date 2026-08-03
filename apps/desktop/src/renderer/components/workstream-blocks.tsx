@@ -15,11 +15,11 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
-import type { ActivitySuggestionData, ElicitationData, Message } from '../lib/types';
+import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { Badge, Button, InlineError } from './primitives';
 
 function personAccent(id: string): string {
@@ -150,17 +150,79 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
   );
 }
 
-function MarkdownBody({ children }: { children: string }): React.JSX.Element {
+const PERSON_LINK_PATTERN = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
+
+function personIdFromHref(href: string | undefined): string | undefined {
+  return href?.match(PERSON_LINK_PATTERN)?.[1]?.toLowerCase();
+}
+
+function mentionInitials(label: string): string {
+  return label
+    .replace(/^@/u, '')
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || '?';
+}
+
+function MentionChip({ fallbackLabel, mention, personId }: {
+  fallbackLabel: React.ReactNode;
+  mention?: MessageMention;
+  personId: string;
+}): React.JSX.Element {
+  const fallbackText = typeof fallbackLabel === 'string' ? fallbackLabel : '@Person';
+  const label = mention?.displayName
+    ? `@${mention.displayName.replace(/^@/u, '')}`
+    : fallbackLabel;
+  const initials = mentionInitials(mention?.displayName ?? fallbackText);
+
+  return (
+    <span className="mention-chip" data-person-id={personId}>
+      <span aria-hidden="true" className="mention-chip-avatar">
+        <span>{initials}</span>
+        {mention?.avatarUrl && (
+          <img
+            alt=""
+            onError={(event) => { event.currentTarget.hidden = true; }}
+            src={mention.avatarUrl}
+          />
+        )}
+      </span>
+      <span className="mention-chip-label">{label}</span>
+    </span>
+  );
+}
+
+function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
   return (
     <div className="markdown-body">
       <ReactMarkdown
         components={{
-          a: ({ children: linkChildren, ...props }) => <a {...props} rel="noopener noreferrer" target="_blank">{linkChildren}</a>,
+          a: ({ children: linkChildren, href, node, ...props }) => {
+            void node;
+            const personId = personIdFromHref(href);
+            if (personId) {
+              const mention = mentions.find((candidate) => (
+                candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
+              ));
+              if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
+              return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
+            }
+            return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
+          },
           code: MarkdownCode,
           pre: ({ children: preChildren }) => <>{preChildren}</>,
           table: MarkdownTable,
         }}
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url, key, node) => (
+          key === 'href' && node.tagName === 'a' && personIdFromHref(url)
+            ? url
+            : defaultUrlTransform(url)
+        )}
       >
         {children}
       </ReactMarkdown>
@@ -378,7 +440,7 @@ export function MessageBlock({ currentUserId, message, onAnswerElicitation, onRe
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         </header>
       )}
-      {message.text && <MarkdownBody>{message.text}</MarkdownBody>}
+      {message.text && <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>}
       {!human && !message.streaming && (
         <footer className="agent-message-actions">
           <button aria-label="Copy response" onClick={() => void navigator.clipboard.writeText(message.text ?? '')} type="button"><Clipboard size={12} /> Copy</button>

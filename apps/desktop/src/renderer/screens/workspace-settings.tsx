@@ -59,6 +59,8 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   },
 ];
 
+const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
+
 const connectorProviders = [
   {
     id: 'google-mail-calendar' as const,
@@ -91,10 +93,22 @@ const connectorProviders = [
     id: 'linear' as const,
     provider: 'linear' as const,
     name: 'Linear',
-    description: 'Workspace issues, projects, comments, and real-time issue activity.',
+    description: 'Connect personally to act as you, or install Avalon for shared workspace access and real-time activity.',
     icon: Workflow,
-    scopes: ['workspace'] as const,
-    capabilities: ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
+    scopes: ['you', 'workspace'] as const,
+    personalCapabilities: [
+      'linear.read',
+      'linear.issue.create',
+      'linear.comment.create',
+      'linear.write',
+    ],
+    capabilities: [
+      'linear.read',
+      'linear.issue.create',
+      'linear.comment.create',
+      'linear.write',
+      ...(linearNativeAgentEnabled ? ['linear.agent'] : []),
+    ],
   },
   {
     id: 'notion' as const,
@@ -124,6 +138,27 @@ function providerHasConnection(
     connection.connectorType === provider.provider &&
     provider.capabilities.some((capability) => connection.capabilities?.includes(capability)),
   );
+}
+
+function providerHasActiveWorkspaceConnection(
+  provider: (typeof connectorProviders)[number],
+  connections: WorkstreamConnection[],
+): boolean {
+  return connections.some((connection) =>
+    connection.connectorType === provider.provider &&
+    connection.scope === 'workspace' &&
+    connection.status !== 'disabled',
+  );
+}
+
+function providerCapabilitiesForScope(
+  provider: (typeof connectorProviders)[number],
+  scope: 'you' | 'workspace',
+): string[] {
+  if (scope === 'you' && 'personalCapabilities' in provider) {
+    return [...provider.personalCapabilities];
+  }
+  return [...provider.capabilities];
 }
 
 export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
@@ -431,11 +466,20 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   </div>
                   <span>{healthyConnections.length} connected</span>
                 </div>
-                <p className="settings-section-copy">Workspace connections expose every granted read and write capability to all work streams. Workspace automations use explicitly bound connections.</p>
+                <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member and workspace automation.</p>
                 <div className="provider-grid">
                   {visibleProviders.map((provider) => {
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
+                    const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
+                    const workspaceConnectTitle = hasActiveWorkspaceConnection
+                      ? `A ${provider.name} workspace connection is already installed. Manage it below.`
+                      : connections.isLoading
+                        ? 'Checking installed workspace connections…'
+                        : connections.isError
+                          ? 'Installed workspace connections could not be loaded.'
+                          : undefined;
                     return (
                       <article className="provider-card" key={provider.id}>
                         <div className="provider-card-heading">
@@ -445,10 +489,16 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <p>{provider.description}</p>
                         <div className="provider-actions">
                           {provider.scopes.includes('you' as never) && (
-                            <Button disabled={connectProvider.isPending} onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: [...provider.capabilities] })}>Connect for me</Button>
+                            <Button disabled={connectProvider.isPending} onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}>Connect for me</Button>
                           )}
                           {provider.scopes.includes('workspace' as never) && isAdmin && (
-                            <Button disabled={connectProvider.isPending} onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: [...provider.capabilities] })}>Connect workspace</Button>
+                            <Button
+                              disabled={workspaceConnectDisabled}
+                              onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') })}
+                              title={workspaceConnectTitle}
+                            >
+                              Connect workspace
+                            </Button>
                           )}
                         </div>
                       </article>

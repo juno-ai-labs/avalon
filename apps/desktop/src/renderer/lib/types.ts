@@ -143,8 +143,24 @@ export interface ActivitySuggestionData {
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
+export interface MessageMention {
+  type: 'person' | 'connector';
+  personId?: string;
+  connectorType?: string;
+  displayName?: string;
+  avatarUrl?: string;
+  startOffset: number;
+  endOffset: number;
+}
+
 export interface Message {
   id: string;
+  /**
+   * Stable identity supplied by the client for idempotent message creation.
+   * The persisted message receives a different database `id`, so this value
+   * is also used to reconcile optimistic, REST, and realtime copies.
+   */
+  clientMessageId?: string;
   workstreamId: string;
   sequenceNumber: number;
   authorType: 'human' | 'agent' | 'system';
@@ -157,6 +173,7 @@ export interface Message {
     | 'activity_suggestion'
     | 'system';
   text?: string;
+  mentions?: MessageMention[];
   createdAt: string;
   streaming?: boolean;
   deliveryState?: 'sending';

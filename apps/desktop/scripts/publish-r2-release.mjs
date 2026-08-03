@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
+  assertNextMinorReleaseVersion,
   compareVersions,
   loadReleaseDirectory,
   normalizeReleasePrefix,
@@ -107,6 +108,10 @@ for (const artifact of release.artifacts) {
 const confirmation = arguments_.confirm ?? process.env.AVALON_RELEASE_PUBLISH_CONFIRM?.trim();
 if (!arguments_.dryRun && confirmation !== release.feed.version) {
   throw new Error(`Pass --confirm ${release.feed.version} to publish this release`);
+}
+
+if (arguments_.dryRun && compareVersions(currentSiteConfig.version, release.feed.version) < 0) {
+  assertNextMinorReleaseVersion(currentSiteConfig.version, release.feed.version);
 }
 
 const accountId = arguments_.dryRun ? process.env.CLOUDFLARE_ACCOUNT_ID?.trim() : required('CLOUDFLARE_ACCOUNT_ID');
@@ -434,9 +439,14 @@ try {
         `Refusing to roll ${prefix} back from ${existingFeed.version} to ${release.feed.version}`,
       );
     }
+    if (comparison < 0) {
+      assertNextMinorReleaseVersion(existingFeed.version, release.feed.version);
+    }
     if (comparison === 0 && !existingBytes.equals(release.manifestBytes)) {
       throw new Error(`Release ${release.feed.version} already has different latest-mac.yml bytes in R2`);
     }
+  } else if (compareVersions(currentSiteConfig.version, release.feed.version) < 0) {
+    assertNextMinorReleaseVersion(currentSiteConfig.version, release.feed.version);
   }
 
   // Each immutable payload is hash-verified through R2 and HEAD/Range-verified

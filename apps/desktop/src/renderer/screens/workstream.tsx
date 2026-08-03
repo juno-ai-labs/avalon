@@ -29,7 +29,7 @@ import { backgroundTasksFromMessages, type MentionIdentity } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
-import { mergeCanonicalTranscript, nextTranscriptSequence, orderTranscript, useWorkstreamSocket } from '../lib/use-workstream-socket';
+import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, orderTranscript, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import type { BackgroundTask, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { InspectorRail } from '../components/inspector-rail';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
@@ -427,6 +427,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       const anchorSequenceNumber = nextTranscriptSequence(current);
       const optimistic: Message = {
         id: clientId,
+        clientMessageId: clientId,
         workstreamId: id,
         sequenceNumber: anchorSequenceNumber,
         authorType: 'human',
@@ -445,12 +446,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     });
     try {
       const created = await api.createMessage(id, { text, clientId, mentions, confirmedParticipantUserIds });
-      queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        orderTranscript([
-          ...(current ?? []).filter((message) => message.id !== clientId && message.id !== created.id),
-          created,
-        ]),
-      );
+      queryClient.setQueryData<Message[]>(['messages', id], (current) => insertMessage(current, created));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),

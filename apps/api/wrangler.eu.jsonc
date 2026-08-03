@@ -12,6 +12,8 @@
     "PUBLIC_API_BASE_URL": "https://eu.api.with-avalon.com",
     "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
+    "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
+    "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "google/gemini-2.5-flash-lite",
@@ -52,6 +54,11 @@
       "binding": "GLOBAL_EMAIL_ROUTER",
       "service": "avalon-api-global",
       "entrypoint": "WorkstreamEmailRoutingBridge"
+    },
+    {
+      "binding": "GLOBAL_LINEAR_ROUTER",
+      "service": "avalon-api-global",
+      "entrypoint": "LinearRoutingBridge"
     }
   ],
   "r2_buckets": [
