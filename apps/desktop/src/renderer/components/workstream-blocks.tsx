@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   Clipboard,
@@ -9,11 +10,10 @@ import {
   FileText,
   LoaderCircle,
   Pin,
-  Sparkles,
   TerminalSquare,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -273,41 +273,98 @@ function ArtifactBlock({ message }: { message: Message }): React.JSX.Element | n
   );
 }
 
-function ElicitationBlock({
+function elicitationAnswerLabel(elicitation: ElicitationData): string {
+  const answer = elicitation.answer;
+  if (answer == null) return 'Skipped';
+  const values = Array.isArray(answer) ? answer : [String(answer)];
+  const labels = values.map((value) => elicitation.options?.find((option) => option.value === value)?.label ?? value);
+  return labels.join(', ');
+}
+
+export function ElicitationPanel({
   elicitation,
   onAnswer,
 }: {
   elicitation: ElicitationData;
-  onAnswer: (answer: unknown) => Promise<void>;
+  onAnswer: (answer: string | string[] | null, customResponse?: string) => Promise<void>;
 }): React.JSX.Element {
   const [text, setText] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
+  const [customSelected, setCustomSelected] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const customInputRef = useRef<HTMLInputElement>(null);
   const isAnswered = elicitation.status === 'answered';
+  const isMulti = elicitation.responseType === 'multi_select';
+  const isText = elicitation.responseType === 'text';
+  const minimumSelections = isText ? 1 : Math.max(1, elicitation.minimumSelections ?? 1);
+  const maximumSelections = isMulti ? elicitation.maximumSelections : 1;
+  const selectionCount = selected.length + (customSelected && text.trim() ? 1 : 0);
+  const canSubmit = isText
+    ? text.trim().length > 0
+    : selectionCount >= minimumSelections && (maximumSelections == null || selectionCount <= maximumSelections);
+
+  useEffect(() => {
+    setText('');
+    setSelected([]);
+    setCustomSelected(false);
+    setCollapsed(false);
+    setError(null);
+  }, [elicitation.id]);
 
   const toggle = (value: string): void => {
-    if (elicitation.responseType !== 'multi_select') {
+    setError(null);
+    if (!isMulti) {
       setSelected([value]);
+      setCustomSelected(false);
       return;
     }
-    setSelected((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+    setSelected((current) => {
+      if (current.includes(value)) return current.filter((item) => item !== value);
+      if (maximumSelections != null && current.length + (customSelected && text.trim() ? 1 : 0) >= maximumSelections) {
+        setError(`Choose no more than ${maximumSelections} ${maximumSelections === 1 ? 'option' : 'options'}.`);
+        return current;
+      }
+      return [...current, value];
+    });
+  };
+
+  const selectCustom = (): void => {
+    setError(null);
+    if (!isMulti) setSelected([]);
+    if (!customSelected && isMulti && maximumSelections != null && selected.length >= maximumSelections) {
+      setError(`Choose no more than ${maximumSelections} ${maximumSelections === 1 ? 'option' : 'options'}.`);
+      return;
+    }
+    setCustomSelected(true);
+    requestAnimationFrame(() => customInputRef.current?.focus());
+  };
+
+  const toggleCustom = (): void => {
+    if (isMulti && customSelected) {
+      setCustomSelected(false);
+      setError(null);
+      return;
+    }
+    selectCustom();
   };
 
   const submit = async (): Promise<void> => {
-    const answer = elicitation.responseType === 'text'
+    const customResponse = customSelected && text.trim() ? text.trim() : undefined;
+    const answer = isText
       ? text.trim()
-      : elicitation.responseType === 'multi_select'
-        ? selected
-        : selected[0];
-    if (!answer || (Array.isArray(answer) && answer.length < (elicitation.minimumSelections ?? 1))) {
+      : isMulti
+        ? [...selected, ...(customResponse ? [customResponse] : [])]
+        : customResponse ?? selected[0];
+    if (!answer || !canSubmit) {
       setError('Choose or enter a response before continuing.');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      await onAnswer(answer);
+      await onAnswer(answer, customResponse);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Your response could not be saved.');
     } finally {
@@ -315,40 +372,138 @@ function ElicitationBlock({
     }
   };
 
+  const skip = async (): Promise<void> => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onAnswer(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'This question could not be skipped.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const options = elicitation.options ?? [];
+  const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(elicitation.prompt)
+    ? `${elicitation.prompt} Pick everything that applies.`
+    : elicitation.prompt;
+
+  if (collapsed && !isAnswered) {
+    return (
+      <button className="elicitation-collapsed-bar" onClick={() => setCollapsed(false)} type="button">
+        <span>Avalon needs input</span>
+        <strong>{elicitation.prompt}</strong>
+        <ChevronDown aria-hidden="true" size={16} />
+      </button>
+    );
+  }
+
   return (
-    <section className={clsx('elicitation-block', isAnswered && 'is-answered')} aria-labelledby={`elicitation-${elicitation.id}`}>
-      <div className="elicitation-heading">
-        <span><Sparkles aria-hidden="true" size={15} /></span>
-        <div><small>{isAnswered ? 'Answered' : 'Avalon needs input'}</small><h3 id={`elicitation-${elicitation.id}`}>{elicitation.prompt}</h3></div>
-      </div>
+    <section
+      aria-labelledby={`elicitation-${elicitation.id}`}
+      className={clsx('elicitation-panel', isAnswered && 'is-answered')}
+      onKeyDown={(event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSubmit && !submitting) {
+          event.preventDefault();
+          void submit();
+          return;
+        }
+        const target = event.target as HTMLElement;
+        if (isText || target.matches('input, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
+        const index = Number(event.key) - 1;
+        if (!Number.isInteger(index) || index < 0 || index > options.length) return;
+        event.preventDefault();
+        const option = options[index];
+        if (option) toggle(option.value);
+        else toggleCustom();
+      }}
+    >
+      <header className="elicitation-panel-header">
+        <h3 id={`elicitation-${elicitation.id}`}>{isAnswered ? 'Response submitted' : question}</h3>
+        {!isAnswered && (
+          <div className="elicitation-header-actions">
+            <button aria-label="Collapse question" onClick={() => setCollapsed(true)} type="button">
+              <ChevronDown aria-hidden="true" size={16} />
+            </button>
+          </div>
+        )}
+      </header>
       {isAnswered ? (
-        <div className="answered-value"><Check aria-hidden="true" size={14} /><span>{Array.isArray(elicitation.answer) ? elicitation.answer.join(', ') : String(elicitation.answer ?? 'Response submitted')}</span></div>
-      ) : elicitation.responseType === 'text' ? (
-        <textarea aria-label="Response" onChange={(event) => setText(event.target.value)} placeholder="Type your response…" rows={3} value={text} />
+        <div className="elicitation-answered-value"><Check aria-hidden="true" size={14} /><span>{elicitationAnswerLabel(elicitation)}</span></div>
+      ) : isText ? (
+        <textarea
+          aria-label="Response"
+          className="elicitation-text-response"
+          onChange={(event) => setText(event.target.value)}
+          placeholder="Type your answer here"
+          rows={3}
+          value={text}
+        />
       ) : (
         <fieldset className="elicitation-options">
           <legend className="sr-only">Response options</legend>
-          {elicitation.options?.map((option) => (
-            <label className="elicitation-option" key={option.value}>
+          {options.map((option, index) => (
+            <label className={clsx('elicitation-option', selected.includes(option.value) && 'is-selected')} key={option.value}>
               <input
                 checked={selected.includes(option.value)}
                 name={`elicitation-${elicitation.id}`}
                 onChange={() => toggle(option.value)}
-                type={elicitation.responseType === 'multi_select' ? 'checkbox' : 'radio'}
+                type={isMulti ? 'checkbox' : 'radio'}
                 value={option.value}
               />
-              <span className="option-control" aria-hidden="true" />
-              <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+              <span className="elicitation-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+              {isMulti ? (
+                <span aria-hidden="true" className="elicitation-checkbox">{selected.includes(option.value) && <Check size={12} strokeWidth={3} />}</span>
+              ) : (
+                <kbd aria-hidden="true">{index + 1}</kbd>
+              )}
             </label>
           ))}
+          <div
+            className={clsx('elicitation-option', 'elicitation-other-option', customSelected && 'is-selected')}
+            onClick={toggleCustom}
+          >
+            <input
+              aria-label="Other"
+              checked={customSelected}
+              name={`elicitation-${elicitation.id}`}
+              onChange={toggleCustom}
+              type={isMulti ? 'checkbox' : 'radio'}
+            />
+            <span className="elicitation-option-copy">
+              <strong>Other</strong>
+              <input
+                aria-label="Other response"
+                onChange={(event) => {
+                  setText(event.target.value);
+                  if (event.target.value) selectCustom();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  selectCustom();
+                }}
+                placeholder="Type your own answer here"
+                ref={customInputRef}
+                type="text"
+                value={text}
+              />
+            </span>
+            {isMulti ? (
+              <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
+            ) : (
+              <kbd aria-hidden="true">{options.length + 1}</kbd>
+            )}
+          </div>
         </fieldset>
       )}
       {!isAnswered && (
         <div className="elicitation-actions">
           {error && <InlineError>{error}</InlineError>}
-          <Button className="button-primary" disabled={submitting} onClick={() => void submit()}>
-            {submitting && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
-            Submit response
+          <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>
+          <Button className="elicitation-submit" disabled={!canSubmit || submitting} onClick={() => void submit()}>
+            {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
+            Submit <kbd aria-hidden="true">⌘↵</kbd>
           </Button>
         </div>
       )}
@@ -404,7 +559,7 @@ interface MessageBlockProps {
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   onOpenAttachment?: (preview: AttachmentPreview) => void;
-  onAnswerElicitation: (elicitationId: string, answer: unknown) => Promise<void>;
+  onAnswerElicitation: (elicitationId: string, answer: string | string[] | null, customResponse?: string) => Promise<void>;
   onResolveSuggestion: (suggestionId: string, action: 'accept' | 'dismiss') => Promise<void>;
 }
 
@@ -419,7 +574,7 @@ export function MessageBlock({
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
   if (message.messageType === 'artifact') return <div className="transcript-event" id={`message-${message.id}`}><ArtifactBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {
-    return <div className="transcript-event" id={`message-${message.id}`}><ElicitationBlock elicitation={message.elicitation} onAnswer={(answer) => onAnswerElicitation(message.elicitation!.id, answer)} /></div>;
+    return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
   if (message.messageType === 'activity_suggestion' && message.activitySuggestion) {
     return <div className="transcript-event" id={`message-${message.id}`}><SuggestionBlock onResolve={(action) => onResolveSuggestion(message.activitySuggestion!.id, action)} suggestion={message.activitySuggestion} /></div>;
