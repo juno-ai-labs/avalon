@@ -281,11 +281,6 @@ function elicitationAnswerLabel(elicitation: ElicitationData): string {
   return labels.join(', ');
 }
 
-function elicitationAnswerValues(elicitation: ElicitationData): string[] {
-  if (elicitation.answer == null) return [];
-  return (Array.isArray(elicitation.answer) ? elicitation.answer : [elicitation.answer]).map(String);
-}
-
 export function ElicitationPanel({
   elicitation,
   onAnswer,
@@ -317,6 +312,14 @@ export function ElicitationPanel({
     setCollapsed(false);
     setError(null);
   }, [elicitation.id]);
+
+  if (isAnswered) {
+    return (
+      <div aria-label="Elicitation response" className="elicitation-resolved-answer">
+        {elicitationAnswerLabel(elicitation)}
+      </div>
+    );
+  }
 
   const toggle = (value: string): void => {
     setError(null);
@@ -393,11 +396,7 @@ export function ElicitationPanel({
   const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(elicitation.prompt)
     ? `${elicitation.prompt} Pick everything that applies.`
     : elicitation.prompt;
-  const answeredValues = elicitationAnswerValues(elicitation);
-  const declaredValues = new Set(options.map((option) => option.value));
-  const customAnswers = answeredValues.filter((value) => !declaredValues.has(value));
-
-  if (collapsed && !isAnswered) {
+  if (collapsed) {
     return (
       <button className="elicitation-collapsed-bar" onClick={() => setCollapsed(false)} type="button">
         <span>Avalon needs input</span>
@@ -410,7 +409,7 @@ export function ElicitationPanel({
   return (
     <section
       aria-labelledby={`elicitation-${elicitation.id}`}
-      className={clsx('elicitation-panel', isAnswered && 'is-answered')}
+      className="elicitation-panel"
       onKeyDown={(event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && canSubmit && !submitting) {
           event.preventDefault();
@@ -429,39 +428,15 @@ export function ElicitationPanel({
     >
       <header className="elicitation-panel-header">
         <div>
-          {isAnswered && <span className="elicitation-status">Response submitted</span>}
           <h3 id={`elicitation-${elicitation.id}`}>{question}</h3>
         </div>
-        {!isAnswered && (
-          <div className="elicitation-header-actions">
-            <button aria-label="Collapse question" onClick={() => setCollapsed(true)} type="button">
-              <ChevronDown aria-hidden="true" size={16} />
-            </button>
-          </div>
-        )}
+        <div className="elicitation-header-actions">
+          <button aria-label="Collapse question" onClick={() => setCollapsed(true)} type="button">
+            <ChevronDown aria-hidden="true" size={16} />
+          </button>
+        </div>
       </header>
-      {isAnswered ? (
-        <>
-          {!isText && options.length > 0 && (
-            <div aria-label="Response options" className="elicitation-resolved-options">
-              {options.map((option) => {
-                const selectedOption = answeredValues.includes(option.value);
-                return (
-                  <div className={clsx('elicitation-resolved-option', selectedOption && 'is-selected')} key={option.value}>
-                    <span aria-hidden="true" className="elicitation-resolved-marker">{selectedOption && <Check size={11} strokeWidth={3} />}</span>
-                    <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
-                  </div>
-                );
-              })}
-              <div className={clsx('elicitation-resolved-option', customAnswers.length > 0 && 'is-selected')}>
-                <span aria-hidden="true" className="elicitation-resolved-marker">{customAnswers.length > 0 && <Check size={11} strokeWidth={3} />}</span>
-                <span><strong>Other</strong>{customAnswers.length > 0 && <small>{customAnswers.join(', ')}</small>}</span>
-              </div>
-            </div>
-          )}
-          <div className="elicitation-answered-value"><Check aria-hidden="true" size={14} /><span>{elicitationAnswerLabel(elicitation)}</span></div>
-        </>
-      ) : isText ? (
+      {isText ? (
         <textarea
           aria-label="Response"
           className="elicitation-text-response"

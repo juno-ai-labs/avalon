@@ -44,9 +44,15 @@ healthRoutes.get("/", async (c) => {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
   };
-  checks.googleOAuth = {
+  checks.googleLoginOAuth = {
     ok: Boolean(c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET),
     message: c.env.GOOGLE_OAUTH_CLIENT_ID && c.env.GOOGLE_OAUTH_CLIENT_SECRET ? "configured" : "not configured",
+  };
+  checks.googleConnectorOAuth = {
+    ok: Boolean(c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET),
+    message: c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID && c.env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET
+      ? "configured"
+      : "not configured",
   };
   checks.resend = {
     ok: Boolean(c.env.RESEND_API_KEY && c.env.RESEND_FROM_EMAIL),

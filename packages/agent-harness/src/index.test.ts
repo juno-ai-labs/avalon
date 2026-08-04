@@ -215,6 +215,48 @@ describe("agent harness", () => {
     expect(repairMessages.at(-1)!.content).not.toContain("Create it");
   });
 
+  it("accepts an incomplete recurring draft when the model omits its generated summary", async () => {
+    const incomplete = {
+      name: "Blog monitor",
+      description: "Check a blog for a new post.",
+      instructions: "Check the configured blog and report a new post.",
+      triggers: [{
+        type: "interval",
+        rrule: null,
+        timezone: null,
+        summary: null,
+        intervalSeconds: 86_400,
+        connectorType: null,
+        eventTypes: null,
+        deterministicFilters: null,
+        deterministicPrefilter: null,
+        condition: null,
+        resourceId: null,
+      }],
+      requiredCapabilities: ["web.read"],
+      expectedOutputs: ["New post summary"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: "What is the blog URL?",
+      ready: false,
+    };
+    const fetcher = vi.fn(async () => Response.json({
+      choices: [{ message: { content: JSON.stringify(incomplete) } }],
+    })) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "model",
+      messages: [{ role: "user", content: "Check this blog every 24 hours for a new post." }],
+      fetch: fetcher,
+    })).resolves.toMatchObject({
+      ready: false,
+      followUpQuestion: "What is the blog URL?",
+      triggers: [{ type: "interval", intervalSeconds: 86_400, summary: "Recurring interval" }],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("canonicalizes tool inputs for stable hashes", () => {
     expect(__testing.canonicalJson({ b: 2, a: { z: 1, y: 0 } })).toBe(
       '{"a":{"y":0,"z":1},"b":2}'

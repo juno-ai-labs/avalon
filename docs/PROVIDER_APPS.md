@@ -4,9 +4,14 @@ Avalon uses one public GitHub App and one public Linear app with account-aware r
 
 The source manifests live in `config/provider-apps`. Provider client secrets, signing secrets, and GitHub private keys are never committed.
 
-## Google OAuth client and APIs
+## Google OAuth clients and APIs
 
-Google platform identity and Google connector consent are separate Avalon flows, but they may share one Google Cloud OAuth 2.0 **Web application** client. Enable these APIs in the client project's Google Cloud console:
+Google platform identity and Google connector consent use two separate Google Cloud OAuth 2.0 **Web application** clients in the same Google Cloud project:
+
+1. **Avalon Login** is used only for platform identity and requests `openid email profile`.
+2. **Avalon Google Connectors** is used only for Gmail, Calendar, Drive, Docs, and Sheets connections.
+
+Do not put connector callbacks on the login client or the login callback on the connector client. This keeps platform authentication independent from sensitive/restricted Google Workspace scopes and their verification lifecycle. Enable these APIs in the project that owns the connector client:
 
 - Gmail API
 - Google Calendar API
@@ -14,13 +19,13 @@ Google platform identity and Google connector consent are separate Avalon flows,
 - Google Docs API
 - Google Sheets API
 
-Register these exact hosted authorized redirect URIs on the web client:
+Register these exact hosted authorized redirect URIs:
 
-| Flow | Authorized redirect URI |
+| OAuth client | Authorized redirect URI |
 | --- | --- |
-| Global platform identity | `https://api.with-avalon.com/auth/google/callback` |
-| Global Google connector | `https://api.with-avalon.com/connections/google/callback` |
-| EU Google connector | `https://eu.api.with-avalon.com/connections/google/callback` |
+| Avalon Login | `https://api.with-avalon.com/auth/google/callback` |
+| Avalon Google Connectors | `https://api.with-avalon.com/connections/google/callback` |
+| Avalon Google Connectors | `https://eu.api.with-avalon.com/connections/google/callback` |
 
 `https://with-avalon.com/auth/desktop/` is Avalon's post-callback browser handoff, and `avalon://auth/complete` is its allowlisted desktop return URI. Neither is a Google OAuth redirect URI. Add the corresponding `http://127.0.0.1:<port>` API callbacks only to a development client used for local provider testing.
 
@@ -106,9 +111,13 @@ When the webhook subscription is created, Notion sends a one-time `verification_
 
 ## Regional Worker secrets
 
-Install the Google web client's values in both regional Workers so each region can complete connector OAuth. The Global Worker also uses them for platform identity:
+Install the platform login client only on the Global Worker:
 
 - `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`
+
+Install the separate Google service connector client in both regional Workers so each region can complete connector OAuth and refresh connector tokens:
+
+- `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`, `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET`
 
 Global and EU use the same public GitHub App identity and webhook secret:
 

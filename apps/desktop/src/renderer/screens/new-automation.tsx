@@ -238,22 +238,26 @@ export function NewAutomationScreen(): React.JSX.Element {
   }, [connections.data, draft, selectedTemplate]);
 
   const compile = useMutation({
-    mutationFn: (payload: { message: string; templateId?: string }) =>
+    mutationFn: (payload: { message: string; templateId?: string; turnId: string }) =>
       api!.compileAutomation({
         message: payload.message,
         ...(draft?.draftId ? { draftId: draft.draftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
       }),
-    onSuccess: (response, payload) => {
+    onMutate: (payload) => {
+      setTurns((current) => current.some((turn) => turn.id === payload.turnId)
+        ? current
+        : [...current, { id: payload.turnId, role: 'user', text: payload.message }]);
+      setInput('');
+    },
+    onSuccess: (response) => {
       setDraft(response);
       setTurns((current) => [
         ...current,
-        { id: crypto.randomUUID(), role: 'user', text: payload.message },
         ...(response.assistantMessage || response.question
           ? [{ id: crypto.randomUUID(), role: 'assistant' as const, text: response.assistantMessage ?? response.question!.prompt }]
           : []),
       ]);
-      setInput('');
     },
   });
 
@@ -276,7 +280,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   const submit = (message = input): void => {
     const trimmed = message.trim();
     if (!trimmed || compile.isPending) return;
-    compile.mutate({ message: trimmed });
+    compile.mutate({ message: trimmed, turnId: crypto.randomUUID() });
   };
 
   return (
