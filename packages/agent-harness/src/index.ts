@@ -763,10 +763,14 @@ function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): u
         timezone: typeof trigger.timezone === "string" && trigger.timezone.trim()
           ? trigger.timezone
           : defaultTimezone,
-        summary: trigger.summary,
+        summary: normalizeTriggerSummary(trigger.summary, "Recurring schedule"),
       };
     case "interval":
-      return { type: "interval", intervalSeconds: trigger.intervalSeconds, summary: trigger.summary };
+      return {
+        type: "interval",
+        intervalSeconds: trigger.intervalSeconds,
+        summary: normalizeTriggerSummary(trigger.summary, "Recurring interval"),
+      };
     case "connector_activity":
       return {
         type: "connector_activity",
@@ -788,6 +792,10 @@ function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): u
     default:
       return value;
   }
+}
+
+function normalizeTriggerSummary(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {

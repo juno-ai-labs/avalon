@@ -102,7 +102,7 @@ describe('ElicitationPanel', () => {
     expect(onAnswer).not.toHaveBeenCalled();
   });
 
-  it('keeps the original choices and a custom answer visible after submission', () => {
+  it('shows only a custom answer after submission', () => {
     render(
       <ElicitationPanel
         elicitation={{
@@ -115,11 +115,24 @@ describe('ElicitationPanel', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: 'Choose one: compare, review, or something else?' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Response options')).toHaveTextContent('Compare offer vs. RSPA');
-    expect(screen.getByLabelText('Response options')).toHaveTextContent('Review the draft offer');
-    expect(screen.getByLabelText('Response options')).toHaveTextContent('Other');
-    expect(screen.getAllByText('Summarize the payment terms')).toHaveLength(2);
+    expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Summarize the payment terms');
+    expect(screen.queryByText('Choose one: compare, review, or something else?')).not.toBeInTheDocument();
+    expect(screen.queryByText('Compare offer vs. RSPA')).not.toBeInTheDocument();
+    expect(screen.queryByText('Review the draft offer')).not.toBeInTheDocument();
+    expect(screen.queryByText('Other')).not.toBeInTheDocument();
+  });
+
+  it('shows only the selected option label after submission', () => {
+    render(
+      <ElicitationPanel
+        elicitation={{ ...singleSelectElicitation, status: 'answered', answer: 'compare' }}
+        onAnswer={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
+    expect(screen.queryByText(singleSelectElicitation.prompt)).not.toBeInTheDocument();
+    expect(screen.queryByText('Review the draft offer')).not.toBeInTheDocument();
   });
 });
 
