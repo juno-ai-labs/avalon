@@ -24,14 +24,18 @@
     "@avalon/db": "workspace:*",
     "@hono/zod-validator": "latest",
     "fflate": "^0.8.3",
+    "heic-decode": "2.1.0",
     "hono": "latest",
     "jose": "latest",
     "rrule": "latest",
+    "upng-js": "2.1.0",
+    "utif2": "4.1.0",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "latest",
     "@cloudflare/workers-types": "latest",
+    "@types/upng-js": "2.1.5",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "wrangler": "latest"

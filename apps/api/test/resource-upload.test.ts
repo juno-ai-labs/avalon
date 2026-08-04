@@ -81,6 +81,7 @@ function attachmentDatabase(): DatabaseSync {
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,
       resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
       title TEXT NOT NULL, mime_type TEXT, canonical_url TEXT, content_ref TEXT,
+      model_content_ref TEXT, model_mime_type TEXT, model_content_sha256 TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}', last_hydrated_at TEXT,
       uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL

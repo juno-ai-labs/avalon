@@ -11,6 +11,7 @@ import type {
 export interface Env {
   DB: D1Database;
   PAYLOADS: R2Bucket;
+  IMAGES: ImagesBinding;
   WORKSTREAM_ROOMS: DurableObjectNamespace;
   WORKSPACE_SCHEDULERS: DurableObjectNamespace;
   ACTIVITY_QUEUE: Queue;

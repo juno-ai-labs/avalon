@@ -18,7 +18,7 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 - `workstream_participants` records explicit participation reasons. Viewer presence is intentionally absent from D1.
 - `messages` has a per-work-stream `sequence_number`; `workstreams.next_sequence_number` allocates ordered events.
 - `message_mentions` stores validated person and connector spans.
-- `resources` holds metadata while `content_ref` points at R2. `workstream_resources` owns attachment/watch behavior.
+- `resources` holds metadata while `content_ref` points at the immutable, user-visible original in regional R2. Image attachments may also carry a `model_content_ref`, `model_mime_type`, and SHA-256 for a bounded, signature-validated derivative used only for model input. `workstream_resources` owns attachment/watch behavior.
 - `artifacts`, `elicitations`, and `activity_suggestions` are first-class transcript blocks.
 
 ## Automations and execution

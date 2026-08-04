@@ -99,6 +99,7 @@
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-global-payloads" }
   ],
+  "images": { "binding": "IMAGES" },
   "durable_objects": {
     "bindings": [
       { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },
