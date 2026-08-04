@@ -52,8 +52,12 @@ describe("prompt renderers", () => {
           activeTask: true,
           connectorMentions: ["github"],
           addressesAvalon: true,
+          recentMessages: [
+            { authorType: "human", authorName: "Morgan", message: "Did the release finish?" },
+            { authorType: "agent", authorName: "Avalon", message: "The release is still running." },
+          ],
         }),
-        hash: "a94856ca83c9d6e4180c7ee9dab8edd626951ee8c214bbc05302e30ec6f25f39",
+        hash: "d17bb0511c8118433aba4eb8702362dcdfb6f8818de902d32f2e038a9fac64e0",
       },
       automationCompiler: {
         actual: renderAutomationCompilerMessages({
@@ -134,6 +138,31 @@ describe("prompt renderers", () => {
     )).toEqual(Object.fromEntries(
       Object.entries(goldenCases).map(([name, golden]) => [name, golden.hash]),
     ));
+  });
+
+  it("bounds multiplayer addressing history while preserving the current message", () => {
+    const currentMessage = "c".repeat(1_250);
+    const rendered = renderAddressingMessages({
+      message: currentMessage,
+      activeTask: false,
+      connectorMentions: [],
+      addressesAvalon: false,
+      recentMessages: Array.from({ length: 12 }, (_, index) => ({
+        authorType: index % 2 === 0 ? "human" as const : "agent" as const,
+        authorName: index % 2 === 0 ? `Person ${index}` : "Avalon",
+        message: `${index}:`.padEnd(1_100, "x"),
+      })),
+    });
+
+    const payload = JSON.parse(rendered[1]!.content) as {
+      recentMessages: Array<{ authorType: string; authorName: string | null; message: string }>;
+      currentMessage: string;
+    };
+    expect(payload.recentMessages).toHaveLength(10);
+    expect(payload.recentMessages[0]).toMatchObject({ authorName: "Person 2" });
+    expect(payload.recentMessages.at(-1)).toMatchObject({ authorName: "Avalon" });
+    expect(payload.recentMessages.every((message) => Array.from(message.message).length === 1_000)).toBe(true);
+    expect(payload.currentMessage).toBe(currentMessage);
   });
 
   it("keeps draft and provider injection text out of system messages", () => {

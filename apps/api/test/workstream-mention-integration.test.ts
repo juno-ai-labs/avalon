@@ -58,6 +58,7 @@ describe("work-stream addressing", () => {
   it("keeps multiplayer classification when more than one participant is active", async () => {
     const database = migratedDatabase();
     seed(database);
+    seedConversationHistory(database);
     const service = new WorkstreamService(environment(database), auth());
 
     const result = await service.createMessage(workstreamId, {
@@ -70,6 +71,17 @@ describe("work-stream addressing", () => {
     expect(result.agentInvoked).toBe(false);
     expect(result.harnessRunId).toBeNull();
     expect(classifyWorkstreamMessage).toHaveBeenCalledOnce();
+    expect(classifyWorkstreamMessage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      message: "This is for Ada",
+      recentMessages: Array.from({ length: 10 }, (_, index) => {
+        const historyIndex = index + 3;
+        return {
+          authorType: historyIndex % 2 === 0 ? "agent" : "human",
+          authorName: historyIndex % 2 === 0 ? "Avalon" : "Author Person",
+          message: `History message ${historyIndex}`,
+        };
+      }),
+    }));
     expect(startWorkstreamWorkflow).not.toHaveBeenCalled();
   });
 
@@ -252,6 +264,30 @@ function seed(database: DatabaseSync, includeSecondParticipant = true): void {
        VALUES (?, ?, ?, 'explicit', ?, NULL)`,
     ).run(workstreamId, personId, authorId, at);
   }
+}
+
+function seedConversationHistory(database: DatabaseSync): void {
+  const insert = database.prepare(
+    `INSERT INTO messages
+     (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+      message_type, text_content, sequence_number, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?)`,
+  );
+  for (let index = 1; index <= 12; index += 1) {
+    const authorType = index % 2 === 0 ? "agent" : "human";
+    insert.run(
+      `history-${index}`,
+      `history-${index}`,
+      workspaceId,
+      workstreamId,
+      authorType,
+      authorType === "human" ? authorId : null,
+      `History message ${index}`,
+      index,
+      at,
+    );
+  }
+  database.prepare("UPDATE workstreams SET next_sequence_number = 13 WHERE id = ?").run(workstreamId);
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {

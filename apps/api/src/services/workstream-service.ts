@@ -334,10 +334,12 @@ export class WorkstreamService {
     const participantCount = await this.activeParticipantCount(id);
     let shouldInvoke = participantCount === 1;
     if (!shouldInvoke) {
+      const recentMessages = await this.recentAddressingMessages(id, message.sequenceNumber);
       const classification = await classifyWorkstreamMessage(this.env, {
         message: input.text,
         activeTask: workstream.harnessStatus === "running" || workstream.harnessStatus === "needs_input",
         connectorMentions,
+        recentMessages,
       });
       shouldInvoke =
         classification.classification === "agent_action" ||
@@ -346,6 +348,30 @@ export class WorkstreamService {
     }
     const harnessRunId = shouldInvoke ? await this.launchHarness(id, message.id, "human_message") : null;
     return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
+  }
+
+  private async recentAddressingMessages(id: string, beforeSequence: number) {
+    const result = await this.env.DB.prepare(
+      `SELECT m.author_type, u.name AS author_name, m.text_content
+         FROM messages m
+         LEFT JOIN users u ON u.id = m.author_user_id
+        WHERE m.workspace_id = ?
+          AND m.workstream_id = ?
+          AND m.sequence_number < ?
+          AND m.message_type = 'text'
+          AND m.author_type IN ('human', 'agent')
+        ORDER BY m.sequence_number DESC
+        LIMIT 10`,
+    ).bind(this.auth.workspaceId, id, beforeSequence).all<{
+      author_type: "human" | "agent";
+      author_name: string | null;
+      text_content: string;
+    }>();
+    return (result.results ?? []).reverse().map((row) => ({
+      authorType: row.author_type,
+      authorName: row.author_type === "agent" ? "Avalon" : row.author_name,
+      message: row.text_content,
+    }));
   }
 
   async addParticipant(id: string, userId: string) {

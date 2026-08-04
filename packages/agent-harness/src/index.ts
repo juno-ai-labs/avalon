@@ -15,6 +15,7 @@ import { z } from "zod";
 import {
   renderAddressingMessages,
   renderAutomationCompilerMessages,
+  type AddressingContextMessage,
 } from "./prompts";
 
 export * from "./prompts";
@@ -585,6 +586,7 @@ export async function classifyAddressing(input: {
   activeTask: boolean;
   connectorMentions?: string[];
   addressesAvalon?: boolean;
+  recentMessages?: AddressingContextMessage[];
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
 }): Promise<AddressingClassification> {
@@ -602,6 +604,7 @@ export async function classifyAddressing(input: {
       activeTask: input.activeTask,
       connectorMentions: input.connectorMentions ?? [],
       addressesAvalon: input.addressesAvalon ?? /\bavalon\b/iu.test(input.message),
+      recentMessages: input.recentMessages ?? [],
     }),
     schemaName: "message_addressing",
     jsonSchema: addressingJsonSchema,

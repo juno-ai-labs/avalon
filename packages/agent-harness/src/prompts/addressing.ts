@@ -1,11 +1,21 @@
 import type { PromptMessage } from "./types";
 
+export interface AddressingContextMessage {
+  authorType: "human" | "agent";
+  authorName: string | null;
+  message: string;
+}
+
 export interface AddressingPromptInput {
   message: string;
   activeTask: boolean;
   connectorMentions: string[];
   addressesAvalon: boolean;
+  recentMessages?: AddressingContextMessage[];
 }
+
+const MAX_RECENT_MESSAGES = 10;
+const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
 
 const SYSTEM_PROMPT = `Classify whether Avalon, the inherent agent in a collaborative work stream, should act on the newest human message.
 
@@ -18,16 +28,29 @@ Use these outcomes precisely:
 An explicit Avalon reference or connector mention strongly indicates agent_action. A question is not automatically mixed: classify it by who is expected to answer. Active-task state is context, not an automatic reason to act. Prefer human_only over interrupting ordinary human conversation, but do not ignore a clear work request. Select the single rationale code that best explains the decision and calibrate confidence to the evidence. Return only the required schema.`;
 
 export function renderAddressingMessages(input: AddressingPromptInput): PromptMessage[] {
+  const recentMessages = (input.recentMessages ?? [])
+    .slice(-MAX_RECENT_MESSAGES)
+    .map((message) => ({
+      authorType: message.authorType,
+      authorName: message.authorName,
+      message: truncateCharacters(message.message, MAX_RECENT_MESSAGE_CHARACTERS),
+    }));
   return [
     { role: "system", content: SYSTEM_PROMPT },
     {
       role: "user",
       content: JSON.stringify({
-        message: input.message,
         activeTask: input.activeTask,
         connectorMentions: input.connectorMentions,
         addressesAvalon: input.addressesAvalon,
+        recentMessages,
+        currentMessage: input.message,
       }),
     },
   ];
+}
+
+function truncateCharacters(value: string, maximum: number): string {
+  if (value.length <= maximum) return value;
+  return Array.from(value).slice(0, maximum).join("");
 }
