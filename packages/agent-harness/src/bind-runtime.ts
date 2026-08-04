@@ -59,7 +59,6 @@ const DEFAULT_CATALOG_TOKENS = 2_500;
 const DEFAULT_MAX_ACTIVE_PLUGINS = 12;
 const DEFAULT_MAX_TOOL_SCHEMA_BYTES = 128 * 1024;
 const DEFAULT_MAX_TOOL_RESULT_BYTES = 128 * 1024;
-const AVALON_RUN_CONTEXT_PREFIX = "AVALON RUN CONTEXT (execution metadata, not durable policy):";
 const circuitBreaker = createCircuitBreaker({
   failureThreshold: 3,
   cooldownMs: 60_000,
@@ -897,7 +896,7 @@ function corePlugin(input: RunHarnessInput): BindPlugin {
     canonicalId: CORE_PLUGIN_ID,
     shortWireName: "avalon",
     description: "Core Avalon work-stream tools and connector plugin activation.",
-    systemMessage: "Use connector plugins only when their catalog description is relevant. Use list_connector_plugins or search_connector_plugins when the compact catalog is insufficient. Loading a plugin never expands the run's original authority.",
+    systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use connector plugins only when their catalog description is relevant. Use list_connector_plugins or search_connector_plugins when the compact catalog is insufficient. Loading a plugin never expands the run's original authority.",
     tools,
     preload: true,
     explicit: true,
@@ -1094,6 +1093,13 @@ function prepareModelContextWithinBudget(input: {
   }
 
   const units = modelContextUnits(conversation);
+  let latestUserUnitIndex = -1;
+  for (let index = units.length - 1; index >= 0; index -= 1) {
+    if (units[index]!.some((message) => message.role === "user")) {
+      latestUserUnitIndex = index;
+      break;
+    }
+  }
   const selectedUnits: ModelMessage[][] = [];
   for (let index = units.length - 1; index >= 0; index -= 1) {
     const nextSelected = [units[index]!, ...selectedUnits];
@@ -1107,12 +1113,12 @@ function prepareModelContextWithinBudget(input: {
       selectedUnits.unshift(units[index]!);
       continue;
     }
-    if (selectedUnits.length === 0 || isProtectedRunContextUnit(units[index]!)) {
+    if (selectedUnits.length === 0 || index === latestUserUnitIndex) {
       // The newest unit is required for a coherent continuation. Never slice a
       // message, tool-call arguments, or a tool result merely to make it fit.
-      // The current trigger and its volatile run metadata are likewise required
-      // throughout a multi-turn tool loop; dropping them would leave the model
-      // with execution metadata or tool results but no originating task.
+      // The newest user request is likewise required throughout a multi-turn
+      // tool loop; dropping it would leave the model with tool results but no
+      // originating task.
       throw modelContextLimitError(input.model, budget, accounting);
     }
     // Keep one contiguous newest suffix. Skipping a newer unit to retain an
@@ -1145,11 +1151,6 @@ function modelContextUnits(messages: RunHarnessInput["messages"]): ModelMessage[
   const units: ModelMessage[][] = [];
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index]!;
-    if (isAvalonRunContextMessage(message)) {
-      const triggerOrEvidence = units.pop();
-      units.push(triggerOrEvidence ? [...triggerOrEvidence, message] : [message]);
-      continue;
-    }
     if (message.role !== "assistant" || !message.tool_calls?.length) {
       units.push([message]);
       continue;
@@ -1168,16 +1169,6 @@ function modelContextUnits(messages: RunHarnessInput["messages"]): ModelMessage[
     index = cursor - 1;
   }
   return units;
-}
-
-function isAvalonRunContextMessage(message: ModelMessage): boolean {
-  return message.role === "user"
-    && typeof message.content === "string"
-    && message.content.startsWith(AVALON_RUN_CONTEXT_PREFIX);
-}
-
-function isProtectedRunContextUnit(unit: ModelMessage[]): boolean {
-  return unit.some(isAvalonRunContextMessage);
 }
 
 function accountModelContext(input: {

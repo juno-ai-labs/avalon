@@ -71,8 +71,8 @@ import {
 
 const TOOL_REPLAY_MAX_BYTES = 256_000;
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
-const WORKSTREAM_PROMPT_VERSION = "workstream-v2";
-const INLINE_CHILD_PROMPT_VERSION = "inline-child-v1";
+const WORKSTREAM_PROMPT_VERSION = "workstream-v3";
+const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const INLINE_CHILD_MAX_TOOL_RESULT_BYTES = 24 * 1_024;
 const INLINE_CHILD_SYSTEM_PROMPT = [
@@ -701,7 +701,6 @@ export async function runWorkstreamHarness(
   const promptContext = await loadRunPromptContext(env, input, {
     title: workstream.title,
     objective: workstream.objective,
-    plannedFor: workstream.plannedFor,
   });
   const maxContextBytes = Math.min(
     numericEnv(env, "HARNESS_MAX_CONTEXT_BYTES", 200_000),
@@ -1760,21 +1759,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           harnessRunId: childInput.harnessRunId,
           executionPrincipal: childInput.executionPrincipal,
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
-          messages: [
-            { role: "user", content: args.objective },
-            {
-              role: "user",
-              content: [
-                "AVALON RUN CONTEXT (execution metadata, not durable policy):",
-                JSON.stringify({
-                  reason: "sub_agent",
-                  currentTime: nowIso(),
-                  requestId: childInput.harnessRunId,
-                  parentRequestId: parentInput.harnessRunId,
-                }),
-              ].join("\n"),
-            },
-          ],
+          messages: [{ role: "user", content: args.objective }],
           tools: childCoreTools,
           plugins: childPlugins,
           activationHints,
@@ -2142,7 +2127,7 @@ async function recordOpenRouterInferenceAttempt(
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
-  workstream: { title: string; objective: string; plannedFor: string | null },
+  workstream: { title: string; objective: string },
 ): Promise<{ systemPrompt: string; additionalMessages: ModelMessage[] }> {
   let automationContext:
     | {
@@ -2200,34 +2185,15 @@ async function loadRunPromptContext(
       metadata: parseJson(activity.metadata_json, {}),
     }));
   }
-  additionalMessages.push({
-    role: "user",
-    content: [
-      "AVALON RUN CONTEXT (execution metadata, not durable policy):",
-      JSON.stringify({
-        reason: input.reason,
-        currentTime: nowIso(),
-        plannedFor: workstream.plannedFor,
-        mode: ["opening_message", "human_message", "elicitation_answer"].includes(input.reason)
-          ? "interactive"
-          : "headless",
-        requestId: input.harnessRunId,
-        triggerMessageId: input.triggerMessageId,
-        activityId: input.activityId,
-      }),
-    ].join("\n"),
-  });
   return {
     // The prompt prefix is intentionally pure with respect to a saved task.
-    // Per-run time, reason, IDs, and trigger evidence live in user messages so
-    // OpenRouter can reuse the stable prefix and retries cannot drift policy.
+    // Volatile execution metadata stays in the durable host and does not become
+    // a synthetic model-visible user message. Trigger evidence remains explicit
+    // untrusted user data, and exact wall-clock time is available through the
+    // authoritative avalon.current_time core tool.
     systemPrompt: renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
-      runReason: "provided_in_final_run_context",
-      currentTime: "provided_in_final_run_context",
-      plannedFor: null,
-      interactive: false,
       ...(automationContext ? { automation: automationContext } : {}),
     }),
     additionalMessages,
@@ -3084,6 +3050,34 @@ function requireProviderIdempotencyKey(
   return providerIdempotencyKey;
 }
 
+function canonicalIanaTimezone(timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: timezone }).resolvedOptions().timeZone;
+  } catch {
+    throw new Error(`Invalid IANA timezone: ${timezone}`);
+  }
+}
+
+function easyEnglishCurrentTime(instant: Date, timezone: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).formatToParts(instant).map((part) => [part.type, part.value]),
+  );
+  return [
+    `current local time: ${parts.hour}:${parts.minute} ${parts.dayPeriod}`,
+    `local timezone: ${timezone}`,
+    `local date: ${parts.month} ${parts.day} ${parts.year}`,
+    `iso8601 timestamp: ${instant.toISOString()}`,
+  ].join("\n");
+}
+
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   const requestElicitationSchema = z.object({
     prompt: z.string().min(1).max(4_000),
@@ -3098,6 +3092,44 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     targetUserId: z.string().uuid().nullable().default(null),
   });
   const tools: HarnessTool[] = [
+    {
+      definition: {
+        name: "avalon.current_time",
+        description: "Return the current local time, IANA timezone, local date, and UTC ISO-8601 timestamp. Defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
+        capability: "time.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            timezone: {
+              type: "string",
+              minLength: 1,
+              maxLength: 100,
+              description: "Optional IANA timezone, for example America/New_York.",
+            },
+          },
+        },
+      },
+      execute: async (raw) => {
+        const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
+        let configuredTimezone: string | null = null;
+        if (!args.timezone && input.executionPrincipal.type === "user") {
+          configuredTimezone = (await env.DB.prepare(
+            "SELECT timezone FROM users WHERE id = ?",
+          ).bind(input.executionPrincipal.userId).first<{ timezone: string }>())?.timezone ?? null;
+        }
+        if (!args.timezone && !configuredTimezone) {
+          configuredTimezone = (await env.DB.prepare(
+            "SELECT timezone FROM workspaces WHERE id = ?",
+          ).bind(input.workspaceId).first<{ timezone: string }>())?.timezone ?? null;
+        }
+        const timezone = canonicalIanaTimezone(args.timezone ?? configuredTimezone ?? "");
+        const text = easyEnglishCurrentTime(new Date(), timezone);
+        return { output: text, summary: text };
+      },
+    },
     {
       definition: {
         name: "avalon.read_workstream",

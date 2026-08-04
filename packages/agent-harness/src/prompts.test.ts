@@ -76,24 +76,16 @@ describe("prompt renderers", () => {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
-          runReason: "human_message",
-          currentTime: "2026-08-03T01:02:03.000Z",
-          plannedFor: null,
-          interactive: true,
         }),
-        hash: "23f67284b7356390b0ac56a0f3334ac6758799e6f8162ee9e35d94a1acba2bcc",
+        hash: "ba080b48d6b78c88e6f0d21413b999edf5b1492c0c91633eb49449816348e68d",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Weekly engineering brief: 2026-08-07",
           objective: "Produce the scheduled weekly engineering brief.",
-          runReason: "schedule",
-          currentTime: "2026-08-07T16:00:00.000Z",
-          plannedFor: "2026-08-07T16:00:00.000Z",
-          interactive: false,
           automation: workstreamAutomation,
         }),
-        hash: "eba28bf3a5716e32ebb33e3492462b30bbacc6a0ddb1aba54c3c43608a6bf1ac",
+        hash: "88b8c16f91b04f64db5c8d3089c9320a2625cb7dfe51238cc38f405636e94e22",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -206,27 +198,19 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Weekly brief",
       objective: "Prepare the brief.",
-      runReason: "schedule",
-      currentTime: "2026-08-07T16:00:00.000Z",
-      plannedFor: "2026-08-07T16:00:00.000Z",
-      interactive: false,
       automation: workstreamAutomation,
     });
 
     expect(prompt).toContain('"expectedOutputs": [');
     expect(prompt).toContain('"defaultBehavior": {');
     expect(prompt).toContain('"overrides": {');
-    expect(prompt).toContain('"mode": "headless"');
+    expect(prompt).not.toContain('"execution"');
   });
 
   it("defines canonical person mention identity syntax", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Coordinate launch",
       objective: "Keep the launch team aligned.",
-      runReason: "human_message",
-      currentTime: "2026-08-03T00:00:00.000Z",
-      plannedFor: null,
-      interactive: true,
     });
 
     expect(prompt).toContain("[@Display Name](person:<person-id>)");
@@ -237,10 +221,6 @@ describe("prompt renderers", () => {
     const workstreamPrompt = renderWorkstreamSystemPrompt({
       title: "T",
       objective: "O",
-      runReason: "human_message",
-      currentTime: "2026-08-03T00:00:00.000Z",
-      plannedFor: null,
-      interactive: true,
     });
     const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
 

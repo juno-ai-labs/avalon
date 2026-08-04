@@ -145,6 +145,56 @@ function context(providerIdempotencyKey?: string) {
 }
 
 describe("Avalon core write-tool idempotency", () => {
+  it("returns easy-English current time in the user's configured timezone", async () => {
+    const { database, env } = fixture();
+    database.prepare("UPDATE users SET timezone = ? WHERE id = ?")
+      .run("America/New_York", USER_ID);
+    database.prepare("UPDATE workspaces SET timezone = ? WHERE id = ?")
+      .run("Europe/London", WORKSPACE_ID);
+    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((candidate) => candidate.definition.name === "avalon.current_time");
+
+    expect(tool?.definition).toMatchObject({
+      capability: "time.read",
+      mode: "read",
+      idempotency: "safe",
+    });
+    const result = await tool!.execute({}, context());
+    const lines = String(result.output).split("\n");
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toMatch(/^current local time: \d{1,2}:\d{2} (AM|PM)$/u);
+    expect(lines[1]).toBe("local timezone: America/New_York");
+    expect(lines[2]).toMatch(/^local date: [A-Z][a-z]+ \d{1,2} \d{4}$/u);
+    expect(lines[3]).toMatch(/^iso8601 timestamp: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+    expect(result.summary).toBe(result.output);
+  });
+
+  it("uses workspace time for workspace runs and validates explicit timezone overrides", async () => {
+    const { database, env } = fixture();
+    database.prepare("UPDATE workspaces SET timezone = ? WHERE id = ?")
+      .run("Europe/London", WORKSPACE_ID);
+    const workspaceInput = workflowInput();
+    workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
+    const tool = __integrationTesting.createAvalonTools(env, workspaceInput)
+      .find((candidate) => candidate.definition.name === "avalon.current_time");
+
+    const workspaceTime = await tool!.execute({}, {
+      ...context(),
+      executionPrincipal: workspaceInput.executionPrincipal,
+    });
+    expect(String(workspaceTime.output)).toContain("local timezone: Europe/London");
+
+    const overrideTime = await tool!.execute({ timezone: "America/Los_Angeles" }, {
+      ...context(),
+      executionPrincipal: workspaceInput.executionPrincipal,
+    });
+    expect(String(overrideTime.output)).toContain("local timezone: America/Los_Angeles");
+    await expect(tool!.execute({ timezone: "Mars/Olympus_Mons" }, {
+      ...context(),
+      executionPrincipal: workspaceInput.executionPrincipal,
+    })).rejects.toThrow("Invalid IANA timezone");
+  });
+
   it("converges artifact retries on one deterministic D1 row and R2 object", async () => {
     const { database, env, bucket } = fixture();
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())
