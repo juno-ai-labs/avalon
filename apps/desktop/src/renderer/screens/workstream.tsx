@@ -1,5 +1,6 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import clsx from 'clsx';
 import {
   Activity,
   AlertTriangle,
@@ -22,17 +23,20 @@ import {
   UserPlus,
   Zap,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { backgroundTasksFromMessages, type MentionIdentity } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
+import { useFileAttachments } from '../lib/use-file-attachments';
+import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, orderTranscript, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import type { BackgroundTask, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { InspectorRail } from '../components/inspector-rail';
+import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
@@ -320,6 +324,14 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [sending, setSending] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const pendingSendCount = useRef(0);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
+  const attachmentDraft = useFileAttachments(api);
+  const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
+  const railDrop = useFileDrop(attachmentDraft.addFiles);
+  const loadAttachmentContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    [api],
+  );
 
   useEffect(() => () => closeRail(), [closeRail, id]);
 
@@ -373,19 +385,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     onSuccess: (updated) => {
       queryClient.setQueryData(['workstream', id], updated);
       setParticipantDialogOpen(false);
-    },
-  });
-
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      if (file.size > 25_000_000) throw new Error('Files must be 25 MB or smaller.');
-      const resource = await api!.uploadResource(file);
-      return api!.attachResource(id, resource.id);
-    },
-    onSuccess: (updated) => {
-      queryClient.setQueryData(['workstream', id], updated);
-      setResourceDialogOpen(false);
-      setResourceSearch('');
     },
   });
 
@@ -468,6 +467,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     confirmedParticipantUserIds: string[] = [],
   ): Promise<void> => {
     if (!api || !workstream.data) throw new Error('This work stream is not ready to receive messages.');
+    const readyAttachments = attachmentDraft.ready;
     pendingSendCount.current += 1;
     setSending(true);
     setSendError(undefined);
@@ -483,6 +483,14 @@ export function WorkstreamScreen(): React.JSX.Element {
         author: workspaceMemberFromSession(session),
         messageType: 'text',
         text,
+        attachments: readyAttachments.flatMap((attachment) => attachment.resource ? [{
+          id: attachment.resource.id,
+          fileName: attachment.file.name,
+          mimeType: attachment.file.type || 'application/octet-stream',
+          sizeBytes: attachment.file.size,
+          contentAvailable: true,
+          createdAt: new Date().toISOString(),
+        }] : []),
         createdAt: new Date().toISOString(),
         deliveryState: 'sending',
         realtimeOrder: {
@@ -494,8 +502,15 @@ export function WorkstreamScreen(): React.JSX.Element {
       return orderTranscript([...(current ?? []), optimistic]);
     });
     try {
-      const created = await api.createMessage(id, { text, clientId, mentions, confirmedParticipantUserIds });
+      const created = await api.createMessage(id, {
+        text,
+        clientId,
+        mentions,
+        confirmedParticipantUserIds,
+        attachmentIds: readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []),
+      });
       queryClient.setQueryData<Message[]>(['messages', id], (current) => insertMessage(current, created));
+      attachmentDraft.consume();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
@@ -578,7 +593,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     <div className="workstream-screen">
       <WorkstreamHeader onAddParticipant={() => setParticipantDialogOpen(true)} workstream={displayedDetail} />
       <div
-        className="transcript-scroll"
+        className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
+        onDragEnter={transcriptDrop.onDragEnter}
+        onDragLeave={transcriptDrop.onDragLeave}
+        onDragOver={transcriptDrop.onDragOver}
+        onDrop={transcriptDrop.onDrop}
         onScroll={(event) => {
           const element = event.currentTarget;
           setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
@@ -593,8 +612,10 @@ export function WorkstreamScreen(): React.JSX.Element {
               <MessageBlock
                 currentUserId={session?.user.id}
                 key={message.id}
+                loadAttachmentContent={loadAttachmentContent}
                 message={message}
                 onAnswerElicitation={answerElicitation}
+                onOpenAttachment={setAttachmentPreview}
                 onResolveSuggestion={resolveSuggestion}
               />
             ))
@@ -620,24 +641,27 @@ export function WorkstreamScreen(): React.JSX.Element {
           <JumpToLatestButton onJump={() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })} />
         )}
         <WorkstreamComposer
-          error={sendError ?? upload.error?.message ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
+          attachments={attachmentDraft.attachments}
+          error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
           fileInputRef={fileInputRef}
           members={members.data ?? []}
-          onAttach={async (file) => {
-            await upload.mutateAsync(file);
-          }}
+          onAttach={attachmentDraft.addFiles}
+          onOpenAttachment={setAttachmentPreview}
+          onRemoveAttachment={attachmentDraft.removeAttachment}
+          onRetryAttachment={attachmentDraft.retryAttachment}
           onSend={sendMessage}
           onStop={async () => {
             await stop.mutateAsync();
           }}
           sending={sending}
           socketState={socketState}
-          uploading={upload.isPending}
+          uploading={attachmentDraft.uploading}
           workstream={displayedDetail}
         />
       </div>
 
       <InspectorRail
+        dropTarget={railDrop}
         error={watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message ?? reconnect.error?.message}
         messages={transcript}
         onAddParticipant={() => setParticipantDialogOpen(true)}
@@ -662,7 +686,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       />
       <AddResourceDialog
         current={displayedDetail.resources}
-        error={availableResources.error?.message ?? attachResource.error?.message ?? upload.error?.message}
+        error={availableResources.error?.message ?? attachResource.error?.message}
         fetching={availableResources.isFetchingNextPage}
         hasMore={Boolean(availableResources.hasNextPage)}
         loading={availableResources.isLoading}
@@ -673,12 +697,16 @@ export function WorkstreamScreen(): React.JSX.Element {
           if (!open) setResourceSearch('');
         }}
         onSearchChange={setResourceSearch}
-        onUpload={() => fileInputRef.current?.click()}
+        onUpload={() => {
+          setResourceDialogOpen(false);
+          fileInputRef.current?.click();
+        }}
         open={resourceDialogOpen}
-        pending={attachResource.isPending || upload.isPending}
+        pending={attachResource.isPending}
         resources={discoveredResources}
         search={resourceSearch}
       />
+      <AttachmentLightbox onClose={() => setAttachmentPreview(null)} preview={attachmentPreview} />
     </div>
   );
 }

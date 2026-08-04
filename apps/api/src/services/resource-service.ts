@@ -69,6 +69,10 @@ const INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL = `(r.provider != 'resend' OR r.reso
     )
 ))`;
 
+const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
+  OR r.attachment_status = 'attached'
+  OR r.uploaded_by_user_id = ?)`;
+
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     COALESCE(MAX(CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END), 0) AS watch_enabled
   FROM resources r
@@ -80,6 +84,7 @@ const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
   WHERE r.id = ? AND r.workspace_id = ?
     AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
     AND ${INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL}
+    AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
   GROUP BY r.id`;
 
 export class ResourceService {
@@ -93,6 +98,7 @@ export class ResourceService {
       "r.workspace_id = ?",
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
       INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
+      "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
     ];
     const bindings: unknown[] = [
       this.auth.workspaceId,
@@ -142,23 +148,57 @@ export class ResourceService {
     };
   }
 
-  async upload(file: File, title?: string) {
+  async upload(file: File, title: string | undefined, draftId: string) {
     const maxBytes = numericEnv(this.env, "MAX_ATTACHMENT_BYTES", 25_000_000);
+    if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);
-    const id = newId();
+    const id = draftId;
+    const existing = await this.env.DB.prepare(
+      `SELECT 1 FROM resources WHERE id = ?`,
+    ).bind(id).first();
+    if (existing) throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
     const key = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}`;
     await this.env.PAYLOADS.put(key, file.stream(), {
       httpMetadata: { contentType: file.type || "application/octet-stream", contentDisposition: `attachment; filename="${safeFilename(file.name)}"` },
       customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
     });
     const at = nowIso();
-    await this.env.DB.prepare(
-      `INSERT INTO resources
-       (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
-        metadata_json, last_hydrated_at, created_at, updated_at)
-       VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(id, this.auth.workspaceId, title ?? file.name, file.type || "application/octet-stream", key, JSON.stringify({ originalName: file.name, size: file.size }), at, at, at).run();
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+          metadata_json, last_hydrated_at, uploaded_by_user_id, attachment_status, created_at, updated_at)
+         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+      ).bind(
+        id,
+        this.auth.workspaceId,
+        title ?? file.name,
+        file.type || "application/octet-stream",
+        key,
+        JSON.stringify({ originalName: file.name, size: file.size }),
+        at,
+        this.auth.userId,
+        at,
+        at,
+      ).run();
+    } catch (error) {
+      await this.env.PAYLOADS.delete(key).catch(() => undefined);
+      throw error;
+    }
     return this.get(id);
+  }
+
+  async deleteDraft(id: string): Promise<void> {
+    const resource = await this.env.DB.prepare(
+      `DELETE FROM resources
+       WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
+         AND uploaded_by_user_id = ? AND attachment_status = 'draft'
+         AND NOT EXISTS (SELECT 1 FROM message_attachments WHERE resource_id = resources.id)
+         AND NOT EXISTS (SELECT 1 FROM workstream_resources WHERE resource_id = resources.id)
+       RETURNING content_ref`,
+    ).bind(id, this.auth.workspaceId, this.auth.userId).first<{ content_ref: string | null }>();
+    if (!resource) throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
+    if (resource.content_ref) await this.env.PAYLOADS.delete(resource.content_ref);
   }
 
   async resolve(input: ResolveResourceInput) {
@@ -302,6 +342,7 @@ export class ResourceService {
       this.auth.userId,
       this.auth.userId,
       this.auth.userId,
+      this.auth.userId,
     ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "resource_not_found", "Resource not found");
     return row;
@@ -380,6 +421,7 @@ function toResource(row: Record<string, unknown>) {
     watchEnabled, watchStatus: row.connection_id == null ? "unsupported" : watchEnabled ? "watching" : "paused",
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     contentAvailable: row.content_ref != null,
+    sizeBytes: Math.max(0, Number(parseJson<Record<string, unknown>>(row.metadata_json, {}).size ?? 0)),
   };
 }
 

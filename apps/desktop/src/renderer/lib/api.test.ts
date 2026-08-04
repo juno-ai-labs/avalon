@@ -84,6 +84,7 @@ const message = {
     startOffset: 11,
     endOffset: 31,
   }],
+  attachments: [],
   sequenceNumber: 4,
   createdAt: timestamp,
   editedAt: null,
@@ -104,6 +105,8 @@ const resource = {
   lastHydratedAt: null,
   createdAt: timestamp,
   updatedAt: timestamp,
+  contentAvailable: false,
+  sizeBytes: 0,
 };
 
 const session: DesktopSession = {

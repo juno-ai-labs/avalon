@@ -84,6 +84,17 @@ export interface WorkstreamResource {
   watchEnabled: boolean;
   watchStatus: 'watching' | 'paused' | 'unsupported' | 'error';
   updatedAt?: string;
+  contentAvailable?: boolean;
+  sizeBytes?: number;
+}
+
+export interface MessageAttachment {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  contentAvailable: boolean;
+  createdAt: string;
 }
 
 export interface ResourcePage {
@@ -176,6 +187,7 @@ export interface Message {
     | 'system';
   text?: string;
   mentions?: MessageMention[];
+  attachments?: MessageAttachment[];
   createdAt: string;
   streaming?: boolean;
   deliveryState?: 'sending';

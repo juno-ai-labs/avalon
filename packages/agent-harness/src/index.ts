@@ -47,11 +47,23 @@ export interface OpenRouterConfig {
 
 export interface ModelMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: ModelMessageContent;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ModelToolCall[];
 }
+
+/**
+ * OpenRouter multimodal content. `file` and `input_audio` are upstream
+ * extensions that are not yet represented by every OpenAI SDK release.
+ */
+export type ModelMessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
+  | { type: "file"; file: { filename: string; file_data: string } }
+  | { type: "input_audio"; input_audio: { data: string; format: string } };
+
+export type ModelMessageContent = string | ModelMessageContentPart[] | null;
 
 export type StructuredModelDiagnostic = {
   stage: "model_request" | "model_response" | "normalize" | "validate" | "repair" | "complete";
@@ -94,6 +106,7 @@ interface ChatRequest {
   toolChoice?: "auto" | "none";
   includeWebSearch?: boolean | undefined;
   maxWebResults?: number | undefined;
+  plugins?: Array<Record<string, unknown>> | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -373,7 +386,8 @@ export class OpenRouterClient {
           stream: true,
           stream_options: { include_usage: true },
           tools: tools.length > 0 ? tools : undefined,
-          tool_choice: tools.length > 0 ? (input.toolChoice ?? "auto") : undefined
+          tool_choice: tools.length > 0 ? (input.toolChoice ?? "auto") : undefined,
+          plugins: input.plugins?.length ? input.plugins : undefined,
         }),
         signal: AbortSignal.any([watchdog.signal, establishment.signal]),
       });

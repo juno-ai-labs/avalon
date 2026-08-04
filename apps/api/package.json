@@ -23,6 +23,7 @@
     "@avalon/contracts": "workspace:*",
     "@avalon/db": "workspace:*",
     "@hono/zod-validator": "latest",
+    "fflate": "^0.8.3",
     "hono": "latest",
     "jose": "latest",
     "rrule": "latest",

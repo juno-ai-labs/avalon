@@ -618,6 +618,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           const result = await client.stream({
             messages: requestMessages,
             ...(args.tools ? { tools: args.tools as unknown as Array<Record<string, unknown>> } : {}),
+            ...(modelMessagesContainFile(requestMessages)
+              ? { plugins: [{ id: "file-parser", pdf: { engine: "native" } }] }
+              : {}),
             includeWebSearch: false,
             signal: args.signal,
           }, async (delta) => {
@@ -1202,13 +1205,15 @@ function accountModelContext(input: {
   const activePluginSnippetBytes = input.systemPrompt.activePluginSnippets
     .reduce((bytes, snippet) => bytes + utf8Bytes(snippet), 0);
   const boundedCatalogBytes = utf8Bytes(input.systemPrompt.boundedCatalog);
-  const conversationAndToolResultBytes = jsonBytes(conversation);
+  const accountedConversation = binarySafeModelMessages(conversation);
+  const accountedMessages = binarySafeModelMessages(input.messages);
+  const conversationAndToolResultBytes = jsonBytes(accountedConversation);
   const toolSchemaBytes = input.tools.length > 0 ? jsonBytes(input.tools) : 0;
   // Measure the exact logical context handed to OpenRouter. Framing covers the
   // system-message role/object, JSON escaping, array separators, and the prompt
   // separators between independently measured policy/plugin/catalog sections.
   const aggregateBytes = jsonBytes({
-    messages: input.messages,
+    messages: accountedMessages,
     ...(input.tools.length > 0 ? { tools: input.tools } : {}),
   });
   const categorizedBytes = fixedPolicyBytes
@@ -1225,6 +1230,18 @@ function accountModelContext(input: {
     toolSchemaBytes,
     framingBytes: Math.max(0, aggregateBytes - categorizedBytes),
   };
+}
+
+function binarySafeModelMessages(messages: RunHarnessInput["messages"]): RunHarnessInput["messages"] {
+  return JSON.parse(JSON.stringify(messages, (key, value: unknown) => {
+    if ((key === "url" || key === "file_data") && typeof value === "string" && value.startsWith("data:")) {
+      return `[binary data URI omitted from text-context accounting; ${value.length} characters]`;
+    }
+    if (key === "data" && typeof value === "string" && value.length > 1_024) {
+      return `[binary audio omitted from text-context accounting; ${value.length} characters]`;
+    }
+    return value;
+  })) as RunHarnessInput["messages"];
 }
 
 function toolSchemaBytes(active: ReadonlySet<string>, registry: ToolRegistry<BindPlugin>): number {
@@ -1312,14 +1329,21 @@ function toOpenAiMessages(messages: RunHarnessInput["messages"]): OpenAI.ChatCom
     if (message.role === "assistant") {
       return {
         role: "assistant",
-        content: message.content,
+        content: message.content as unknown as OpenAI.ChatCompletionAssistantMessageParam["content"],
         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
-      };
+      } as OpenAI.ChatCompletionAssistantMessageParam;
     }
     if (message.role === "tool") {
-      return { role: "tool", content: message.content ?? "", tool_call_id: message.tool_call_id ?? "missing" };
+      return {
+        role: "tool",
+        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content ?? ""),
+        tool_call_id: message.tool_call_id ?? "missing",
+      };
     }
-    return { role: message.role, content: message.content ?? "" };
+    return {
+      role: message.role,
+      content: (message.content ?? "") as unknown as OpenAI.ChatCompletionMessageParam["content"],
+    } as OpenAI.ChatCompletionMessageParam;
   });
 }
 
@@ -1345,11 +1369,20 @@ function fromOpenAiMessages(messages: OpenAI.ChatCompletionMessageParam[]): RunH
     if (message.role === "system" || message.role === "developer" || message.role === "user") {
       result.push({
         role: message.role === "developer" ? "system" : message.role,
-        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+        content: message.role === "user" && Array.isArray(message.content)
+          ? message.content as unknown as ModelMessage["content"]
+          : typeof message.content === "string"
+            ? message.content
+            : JSON.stringify(message.content),
       });
     }
   }
   return result;
+}
+
+function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolean {
+  return messages.some((message) => Array.isArray(message.content)
+    && message.content.some((part) => part.type === "file"));
 }
 
 function harnessResultOutcome(toolCallId: string, result: HarnessToolResult) {

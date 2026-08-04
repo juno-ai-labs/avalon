@@ -47,6 +47,7 @@ describe("work-stream addressing", () => {
       clientMessageId: "single-participant-message",
       mentions: [],
       confirmedParticipantUserIds: [],
+      attachmentIds: [],
     });
 
     expect(result.agentInvoked).toBe(true);
@@ -66,6 +67,7 @@ describe("work-stream addressing", () => {
       clientMessageId: "multi-participant-message",
       mentions: [],
       confirmedParticipantUserIds: [],
+      attachmentIds: [],
     });
 
     expect(result.agentInvoked).toBe(false);
@@ -98,6 +100,7 @@ describe("work-stream addressing", () => {
       clientMessageId: "launch-failure-message",
       mentions: [],
       confirmedParticipantUserIds: [],
+      attachmentIds: [],
     })).rejects.toMatchObject({
       status: 503,
       code: "workflow_unavailable",
@@ -141,6 +144,7 @@ describe("work-stream person mention persistence", () => {
         endOffset: 24,
       }],
       confirmedParticipantUserIds: [],
+      attachmentIds: [],
     });
     await Promise.all(deferred);
 
@@ -183,6 +187,7 @@ describe("work-stream person mention persistence", () => {
         endOffset: 24,
       }],
       confirmedParticipantUserIds: [],
+      attachmentIds: [],
     });
     expect(replay.agentInvoked).toBe(false);
     expect(deferred).toHaveLength(1);
