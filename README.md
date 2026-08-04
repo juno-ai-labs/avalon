@@ -51,7 +51,7 @@ Settings also offers **Google Mail + Calendar** and **Google Drive + Docs + Shee
 
 ## Brand
 
-The canonical woven Avalon mark is generated into `assets/brand/avalon-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
+The canonical woven Avalon mark is generated into `assets/brand/avalon-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. The desktop generator emits a conventional bundle `icon.icns` plus named light/dark ICNS variants under `apps/desktop/resources/icons`; the running macOS app follows the native appearance and the family layout can accommodate future user-selectable icons. See [Desktop application icons](docs/DESKTOP_ICONS.md) before changing or adding an icon. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
 
 ## Quality commands
 
@@ -78,6 +78,7 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 - [Product requirements](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Desktop application icons](docs/DESKTOP_ICONS.md)
 - [Data model](docs/DATA_MODEL.md)
 - [Security model](docs/SECURITY.md)
 - [Regionalization](docs/REGIONALIZATION.md)
