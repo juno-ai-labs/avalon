@@ -28,6 +28,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatDuration, formatRelative } from '../lib/format';
+import { desktopBridge } from '../lib/platform';
 import type { AutomationRunSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from '../components/inspector-rail';
@@ -143,7 +144,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const copyAutomationEmail = async (): Promise<void> => {
     if (!automationEmailAddress) return;
     try {
-      await navigator.clipboard.writeText(automationEmailAddress);
+      await desktopBridge().copyText(automationEmailAddress);
       setAutomationEmailCopyState('copied');
     } catch {
       setAutomationEmailCopyState('failed');

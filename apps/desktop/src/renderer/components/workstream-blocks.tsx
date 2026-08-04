@@ -19,6 +19,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
+import { desktopBridge } from '../lib/platform';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { Badge, Button, InlineError } from './primitives';
 
@@ -82,7 +83,7 @@ function MarkdownCodeBlock({ code, language }: { code: string; language: string 
 
   const copy = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(code);
+      await desktopBridge().copyText(code);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_500);
     } catch {
@@ -447,7 +448,7 @@ export function MessageBlock({ currentUserId, message, onAnswerElicitation, onRe
         : message.text && <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>}
       {!human && !message.streaming && (
         <footer className="agent-message-actions">
-          <button aria-label="Copy response" onClick={() => void navigator.clipboard.writeText(message.text ?? '')} type="button"><Clipboard size={12} /> Copy</button>
+          <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(message.text ?? '')} type="button"><Clipboard size={12} /> Copy</button>
         </footer>
       )}
       {message.streaming && <span className="streaming-caret" aria-hidden="true" />}

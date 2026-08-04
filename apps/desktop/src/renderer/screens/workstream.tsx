@@ -2,6 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
+  AlertTriangle,
   ArrowDown,
   Bot,
   CalendarClock,
@@ -205,10 +206,10 @@ function WorkstreamHeader({
   const openRail = useUiStore((state) => state.openRail);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const copyLink = (): void => {
-    void navigator.clipboard.writeText(`avalon://workstreams/${workstream.id}`);
+    void desktopBridge().copyText(`avalon://workstreams/${workstream.id}`);
   };
   const copyEmailAddress = (): void => {
-    if (workstream.emailAddress) void navigator.clipboard.writeText(workstream.emailAddress);
+    if (workstream.emailAddress) void desktopBridge().copyText(workstream.emailAddress);
   };
   const runningTasks = workstream.backgroundTasks.filter((task) => task.status === 'running').length;
 
@@ -250,7 +251,7 @@ function WorkstreamHeader({
               {workstream.emailAddress && (
                 <DropdownMenu.Item className="menu-item" onSelect={copyEmailAddress}><Mail size={14} /> Copy work-stream email address</DropdownMenu.Item>
               )}
-              <DropdownMenu.Item className="menu-item" onSelect={() => void navigator.clipboard.writeText(workstream.id)}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={() => void desktopBridge().copyText(workstream.id)}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -264,6 +265,42 @@ export function JumpToLatestButton({ onJump }: { onJump: () => void }): React.JS
     <IconButton className="jump-bottom" label="Jump to latest" onClick={onJump} tooltipSide="top">
       <ArrowDown aria-hidden="true" size={15} />
     </IconButton>
+  );
+}
+
+export function RunFailureNotice({
+  code,
+  message,
+  requestId,
+  retrying,
+  onCopyRequestId,
+  onRetry,
+}: {
+  code: string;
+  message: string;
+  requestId?: string;
+  retrying: boolean;
+  onCopyRequestId: () => void;
+  onRetry: () => void;
+}): React.JSX.Element {
+  return (
+    <section aria-label="Run failed" className="run-failure-notice" role="alert">
+      <span aria-hidden="true" className="run-failure-icon"><AlertTriangle size={16} /></span>
+      <div className="run-failure-copy">
+        <strong>Run failed</strong>
+        <p>{message}</p>
+        <code>{code}</code>
+      </div>
+      <div className="run-failure-actions">
+        {requestId ? (
+          <Button onClick={onCopyRequestId}><Copy aria-hidden="true" size={13} /> Copy request ID</Button>
+        ) : null}
+        <Button className="button-primary" disabled={retrying} onClick={onRetry}>
+          {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
+          Retry
+        </Button>
+      </div>
+    </section>
   );
 }
 
@@ -282,7 +319,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const sendInFlight = useRef(false);
+  const pendingSendCount = useRef(0);
 
   useEffect(() => () => closeRail(), [closeRail, id]);
 
@@ -366,6 +403,17 @@ export function WorkstreamScreen(): React.JSX.Element {
     onSuccess: () => void workstream.refetch(),
   });
 
+  const retry = useMutation({
+    mutationFn: () => api!.retryHarness(id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
+        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
+        queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+      ]);
+    },
+  });
+
   const reconnect = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
       const url = await api!.reconnectConnection(connection.id);
@@ -419,8 +467,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
   ): Promise<void> => {
-    if (!api || !workstream.data || sendInFlight.current) return;
-    sendInFlight.current = true;
+    if (!api || !workstream.data) throw new Error('This work stream is not ready to receive messages.');
+    pendingSendCount.current += 1;
     setSending(true);
     setSendError(undefined);
     const clientId = crypto.randomUUID();
@@ -458,8 +506,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       setSendError(error instanceof Error ? error.message : 'The message could not be sent.');
       throw error;
     } finally {
-      sendInFlight.current = false;
-      setSending(false);
+      pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
+      if (pendingSendCount.current === 0) setSending(false);
     }
   };
 
@@ -554,6 +602,16 @@ export function WorkstreamScreen(): React.JSX.Element {
           {detail.harnessStatus === 'running' && !transcript.some((message) => message.streaming) && (
             <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
           )}
+          {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
+            <RunFailureNotice
+              code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
+              message={detail.latestHarnessRun.error?.message ?? 'Avalon could not complete this run. Retry it, or copy the request ID for support.'}
+              onCopyRequestId={() => void desktopBridge().copyText(detail.latestHarnessRun?.requestId ?? detail.latestHarnessRun!.id)}
+              onRetry={() => retry.mutate()}
+              requestId={detail.latestHarnessRun.requestId ?? detail.latestHarnessRun.id}
+              retrying={retry.isPending}
+            />
+          )}
         </div>
       </div>
 
@@ -562,7 +620,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           <JumpToLatestButton onJump={() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })} />
         )}
         <WorkstreamComposer
-          error={sendError ?? upload.error?.message ?? attachResource.error?.message ?? stop.error?.message ?? reconnect.error?.message}
+          error={sendError ?? upload.error?.message ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
           fileInputRef={fileInputRef}
           members={members.data ?? []}
           onAttach={async (file) => {

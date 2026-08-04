@@ -13,6 +13,12 @@ function toolFailure(
     toolCallId: "run-1:turn:1:tool:0",
     toolName: "connector.create",
     pluginId: "connection:connection-1",
+    policy: {
+      canonicalToolName: "connector.create",
+      capability: "records.write",
+      mode: "write",
+      idempotency: "record_before_execute",
+    },
     error: "Provider request failed",
     phase,
     outcome,

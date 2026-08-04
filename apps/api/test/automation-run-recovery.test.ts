@@ -101,6 +101,9 @@ class ManualRunStatement {
       return this.database.subscription as T;
     }
     if (normalized.includes("FROM automation_runs r LEFT JOIN harness_runs h")) {
+      if (!normalized.includes("h.parent_tool_call_id IS NULL")) {
+        throw new Error("idempotent automation recovery must ignore inline child runs");
+      }
       const run = this.database.run;
       if (!run || run.workspaceId !== this.values[0] || run.subscriptionId !== this.values[1] || run.idempotencyKey !== this.values[2]) {
         return null;

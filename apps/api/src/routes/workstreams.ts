@@ -88,6 +88,9 @@ workstreamRoutes.post("/:id/stop", zValidator("param", idParam), async (c) => {
   await new WorkstreamService(c.env, getAuth(c)).stop(c.req.valid("param").id);
   return c.body(null, 204);
 });
+workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) =>
+  c.json(await new WorkstreamService(c.env, getAuth(c)).retry(c.req.valid("param").id), 202),
+);
 workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id)),
 );

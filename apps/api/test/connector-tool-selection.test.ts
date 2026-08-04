@@ -17,6 +17,7 @@ const OTHER_CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
 const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000009";
 const WEB_MONITOR_CONNECTION_ID = "00000000-0000-4000-8000-000000000010";
 const OTHER_WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000011";
+const CHILD_HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000012";
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
   "drive.read",
@@ -145,7 +146,9 @@ function connection(
     owner_user_id: ownerUserId,
     granted_scopes_json: JSON.stringify(capabilities),
     cursor_json: "{}",
-    config_json: "{}",
+    config_json: JSON.stringify(connectorType === "web_monitor"
+      ? { url: "https://example.com/workspace-fixture", intervalSeconds: 3600, region: "global" }
+      : {}),
     status: "healthy",
     created_at: createdAt,
   };
@@ -193,7 +196,267 @@ function pluginConnectionIds(
   return selected.plugins.map((plugin) => plugin.canonicalId.slice("connection:".length));
 }
 
+function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
+  return {
+    ...parent,
+    harnessRunId: CHILD_HARNESS_RUN_ID,
+    reason: "sub_agent",
+  };
+}
+
 describe("connector tools selected for harness runs", () => {
+  it("resolves durable receipt policy from canonical identity, never a provider wire alias", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+      connection(
+        WEB_MONITOR_CONNECTION_ID,
+        "workspace",
+        null,
+        ["web.read"],
+        "2026-08-01T00:00:01.000Z",
+        WORKSPACE_ID,
+        "web_monitor",
+      ),
+    ]);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+
+    const listPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: "avalon:core",
+      canonicalToolName: "list_connector_plugins",
+      capability: "avalon.plugins.list",
+      mode: "read",
+      idempotency: "safe",
+    }, selected);
+    const loadPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: "avalon:core",
+      canonicalToolName: "load_plugin",
+      capability: "avalon.plugins.load",
+      mode: "read",
+      idempotency: "safe",
+    }, selected);
+    const monitorPluginId = `connection:${WEB_MONITOR_CONNECTION_ID}`;
+    const monitorPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: monitorPluginId,
+      canonicalToolName: "web_monitor.fetch",
+      capability: "web.read",
+      mode: "read",
+      idempotency: "safe",
+    }, selected);
+
+    expect(listPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
+    expect(loadPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
+    expect(monitorPolicy).toMatchObject({
+      pluginId: monitorPluginId,
+      connectionId: WEB_MONITOR_CONNECTION_ID,
+      definition: { name: "web_monitor.fetch", mode: "read", idempotency: "safe" },
+    });
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
+      pluginId: monitorPolicy.pluginId,
+      canonicalToolName: monitorPolicy.definition.name,
+      capability: monitorPolicy.definition.capability,
+      mode: monitorPolicy.definition.mode,
+      idempotency: monitorPolicy.definition.idempotency,
+      connectionId: monitorPolicy.connectionId,
+      toolSurfaceHash: monitorPolicy.toolSurfaceHash,
+    }), monitorPolicy)).toBe(true);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
+      pluginId: monitorPolicy.pluginId,
+      canonicalToolName: monitorPolicy.definition.name,
+      capability: monitorPolicy.definition.capability,
+      mode: "write",
+      idempotency: "record_before_execute",
+      connectionId: monitorPolicy.connectionId,
+      toolSurfaceHash: monitorPolicy.toolSurfaceHash,
+    }), monitorPolicy)).toBe(false);
+    expect(() => __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: monitorPluginId,
+      canonicalToolName: "web_monitor.fetch",
+      capability: "web.read",
+      mode: "write",
+      idempotency: "record_before_execute",
+    }, selected)).toThrow("outside this run scope");
+  });
+
+  it("installs one durable read-only sub-agent tool into the root core surface", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const parentInput = workflowInput();
+    const selected = await __integrationTesting.loadHarnessTools(env(database), parentInput);
+
+    const tool = __integrationTesting.installInlineChildAgentTool({
+      env: env(database),
+      input: parentInput,
+      parentLease: () => ({
+        attemptId: "attempt-parent",
+        owner: "owner-parent",
+        attemptNumber: 1,
+        leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+      }),
+      parentSignal: new AbortController().signal,
+      runAuthoritySnapshot: {
+        automationRunId: null,
+        automationTemplateVersionId: null,
+        triggerType: null,
+      },
+      harnessTools: selected,
+      activeCredentialPluginIds: new Set(),
+    });
+
+    expect(tool.definition).toMatchObject({
+      name: "avalon.run_subagent",
+      capability: "subagent.run",
+      mode: "read",
+      idempotency: "safe",
+    });
+    expect(selected.coreTools.filter(({ definition }) =>
+      definition.name === "avalon.run_subagent"
+    )).toHaveLength(1);
+    expect(selected.tools.filter(({ definition }) =>
+      definition.name === "avalon.run_subagent"
+    )).toHaveLength(1);
+    expect(selected.modeByTool.get("avalon.run_subagent")).toBe("read");
+    expect(selected.idempotencyByTool.get("avalon.run_subagent")).toBe("safe");
+  });
+
+  it("builds a non-recursive read-only child surface from only inherited active plugins", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID),
+    ]);
+    const parentInput = workflowInput();
+    const runtimeEnv = {
+      ...env(database),
+      FIRECRAWL_API_KEY: "firecrawl-test-key",
+    } as Env;
+    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
+    expect(parentTools.plugins).toHaveLength(2);
+    expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
+      .some((tool) => tool.definition.mode === "write")).toBe(true);
+
+    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
+      env: runtimeEnv,
+      parentInput,
+      childInput: childWorkflowInput(parentInput),
+      parentHarnessTools: parentTools,
+      selectedPluginIds: [`connection:${WORKSPACE_CONNECTION_ID}`],
+      assertChildOwned: async () => undefined,
+    });
+
+    expect(childTools.plugins.map((plugin) => plugin.canonicalId)).toEqual([
+      `connection:${WORKSPACE_CONNECTION_ID}`,
+    ]);
+    expect(childTools.plugins[0]).toMatchObject({ preload: true, explicit: true });
+    expect(childTools.tools.every((tool) => tool.definition.mode === "read")).toBe(true);
+    expect(childTools.plugins[0]?.tools.map((tool) => tool.definition.name)).toEqual([
+      "google.drive.search",
+      "google.drive.get_metadata",
+      "google.drive.download",
+      "google.drive.export",
+      "google.docs.read_document",
+      "google.sheets.read_spreadsheet",
+      "google.sheets.read_values",
+    ]);
+    expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
+      "avalon.read_workstream",
+      "avalon.read_resource",
+      "avalon.web_search",
+      "avalon.web_fetch",
+    ]);
+    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.run_subagent");
+    expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
+    expect(childTools.frozenConnections.has(`connection:${WORKSPACE_CONNECTION_ID}`)).toBe(true);
+  });
+
+  it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
+    const database = new ToolSelectionDatabase([]);
+    const parentInput = workflowInput();
+    parentInput.reason = "inbound_email";
+    const runtimeEnv = {
+      ...env(database),
+      FIRECRAWL_API_KEY: "firecrawl-test-key",
+    } as Env;
+    const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
+
+    const childTools = await __integrationTesting.createInlineChildHarnessSurface({
+      env: runtimeEnv,
+      parentInput,
+      childInput: childWorkflowInput(parentInput),
+      parentHarnessTools: parentTools,
+      selectedPluginIds: [],
+      assertChildOwned: async () => undefined,
+    });
+
+    expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
+      "avalon.read_workstream",
+      "avalon.read_resource",
+    ]);
+    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.web_search");
+    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.web_fetch");
+  });
+
+  it("bounds child tool results to leave room for search, fetch, and synthesis", () => {
+    const defaultLimits = __integrationTesting.childRunLimits({
+      ...env(new ToolSelectionDatabase([])),
+      HARNESS_MAX_TOOL_RESULT_BYTES: String(128 * 1_024),
+    } as Env);
+
+    expect(defaultLimits).toMatchObject({
+      maxRunTokens: 12_000,
+      maxToolResultBytes: 24_000,
+    });
+
+    const smallerTokenBudget = __integrationTesting.childRunLimits({
+      ...env(new ToolSelectionDatabase([])),
+      HARNESS_CHILD_MAX_RUN_TOKENS: "2000",
+      HARNESS_MAX_TOOL_RESULT_BYTES: String(128 * 1_024),
+    } as Env);
+    expect(smallerTokenBudget).toMatchObject({
+      maxRunTokens: 2_000,
+      maxToolResultBytes: 4_000,
+    });
+  });
+
+  it("rejects a child request for a credential plugin not already active in the parent", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(WORKSPACE_CONNECTION_ID, "workspace", null),
+      connection(OWNER_CONNECTION_ID, "personal", USER_ID),
+    ]);
+    const parentInput = workflowInput();
+    const selected = await __integrationTesting.loadHarnessTools(env(database), parentInput);
+    const tool = __integrationTesting.installInlineChildAgentTool({
+      env: env(database),
+      input: parentInput,
+      parentLease: () => ({
+        attemptId: "attempt-parent",
+        owner: "owner-parent",
+        attemptNumber: 1,
+        leaseExpiresAt: "2099-01-01T00:00:00.000Z",
+      }),
+      parentSignal: new AbortController().signal,
+      runAuthoritySnapshot: {
+        automationRunId: null,
+        automationTemplateVersionId: null,
+        triggerType: null,
+      },
+      harnessTools: selected,
+      activeCredentialPluginIds: new Set([`connection:${WORKSPACE_CONNECTION_ID}`]),
+    });
+
+    await expect(tool.execute(
+      {
+        objective: "Read the private plan",
+        pluginIds: [`connection:${OWNER_CONNECTION_ID}`],
+      },
+      {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        harnessRunId: HARNESS_RUN_ID,
+        toolCallId: "tool-inactive-child-plugin",
+        executionPrincipal: { type: "user", userId: USER_ID },
+        signal: new AbortController().signal,
+      },
+    )).rejects.toThrow("only inherit connector plugins already activated");
+  });
+
   it("executes a workspace tool as the workspace principal and omits another workspace's connection", async () => {
     const fetcher = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(
       "workspace-only fixture",
@@ -229,11 +492,12 @@ describe("connector tools selected for harness runs", () => {
     const tool = selected.tools.find(({ definition }) => definition.name === "web_monitor.fetch");
     expect(tool).toBeDefined();
     const result = await tool!.execute(
-      { url: "https://example.com/workspace-fixture" },
+      {},
       {
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
         harnessRunId: HARNESS_RUN_ID,
+        toolCallId: "tool-web-monitor-fetch",
         executionPrincipal: { type: "user", userId: USER_ID },
         signal: new AbortController().signal,
       },

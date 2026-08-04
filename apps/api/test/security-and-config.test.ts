@@ -66,6 +66,38 @@ describe("API security utilities", () => {
     });
   });
 
+  it("never exposes persisted harness exception or provider detail to members", () => {
+    const providerFailure = __workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+      code: "provider_error",
+      message: "OpenRouter rejected sk-secret with upstream body: private",
+    }));
+    expect(providerFailure).toEqual({
+      code: "provider_error",
+      message: "The model provider could not complete this run",
+    });
+    expect(JSON.stringify(providerFailure)).not.toContain("sk-secret");
+
+    expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+      code: "run_token_limit_exceeded",
+      message: "raw internal accounting state",
+    }))).toEqual({
+      code: "run_token_limit_exceeded",
+      message: "This run reached its token limit",
+    });
+
+    for (const unsafeValue of [
+      JSON.stringify({ code: "attacker-controlled-code", message: "database credentials" }),
+      "not-json",
+      JSON.stringify({ message: "filesystem path and stack" }),
+    ]) {
+      expect(__workstreamServiceTesting.memberSafeHarnessError(unsafeValue)).toEqual({
+        code: "harness_execution_failed",
+        message: "The Avalon harness could not complete this run",
+      });
+    }
+    expect(__workstreamServiceTesting.memberSafeHarnessError(null)).toBeNull();
+  });
+
   it("binds suggested provider resources to their originating connection", () => {
     const sql = __workstreamServiceTesting.activityResourceLookupSql.replace(/\s+/gu, " ");
     expect(sql).toContain("connection_id = ?");

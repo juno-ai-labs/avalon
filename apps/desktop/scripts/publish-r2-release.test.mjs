@@ -7,6 +7,11 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
 
+import {
+  purgeAndVerifyImmutableReleaseUrls,
+  purgeCloudflareUrls,
+} from './release-cache.mjs';
+
 const execFileAsync = promisify(execFile);
 const publisherPath = new URL('./publish-r2-release.mjs', import.meta.url);
 const version = '0.1.0';
@@ -81,6 +86,14 @@ test('dry-run resolves the complete release transaction without cloud access or 
     const plan = JSON.parse(stdout);
     assert.equal(plan.dryRun, true);
     assert.ok(plan.immutableObjects.includes(`stable/darwin/arm64/${version}/SHA256SUMS`));
+    assert.deepEqual(plan.immutableCachePurgeUrls, [
+      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64-mac.zip`,
+      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64-mac.zip.blockmap`,
+      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg`,
+      `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg.blockmap`,
+      `https://downloads.with-avalon.com/stable/darwin/arm64/${version}/SHA256SUMS`,
+    ]);
+    assert.ok(plan.immutableCachePurgeUrls.every((url) => !url.includes('?')));
     assert.equal(plan.canonicalDmg, 'stable/darwin/arm64/Avalon.dmg');
     assert.equal(plan.latestManifest, 'stable/darwin/arm64/latest-mac.yml');
     assert.equal(plan.siteRelease.published, true);
@@ -150,4 +163,94 @@ test('dry-run rejects a release that does not advance exactly one minor version'
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }
+});
+
+test('purges exact immutable URLs in one confirmed Cloudflare request', async () => {
+  const urls = [
+    `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg`,
+    `https://downloads.with-avalon.com/stable/darwin/arm64/${version}/SHA256SUMS`,
+  ];
+  let request;
+  await purgeCloudflareUrls({
+    apiToken: 'test-api-token',
+    zoneId: 'test-zone-id',
+    urls,
+    fetchImplementation: async (url, init) => {
+      request = { url, init };
+      return Response.json({
+        success: true,
+        errors: [],
+        result: { id: 'confirmed-purge-id' },
+      });
+    },
+  });
+
+  assert.equal(
+    request.url,
+    'https://api.cloudflare.com/client/v4/zones/test-zone-id/purge_cache',
+  );
+  assert.equal(request.init.method, 'POST');
+  assert.equal(new Headers(request.init.headers).get('authorization'), 'Bearer test-api-token');
+  assert.deepEqual(JSON.parse(request.init.body), { files: urls });
+});
+
+test('fails closed and redacts Cloudflare purge failure details', async () => {
+  const apiToken = 'test-api-token-must-not-leak';
+  const providerDetail = 'provider-detail-must-not-leak';
+  await assert.rejects(
+    purgeCloudflareUrls({
+      apiToken,
+      zoneId: 'test-zone-id',
+      urls: ['https://downloads.with-avalon.com/stable/darwin/arm64/artifact.zip'],
+      fetchImplementation: async () => Response.json({
+        success: false,
+        errors: [{ code: 1001, message: `${providerDetail}: ${apiToken}` }],
+      }, { status: 403 }),
+    }),
+    (error) => {
+      assert.match(error.message, /could not be confirmed \(HTTP 403; codes: 1001\)/u);
+      assert.ok(!error.message.includes(apiToken));
+      assert.ok(!error.message.includes(providerDetail));
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    purgeCloudflareUrls({
+      apiToken,
+      zoneId: 'test-zone-id',
+      urls: ['https://downloads.with-avalon.com/stable/darwin/arm64/artifact.zip'],
+      fetchImplementation: async () => Response.json({ success: true, errors: [] }),
+    }),
+    /could not be confirmed/u,
+  );
+});
+
+test('does not verify immutable public artifacts until their purge is confirmed', async () => {
+  const artifacts = [
+    { name: 'artifact.zip', url: 'https://downloads.with-avalon.com/artifact.zip' },
+    { name: 'artifact.zip.blockmap', url: 'https://downloads.with-avalon.com/artifact.zip.blockmap' },
+  ];
+  const events = [];
+  await purgeAndVerifyImmutableReleaseUrls({
+    artifacts,
+    purgeUrls: async (urls) => { events.push(['purge', ...urls]); },
+    verifyArtifact: async ({ name }) => { events.push(['verify', name]); },
+  });
+  assert.deepEqual(events, [
+    ['purge', ...artifacts.map(({ url }) => url)],
+    ['verify', 'artifact.zip'],
+    ['verify', 'artifact.zip.blockmap'],
+  ]);
+
+  let verified = false;
+  await assert.rejects(
+    purgeAndVerifyImmutableReleaseUrls({
+      artifacts,
+      purgeUrls: async () => { throw new Error('purge rejected'); },
+      verifyArtifact: async () => { verified = true; },
+    }),
+    /purge rejected/u,
+  );
+  assert.equal(verified, false);
 });

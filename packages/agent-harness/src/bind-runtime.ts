@@ -37,6 +37,7 @@ import { z } from "zod";
 import type { HarnessFailureCode } from "@avalon/contracts";
 import { modelContextBudget } from "./context-budget";
 import {
+  BIND_RUNTIME_CORE_TOOL_DEFINITIONS,
   OpenRouterClient,
   OpenRouterError,
   canonicalToolInputHash,
@@ -46,6 +47,7 @@ import {
   type HarnessPlugin,
   type HarnessTool,
   type HarnessToolContext,
+  type HarnessToolPolicyIdentity,
   type HarnessToolResult,
   type ModelMessage,
   type RunHarnessInput,
@@ -67,6 +69,8 @@ const circuitBreaker = createCircuitBreaker({
 type BindPlugin = ToolPlugin<HarnessToolContext> & {
   canonicalId: string;
   shortWireName: string;
+  displayName?: string;
+  searchAliases: readonly string[];
   explicit: boolean;
   toolByWireName: Map<string, HarnessTool>;
   modeByWireName: Map<string, "read" | "write">;
@@ -293,6 +297,12 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }),
           };
         }
+        const policy: HarnessToolPolicyIdentity = {
+          canonicalToolName: dispatched.tool.definition.name,
+          capability: dispatched.tool.definition.capability,
+          mode: dispatched.tool.definition.mode,
+          idempotency: dispatched.tool.definition.idempotency,
+        };
         let args: unknown;
         try {
           args = JSON.parse(toolCall.function.arguments || "{}") as unknown;
@@ -302,6 +312,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             toolCallId: toolCall.id,
             toolName: toolCall.function.name,
             pluginId: dispatched.pluginId,
+            policy,
             error: "Tool arguments were not valid JSON",
             phase: "validation",
             outcome: "definitive_failure",
@@ -319,19 +330,22 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         const receiptId = position
           ? `${input.harnessRunId}:turn:${position.turn}:tool:${position.index}`
           : `${input.harnessRunId}:tool:${toolCall.function.name}:${inputHash.slice(0, 32)}`;
-        const completed = await requiredPort(
-          "Tool receipt lookup failed",
-          () => input.findCompletedToolResult?.(receiptId, inputHash),
-        );
-        if (completed) {
-          return harnessResultOutcome(toolCall.id, completed);
-        }
         await requiredPort("Tool authorization revalidation failed", () => input.beforeToolCall?.({
             pluginId: dispatched.pluginId,
             toolName: dispatched.tool.definition.name,
             inputHash,
             signal,
           }));
+        const completed = await requiredPort(
+          "Tool receipt lookup failed",
+          () => input.findCompletedToolResult?.(receiptId, inputHash, {
+            pluginId: dispatched.pluginId,
+            ...policy,
+          }),
+        );
+        if (completed) {
+          return harnessResultOutcome(toolCall.id, completed);
+        }
         const executionPlanHash = await canonicalToolInputHash({
           pluginId: dispatched.pluginId,
           toolName: dispatched.tool.definition.name,
@@ -363,16 +377,21 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           toolCallId: receiptId,
           toolName: toolCall.function.name,
           pluginId: dispatched.pluginId,
+          policy,
           input: args,
           ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
         });
-        const toolSignal = combinedTimeoutSignal(signal, input.config.toolTimeoutMs);
+        const toolSignal = combinedTimeoutSignal(
+          signal,
+          dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
+        );
         let toolResult: HarnessToolResult;
         try {
           toolResult = await raceWithSignal(dispatched.tool.execute(args, {
             workspaceId: input.workspaceId,
             workstreamId: input.workstreamId,
             harnessRunId: input.harnessRunId,
+            toolCallId: receiptId,
             executionPrincipal: input.executionPrincipal,
             ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
             signal: toolSignal,
@@ -395,6 +414,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             toolCallId: receiptId,
             toolName: toolCall.function.name,
             pluginId: dispatched.pluginId,
+            policy,
             error: message,
             phase: "execution",
             outcome: failureOutcome,
@@ -441,6 +461,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           toolCallId: receiptId,
           toolName: toolCall.function.name,
           pluginId: dispatched.pluginId,
+          policy,
           result: persistedResult,
         });
         await requiredPort("Tool completion checkpoint persistence failed", () => input.checkpointToolInvocation?.({
@@ -754,12 +775,38 @@ async function createPluginRuntime(
   };
 
   const resolveTool = (wireName: string) => {
+    // Prefer the exact name Avalon advertised. Some OpenRouter routes have
+    // nevertheless returned a namespaced/canonical alias (for example,
+    // `avalon_core.web_monitor_fetch`) after a plugin was loaded. Bind has
+    // already rebuilt the next-turn tool surface at that point; rejecting the
+    // alias would make a successfully activated tool appear unavailable.
     for (const id of [...active].sort()) {
       const plugin = registry.get(id);
       const tool = plugin?.toolByWireName.get(wireName);
       if (tool) return { pluginId: id, tool };
     }
-    return null;
+
+    // Alias resolution is deliberately scoped to the current active surface
+    // and succeeds only when one tool matches. It therefore cannot activate a
+    // plugin, widen the frozen run authority, or guess across two credential
+    // plugins exposing the same canonical tool name. Host authorization and
+    // health checks still run immediately before the resolved tool executes.
+    const aliases = providerToolAliasCandidates(wireName);
+    const matches: Array<{ pluginId: string; tool: HarnessTool }> = [];
+    for (const id of [...active].sort()) {
+      const plugin = registry.get(id);
+      if (!plugin) continue;
+      for (const [advertisedWireName, tool] of plugin.toolByWireName) {
+        const identities = [
+          normalizeToolIdentity(advertisedWireName),
+          normalizeToolIdentity(tool.definition.name),
+        ];
+        if (identities.some((identity) => identity && aliases.has(identity))) {
+          matches.push({ pluginId: id, tool });
+        }
+      }
+    }
+    return matches.length === 1 ? matches[0]! : null;
   };
 
   const catalogTool = plugins[0]!.toolByWireName.get("avalon_load_plugin");
@@ -775,9 +822,14 @@ async function createPluginRuntime(
       const next = new Set(active).add(id);
       assertActiveSurface(next);
       await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
+      const plugin = registry.get(id)!;
+      const tools = plugin.tools.map((tool) => ({
+        name: stableWireToolName(plugin.shortWireName, tool.name),
+        description: tool.description,
+      }));
       return {
-        output: { loaded: id },
-        summary: `Loaded ${id}`,
+        output: { loaded: id, tools },
+        summary: `Loaded ${plugin.displayName ?? id}; ${tools.length} tools are now available`,
         loadedPluginName: id,
       } as HarnessToolResult;
     };
@@ -796,7 +848,9 @@ async function createPluginRuntime(
         ? String(raw.query).trim().toLowerCase()
         : "";
       const matches = connectorCatalog(registry).filter((plugin) =>
-        `${plugin.id} ${plugin.description}`.toLowerCase().includes(query));
+        `${plugin.id} ${plugin.displayName ?? ""} ${plugin.searchAliases.join(" ")} ${plugin.description}`
+          .toLowerCase()
+          .includes(query));
       return {
         output: { plugins: matches },
         summary: `Found ${matches.length} authorized connector plugins`,
@@ -831,49 +885,14 @@ async function createPluginRuntime(
 
 function corePlugin(input: RunHarnessInput): BindPlugin {
   const tools = [...input.tools];
-  tools.push({
-    definition: {
-      name: "list_connector_plugins",
-      description: "List authorized connector plugins available to this frozen run scope.",
-      capability: "avalon.plugins.list",
-      mode: "read",
-      idempotency: "safe",
-      inputSchema: { type: "object", additionalProperties: false, properties: {} },
-    },
-    execute: async () => ({ output: { plugins: [] }, summary: "Plugin catalog unavailable" }),
-  });
-  tools.push({
-    definition: {
-      name: "search_connector_plugins",
-      description: "Search authorized connector plugins available to this frozen run scope.",
-      capability: "avalon.plugins.search",
-      mode: "read",
-      idempotency: "safe",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { query: { type: "string", minLength: 1 } },
-        required: ["query"],
-      },
-    },
-    execute: async () => ({ output: { plugins: [] }, summary: "Plugin catalog unavailable" }),
-  });
-  tools.push({
-    definition: {
-      name: "load_plugin",
-      description: "Load one authorized connector plugin from the catalog for this run.",
-      capability: "avalon.plugins.load",
-      mode: "write",
-      idempotency: "safe",
-      inputSchema: {
-        type: "object",
-        additionalProperties: false,
-        properties: { pluginId: { type: "string" } },
-        required: ["pluginId"],
-      },
-    },
-    execute: async () => ({ output: { error: "activation_not_initialized" }, summary: "Activation unavailable" }),
-  });
+  for (const definition of BIND_RUNTIME_CORE_TOOL_DEFINITIONS) {
+    tools.push({
+      definition,
+      execute: async () => definition.name === "load_plugin"
+        ? { output: { error: "activation_not_initialized" }, summary: "Activation unavailable" }
+        : { output: { plugins: [] }, summary: "Plugin catalog unavailable" },
+    });
+  }
   return buildPlugin({
     canonicalId: CORE_PLUGIN_ID,
     shortWireName: "avalon",
@@ -928,6 +947,8 @@ function buildPlugin(plugin: HarnessPlugin): BindPlugin {
     ...generated,
     canonicalId: plugin.canonicalId,
     shortWireName: plugin.shortWireName,
+    ...(plugin.displayName ? { displayName: plugin.displayName } : {}),
+    searchAliases: [...(plugin.searchAliases ?? [])],
     explicit: plugin.explicit ?? false,
     toolByWireName,
     modeByWireName,
@@ -935,16 +956,55 @@ function buildPlugin(plugin: HarnessPlugin): BindPlugin {
 }
 
 function stableWireToolName(prefix: string, toolName: string): string {
-  const normalized = toolName.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+  const normalized = normalizeToolIdentity(toolName);
   return `${prefix}_${normalized}`.slice(0, 64);
 }
 
-function connectorCatalog(registry: ToolRegistry<BindPlugin>): Array<{ id: string; description: string }> {
+function normalizeToolIdentity(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+/**
+ * Return normalized identities a provider may have used for one advertised
+ * tool name. The full value is included for punctuation-only rewrites, while
+ * suffixes cover provider-added namespaces such as `avalon_core.<tool>`.
+ */
+function providerToolAliasCandidates(value: string): ReadonlySet<string> {
+  const candidates = new Set<string>();
+  const add = (candidate: string) => {
+    const normalized = normalizeToolIdentity(candidate);
+    if (normalized) candidates.add(normalized);
+  };
+  add(value);
+  for (const separator of ["::", "__", ".", "/"]) {
+    let offset = value.indexOf(separator);
+    while (offset >= 0) {
+      add(value.slice(offset + separator.length));
+      offset = value.indexOf(separator, offset + separator.length);
+    }
+  }
+  return candidates;
+}
+
+function connectorCatalog(registry: ToolRegistry<BindPlugin>): Array<{
+  id: string;
+  displayName?: string;
+  searchAliases: readonly string[];
+  description: string;
+}> {
   return registry.summaries()
     .filter((plugin) => plugin.name !== CORE_PLUGIN_ID)
     .sort((left, right) => left.name.localeCompare(right.name))
     .slice(0, 500)
-    .map((plugin) => ({ id: plugin.name, description: plugin.description }));
+    .map((plugin) => {
+      const registered = registry.get(plugin.name);
+      return {
+        id: plugin.name,
+        ...(registered?.displayName ? { displayName: registered.displayName } : {}),
+        searchAliases: registered?.searchAliases ?? [],
+        description: plugin.description,
+      };
+    });
 }
 
 function renderStableSystemPrompt(
@@ -962,7 +1022,16 @@ function renderStableSystemPrompt(
   const catalog = partitionPluginCatalog(active, registry.summaries());
   const catalogLines = catalog.loadable
     .sort((left, right) => left.name.localeCompare(right.name))
-    .map((plugin) => `- ${plugin.name}: ${plugin.description}`);
+    .map((plugin) => {
+      const registered = registry.get(plugin.name);
+      const displayName = registered?.displayName;
+      const aliases = registered?.searchAliases ?? [];
+      const discovery = [
+        ...(displayName ? [`name=${JSON.stringify(displayName)}`] : []),
+        ...(aliases.length > 0 ? [`aliases=${JSON.stringify(aliases)}`] : []),
+      ].join("; ");
+      return `- id=${JSON.stringify(plugin.name)}${discovery ? `; ${discovery}` : ""}; description=${plugin.description}`;
+    });
   const maxChars = Math.max(256, catalogTokens * 4);
   let used = 0;
   const bounded: string[] = [];

@@ -568,6 +568,7 @@ export class WorkspaceScheduler {
         WHERE workspace_id = ?1
           AND workstream_id = ?2
           AND origin = 'automation'
+          AND parent_tool_call_id IS NULL
           AND status IN ('scheduled', 'running')
         ORDER BY started_at DESC
         LIMIT 1`

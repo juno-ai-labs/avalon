@@ -28,6 +28,7 @@ const workstream: WorkstreamDetail = {
 
 function renderComposer(
   onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void> = vi.fn(async () => undefined),
+  sending = false,
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -42,7 +43,7 @@ function renderComposer(
         onAttach={async () => undefined}
         onSend={onSend}
         onStop={async () => undefined}
-        sending={false}
+        sending={sending}
         socketState="connected"
         uploading={false}
         workstream={workstream}
@@ -66,6 +67,21 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(onSend).toHaveBeenCalledWith('Send this now', []);
     expect(composer).toHaveValue('');
     finishSend?.();
+  });
+
+  it('accepts another message while an earlier submission is still pending', () => {
+    const onSend = vi.fn(() => new Promise<void>(() => undefined));
+    renderComposer(onSend, true);
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: 'First queued message' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    fireEvent.change(composer, { target: { value: 'Second queued message' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(onSend).toHaveBeenNthCalledWith(1, 'First queued message', []);
+    expect(onSend).toHaveBeenNthCalledWith(2, 'Second queued message', []);
+    expect(composer).toHaveValue('');
   });
 
   it('restores a failed message unless the user has started a new draft', async () => {

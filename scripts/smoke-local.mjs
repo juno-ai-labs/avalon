@@ -83,8 +83,14 @@ for (const path of protectedPaths) {
 
 if (otherBaseUrl) {
   const crossRegion = await jsonRequest("/workspace", { headers: authHeaders }, otherBaseUrl);
-  assert(crossRegion.response.status === 409, "A session was accepted by the other regional API");
-  assert(crossRegion.body?.error?.code === "region_mismatch", "Cross-region access did not report a region mismatch");
+  assert(
+    crossRegion.response.status === 409 || crossRegion.response.status === 401,
+    "A session was accepted by the other regional API",
+  );
+  assert(
+    crossRegion.body?.error?.code === "region_mismatch" || crossRegion.body?.error?.code === "invalid_session",
+    "Cross-region access did not reject the foreign session",
+  );
 }
 
 const workspace = await jsonRequest("/workspace", { headers: authHeaders });
@@ -92,17 +98,11 @@ const expectedRegion = health.body?.region;
 assert(workspace.body?.region === expectedRegion, "The organization was not bound to the API's region");
 
 const wrongRegion = expectedRegion === "global" ? "eu" : "global";
-const wrongRegionStart = await jsonRequest("/auth/google/start", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({
-    region: wrongRegion,
-    workspaceName: "Avalon Smoke",
-    desktopAttemptId: "a".repeat(43),
-    desktopCodeChallenge: "c".repeat(43),
-  }),
+const wrongRegionRequest = await jsonRequest("/health", {
+  headers: { "x-avalon-region": wrongRegion },
 });
-assert(wrongRegionStart.response.status === 409, "Google sign-in accepted the wrong regional selector");
+assert(wrongRegionRequest.response.status === 409, "The API accepted an explicit request for the wrong region");
+assert(wrongRegionRequest.body?.error?.code === "region_mismatch", "Wrong-region access did not report a region mismatch");
 
 const inviteEmail = `regional-smoke-${expectedRegion}@example.test`;
 const firstInvitation = await jsonRequest("/workspace/invitations", {

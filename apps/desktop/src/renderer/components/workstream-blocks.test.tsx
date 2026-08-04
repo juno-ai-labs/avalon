@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Message } from '../lib/types';
 import { MessageBlock } from './workstream-blocks';
 
+const copyText = vi.hoisted(() => vi.fn());
+
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ copyText }),
+}));
+
 const baseMessage: Message = {
   id: 'message-human',
   workstreamId: 'workstream-one',
@@ -194,11 +200,7 @@ describe('MessageBlock markdown', () => {
   });
 
   it('keeps code copy retryable when clipboard access is unavailable', async () => {
-    const writeText = vi.fn(async () => Promise.reject(new Error('clipboard unavailable')));
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
+    copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
     const message: Message = {
       ...baseMessage,
       id: 'message-copy-failure',
@@ -210,7 +212,7 @@ describe('MessageBlock markdown', () => {
     render(<MessageBlock {...actions} message={message} />);
     fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('const ready = true;'));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('const ready = true;'));
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
   });
 });

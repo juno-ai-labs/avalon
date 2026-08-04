@@ -113,6 +113,63 @@ function streamResponse(content: string): Response {
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("fences an earlier attempt at its trigger while a later message is already queued", async () => {
+    const prior = message("00000000-0000-4000-8000-000000000021", 1, {
+      author: "human",
+      textContent: "First question",
+    });
+    const trigger = message("00000000-0000-4000-8000-000000000022", 2, {
+      author: "human",
+      textContent: "Question for run A",
+    });
+    const queued = message("00000000-0000-4000-8000-000000000023", 3, {
+      author: "human",
+      textContent: "Question for queued run B",
+    });
+    const allMessages = [prior, trigger, queued];
+    const first = vi.fn(async () => ({ sequence_number: trigger.sequenceNumber }));
+    const bind = vi.fn(() => ({ first }));
+    const prepare = vi.fn(() => ({ bind }));
+    const listMessages = vi.fn(async (
+      _workspaceId: string,
+      _workstreamId: string,
+      limit: number,
+      beforeSequence?: number,
+    ) => allMessages.filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity)).slice(-limit));
+
+    const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: { prepare } as unknown as D1Database },
+      {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        triggerMessageId: trigger.id,
+      },
+      listMessages,
+    );
+
+    expect(bind).toHaveBeenCalledWith(trigger.id, WORKSPACE_ID, WORKSTREAM_ID);
+    expect(listMessages).toHaveBeenCalledWith(WORKSPACE_ID, WORKSTREAM_ID, 80, 3);
+    expect(stored.map((entry) => entry.id)).toEqual([prior.id, trigger.id]);
+    expect(stored.map((entry) => entry.textContent)).not.toContain(queued.textContent);
+  });
+
+  it("fails closed when the immutable trigger message cannot be resolved", async () => {
+    const first = vi.fn(async () => null);
+    const bind = vi.fn(() => ({ first }));
+    const listMessages = vi.fn(async () => [] as Message[]);
+
+    await expect(__integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: { prepare: vi.fn(() => ({ bind })) } as unknown as D1Database },
+      {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        triggerMessageId: "00000000-0000-4000-8000-000000000099",
+      },
+      listMessages,
+    )).rejects.toMatchObject({ code: "trigger_message_not_found" });
+    expect(listMessages).not.toHaveBeenCalled();
+  });
+
   it("never splits a matched tool-call/result unit while bounding context", () => {
     const assistant = {
       role: "assistant" as const,
