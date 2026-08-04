@@ -73,6 +73,7 @@ describe('useFileAttachments', () => {
     const api = apiMock({ uploadResource });
     const { result } = renderHook(() => useFileAttachments(api));
     act(() => result.current.addFiles([new File(['hello'], 'notes.txt', { type: 'text/plain' })]));
+    await waitFor(() => expect(result.current.attachments).toHaveLength(1));
     const draftId = result.current.attachments[0]!.localId;
 
     act(() => result.current.removeAttachment(draftId));
@@ -83,7 +84,7 @@ describe('useFileAttachments', () => {
     expect(result.current.attachments).toHaveLength(0);
   });
 
-  it('rejects empty and oversized files locally without uploading them', () => {
+  it('rejects empty and oversized files locally without uploading them', async () => {
     const api = apiMock();
     const { result } = renderHook(() => useFileAttachments(api));
     const oversized = new File(['x'], 'huge.bin');
@@ -91,6 +92,7 @@ describe('useFileAttachments', () => {
 
     act(() => result.current.addFiles([new File([], 'empty.txt'), oversized]));
 
+    await waitFor(() => expect(result.current.attachments).toHaveLength(2));
     expect(result.current.attachments.map((attachment) => attachment.status)).toEqual(['failed', 'failed']);
     expect(result.current.attachments.map((attachment) => attachment.error)).toEqual([
       'Empty files cannot be attached.',
@@ -106,7 +108,7 @@ describe('useFileAttachments', () => {
 
     act(() => result.current.addFiles(files));
 
-    expect(result.current.attachments).toHaveLength(10);
+    await waitFor(() => expect(result.current.attachments).toHaveLength(10));
     expect(result.current.error).toBe('You can attach up to 10 files to one message.');
     await waitFor(() => expect(result.current.ready).toHaveLength(10));
 
@@ -126,6 +128,24 @@ describe('useFileAttachments', () => {
     act(() => result.current.retryAttachment(result.current.attachments[0]!.localId));
 
     await waitFor(() => expect(result.current.attachments[0]?.status).toBe('ready'));
+    expect(uploadResource).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses SHA-256 to skip duplicate files within one pending message', async () => {
+    const uploadResource = vi.fn(async () => resource);
+    const api = apiMock({ uploadResource });
+    const { result } = renderHook(() => useFileAttachments(api));
+
+    act(() => result.current.addFiles([
+      new File(['same bytes'], 'first.txt', { type: 'text/plain' }),
+      new File(['same bytes'], 'renamed.md', { type: 'text/markdown' }),
+      new File(['different bytes'], 'first.txt', { type: 'text/plain' }),
+    ]));
+
+    await waitFor(() => expect(result.current.ready).toHaveLength(2));
+    expect(result.current.attachments.map((attachment) => attachment.file.name)).toEqual(['first.txt', 'first.txt']);
+    expect(result.current.attachments[0]?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.current.error).toBe('Skipped 1 duplicate attachment.');
     expect(uploadResource).toHaveBeenCalledTimes(2);
   });
 });
