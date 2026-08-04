@@ -157,6 +157,15 @@ export const MentionSchema = z.object({
   endOffset: z.number().int().positive()
 });
 
+export const MessageAttachmentSchema = z.object({
+  id: IdSchema,
+  fileName: z.string().min(1).max(300),
+  mimeType: z.string().min(1).max(160),
+  sizeBytes: z.number().int().nonnegative(),
+  contentAvailable: z.boolean(),
+  createdAt: TimestampSchema,
+});
+
 export const MessageSchema = z.object({
   id: IdSchema,
   clientMessageId: z.string().max(120).nullable(),
@@ -167,6 +176,7 @@ export const MessageSchema = z.object({
   textContent: z.string(),
   structuredContent: z.record(z.string(), z.unknown()).nullable(),
   mentions: z.array(MentionSchema),
+  attachments: z.array(MessageAttachmentSchema).default([]),
   sequenceNumber: z.number().int().nonnegative(),
   createdAt: TimestampSchema,
   editedAt: TimestampSchema.nullable()
@@ -186,7 +196,9 @@ export const ResourceSchema = z.object({
   watchStatus: z.enum(["watching", "paused", "unsupported", "error"]),
   lastHydratedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema,
-  updatedAt: TimestampSchema
+  updatedAt: TimestampSchema,
+  contentAvailable: z.boolean().default(false),
+  sizeBytes: z.number().int().nonnegative().default(0),
 });
 
 export const ConnectionSchema = z.object({
@@ -446,10 +458,13 @@ export const UpdateWorkstreamRequestSchema = z.object({
 });
 
 export const CreateMessageRequestSchema = z.object({
-  text: z.string().min(1).max(50000),
+  text: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
   mentions: z.array(MentionSchema).default([]),
-  confirmedParticipantUserIds: z.array(IdSchema).default([])
+  confirmedParticipantUserIds: z.array(IdSchema).default([]),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
+}).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0, {
+  message: "A message must include text or an attachment",
 });
 
 export const AddParticipantRequestSchema = z.object({ userId: IdSchema });

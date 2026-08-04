@@ -49,6 +49,10 @@ import {
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
 import {
+  buildAttachmentModelParts,
+  type ModelAttachmentSource,
+} from "./attachment-model-content";
+import {
   admitInlineChildAttempt,
   assertInlineChildAttemptOwned,
   assertHarnessAttemptOwned,
@@ -326,6 +330,7 @@ async function projectModelProtocolTranscript(
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">,
   storedMessages: Message[],
 ): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
+  const attachmentSources = await loadModelAttachmentSources(env, input.workspaceId, storedMessages);
   const toolMessageIds = storedMessages
     .filter((message) => message.messageType === "tool")
     .map((message) => message.id);
@@ -456,15 +461,63 @@ async function projectModelProtocolTranscript(
     // relevant human answer or durable final text is represented separately.
     if (message.messageType !== "text") continue;
     const content = modelMessageContent(message);
-    if (content.trim().length === 0) {
+    if (content.trim().length === 0 && message.attachments.length === 0) {
       issues.push({ kind: "empty_ui_message_omitted", healed: true });
       continue;
     }
-    if (message.author.type === "human") projected.push({ role: "user", content });
+    if (message.author.type === "human") {
+      if (message.attachments.length > 0 && message.id === input.triggerMessageId) {
+        const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
+          id: attachment.id,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          contentRef: null,
+        });
+        const parts = await buildAttachmentModelParts(env.PAYLOADS, sources);
+        projected.push({
+          role: "user",
+          content: [
+            ...(content.trim().length > 0 ? [{ type: "text" as const, text: content }] : []),
+            ...parts,
+          ],
+        });
+      } else {
+        const attachmentMarker = message.attachments.length === 0
+          ? ""
+          : `\n\n[Attachments in this historical message: ${message.attachments.map((attachment) => attachment.fileName).join(", ")}. Binary content is not replayed.]`;
+        projected.push({ role: "user", content: `${content}${attachmentMarker}`.trim() });
+      }
+    }
     else if (message.author.type === "agent") projected.push({ role: "assistant", content });
   }
   flushTools();
   return { messages: projected, issues };
+}
+
+async function loadModelAttachmentSources(
+  env: Env,
+  workspaceId: string,
+  messages: Message[],
+): Promise<Map<string, ModelAttachmentSource>> {
+  const ids = [...new Set(messages.flatMap((message) => message.attachments.map((attachment) => attachment.id)))];
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(
+    `SELECT id, title, mime_type, content_ref
+       FROM resources
+      WHERE workspace_id = ? AND id IN (${placeholders})`,
+  ).bind(workspaceId, ...ids).all<{
+    id: string;
+    title: string;
+    mime_type: string | null;
+    content_ref: string | null;
+  }>();
+  return new Map((rows.results ?? []).map((row) => [row.id, {
+    id: row.id,
+    fileName: row.title,
+    mimeType: row.mime_type ?? "application/octet-stream",
+    contentRef: row.content_ref,
+  }]));
 }
 
 export async function classifyWorkstreamMessage(
@@ -2234,7 +2287,7 @@ function boundModelContext(
     const unit = units[index]!;
     // Count complete protocol rows, including arguments and IDs. An assistant
     // tool-call row and all of its results form one indivisible context unit.
-    const unitBytes = utf8Length(JSON.stringify(unit));
+    const unitBytes = utf8Length(JSON.stringify(unit, modelBinaryAccountingReplacer));
     if (usedBytes + unitBytes > maxBytes) {
       if (selectedUnits.length === 0) {
         throw new ContextLimitExceededError("The newest complete transcript unit exceeds the selected model context budget");
@@ -2246,6 +2299,16 @@ function boundModelContext(
   }
   const selected = selectedUnits.reverse().flat();
   return { systemPrompt, messages: selected, byteLength: usedBytes };
+}
+
+function modelBinaryAccountingReplacer(key: string, value: unknown): unknown {
+  if ((key === "url" || key === "file_data") && typeof value === "string" && value.startsWith("data:")) {
+    return `[binary data URI omitted from text-context accounting; ${value.length} characters]`;
+  }
+  if (key === "data" && typeof value === "string" && value.length > 1_024) {
+    return `[binary audio omitted from text-context accounting; ${value.length} characters]`;
+  }
+  return value;
 }
 
 function modelProtocolUnits(messages: ModelMessage[]): ModelMessage[][] {

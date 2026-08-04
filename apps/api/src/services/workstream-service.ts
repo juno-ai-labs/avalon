@@ -283,6 +283,8 @@ export class WorkstreamService {
     if (replayed) {
       return { message: replayed, agentInvoked: false, harnessRunId: null };
     }
+    const attachmentIds = [...new Set(input.attachmentIds)];
+    await this.assertDraftAttachments(attachmentIds);
     const personIds = [...new Set(input.mentions
       .filter((mention) => mention.type === "person" && mention.userId)
       .map((mention) => mention.userId!))];
@@ -293,6 +295,7 @@ export class WorkstreamService {
     const preparedMention = prepareMentionMarkdown(input.text, input.mentions, mentionPeople);
     const preparedInput: CreateMessageInput = {
       ...input,
+      attachmentIds,
       text: preparedMention.text,
       mentions: preparedMention.mentions,
     };
@@ -332,7 +335,7 @@ export class WorkstreamService {
       .filter((mention) => mention.type === "connector" && mention.connectorType)
       .map((mention) => mention.connectorType!);
     const participantCount = await this.activeParticipantCount(id);
-    let shouldInvoke = participantCount === 1;
+    let shouldInvoke = participantCount === 1 || attachmentIds.length > 0;
     if (!shouldInvoke) {
       const recentMessages = await this.recentAddressingMessages(id, message.sequenceNumber);
       const classification = await classifyWorkstreamMessage(this.env, {
@@ -603,6 +606,30 @@ export class WorkstreamService {
   ): Promise<{ message: Message; inserted: boolean }> {
     const messageId = newId();
     const at = nowIso();
+    const attachmentStatements = input.attachmentIds.flatMap((resourceId, position) => [
+      this.env.DB.prepare(
+        `INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
+         SELECT ?, r.id, ?, ? FROM resources r
+         WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
+           AND r.uploaded_by_user_id = ? AND r.attachment_status = 'draft'
+           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
+         ON CONFLICT(message_id, resource_id) DO NOTHING`,
+      ).bind(messageId, position, at, resourceId, this.auth.workspaceId, this.auth.userId, messageId),
+      this.env.DB.prepare(
+        `INSERT INTO workstream_resources
+         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+         SELECT ?, r.id, ?, 0, 'message_attachment', ? FROM resources r
+         WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
+           AND r.uploaded_by_user_id = ?
+           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
+         ON CONFLICT(workstream_id, resource_id) DO NOTHING`,
+      ).bind(workstreamId, this.auth.userId, at, resourceId, this.auth.workspaceId, this.auth.userId, messageId),
+      this.env.DB.prepare(
+        `UPDATE resources SET attachment_status = 'attached', updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND uploaded_by_user_id = ?
+           AND EXISTS (SELECT 1 FROM message_attachments WHERE message_id = ? AND resource_id = ?)`,
+      ).bind(at, resourceId, this.auth.workspaceId, this.auth.userId, messageId, resourceId),
+    ]);
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workstream_participants
@@ -632,6 +659,7 @@ export class WorkstreamService {
          WHERE id = ? AND workspace_id = ?
            AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
       ).bind(at, at, workstreamId, this.auth.workspaceId, messageId),
+      ...attachmentStatements,
     ]);
     const inserted = Number(results[1]?.meta.changes ?? 0) > 0;
     const message = await this.loadMessageByClientId(workstreamId, input.clientMessageId);
@@ -653,7 +681,17 @@ export class WorkstreamService {
            'endOffset', mm.end_offset
          )) FROM message_mentions mm
            LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
-           WHERE mm.message_id = m.id), '[]') AS mentions_json
+           WHERE mm.message_id = m.id), '[]') AS mentions_json,
+         COALESCE((SELECT json_group_array(json_object(
+           'id', attachment_resource.id,
+           'fileName', attachment_resource.title,
+           'mimeType', COALESCE(attachment_resource.mime_type, 'application/octet-stream'),
+           'sizeBytes', COALESCE(json_extract(attachment_resource.metadata_json, '$.size'), 0),
+           'contentAvailable', CASE WHEN attachment_resource.content_ref IS NULL THEN 0 ELSE 1 END,
+           'createdAt', attachment_resource.created_at
+         )) FROM message_attachments ma
+           JOIN resources attachment_resource ON attachment_resource.id = ma.resource_id
+           WHERE ma.message_id = m.id ORDER BY ma.position), '[]') AS attachments_json
        FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
        WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.client_message_id = ?`,
     ).bind(this.auth.workspaceId, workstreamId, clientMessageId).first<Record<string, unknown>>();
@@ -681,10 +719,31 @@ export class WorkstreamService {
       textContent: String(row.text_content ?? ""),
       structuredContent: json(row.structured_content_json, null),
       mentions: json(row.mentions_json, []),
+      attachments: json<Array<Record<string, unknown>>>(row.attachments_json, []).map((attachment) => ({
+        id: String(attachment.id),
+        fileName: String(attachment.fileName),
+        mimeType: String(attachment.mimeType || "application/octet-stream"),
+        sizeBytes: Math.max(0, Number(attachment.sizeBytes ?? 0)),
+        contentAvailable: Number(attachment.contentAvailable ?? 0) === 1 || attachment.contentAvailable === true,
+        createdAt: String(attachment.createdAt),
+      })),
       sequenceNumber: Number(row.sequence_number),
       createdAt: String(row.created_at),
       editedAt: row.edited_at == null ? null : String(row.edited_at),
     };
+  }
+
+  private async assertDraftAttachments(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => "?").join(", ");
+    const result = await this.env.DB.prepare(
+      `SELECT id FROM resources
+       WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
+         AND uploaded_by_user_id = ? AND attachment_status = 'draft'`,
+    ).bind(...ids, this.auth.workspaceId, this.auth.userId).all<{ id: string }>();
+    if ((result.results ?? []).length !== ids.length) {
+      throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
+    }
   }
 
   private async launchHarness(workstreamId: string, triggerMessageId: string | null, origin: string, parentHarnessRunId?: string): Promise<string> {

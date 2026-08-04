@@ -122,7 +122,9 @@ describe("resource listing", () => {
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,
         resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
         title TEXT NOT NULL, mime_type TEXT, canonical_url TEXT, content_ref TEXT,
-        last_hydrated_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        metadata_json TEXT NOT NULL DEFAULT '{}', last_hydrated_at TEXT,
+        uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE TABLE automation_subscriptions (
         id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT

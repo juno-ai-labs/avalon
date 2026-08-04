@@ -51,6 +51,13 @@ interface InspectorRailProps {
   onJumpToMessage?: (messageId: string) => void;
   onDownloadArtifact?: (artifact: ArtifactData) => void;
   onReconnectConnection?: (connection: WorkstreamConnection) => void;
+  dropTarget?: {
+    dragging: boolean;
+    onDragEnter: React.DragEventHandler<HTMLElement>;
+    onDragLeave: React.DragEventHandler<HTMLElement>;
+    onDragOver: React.DragEventHandler<HTMLElement>;
+    onDrop: React.DragEventHandler<HTMLElement>;
+  };
 }
 
 function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }): React.JSX.Element {
@@ -576,7 +583,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       <button aria-label="Close inspector" className="rail-scrim" onClick={closeRail} type="button" />
       <aside
         aria-label={inspector ? 'Inspector detail' : railTitle[railVariant]}
-        className={clsx('inspector-rail', resizing && 'is-resizing')}
+        className={clsx('inspector-rail', resizing && 'is-resizing', props.dropTarget?.dragging && 'is-file-dragging')}
+        onDragEnter={props.dropTarget?.onDragEnter}
+        onDragLeave={props.dropTarget?.onDragLeave}
+        onDragOver={props.dropTarget?.onDragOver}
+        onDrop={props.dropTarget?.onDrop}
         onKeyDown={(event) => {
           if (event.key === 'Escape') closeRail();
         }}

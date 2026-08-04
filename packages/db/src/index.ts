@@ -111,10 +111,23 @@ function toMessage(row: Record<string, unknown>): Message {
     textContent: String(row.text_content ?? ""),
     structuredContent: parseJson<Record<string, unknown> | null>(row.structured_content_json, null),
     mentions: parseJson<Message["mentions"]>(row.mentions_json, []),
+    attachments: parseMessageAttachments(row.attachments_json),
     sequenceNumber: Number(row.sequence_number),
     createdAt: String(row.created_at),
     editedAt: row.edited_at == null ? null : String(row.edited_at)
   };
+}
+
+function parseMessageAttachments(value: unknown): Message["attachments"] {
+  const rows = parseJson<Array<Record<string, unknown>>>(value, []);
+  return rows.map((attachment) => ({
+    id: String(attachment.id),
+    fileName: String(attachment.fileName),
+    mimeType: String(attachment.mimeType || "application/octet-stream"),
+    sizeBytes: Math.max(0, Number(attachment.sizeBytes ?? 0)),
+    contentAvailable: Number(attachment.contentAvailable ?? 0) === 1 || attachment.contentAvailable === true,
+    createdAt: String(attachment.createdAt),
+  }));
 }
 
 export interface CreateWorkstreamInput {
@@ -136,6 +149,7 @@ export interface CreateMessageInput {
   text: string;
   clientMessageId: string;
   mentions: Array<Record<string, unknown>>;
+  attachmentIds?: string[];
 }
 
 export function createDatabase(db: D1DatabaseLike) {
@@ -306,7 +320,7 @@ export function createDatabase(db: D1DatabaseLike) {
         .prepare(
           `SELECT m.*, u.email AS author_email, u.name AS author_name,
              u.avatar_url AS author_avatar_url, u.timezone AS author_timezone, u.created_at AS author_created_at,
-             '[]' AS mentions_json
+             '[]' AS mentions_json, '[]' AS attachments_json
            FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
            WHERE m.workstream_id = ? AND m.client_message_id = ?`
         )
@@ -337,7 +351,17 @@ export function createDatabase(db: D1DatabaseLike) {
                'endOffset', mm.end_offset
              )) FROM message_mentions mm
                LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
-               WHERE mm.message_id = m.id), '[]') AS mentions_json
+               WHERE mm.message_id = m.id), '[]') AS mentions_json,
+             COALESCE((SELECT json_group_array(json_object(
+               'id', attachment_resource.id,
+               'fileName', attachment_resource.title,
+               'mimeType', COALESCE(attachment_resource.mime_type, 'application/octet-stream'),
+               'sizeBytes', COALESCE(json_extract(attachment_resource.metadata_json, '$.size'), 0),
+               'contentAvailable', CASE WHEN attachment_resource.content_ref IS NULL THEN 0 ELSE 1 END,
+               'createdAt', attachment_resource.created_at
+             )) FROM message_attachments ma
+               JOIN resources attachment_resource ON attachment_resource.id = ma.resource_id
+               WHERE ma.message_id = m.id ORDER BY ma.position), '[]') AS attachments_json
            FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
            WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.sequence_number < ?
            ORDER BY m.sequence_number DESC LIMIT ?`

@@ -21,6 +21,7 @@ import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
+import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Badge, Button, InlineError } from './primitives';
 
 function personAccent(id: string): string {
@@ -401,11 +402,20 @@ function SuggestionBlock({
 interface MessageBlockProps {
   currentUserId?: string;
   message: Message;
+  loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
+  onOpenAttachment?: (preview: AttachmentPreview) => void;
   onAnswerElicitation: (elicitationId: string, answer: unknown) => Promise<void>;
   onResolveSuggestion: (suggestionId: string, action: 'accept' | 'dismiss') => Promise<void>;
 }
 
-export function MessageBlock({ currentUserId, message, onAnswerElicitation, onResolveSuggestion }: MessageBlockProps): React.JSX.Element {
+export function MessageBlock({
+  currentUserId,
+  loadAttachmentContent,
+  message,
+  onAnswerElicitation,
+  onOpenAttachment,
+  onResolveSuggestion,
+}: MessageBlockProps): React.JSX.Element {
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
   if (message.messageType === 'artifact') return <div className="transcript-event" id={`message-${message.id}`}><ArtifactBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {
@@ -445,7 +455,18 @@ export function MessageBlock({ currentUserId, message, onAnswerElicitation, onRe
       )}
       {sending
         ? <span aria-hidden="true" className="message-skeleton" />
-        : message.text && <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>}
+        : (
+            <>
+              {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+                <MessageAttachments
+                  attachments={message.attachments}
+                  loadContent={loadAttachmentContent}
+                  onOpen={onOpenAttachment}
+                />
+              ) : null}
+              {message.text ? <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody> : null}
+            </>
+          )}
       {!human && !message.streaming && (
         <footer className="agent-message-actions">
           <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(message.text ?? '')} type="button"><Clipboard size={12} /> Copy</button>

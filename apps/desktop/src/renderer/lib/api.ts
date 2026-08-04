@@ -166,6 +166,8 @@ export function mapResource(resource: WireResource): WorkstreamResource {
     watchEnabled: resource.watchEnabled,
     watchStatus: resource.watchStatus,
     updatedAt: resource.updatedAt,
+    contentAvailable: resource.contentAvailable,
+    sizeBytes: resource.sizeBytes,
   };
 }
 
@@ -302,6 +304,7 @@ export function mapMessage(message: WireMessage): Message {
       startOffset: mention.startOffset,
       endOffset: mention.endOffset,
     })),
+    attachments: message.attachments.map((attachment) => ({ ...attachment })),
     createdAt: message.createdAt,
     ...(invocation.success ? { toolEvent: mapToolInvocation(invocation.data) } : {}),
     ...(message.messageType === 'artifact'
@@ -814,6 +817,7 @@ export class AvalonApi {
     clientId: string;
     mentions?: MentionIdentity[];
     confirmedParticipantUserIds?: string[];
+    attachmentIds?: string[];
   }): Promise<Message> {
     const mentions = await this.mentionPayload(id, input.text, input.mentions);
     const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
@@ -823,20 +827,77 @@ export class AvalonApi {
         clientMessageId: input.clientId,
         mentions,
         confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
+        attachmentIds: input.attachmentIds ?? [],
       },
       schema: createMessageResponseSchema,
     });
     return mapMessage(response.message);
   }
 
-  async uploadResource(file: File): Promise<WorkstreamResource> {
-    const form = new FormData();
-    form.set('file', file, file.name);
-    const response = await this.execute('/resources/upload', { method: 'POST', body: form });
+  async uploadResource(
+    file: File,
+    draftId: string,
+    onProgress?: (percentage: number) => void,
+    signal?: AbortSignal,
+  ): Promise<WorkstreamResource> {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open('POST', `${this.baseUrl}/resources/upload`);
+      request.responseType = 'json';
+      request.setRequestHeader('Accept', 'application/json');
+      request.setRequestHeader('X-Avalon-Draft-Id', draftId);
+      if (this.session?.accessToken) request.setRequestHeader('Authorization', `Bearer ${this.session.accessToken}`);
+      request.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      });
+      request.addEventListener('load', () => {
+        if (request.status < 200 || request.status >= 300) {
+          const nested = request.response && typeof request.response === 'object' && 'error' in request.response
+            ? (request.response as { error?: { code?: string; message?: string; details?: unknown; requestId?: string } }).error
+            : undefined;
+          reject(new ApiError(
+            nested?.message ?? `Upload failed with status ${request.status}`,
+            request.status,
+            nested?.code,
+            nested?.details,
+            nested?.requestId,
+          ));
+          return;
+        }
+        const parsed = WireResourceSchema.safeParse(request.response);
+        if (!parsed.success) {
+          reject(new ApiError('The upload response was invalid.', 502, 'invalid_response', parsed.error.issues));
+          return;
+        }
+        onProgress?.(100);
+        resolve(mapResource(parsed.data));
+      });
+      request.addEventListener('error', () => reject(new ApiError('Avalon could not upload the attachment.', 0, 'network_error')));
+      request.addEventListener('abort', () => reject(new DOMException('The upload was cancelled.', 'AbortError')));
+      if (signal) {
+        if (signal.aborted) {
+          request.abort();
+          return;
+        }
+        signal.addEventListener('abort', () => request.abort(), { once: true });
+      }
+      const form = new FormData();
+      form.set('file', file, file.name);
+      request.send(form);
+    });
+  }
+
+  async deleteDraftResource(id: string): Promise<void> {
+    await this.requestVoid(`/resources/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async getResourceContent(id: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.execute(`/resources/${encodeURIComponent(id)}/content`, {
+      method: 'GET',
+      ...(signal ? { signal } : {}),
+    });
     if (!response.ok) return this.throwResponseError(response);
-    const parsed = WireResourceSchema.safeParse(await response.json());
-    if (!parsed.success) throw new ApiError('The upload response was invalid.', 502, 'invalid_response');
-    return mapResource(parsed.data);
+    return response.blob();
   }
 
   async listResources(input: {
