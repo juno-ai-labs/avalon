@@ -70,15 +70,37 @@ runWithStderr('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', mainE
 verifyArm64(mainExecutable, 'Avalon');
 
 const resourcesDirectory = join(appPath, 'Contents/Resources');
-for (const iconPathFromResources of [
-  'icon.icns',
-  join('icons', 'avalon-light.icns'),
-  join('icons', 'avalon-dark.icns'),
-]) {
-  const iconPath = join(resourcesDirectory, iconPathFromResources);
-  if (!existsSync(iconPath)) throw new Error(`Packaged app is missing ICNS resource ${iconPathFromResources}`);
-  if (readFileSync(iconPath).subarray(0, 4).toString('ascii') !== 'icns') {
-    throw new Error(`Packaged icon resource is not an ICNS file: ${iconPathFromResources}`);
+const infoPlistPath = join(appPath, 'Contents/Info.plist');
+const iconName = runWithStderr('/usr/bin/plutil', [
+  '-extract',
+  'CFBundleIconName',
+  'raw',
+  infoPlistPath,
+]).trim();
+if (iconName !== 'Icon') {
+  throw new Error(`Packaged app must select the Icon Composer asset catalog; found ${iconName || '(none)'}`);
+}
+
+const legacyIconPath = join(resourcesDirectory, 'icon.icns');
+if (!existsSync(legacyIconPath)) throw new Error('Packaged app is missing its generated ICNS fallback');
+if (readFileSync(legacyIconPath).subarray(0, 4).toString('ascii') !== 'icns') {
+  throw new Error('Packaged icon fallback is not an ICNS file');
+}
+
+const assetCatalogPath = join(resourcesDirectory, 'Assets.car');
+if (!existsSync(assetCatalogPath)) throw new Error('Packaged app is missing its Icon Composer asset catalog');
+const assetCatalog = JSON.parse(runWithStderr('/usr/bin/assetutil', ['--info', assetCatalogPath]));
+if (!Array.isArray(assetCatalog) || !assetCatalog.some((asset) => asset?.AssetType === 'Icon Image')) {
+  throw new Error('Packaged Icon Composer asset catalog contains no icon renditions');
+}
+const iconStackAppearances = new Set(
+  assetCatalog
+    .filter((asset) => asset?.AssetType === 'IconImageStack' && asset?.Name === 'Icon')
+    .map((asset) => asset.Appearance),
+);
+for (const appearance of ['NSAppearanceNameAqua', 'NSAppearanceNameDarkAqua', 'ISAppearanceTintable']) {
+  if (!iconStackAppearances.has(appearance)) {
+    throw new Error(`Packaged Icon Composer asset catalog is missing ${appearance}`);
   }
 }
 
