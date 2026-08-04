@@ -281,6 +281,11 @@ function elicitationAnswerLabel(elicitation: ElicitationData): string {
   return labels.join(', ');
 }
 
+function elicitationAnswerValues(elicitation: ElicitationData): string[] {
+  if (elicitation.answer == null) return [];
+  return (Array.isArray(elicitation.answer) ? elicitation.answer : [elicitation.answer]).map(String);
+}
+
 export function ElicitationPanel({
   elicitation,
   onAnswer,
@@ -388,6 +393,9 @@ export function ElicitationPanel({
   const question = isMulti && !/pick (?:everything|all)|select (?:everything|all)|choose (?:everything|all)/iu.test(elicitation.prompt)
     ? `${elicitation.prompt} Pick everything that applies.`
     : elicitation.prompt;
+  const answeredValues = elicitationAnswerValues(elicitation);
+  const declaredValues = new Set(options.map((option) => option.value));
+  const customAnswers = answeredValues.filter((value) => !declaredValues.has(value));
 
   if (collapsed && !isAnswered) {
     return (
@@ -420,7 +428,10 @@ export function ElicitationPanel({
       }}
     >
       <header className="elicitation-panel-header">
-        <h3 id={`elicitation-${elicitation.id}`}>{isAnswered ? 'Response submitted' : question}</h3>
+        <div>
+          {isAnswered && <span className="elicitation-status">Response submitted</span>}
+          <h3 id={`elicitation-${elicitation.id}`}>{question}</h3>
+        </div>
         {!isAnswered && (
           <div className="elicitation-header-actions">
             <button aria-label="Collapse question" onClick={() => setCollapsed(true)} type="button">
@@ -430,7 +441,26 @@ export function ElicitationPanel({
         )}
       </header>
       {isAnswered ? (
-        <div className="elicitation-answered-value"><Check aria-hidden="true" size={14} /><span>{elicitationAnswerLabel(elicitation)}</span></div>
+        <>
+          {!isText && options.length > 0 && (
+            <div aria-label="Response options" className="elicitation-resolved-options">
+              {options.map((option) => {
+                const selectedOption = answeredValues.includes(option.value);
+                return (
+                  <div className={clsx('elicitation-resolved-option', selectedOption && 'is-selected')} key={option.value}>
+                    <span aria-hidden="true" className="elicitation-resolved-marker">{selectedOption && <Check size={11} strokeWidth={3} />}</span>
+                    <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+                  </div>
+                );
+              })}
+              <div className={clsx('elicitation-resolved-option', customAnswers.length > 0 && 'is-selected')}>
+                <span aria-hidden="true" className="elicitation-resolved-marker">{customAnswers.length > 0 && <Check size={11} strokeWidth={3} />}</span>
+                <span><strong>Other</strong>{customAnswers.length > 0 && <small>{customAnswers.join(', ')}</small>}</span>
+              </div>
+            </div>
+          )}
+          <div className="elicitation-answered-value"><Check aria-hidden="true" size={14} /><span>{elicitationAnswerLabel(elicitation)}</span></div>
+        </>
       ) : isText ? (
         <textarea
           aria-label="Response"
