@@ -510,7 +510,7 @@ describe("environment guardrails", () => {
     });
   });
 
-  it("allows the desktop idempotency header in CORS preflights", async () => {
+  it("allows the desktop upload and idempotency headers in CORS preflights", async () => {
     const response = await createApp().request(
       "https://api.example.com/automations/00000000-0000-7000-8000-000000000001/run",
       {
@@ -518,7 +518,7 @@ describe("environment guardrails", () => {
         headers: {
           origin: "app://avalon",
           "access-control-request-method": "POST",
-          "access-control-request-headers": "authorization,content-type,idempotency-key",
+          "access-control-request-headers": "authorization,content-type,idempotency-key,x-avalon-draft-id",
         },
       },
       {
@@ -530,7 +530,9 @@ describe("environment guardrails", () => {
 
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
-    expect(response.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("idempotency-key");
+    const allowedHeaders = response.headers.get("access-control-allow-headers")?.toLowerCase();
+    expect(allowedHeaders).toContain("idempotency-key");
+    expect(allowedHeaders).toContain("x-avalon-draft-id");
   });
 
   it("uses a safe fallback for invalid positive numeric limits", () => {
