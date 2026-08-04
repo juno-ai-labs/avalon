@@ -7,6 +7,7 @@ export type PendingAttachmentStatus = 'uploading' | 'ready' | 'failed';
 export interface PendingAttachment {
   localId: string;
   file: File;
+  sha256?: string;
   previewUrl?: string;
   progress: number;
   status: PendingAttachmentStatus;
@@ -19,6 +20,12 @@ const MAX_ATTACHMENT_BYTES = 25_000_000;
 const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
 
 const DELETE_RETRY_DELAYS_MS = [0, 250, 1_250] as const;
+
+async function sha256File(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 async function deleteDraftWithRetry(api: AvalonApi, id: string): Promise<void> {
   let lastError: unknown;
@@ -39,7 +46,9 @@ async function deleteDraftWithRetry(api: AvalonApi, id: string): Promise<void> {
 export function useFileAttachments(api: AvalonApi | null) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [error, setError] = useState<string>();
+  const [fingerprinting, setFingerprinting] = useState(0);
   const attachmentsRef = useRef<PendingAttachment[]>([]);
+  const fingerprintQueue = useRef(Promise.resolve());
   const controllers = useRef(new Map<string, AbortController>());
   const removed = useRef(new Set<string>());
   const apiRef = useRef(api);
@@ -86,25 +95,53 @@ export function useFileAttachments(api: AvalonApi | null) {
 
   const addFiles = useCallback((files: FileList | File[]): void => {
     const incoming = Array.from(files);
-    const available = Math.max(0, MAX_ATTACHMENTS - attachmentsRef.current.length);
-    const accepted = incoming.slice(0, available);
-    setError(incoming.length > available ? `You can attach up to ${MAX_ATTACHMENTS} files to one message.` : undefined);
-    const pending = accepted.map<PendingAttachment>((file) => ({
-      localId: crypto.randomUUID(),
-      file,
-      ...(file.type.startsWith('image/') || IMAGE_FILE_PATTERN.test(file.name) ? { previewUrl: URL.createObjectURL(file) } : {}),
-      progress: 0,
-      status: file.size === 0 || file.size > MAX_ATTACHMENT_BYTES ? 'failed' : 'uploading',
-      ...(file.size === 0
-        ? { error: 'Empty files cannot be attached.' }
-        : file.size > MAX_ATTACHMENT_BYTES
-          ? { error: 'Files must be 25 MB or smaller.' }
-          : {}),
-    }));
-    replace((current) => [...current, ...pending]);
-    for (const attachment of pending) {
-      if (attachment.status === 'uploading') void upload(attachment);
-    }
+    if (incoming.length === 0) return;
+    setFingerprinting((current) => current + 1);
+    fingerprintQueue.current = fingerprintQueue.current.then(async () => {
+      const fingerprinted = await Promise.all(incoming.map(async (file) => ({
+        file,
+        ...(file.size > 0 && file.size <= MAX_ATTACHMENT_BYTES ? { sha256: await sha256File(file) } : {}),
+      })));
+      const knownHashes = new Set(attachmentsRef.current.flatMap((attachment) => attachment.sha256 ? [attachment.sha256] : []));
+      let duplicateCount = 0;
+      const unique = fingerprinted.filter(({ sha256 }) => {
+        if (!sha256 || !knownHashes.has(sha256)) {
+          if (sha256) knownHashes.add(sha256);
+          return true;
+        }
+        duplicateCount += 1;
+        return false;
+      });
+      const available = Math.max(0, MAX_ATTACHMENTS - attachmentsRef.current.length);
+      const accepted = unique.slice(0, available);
+      const overflowCount = unique.length - accepted.length;
+      const errors = [
+        ...(duplicateCount > 0 ? [`Skipped ${duplicateCount} duplicate ${duplicateCount === 1 ? 'attachment' : 'attachments'}.`] : []),
+        ...(overflowCount > 0 ? [`You can attach up to ${MAX_ATTACHMENTS} files to one message.`] : []),
+      ];
+      setError(errors.length > 0 ? errors.join(' ') : undefined);
+      const pending = accepted.map<PendingAttachment>(({ file, sha256 }) => ({
+        localId: crypto.randomUUID(),
+        file,
+        ...(sha256 ? { sha256 } : {}),
+        ...(file.type.startsWith('image/') || IMAGE_FILE_PATTERN.test(file.name) ? { previewUrl: URL.createObjectURL(file) } : {}),
+        progress: 0,
+        status: file.size === 0 || file.size > MAX_ATTACHMENT_BYTES ? 'failed' : 'uploading',
+        ...(file.size === 0
+          ? { error: 'Empty files cannot be attached.' }
+          : file.size > MAX_ATTACHMENT_BYTES
+            ? { error: 'Files must be 25 MB or smaller.' }
+            : {}),
+      }));
+      replace((current) => [...current, ...pending]);
+      for (const attachment of pending) {
+        if (attachment.status === 'uploading') void upload(attachment);
+      }
+    }).catch(() => {
+      setError('Avalon could not fingerprint the selected file. Try attaching it again.');
+    }).finally(() => {
+      setFingerprinting((current) => Math.max(0, current - 1));
+    });
   }, [replace, upload]);
 
   const removeAttachment = useCallback((localId: string): void => {
@@ -156,7 +193,7 @@ export function useFileAttachments(api: AvalonApi | null) {
     removeAttachment,
     retryAttachment,
     consume,
-    uploading: attachments.some((attachment) => attachment.status === 'uploading'),
+    uploading: fingerprinting > 0 || attachments.some((attachment) => attachment.status === 'uploading'),
     ready: attachments.filter((attachment) => attachment.status === 'ready' && attachment.resource),
   };
 }
