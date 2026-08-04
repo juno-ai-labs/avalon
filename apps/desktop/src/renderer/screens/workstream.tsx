@@ -34,11 +34,11 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, orderTranscript, useWorkstreamSocket } from '../lib/use-workstream-socket';
-import type { BackgroundTask, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
-import { MessageBlock } from '../components/workstream-blocks';
+import { ElicitationPanel, MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -56,6 +56,16 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
 export function mergeBackgroundTasks(persisted: BackgroundTask[], live: BackgroundTask[]): BackgroundTask[] {
   return [...new Map([...persisted, ...live].map((task) => [task.id, task])).values()]
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+}
+
+export function manualElicitationResponse(
+  elicitation: ElicitationData,
+  text: string,
+): { answer: string | string[]; customResponse?: string } {
+  const customResponse = text.trim();
+  if (elicitation.responseType === 'text') return { answer: customResponse };
+  if (elicitation.responseType === 'multi_select') return { answer: [customResponse], customResponse };
+  return { answer: customResponse, customResponse };
 }
 
 function AddParticipantDialog({
@@ -461,6 +471,36 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
+  const activeElicitation = (messages.data ?? []).find((message) =>
+    message.messageType === 'elicitation' && message.elicitation?.status === 'open')?.elicitation;
+
+  const answerElicitation = async (
+    elicitationId: string,
+    answer: string | string[] | null,
+    customResponse?: string,
+  ): Promise<void> => {
+    const previousMessage = queryClient.getQueryData<Message[]>(['messages', id])?.find((message) =>
+      message.messageType === 'elicitation' && message.elicitation?.id === elicitationId);
+    queryClient.setQueryData<Message[]>(['messages', id], (current) => current?.map((message) =>
+      message.messageType === 'elicitation' && message.elicitation?.id === elicitationId
+        ? { ...message, elicitation: { ...message.elicitation, status: 'answered', answer } }
+        : message));
+    try {
+      await api!.answerElicitation(id, elicitationId, answer, customResponse);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
+        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
+        queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+      ]);
+    } catch (error) {
+      if (previousMessage) {
+        queryClient.setQueryData<Message[]>(['messages', id], (current) => current?.map((message) =>
+          message.id === previousMessage.id ? previousMessage : message));
+      }
+      throw error;
+    }
+  };
+
   const sendMessage = async (
     text: string,
     mentions: MentionIdentity[],
@@ -471,6 +511,19 @@ export function WorkstreamScreen(): React.JSX.Element {
     pendingSendCount.current += 1;
     setSending(true);
     setSendError(undefined);
+    if (activeElicitation) {
+      const response = manualElicitationResponse(activeElicitation, text);
+      try {
+        await answerElicitation(activeElicitation.id, response.answer, response.customResponse);
+      } catch (error) {
+        setSendError(error instanceof Error ? error.message : 'The response could not be sent.');
+        throw error;
+      } finally {
+        pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
+        if (pendingSendCount.current === 0) setSending(false);
+      }
+      return;
+    }
     const clientId = crypto.randomUUID();
     queryClient.setQueryData<Message[]>(['messages', id], (current) => {
       const anchorSequenceNumber = nextTranscriptSequence(current);
@@ -526,15 +579,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     }
   };
 
-  const answerElicitation = async (elicitationId: string, answer: unknown): Promise<void> => {
-    await api!.answerElicitation(id, elicitationId, answer);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-      queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-      queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
-    ]);
-  };
-
   const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
     await api!.resolveActivitySuggestion(id, suggestionId, action);
     await Promise.all([messages.refetch(), workstream.refetch()]);
@@ -562,6 +606,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const detail = workstream.data;
   const transcript = messages.data ?? [];
+  const visibleTranscript = transcript.filter((message) => message.messageType !== 'elicitation');
   const liveBackgroundTasks = backgroundTasksFromMessages(transcript);
   const backgroundTasks = mergeBackgroundTasks(detail.backgroundTasks, liveBackgroundTasks);
   const displayedDetail: WorkstreamDetail = {
@@ -605,10 +650,10 @@ export function WorkstreamScreen(): React.JSX.Element {
         ref={transcriptRef}
       >
         <div className="transcript-column">
-          {transcript.length === 0 ? (
+          {visibleTranscript.length === 0 && !activeElicitation ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
-            transcript.map((message) => (
+            visibleTranscript.map((message) => (
               <MessageBlock
                 currentUserId={session?.user.id}
                 key={message.id}
@@ -640,24 +685,33 @@ export function WorkstreamScreen(): React.JSX.Element {
         {!atBottom && (
           <JumpToLatestButton onJump={() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })} />
         )}
-        <WorkstreamComposer
-          attachments={attachmentDraft.attachments}
-          error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
-          fileInputRef={fileInputRef}
-          members={members.data ?? []}
-          onAttach={attachmentDraft.addFiles}
-          onOpenAttachment={setAttachmentPreview}
-          onRemoveAttachment={attachmentDraft.removeAttachment}
-          onRetryAttachment={attachmentDraft.retryAttachment}
-          onSend={sendMessage}
-          onStop={async () => {
-            await stop.mutateAsync();
-          }}
-          sending={sending}
-          socketState={socketState}
-          uploading={attachmentDraft.uploading}
-          workstream={displayedDetail}
-        />
+        <div className="composer-stack">
+          {activeElicitation && (
+            <ElicitationPanel
+              elicitation={activeElicitation}
+              key={activeElicitation.id}
+              onAnswer={(answer, customResponse) => answerElicitation(activeElicitation.id, answer, customResponse)}
+            />
+          )}
+          <WorkstreamComposer
+            attachments={attachmentDraft.attachments}
+            error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
+            fileInputRef={fileInputRef}
+            members={members.data ?? []}
+            onAttach={attachmentDraft.addFiles}
+            onOpenAttachment={setAttachmentPreview}
+            onRemoveAttachment={attachmentDraft.removeAttachment}
+            onRetryAttachment={attachmentDraft.retryAttachment}
+            onSend={sendMessage}
+            onStop={async () => {
+              await stop.mutateAsync();
+            }}
+            sending={sending}
+            socketState={socketState}
+            uploading={attachmentDraft.uploading}
+            workstream={displayedDetail}
+          />
+        </div>
       </div>
 
       <InspectorRail

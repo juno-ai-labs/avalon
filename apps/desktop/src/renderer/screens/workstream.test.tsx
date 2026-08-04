@@ -2,14 +2,44 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
-import type { BackgroundTask, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, WorkstreamResource } from '../lib/types';
 import {
   AddResourceDialog,
   JumpToLatestButton,
+  manualElicitationResponse,
   mergeBackgroundTasks,
   RunFailureNotice,
   workspaceMemberFromSession,
 } from './workstream';
+
+const openElicitation: ElicitationData = {
+  id: 'elicitation-one',
+  prompt: 'What should Avalon do?',
+  responseType: 'single_select',
+  options: [{ label: 'Review it', value: 'review' }],
+  minimumSelections: 1,
+  maximumSelections: 1,
+  status: 'open',
+};
+
+describe('manualElicitationResponse', () => {
+  it('turns a composer entry into a custom single-select response', () => {
+    expect(manualElicitationResponse(openElicitation, '  Take a closer look  ')).toEqual({
+      answer: 'Take a closer look',
+      customResponse: 'Take a closer look',
+    });
+  });
+
+  it('wraps a custom multi-select response and leaves text responses as text', () => {
+    expect(manualElicitationResponse({ ...openElicitation, responseType: 'multi_select' }, 'Summarize both')).toEqual({
+      answer: ['Summarize both'],
+      customResponse: 'Summarize both',
+    });
+    expect(manualElicitationResponse({ ...openElicitation, responseType: 'text' }, 'Explain the risk')).toEqual({
+      answer: 'Explain the risk',
+    });
+  });
+});
 
 describe('JumpToLatestButton', () => {
   it('is compact and icon-only while retaining an accessible action name', () => {
