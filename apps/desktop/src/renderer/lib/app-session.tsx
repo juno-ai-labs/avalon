@@ -253,9 +253,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = `/workstreams/${workstreamId}`;
         return;
       }
-      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'settings' && deepLink.pathname === '/workspace') {
+      if (
+        deepLink.protocol === 'avalon:'
+        && deepLink.hostname === 'settings'
+        && deepLink.pathname === '/workspace'
+        && deepLink.search === ''
+      ) {
         setDeepLinkError(null);
-        void desktopBridge().openSettings();
+        void desktopBridge().openSettings('workspace');
         return;
       }
       if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {

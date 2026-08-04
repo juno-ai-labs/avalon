@@ -267,7 +267,30 @@ describe('single-platform desktop identity routing', () => {
 
     act(() => deepLinkListener?.('avalon://settings/workspace'));
 
-    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
+  it.each([
+    'avalon://settings/connections',
+    'avalon://settings/workspace?section=connections',
+    'avalon://settings/Workspace',
+  ])('rejects a non-canonical settings deep link: %s', async (rawUrl) => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    act(() => deepLinkListener?.(rawUrl));
+
+    await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent('unexpected sign-in link'));
+    expect(bridge.openSettings).not.toHaveBeenCalled();
   });
 });

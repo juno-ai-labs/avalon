@@ -65,6 +65,10 @@ Automation email may start a read-only run, but the sender match remains defense
 
 Audit events cover sign-in/session changes, membership, connector authorization/revocation, external writes, automation changes, suggestion decisions, and administrative actions.
 
+## Dependency advisories
+
+The release gate upgrades patched transitive dependencies rather than suppressing advisories. As of August 2026, the package audit still reports [GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2) against React Router 7.18.2. The vulnerable path is React Server Components action handling; Avalon is a bundled Electron client using `HashRouter` and has no RSC server, action decoder, or React server endpoint, so that path is not present. Remove this documented exception as soon as React Router publishes a compatible patched stable release.
+
 ## Secrets
 
 Local server keys live only in ignored `.env.local`. Renderer-safe values are an explicit `VITE_` allowlist containing API base URLs and the protocol name. Hosted secrets, including `RESEND_API_KEY`, use separate Cloudflare secrets per region. Cloudflare administrative credentials are local deployment inputs and never Worker bindings.

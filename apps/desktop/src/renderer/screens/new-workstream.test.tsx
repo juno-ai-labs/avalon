@@ -105,4 +105,40 @@ describe('New work-stream home', () => {
     }));
   });
 
+  it('clears the submitted message before the create request settles and blocks duplicate submission', async () => {
+    let resolveCreate!: (value: { id: string }) => void;
+    api.createWorkstream.mockReturnValue(new Promise((resolve) => {
+      resolveCreate = resolve;
+    }));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Create this once' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(composer).toHaveValue('');
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
+    expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: 'Create this once',
+      participantIds: [],
+    });
+
+    resolveCreate({ id: 'new-workstream' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
+  });
+
+  it('restores an immediately cleared message when creation fails without replacing a newer draft', async () => {
+    api.createWorkstream.mockRejectedValueOnce(new Error('offline'));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Retry this request' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(composer).toHaveValue('');
+    await waitFor(() => expect(composer).toHaveValue('Retry this request'));
+    expect(await screen.findByText('offline')).toBeVisible();
+  });
+
 });

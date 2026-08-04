@@ -1,3 +1,5 @@
+import type { DesktopSettingsSection } from './settings';
+
 export type AvalonRegion = 'global' | 'eu';
 
 export interface RuntimeConfig {
@@ -79,7 +81,8 @@ export interface AvalonDesktopBridge {
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;
-  openSettings: () => Promise<void>;
+  openSettings: (section?: DesktopSettingsSection) => Promise<void>;
+  onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   consumePendingDeepLinks: () => Promise<string[]>;
   onDeepLink: (listener: (url: string) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;

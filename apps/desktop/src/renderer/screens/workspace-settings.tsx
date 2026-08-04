@@ -27,12 +27,14 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { parseDesktopSettingsSection } from '../../common/settings';
+import type { DesktopSettingsSection } from '../../common/settings';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
 
-type SettingsSection = 'general' | 'account' | 'workspace' | 'connections' | 'application';
+type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
 
 interface SettingsNavItem {
@@ -165,10 +167,20 @@ function providerCapabilitiesForScope(
   return [...provider.capabilities];
 }
 
+function initialSettingsSection(): SettingsSection {
+  const nativeSection = parseDesktopSettingsSection(
+    new URLSearchParams(window.location.search).get('settingsSection'),
+  );
+  if (nativeSection) return nativeSection;
+  const hashQuery = window.location.hash.split('?', 2)[1];
+  return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'general';
+}
+
 export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api, runtime, session, signOut } = useAppSession();
   const queryClient = useQueryClient();
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+  const bridge = useMemo(() => desktopBridge(), []);
+  const [activeSection, setActiveSection] = useState<SettingsSection>(initialSettingsSection);
   const [navigationQuery, setNavigationQuery] = useState('');
   const [connectionFilter, setConnectionFilter] = useState<ConnectionFilter>('all');
   const [email, setEmail] = useState('');
@@ -273,6 +285,13 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     const first = filteredNavigation[0]?.items[0]?.id;
     if (first) setActiveSection(first);
   }, [activeSection, availableSections, filteredNavigation]);
+
+  useEffect(() => bridge.onSettingsSectionRequested((section) => {
+    const nextSection = parseDesktopSettingsSection(section);
+    if (!nextSection) return;
+    setNavigationQuery('');
+    setActiveSection(nextSection);
+  }), [bridge]);
 
   const copyInvitation = async (): Promise<void> => {
     if (!createdUrl) return;

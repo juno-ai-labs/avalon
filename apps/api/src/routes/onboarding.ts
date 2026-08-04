@@ -1,4 +1,4 @@
-import { zValidator } from "@hono/zod-validator";
+import { zValidator } from "../middleware/validation";
 import {
   ActivateWorkspaceRequestSchema,
   CreateWorkspaceRequestSchema,
