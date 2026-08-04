@@ -137,6 +137,26 @@ describe('ElicitationPanel', () => {
 });
 
 describe('MessageBlock human identity', () => {
+  it('renders a completed elicitation as a right-side human response', () => {
+    const elicitationMessage: Message = {
+      ...baseMessage,
+      id: 'message-elicitation-answer',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'elicitation',
+      text: '',
+      elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
+    };
+
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
+
+    const response = screen.getByLabelText('Human elicitation response');
+    expect(response).toHaveClass('human-message', 'own-human-message', 'elicitation-response-message');
+    expect(response).not.toHaveClass('transcript-event');
+    expect(screen.getByLabelText('Elicitation response')).toHaveClass('human-message-bubble');
+    expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
+  });
+
   it('renders an optimistic turn as a neutral skeleton instead of previewing client text', () => {
     render(
       <MessageBlock
