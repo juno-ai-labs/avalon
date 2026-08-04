@@ -58,6 +58,10 @@ describe("agent harness", () => {
 
   it("uses the typed addressing renderer for uncertain messages", async () => {
     let requestBody: Record<string, unknown> | null = null;
+    const recentMessages = [
+      { authorType: "human" as const, authorName: "Morgan", message: "Can you revise it?" },
+      { authorType: "agent" as const, authorName: "Avalon", message: "Which section?" },
+    ];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Response.json({
@@ -75,6 +79,7 @@ describe("agent harness", () => {
       message: "The second section still needs work",
       activeTask: true,
       connectorMentions: [],
+      recentMessages,
       fetch: fetcher,
     })).resolves.toMatchObject({ classification: "uncertain" });
 
@@ -84,6 +89,7 @@ describe("agent harness", () => {
       activeTask: true,
       connectorMentions: [],
       addressesAvalon: false,
+      recentMessages,
     }));
   });
 

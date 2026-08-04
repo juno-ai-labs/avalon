@@ -8,6 +8,7 @@ import {
   renderUntrustedInboundEmailMessage,
   renderWorkstreamSystemPrompt,
   runHarness,
+  type AddressingContextMessage,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessToolPolicyIdentity,
@@ -468,7 +469,12 @@ async function projectModelProtocolTranscript(
 
 export async function classifyWorkstreamMessage(
   env: Env,
-  input: { message: string; activeTask: boolean; connectorMentions: string[] },
+  input: {
+    message: string;
+    activeTask: boolean;
+    connectorMentions: string[];
+    recentMessages: AddressingContextMessage[];
+  },
 ): Promise<AddressingClassification> {
   return classifyAddressing({
     apiKey: env.OPENROUTER_API_KEY,
@@ -477,6 +483,7 @@ export async function classifyWorkstreamMessage(
     message: input.message,
     activeTask: input.activeTask,
     connectorMentions: input.connectorMentions,
+    recentMessages: input.recentMessages,
   });
 }
 
