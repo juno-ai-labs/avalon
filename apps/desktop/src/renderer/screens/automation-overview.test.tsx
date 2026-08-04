@@ -14,9 +14,13 @@ const api = vi.hoisted(() => ({
   shareAutomation: vi.fn(),
   updateAutomation: vi.fn(),
 }));
+const copyText = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../components/inspector-rail', () => ({ InspectorRail: () => null }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ copyText }),
+}));
 
 const automationId = '00000000-0000-7000-8000-000000000008';
 const nextVersionId = '00000000-0000-7000-8000-000000000011';
@@ -67,6 +71,7 @@ function renderScreen(): QueryClient {
 describe('Automation template updates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    copyText.mockResolvedValue(undefined);
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -109,11 +114,6 @@ describe('Automation template updates', () => {
   });
 
   it('shows the permanent email trigger and copies it from an icon button', async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
     renderScreen();
 
     const emailAddress = await screen.findByText('luminous-tidal-structured-curie@automation.with-avalon.com');
@@ -125,7 +125,7 @@ describe('Automation template updates', () => {
     });
     expect(copyButton).not.toHaveTextContent('luminous-tidal-structured-curie@automation.with-avalon.com');
     fireEvent.click(copyButton);
-    expect(writeText).toHaveBeenCalledWith('luminous-tidal-structured-curie@automation.with-avalon.com');
+    expect(copyText).toHaveBeenCalledWith('luminous-tidal-structured-curie@automation.with-avalon.com');
     await waitFor(() => {
       expect(screen.getByRole('button', {
         name: 'Automation email address copied luminous-tidal-structured-curie@automation.with-avalon.com',
@@ -143,11 +143,7 @@ describe('Automation template updates', () => {
   });
 
   it('keeps the automation copy control retryable when the clipboard write fails', async () => {
-    const writeText = vi.fn(async () => Promise.reject(new Error('clipboard unavailable')));
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
+    copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
     renderScreen();
 
     const emailAddress = 'luminous-tidal-structured-curie@automation.with-avalon.com';

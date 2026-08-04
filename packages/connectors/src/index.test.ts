@@ -7,6 +7,7 @@ import {
   ConnectorRegistry,
   createGenericWebhookConnector,
   createGoogleConnector,
+  createWebMonitorConnector,
   CredentialCipher,
   pollWebMonitor,
   verifyGenericWebhook,
@@ -145,6 +146,100 @@ describe("connectors", () => {
     "http://metadata.google.internal/computeMetadata/v1"
   ])("rejects non-public monitor URL %s", async (url) => {
     await expect(pollWebMonitor({ url, previous: {} })).rejects.toThrow(/not allowed/i);
+  });
+
+  it("executes the web-monitor tool against the connection's configured URL", async () => {
+    const requested: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requested.push(input.toString());
+      return new Response("Configured monitor content", {
+        headers: { "content-type": "text/plain" }
+      });
+    };
+    const adapter = createWebMonitorConnector(fetcher);
+
+    const result = await adapter.executeTool(
+      "web_monitor.fetch",
+      {},
+      {
+        connection: webMonitorConnection("https://example.com/configured"),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+
+    expect(requested).toEqual(["https://example.com/configured"]);
+    expect(result).toMatchObject({
+      summary: "Fetched example.com",
+      output: {
+        url: "https://example.com/configured",
+        readableText: "Configured monitor content"
+      }
+    });
+  });
+
+  it("rejects a model-supplied web-monitor URL that differs from the configured target", async () => {
+    let fetchCalls = 0;
+    const adapter = createWebMonitorConnector(async () => {
+      fetchCalls += 1;
+      return new Response("must not be fetched", { headers: { "content-type": "text/plain" } });
+    });
+
+    await expect(adapter.executeTool(
+      "web_monitor.fetch",
+      { url: "https://attacker.example/exfiltrate" },
+      {
+        connection: webMonitorConnection("https://example.com/configured"),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({
+      code: "unsafe_url",
+      message: expect.stringMatching(/configured for this connection/i)
+    });
+    expect(fetchCalls).toBe(0);
+  });
+
+  it("propagates tool cancellation to an in-flight web-monitor fetch", async () => {
+    const cancellation = new Error("cancelled by test");
+    const controller = new AbortController();
+    let fetchSignal: AbortSignal | null | undefined;
+    let markFetchStarted: (() => void) | undefined;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetcher: typeof fetch = async (_input, init) => {
+      fetchSignal = init?.signal;
+      markFetchStarted?.();
+      return await new Promise<Response>((_resolve, reject) => {
+        const fallback = setTimeout(() => reject(new Error("web-monitor fetch did not observe cancellation")), 250);
+        const rejectForAbort = () => {
+          clearTimeout(fallback);
+          reject(fetchSignal?.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (fetchSignal?.aborted) {
+          rejectForAbort();
+          return;
+        }
+        fetchSignal?.addEventListener("abort", rejectForAbort, { once: true });
+      });
+    };
+    const adapter = createWebMonitorConnector(fetcher);
+
+    const execution = adapter.executeTool(
+      "web_monitor.fetch",
+      {},
+      {
+        connection: webMonitorConnection("https://example.com/configured"),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: controller.signal
+      }
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+
+    await expect(execution).rejects.toBe(cancellation);
+    expect(fetchSignal?.aborted).toBe(true);
   });
 
   it("baselines Gmail without flooding old mail, then advances history with normalized metadata", async () => {
@@ -915,6 +1010,19 @@ function googleConnection(
     credentials: { accessToken: "google-access-token" },
     cursor,
     config: { region: "global", pollIntervalSeconds: 300 }
+  };
+}
+
+function webMonitorConnection(url: string): ConnectorConnectionContext {
+  return {
+    id: TEST_CONNECTION_ID,
+    workspaceId: TEST_WORKSPACE_ID,
+    scope: "personal",
+    ownerUserId: TEST_USER_ID,
+    grantedScopes: ["web.read"],
+    credentials: {},
+    cursor: {},
+    config: { url, region: "global", intervalSeconds: 3600 }
   };
 }
 

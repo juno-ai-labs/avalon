@@ -242,6 +242,53 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
   return orderTranscript([...canonical, ...realtimeTools, ...pendingHumanMessages]);
 }
 
+/**
+ * Once a run is terminal, D1 is the authoritative transcript. Realtime tool
+ * rows are intentionally synthetic and can survive a reconnect after their
+ * canonical counterparts have already been persisted. Retain only genuinely
+ * newer persisted rows and local optimistic sends while replacing that
+ * synthetic surface.
+ */
+export function replaceWithCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
+  const canonicalIds = new Set(canonical.map((message) => message.id));
+  const highestCanonicalSequence = canonical.reduce(
+    (highest, message) => Math.max(highest, message.sequenceNumber),
+    0,
+  );
+  const newerPersistedMessages = (previous ?? []).filter((message) =>
+    message.realtimeOrder === undefined
+    && message.sequenceNumber > highestCanonicalSequence
+    && !canonicalIds.has(message.id)
+    && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
+  );
+  const pendingHumanMessages = (previous ?? []).filter((message) =>
+    message.authorType === 'human'
+    && message.deliveryState === 'sending'
+    && !canonicalIds.has(message.id)
+    && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
+  );
+  return orderTranscript([...canonical, ...newerPersistedMessages, ...pendingHumanMessages]);
+}
+
+/**
+ * A canonical request can race a newer socket frame. In that case the cached
+ * version must win for duplicate identities and every unmatched realtime row
+ * must survive until the immediately-following canonical retry completes.
+ */
+function mergeCanonicalTranscriptAfterConcurrentEvent(
+  previous: Message[] | undefined,
+  canonical: Message[],
+): Message[] {
+  return (previous ?? []).reduce(
+    (merged, message) => insertMessage(merged, message),
+    orderTranscript(canonical),
+  );
+}
+
+function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
+  return status === 'running' || status === 'scheduled';
+}
+
 function removeMessage(messages: Message[] | undefined, id: string): Message[] {
   return (messages ?? []).filter((message) => message.id !== id);
 }
@@ -268,6 +315,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
     let ticketRequestInFlight = false;
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
+    let canonicalReconcileGeneration = 0;
     const streamCursors = new Map<string, StreamCursor>();
     const isOffline = (): boolean => navigator.onLine === false;
 
@@ -276,6 +324,39 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
         queryClient.invalidateQueries({ queryKey: ['messages', workstreamId], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
       ]);
+    };
+
+    const reconcileCanonicalState = async (): Promise<void> => {
+      const generation = ++canonicalReconcileGeneration;
+      const sequenceAtStart = lastSequence.current;
+      try {
+        const [canonicalWorkstream, canonicalMessages, canonicalWorkstreams] = await Promise.all([
+          api.getWorkstream(workstreamId),
+          api.getMessages(workstreamId),
+          api.getWorkstreams(),
+        ]);
+        if (closedByEffect || generation !== canonicalReconcileGeneration) return;
+        if (lastSequence.current > sequenceAtStart) {
+          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+            mergeCanonicalTranscriptAfterConcurrentEvent(current, canonicalMessages));
+          // The detail and list snapshots may be stale too. Keep the socket's
+          // newer cache state, then reconcile all three resources again from a
+          // sequence boundary that includes the frame which just landed.
+          void reconcileCanonicalState();
+          return;
+        }
+        const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
+        queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+          mayStillEmitRealtime
+            ? mergeCanonicalTranscript(current, canonicalMessages)
+            : replaceWithCanonicalTranscript(current, canonicalMessages));
+        queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
+        if (!mayStillEmitRealtime) streamCursors.clear();
+      } catch {
+        // The socket replay remains usable. A later terminal frame, reconnect,
+        // or ordinary query refresh will retry the authoritative reconciliation.
+      }
     };
 
     const applyEvent = (event: ServerSocketEvent): void => {
@@ -331,6 +412,14 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           current ? { ...current, harnessStatus: normalizeHarnessStatus(event.status) } : current,
         );
         void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+        if (
+          event.status === 'needs_input'
+          || event.status === 'completed'
+          || event.status === 'failed'
+          || event.status === 'idle'
+        ) {
+          void reconcileCanonicalState();
+        }
       } else if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'tool_failed') {
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
           const messageId = `tool-${event.invocation.id}`;
@@ -489,8 +578,11 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           ]);
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
+          const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            mergeCanonicalTranscript(current, canonicalMessages));
+            mayStillEmitRealtime
+              ? mergeCanonicalTranscript(current, canonicalMessages)
+              : replaceWithCanonicalTranscript(current, canonicalMessages));
           queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
           streamCursors.clear();
           lastSequence.current = Math.max(lastSequence.current, targetSequence);
@@ -521,8 +613,10 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
         socket = nextSocket;
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;
+          const isReconnect = attempts.current > 0 || lastSequence.current > 0;
           setState('connected');
           nextSocket.send(JSON.stringify({ type: 'subscribe', afterSequence: lastSequence.current }));
+          if (isReconnect) void reconcileCanonicalState();
           scheduleStabilityReset(nextSocket);
           scheduleHeartbeat(nextSocket);
         });

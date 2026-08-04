@@ -89,8 +89,21 @@ OpenRouter SSE comments are ignored and function-call fragments are combined by 
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The desktop retains per-message stream cursors across reconnects, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. D1 stores the complete final assistant message; REST resynchronization remains canonical.
 
+## Durable inline subagents
+
+The root harness exposes `avalon.run_subagent` for several independent, substantial read-only investigations. Avalon follows Monad's useful delegation shape while preserving Avalon-specific durable authority:
+
+- A child is an inline Bind run, not an autonomous participant. It receives one self-contained objective and a narrowed subset of plugins already authorized and active in the parent run.
+- Child admission is atomically keyed by the parent's stable tool-call receipt. Duplicate calls replay the same durable result, and a child can never widen the parent's frozen scope.
+- The database records parent/chain lineage, depth, delegated-task and inherited-scope hashes, leases, activations, inference attempts, tool receipts, checkpoints, result hashes, and terminal state.
+- Children are read-only. Connector writes, Firecrawl tools for inbound-email parents, elicitation, recursion, and human-facing progress are unavailable.
+- Child and chain depth, concurrency, plugin surface, model iterations, tool calls, tokens, cost, and wall time are independently bounded. Capacity refusal is deterministic rather than an untracked background task.
+- Parent and child ownership are revalidated during inference and around tool execution. A lost parent or child lease aborts the child, and a successful result becomes visible to Bind only after it is durable.
+
+This deliberately adopts Monad's focused parallel-investigation strategy without copying in-memory interrupt queues, fire-and-forget persistence, autonomous agents, personas, memory, or nested delegation.
+
 ## Cancellation and deferred systems
 
 Stopping a run persists `cancellation_requested_at`; it does not terminate the Workflow out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. The same leased Workflow then commits one fenced `stopped` lifecycle event and returns the work stream to `idle`, preventing a stop/complete race.
 
-Avalon does not currently expose Bind child-run/sub-agent spawning, and it has no separate durable semantic-memory service. The work-stream transcript, attached resources, activation hints, run scope, inference ledger, and tool receipts are context and audit state, not autonomous memory. Child lineage/admission and a memory host remain deferred product work.
+Avalon has no separate durable semantic-memory service. The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, and inline child results are context and audit state, not autonomous memory. Nested child delegation, long-term memory, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.

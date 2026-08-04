@@ -4,6 +4,8 @@ useDefault = true
 [allowlist]
 description = "Generated dependencies, build artifacts, release bundles, and local tool state"
 paths = [
+  '''(^|/)\.env\.local$''',
+  '''(^|/)\.dev\.vars(?:\.[^/]*)?$''',
   '''(^|/)node_modules/''',
   '''(^|/)out/''',
   '''(^|/)dist(?:-[^/]+)?/''',

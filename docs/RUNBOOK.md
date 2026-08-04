@@ -169,6 +169,8 @@ Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to t
 
 Connector polls have a 20-second adapter cancellation deadline inside a 25-second Workflow step. The step uses three exponentially backed-off retries. A terminal timeout or provider failure moves the connection into a deterministic degraded/error state and emits only structured, redacted metadata; it must never leave the workflow waiting indefinitely.
 
+Inline read-only subagents use independent ceilings configured with `HARNESS_CHILD_MAX_*`. The production defaults are four model iterations, eight tool calls, 90 seconds, 12,000 tokens, 100 cents, four active credential plugins, 64 KiB of tool schemas, four children per chain, eight active children per workspace, and depth one. A child inherits and narrows the parent's persisted authority; raising these limits must never enable writes, recursion, or mid-run scope expansion.
+
 ## Incident response
 
 ### OpenRouter unavailable

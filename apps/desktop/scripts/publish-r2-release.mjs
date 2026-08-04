@@ -18,6 +18,10 @@ import {
   verifyFeedArtifact,
 } from './release-lib.mjs';
 import {
+  purgeAndVerifyImmutableReleaseUrls,
+  purgeCloudflareUrls,
+} from './release-cache.mjs';
+import {
   createChecksumManifest,
   createPublishedSiteReleaseConfig,
   readSiteReleaseConfig,
@@ -229,15 +233,15 @@ function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
-async function verifyPublicArtifact(name, expectedSize, verificationId) {
+async function verifyPublicArtifact(name, expectedSize, verificationId, { cacheBust = true } = {}) {
   const url = new URL(publicUrl(name));
-  url.searchParams.set('avalon-release-verify', verificationId.slice(0, 24));
+  if (cacheBust) url.searchParams.set('avalon-release-verify', verificationId.slice(0, 24));
   let failure = 'no response';
   for (let attempt = 0; attempt < 7; attempt += 1) {
     try {
       const head = await fetch(url, {
         method: 'HEAD',
-        headers: { 'cache-control': 'no-cache' },
+        ...(cacheBust ? { headers: { 'cache-control': 'no-cache' } } : {}),
         signal: AbortSignal.timeout(30_000),
       });
       const contentLength = head.headers.get('content-length');
@@ -249,7 +253,7 @@ async function verifyPublicArtifact(name, expectedSize, verificationId) {
       }
       const range = await fetch(url, {
         headers: {
-          'cache-control': 'no-cache',
+          ...(cacheBust ? { 'cache-control': 'no-cache' } : {}),
           range: 'bytes=0-0',
         },
         signal: AbortSignal.timeout(30_000),
@@ -323,22 +327,15 @@ async function uploadImmutableArtifact(artifact, scratchDirectory) {
     console.log(`Uploaded immutable artifact ${objectName}`);
   }
   await verifyPublicArtifact(objectName, metadata.size, localHash);
+  return { name: objectName, expectedSize: metadata.size, verificationId: localHash };
+}
+
+async function purgePublicUrls(urls) {
+  await purgeCloudflareUrls({ apiToken, urls, zoneId });
 }
 
 async function purgePublicUrl(url) {
-  const response = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${apiToken}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ files: [url] }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  const body = await response.json().catch(() => undefined);
-  if (!response.ok || !body || body.success !== true) {
-    throw new Error(`Cloudflare URL purge failed with HTTP ${response.status}: ${JSON.stringify(body)}`);
-  }
+  await purgePublicUrls([url]);
 }
 
 async function publishCanonicalDmg(versionedDmg, scratchDirectory) {
@@ -425,6 +422,10 @@ try {
         ...release.artifacts.map(({ name }) => `${prefix}/${name}`),
         `${prefix}/${release.feed.version}/${checksumsName}`,
       ],
+      immutableCachePurgeUrls: [
+        ...release.artifacts.map(({ name }) => publicUrl(name)),
+        publicUrl(`${release.feed.version}/${checksumsName}`),
+      ],
       canonicalDmg: `${prefix}/${canonicalDmgName}`,
       latestManifest: `${prefix}/${latestManifestName}`,
       siteRelease: proposedSiteConfig,
@@ -455,8 +456,30 @@ try {
 
   // Each immutable payload is hash-verified through R2 and HEAD/Range-verified
   // through the public custom domain before either mutable channel pointer moves.
-  for (const artifact of release.artifacts) await uploadImmutableArtifact(artifact, scratchDirectory);
-  await uploadImmutableArtifact(checksumsArtifact, scratchDirectory);
+  const immutablePublicArtifacts = [];
+  for (const artifact of release.artifacts) {
+    immutablePublicArtifacts.push(await uploadImmutableArtifact(artifact, scratchDirectory));
+  }
+  immutablePublicArtifacts.push(await uploadImmutableArtifact(checksumsArtifact, scratchDirectory));
+
+  // Query parameters bypass a stale negative cache entry but updater clients do
+  // not use them. Purge every exact immutable URL as one fail-closed gate, then
+  // verify the ordinary no-query URLs before either mutable channel pointer moves.
+  await purgeAndVerifyImmutableReleaseUrls({
+    artifacts: immutablePublicArtifacts.map((artifact) => ({
+      ...artifact,
+      url: publicUrl(artifact.name),
+    })),
+    purgeUrls: purgePublicUrls,
+    verifyArtifact: async (artifact) => {
+      await verifyPublicArtifact(
+        artifact.name,
+        artifact.expectedSize,
+        artifact.verificationId,
+        { cacheBust: false },
+      );
+    },
+  });
 
   // Recovery downloads use this stable alias. It moves only after the matching
   // immutable DMG is verified, and before latest-mac.yml commits the channel.

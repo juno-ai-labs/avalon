@@ -81,7 +81,7 @@ describe("prompt renderers", () => {
           plannedFor: null,
           interactive: true,
         }),
-        hash: "b9f1ba0a27d6f1faedcb40fc2f1dba7a51ba8e0acdd1f194ec27163dfbd8241a",
+        hash: "23f67284b7356390b0ac56a0f3334ac6758799e6f8162ee9e35d94a1acba2bcc",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -93,7 +93,7 @@ describe("prompt renderers", () => {
           interactive: false,
           automation: workstreamAutomation,
         }),
-        hash: "4b709340b16614471b427d2804287689990c6926815a99bb03939de89362ef63",
+        hash: "eba28bf3a5716e32ebb33e3492462b30bbacc6a0ddb1aba54c3c43608a6bf1ac",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({

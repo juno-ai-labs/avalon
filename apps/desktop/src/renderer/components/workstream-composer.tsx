@@ -189,7 +189,7 @@ export function WorkstreamComposer({
 
   const send = async (): Promise<void> => {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed) return;
     const selectedPersonIds = new Set(selectedMentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
     const nonparticipants = members.filter((member) => {
       if (participantIds.has(member.id)) return false;
@@ -308,7 +308,7 @@ export function WorkstreamComposer({
             {workstream.harnessStatus === 'running' && (
               <Button className="stop-button" onClick={() => void onStop()}><Square fill="currentColor" size={9} /> Stop</Button>
             )}
-            <button aria-label="Send message" className="composer-send" disabled={!text.trim() || sending} onClick={() => void send()} type="button">
+            <button aria-label="Send message" className="composer-send" disabled={!text.trim()} onClick={() => void send()} type="button">
               {sending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
             </button>
           </div>

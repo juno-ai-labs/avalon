@@ -568,7 +568,9 @@ export class WorkstreamRoom {
           .bind(workstreamId)
           .all<Record<string, unknown>>(),
         this.env.DB.prepare(
-          `SELECT id FROM harness_runs WHERE workstream_id = ?1 ORDER BY started_at DESC LIMIT 1`
+          `SELECT id FROM harness_runs
+            WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
+            ORDER BY started_at DESC LIMIT 1`
         )
           .bind(workstreamId)
           .first<{ id: string }>()
