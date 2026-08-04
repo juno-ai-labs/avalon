@@ -75,6 +75,13 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 
 Do not grant DNS, billing, user-management, API-token-management, or account-wide zone access. Rotate any broader bootstrap token after provisioning.
 
+Keep Cloudflare's zone-level **Always Use HTTPS** setting enabled. Keep HTTP Strict
+Transport Security enabled with a one-year `max-age`, `includeSubDomains`, and
+`nosniff`; do not enable HSTS preload until the domain has completed the separate
+preload-readiness review. Release verification must confirm that the site, both API
+origins, and the downloads origin redirect cleartext HTTP to HTTPS and return the
+expected `Strict-Transport-Security` header over HTTPS.
+
 ## Deployment order
 
 ### Release version policy

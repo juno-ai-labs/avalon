@@ -6,9 +6,13 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
+import { parseDesktopSettingsSection } from '../common/settings';
+import type { DesktopSettingsSection } from '../common/settings';
 
 const deepLinkListeners = new Set<(url: string) => void>();
 const queuedDeepLinks: string[] = [];
+const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
+let queuedSettingsSection: DesktopSettingsSection | null = null;
 
 // Install the privileged listener before React starts. Session changes can
 // briefly replace the renderer callback; a native OAuth/invitation callback
@@ -21,6 +25,19 @@ ipcRenderer.on('auth:deep-link', (_event, rawUrl: unknown) => {
     return;
   }
   for (const listener of deepLinkListeners) listener(rawUrl);
+});
+
+// A settings request can arrive as soon as the window finishes loading, before
+// React has mounted its section listener. Retain the newest request so an
+// already-open singleton and a newly-created window behave identically.
+ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
+  const section = parseDesktopSettingsSection(rawSection);
+  if (!section) return;
+  if (settingsSectionListeners.size === 0) {
+    queuedSettingsSection = section;
+    return;
+  }
+  for (const listener of settingsSectionListeners) listener(section);
 });
 
 const bridge: AvalonDesktopBridge = {
@@ -39,7 +56,18 @@ const bridge: AvalonDesktopBridge = {
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
-  openSettings: () => ipcRenderer.invoke('system:open-settings') as Promise<void>,
+  openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
+  onSettingsSectionRequested: (listener) => {
+    settingsSectionListeners.add(listener);
+    const pending = queuedSettingsSection;
+    queuedSettingsSection = null;
+    if (pending) {
+      queueMicrotask(() => {
+        if (settingsSectionListeners.has(listener)) listener(pending);
+      });
+    }
+    return () => settingsSectionListeners.delete(listener);
+  },
   consumePendingDeepLinks: () => ipcRenderer.invoke('auth:consume-pending-deep-links') as Promise<string[]>,
   onDeepLink: (listener) => {
     deepLinkListeners.add(listener);

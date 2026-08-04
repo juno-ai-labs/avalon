@@ -1,6 +1,6 @@
 {
   "name": "@avalon/desktop",
-  "version": "0.9.0",
+  "version": "0.11.0",
   "private": true,
   "description": "Avalon secure Electron desktop client",
   "author": "Avalon",
@@ -33,7 +33,7 @@
     "@radix-ui/react-tooltip": "latest",
     "@tanstack/react-query": "latest",
     "clsx": "latest",
-    "electron-updater": "6.8.3",
+    "electron-updater": "6.8.9",
     "lucide-react": "latest",
     "prism-react-renderer": "^2.4.1",
     "react": "latest",

@@ -260,8 +260,12 @@ const browserBridge: AvalonDesktopBridge = {
   async openExternal(url) {
     window.open(url, '_blank', 'noopener,noreferrer');
   },
-  async openSettings() {
-    window.location.hash = '#/settings';
+  async openSettings(section) {
+    const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
+    window.location.hash = `#${target}`;
+  },
+  onSettingsSectionRequested() {
+    return () => undefined;
   },
   async consumePendingDeepLinks() {
     return [];

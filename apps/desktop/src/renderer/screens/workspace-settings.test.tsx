@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
@@ -19,6 +19,9 @@ const api = vi.hoisted(() => ({
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
+const settingsSectionRequest = vi.hoisted(() => ({
+  listener: null as ((section: string) => void) | null,
+}));
 
 vi.mock('../lib/app-session', () => ({
   useAppSession: () => ({
@@ -34,7 +37,18 @@ vi.mock('../lib/app-session', () => ({
     signOut,
   }),
 }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText, openExternal }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    copyText,
+    openExternal,
+    onSettingsSectionRequested: (listener: (section: string) => void) => {
+      settingsSectionRequest.listener = listener;
+      return () => {
+        if (settingsSectionRequest.listener === listener) settingsSectionRequest.listener = null;
+      };
+    },
+  }),
+}));
 
 const owner = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles', role: 'owner' };
 const member = { id: 'user-2', name: 'Sam', email: 'sam@example.com', timezone: 'America/Los_Angeles', role: 'member' };
@@ -78,6 +92,8 @@ function openSettingsSection(name: 'General' | 'Account' | 'Workspace' | 'Connec
 describe('Workspace settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.history.replaceState({}, '', '/');
+    settingsSectionRequest.listener = null;
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
@@ -86,6 +102,34 @@ describe('Workspace settings', () => {
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
+  });
+
+  it('opens the exact section requested by a native settings-window URL', async () => {
+    window.history.replaceState({}, '', '/?surface=settings&settingsSection=workspace#/settings');
+    renderSettings();
+
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    expect(within(navigation).getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
+    expect(await screen.findByText('Sam')).toBeVisible();
+  });
+
+  it('targets an already-open singleton settings window and ignores invalid section events', async () => {
+    renderSettings();
+    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
+
+    act(() => settingsSectionRequest.listener?.('connections'));
+    expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeVisible();
+
+    act(() => settingsSectionRequest.listener?.('not-a-section'));
+    expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeVisible();
+  });
+
+  it('falls back to General for an invalid initial settings section', () => {
+    window.history.replaceState({}, '', '/?surface=settings&settingsSection=not-a-section#/settings');
+    renderSettings();
+
+    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
   });
 
   it('offers separate Google presets with their exact personal and workspace capabilities', async () => {

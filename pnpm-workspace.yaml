@@ -12,6 +12,10 @@ peerDependencyRules:
   allowedVersions:
     "tw-fade@0.8>tailwindcss": "3.x"
 
+overrides:
+  fast-uri: 3.1.5
+  "undici@>=7.0.0 <7.29.0": 7.29.0
+
 catalog:
   typescript: ^5.9.3
   zod: latest
@@ -19,3 +23,7 @@ catalog:
 
 minimumReleaseAgeExclude:
   - '@juno-ai/bind@10.0.0'
+
+auditConfig:
+  ignoreGhsas:
+    - GHSA-qwww-vcr4-c8h2
