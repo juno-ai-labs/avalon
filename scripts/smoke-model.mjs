@@ -1,5 +1,5 @@
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
-const expectedModel = "google/gemini-2.5-flash-lite";
+const expectedModel = "x-ai/grok-4.3";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -30,11 +30,11 @@ const created = await request("/workstreams", {
   method: "POST",
   headers,
   body: JSON.stringify({
-    title: "Gemini 2.5 Flash Lite smoke test",
+    title: "Primary model smoke test",
     objective: "Verify that Avalon's configured primary model completes a real request.",
     participantUserIds: [],
-    openingMessage: "Reply with exactly AVALON_GEMINI_SMOKE_OK. Do not call any tools.",
-    clientMessageId: `gemini-smoke-${crypto.randomUUID()}`,
+    openingMessage: "Reply with exactly AVALON_MODEL_SMOKE_OK. Do not call any tools.",
+    clientMessageId: `model-smoke-${crypto.randomUUID()}`,
   }),
 });
 assert(created.response.status === 201, `Work-stream creation failed (${created.response.status})`);
@@ -60,7 +60,7 @@ const run = detail.body?.latestHarnessRun;
 const assistant = messages.body?.items?.find((message) => message.author?.type === "agent" && message.textContent);
 assert(run?.status === "completed", `The model run ended in ${run?.status ?? "an unknown state"}`);
 assert(run?.model === expectedModel, `Expected ${expectedModel}, received ${run?.model ?? "no model"}`);
-assert(assistant?.textContent?.includes("AVALON_GEMINI_SMOKE_OK"), "Gemini returned an unexpected smoke response");
+assert(assistant?.textContent?.includes("AVALON_MODEL_SMOKE_OK"), "The primary model returned an unexpected smoke response");
 
 console.log(JSON.stringify({
   workstreamId,

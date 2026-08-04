@@ -49,6 +49,7 @@ interface StoredConnection extends Record<string, unknown> {
   connector_type: string;
   scope: Scope;
   owner_user_id: string | null;
+  model_plugin_id?: string | null;
 }
 
 type OAuthConnectorProvider = "linear" | "notion";
@@ -164,11 +165,16 @@ export class ConnectionService {
       this.env.CONNECTOR_CREDENTIALS_KEY,
       connectionId,
     );
+    const modelPluginId = await this.allocateModelPluginId(
+      String(row.workspace_id),
+      "google",
+      stateData.connectionId ? connectionId : null,
+    );
     if (stateData.connectionId) {
       const updated = await this.env.DB.prepare(
         `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
          credential_key_version = ?, granted_scopes_json = ?, provider_account_id = ?, display_name = ?,
-         status = 'healthy', error_json = NULL,
+         model_plugin_id = ?, status = 'healthy', error_json = NULL,
          next_poll_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ? AND connector_type = 'google'
          RETURNING id`,
@@ -179,6 +185,7 @@ export class ConnectionService {
         JSON.stringify(stateData.capabilities),
         account.providerAccountId,
         displayName,
+        modelPluginId,
         at,
         at,
         connectionId,
@@ -190,8 +197,8 @@ export class ConnectionService {
         `INSERT INTO connector_connections
          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
           encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          status, cursor_json, config_json, next_poll_at, created_at, updated_at)
-         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?, ?)`,
+          model_plugin_id, status, cursor_json, config_json, next_poll_at, created_at, updated_at)
+         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?, ?)`,
       ).bind(
         connectionId,
         row.workspace_id,
@@ -203,6 +210,7 @@ export class ConnectionService {
         encrypted.iv,
         Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
         JSON.stringify(stateData.capabilities),
+        modelPluginId,
         at,
         at,
         at,
@@ -454,6 +462,11 @@ export class ConnectionService {
     const at = nowIso();
     const providerAccountName = stringField(credentials, "providerAccountName") ?? `installation ${providerAccountId}`;
     const displayName = `GitHub · ${providerAccountName}`.slice(0, 180);
+    const modelPluginId = await this.allocateModelPluginId(
+      String(row.workspace_id),
+      "github",
+      existing ? connectionId : null,
+    );
     const config = JSON.stringify({
       region: this.env.AVALON_REGION,
       installationId: providerAccountId,
@@ -471,7 +484,7 @@ export class ConnectionService {
     if (existing) {
       await this.env.DB.prepare(
         `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
-         granted_scopes_json = ?, provider_account_id = ?, display_name = ?, status = 'healthy', error_json = NULL,
+         granted_scopes_json = ?, provider_account_id = ?, display_name = ?, model_plugin_id = ?, status = 'healthy', error_json = NULL,
          config_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND connector_type = 'github'`,
       ).bind(
         encrypted.ciphertext,
@@ -480,6 +493,7 @@ export class ConnectionService {
         JSON.stringify(stateData.capabilities),
         providerAccountId,
         displayName,
+        modelPluginId,
         config,
         at,
         connectionId,
@@ -490,8 +504,8 @@ export class ConnectionService {
         `INSERT INTO connector_connections
          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
           encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          status, cursor_json, config_json, created_at, updated_at)
-         VALUES (?, ?, 'github', ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
+          model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+         VALUES (?, ?, 'github', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
       ).bind(
         connectionId,
         row.workspace_id,
@@ -503,6 +517,7 @@ export class ConnectionService {
         encrypted.iv,
         Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
         JSON.stringify(stateData.capabilities),
+        modelPluginId,
         config,
         at,
         at,
@@ -604,10 +619,15 @@ export class ConnectionService {
       ?? stringField(credentials, "workspaceName")
       ?? providerAccountId;
     const displayName = `${adapter.manifest.displayName} · ${label}`.slice(0, 180);
+    const modelPluginId = await this.allocateModelPluginId(
+      String(row.workspace_id),
+      provider,
+      existing ? connectionId : null,
+    );
     if (existing) {
       await this.env.DB.prepare(
         `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
-         granted_scopes_json = ?, provider_account_id = ?, display_name = ?, status = 'healthy', error_json = NULL,
+         granted_scopes_json = ?, provider_account_id = ?, display_name = ?, model_plugin_id = ?, status = 'healthy', error_json = NULL,
          config_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND connector_type = ?`,
       ).bind(
         encrypted.ciphertext,
@@ -616,6 +636,7 @@ export class ConnectionService {
         JSON.stringify(stateData.capabilities),
         providerAccountId,
         displayName,
+        modelPluginId,
         JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
         at,
         connectionId,
@@ -628,8 +649,8 @@ export class ConnectionService {
           `INSERT INTO connector_connections
            (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
             encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-            status, cursor_json, config_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
+            model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
         ).bind(
           connectionId,
           row.workspace_id,
@@ -642,6 +663,7 @@ export class ConnectionService {
           encrypted.iv,
           Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
           JSON.stringify(stateData.capabilities),
+          modelPluginId,
           JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
           at,
           at,
@@ -840,13 +862,14 @@ export class ConnectionService {
       id,
     );
     const at = nowIso();
+    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "generic_webhook");
     await this.env.DB.prepare(
       `INSERT INTO connector_connections
        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
         encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-        status, cursor_json, config_json, created_at, updated_at)
-       VALUES (?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, '[]', 'healthy', '{}', ?, ?, ?)`,
-    ).bind(id, auth.workspaceId, input.scope, input.scope === "personal" ? auth.userId : null, input.displayName, encrypted.ciphertext, encrypted.iv, Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1), JSON.stringify({ eventTypes: input.eventTypes }), at, at).run();
+        model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+       VALUES (?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, '[]', ?, 'healthy', '{}', ?, ?, ?)`,
+    ).bind(id, auth.workspaceId, input.scope, input.scope === "personal" ? auth.userId : null, input.displayName, encrypted.ciphertext, encrypted.iv, Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1), modelPluginId, JSON.stringify({ eventTypes: input.eventTypes }), at, at).run();
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
     });
@@ -864,12 +887,13 @@ export class ConnectionService {
     assertPublicMonitorUrl(input.url);
     const id = newId();
     const at = nowIso();
+    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "web_monitor");
     await this.env.DB.prepare(
       `INSERT INTO connector_connections
        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-        granted_scopes_json, status, cursor_json, config_json, next_poll_at, created_at, updated_at)
-       VALUES (?, ?, 'web_monitor', ?, ?, ?, '["web.read"]', 'healthy', '{}', ?, ?, ?, ?)`,
-    ).bind(id, auth.workspaceId, input.scope, input.scope === "personal" ? auth.userId : null, `Monitor ${new URL(input.url).hostname}`, JSON.stringify({ url: input.url, intervalSeconds: input.intervalSeconds, phrase: input.phrase, region: this.env.AVALON_REGION }), at, at, at).run();
+        granted_scopes_json, model_plugin_id, status, cursor_json, config_json, next_poll_at, created_at, updated_at)
+       VALUES (?, ?, 'web_monitor', ?, ?, ?, '["web.read"]', ?, 'healthy', '{}', ?, ?, ?, ?)`,
+    ).bind(id, auth.workspaceId, input.scope, input.scope === "personal" ? auth.userId : null, `Monitor ${new URL(input.url).hostname}`, modelPluginId, JSON.stringify({ url: input.url, intervalSeconds: input.intervalSeconds, phrase: input.phrase, region: this.env.AVALON_REGION }), at, at, at).run();
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "web_monitor", scope: input.scope, host: new URL(input.url).hostname,
     });
@@ -1067,6 +1091,45 @@ export class ConnectionService {
     }
   }
 
+  /**
+   * Allocate the stable, workspace-local name shown to the model. Opaque
+   * connection UUIDs remain the only authorization identity. Disabled rows do
+   * not reserve a name, so removing and later adding the same provider reuses
+   * the clean base (plugin_google, plugin_linear, and so on).
+   */
+  private async allocateModelPluginId(
+    workspaceId: string,
+    connectorType: string,
+    existingConnectionId: string | null = null,
+  ): Promise<string> {
+    const base = modelPluginIdBase(connectorType);
+    const active = await this.env.DB.prepare(
+      `SELECT id, model_plugin_id FROM connector_connections
+       WHERE workspace_id = ? AND status <> 'disabled' AND (? IS NULL OR id <> ?)`,
+    ).bind(workspaceId, existingConnectionId, existingConnectionId).all<{
+      id: string;
+      model_plugin_id: string | null;
+    }>();
+    const used = new Set(
+      (active.results ?? [])
+        .map((row) => row.model_plugin_id)
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    );
+    if (existingConnectionId) {
+      const current = await this.env.DB.prepare(
+        `SELECT model_plugin_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+      ).bind(existingConnectionId, workspaceId).first<{ model_plugin_id: string | null }>();
+      const currentId = current?.model_plugin_id;
+      if (currentId && isModelPluginIdForBase(currentId, base) && !used.has(currentId)) return currentId;
+    }
+    if (!used.has(base)) return base;
+    for (let suffix = 2; suffix < 100_000; suffix += 1) {
+      const candidate = `${base}_${suffix}`;
+      if (!used.has(candidate)) return candidate;
+    }
+    throw new ApiError(409, "connector_plugin_namespace_exhausted", "No connector plugin name is available");
+  }
+
   private async loadAuthorized(id: string): Promise<StoredConnection> {
     const auth = this.requireAuth();
     const row = await this.env.DB.prepare(
@@ -1155,6 +1218,21 @@ function toConnection(row: Record<string, unknown>) {
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+export function modelPluginIdBase(connectorType: string): string {
+  const provider = connectorType === "generic_webhook" ? "webhook" : connectorType;
+  const safe = provider
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/gu, "_")
+    .replace(/^_+|_+$/gu, "")
+    .slice(0, 48);
+  if (!safe) throw new ApiError(422, "invalid_connector_type", "Connector type cannot form a plugin name");
+  return `plugin_${safe}`;
+}
+
+function isModelPluginIdForBase(value: string, base: string): boolean {
+  return value === base || new RegExp(`^${base}_[2-9][0-9]*$`, "u").test(value);
 }
 
 function assertPublicMonitorUrl(value: string): void {

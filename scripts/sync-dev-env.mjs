@@ -107,7 +107,7 @@ const safeDefaults = {
   PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
   ALLOWED_ORIGINS: "app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
-  OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
+  OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
   OPENROUTER_FALLBACK_MODELS: "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",

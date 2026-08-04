@@ -19,7 +19,7 @@
     "db:migrate": "pnpm env:sync && pnpm --filter @avalon/api db:migrate && pnpm --filter @avalon/api db:migrate:eu",
     "db:seed": "pnpm env:sync && pnpm --filter @avalon/api db:seed && pnpm --filter @avalon/api db:seed:eu",
     "smoke:local": "node scripts/smoke-local.mjs",
-    "smoke:model": "node scripts/smoke-gemini.mjs",
+    "smoke:model": "node scripts/smoke-model.mjs",
     "test": "pnpm -r --if-present test",
     "test:observability": "node --test scripts/configure-cloudflare-observability.test.mjs",
     "test:watch": "vitest",
