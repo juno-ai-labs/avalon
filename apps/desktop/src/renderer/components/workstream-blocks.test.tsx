@@ -61,6 +61,40 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Sam')).toHaveClass('message-author');
     expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
   });
+
+  it('renders sent attachments outside the rounded human text bubble', () => {
+    const message: Message = {
+      ...baseMessage,
+      attachments: [{
+        id: 'attachment-one',
+        fileName: 'reference.png',
+        mimeType: 'image/png',
+        sizeBytes: 128,
+        contentAvailable: true,
+        createdAt: '2026-07-31T19:19:00.000Z',
+      }],
+    };
+    const loadAttachmentContent = vi.fn(async () => new Blob(['image'], { type: 'image/png' }));
+    const onOpenAttachment = vi.fn();
+
+    render(
+      <MessageBlock
+        {...actions}
+        currentUserId="user-adam"
+        loadAttachmentContent={loadAttachmentContent}
+        message={message}
+        onOpenAttachment={onOpenAttachment}
+      />,
+    );
+
+    const humanMessage = screen.getByLabelText('Message from Adam');
+    const attachments = humanMessage.querySelector<HTMLElement>('.message-attachments');
+    const bubble = humanMessage.querySelector<HTMLElement>('.human-message-bubble');
+    expect(attachments).toBeInTheDocument();
+    expect(bubble).toHaveTextContent('Please investigate this.');
+    expect(bubble).not.toContainElement(attachments);
+    expect(attachments?.nextElementSibling).toBe(bubble);
+  });
 });
 
 describe('MessageBlock markdown', () => {
