@@ -18,12 +18,7 @@ publish:
   - provider: generic
     url: https://downloads.with-avalon.com/stable/darwin/arm64
 mac:
-  icon: resources/icon.icns
-  extraResources:
-    - from: resources/icons
-      to: icons
-      filter:
-        - "*.icns"
+  icon: resources/icon.icon
   category: public.app-category.productivity
   hardenedRuntime: true
   forceCodeSigning: true
@@ -38,6 +33,9 @@ mac:
       arch:
         - arm64
 dmg:
+  # Icon Composer supplies the app's adaptive asset catalog. Keep an ICNS
+  # only for the disk-image volume, which still uses the legacy format.
+  icon: resources/icon.icns
   # electron-builder 26 notarizes Avalon.app, but not the disk image. The
   # afterAllArtifactBuild hook signs, notarizes, staples, and re-blockmaps it.
   sign: false
