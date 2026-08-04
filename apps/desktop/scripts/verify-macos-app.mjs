@@ -69,6 +69,19 @@ const mainExecutable = join(appPath, 'Contents/MacOS/Avalon');
 runWithStderr('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', mainExecutable]);
 verifyArm64(mainExecutable, 'Avalon');
 
+const resourcesDirectory = join(appPath, 'Contents/Resources');
+for (const iconPathFromResources of [
+  'icon.icns',
+  join('icons', 'avalon-light.icns'),
+  join('icons', 'avalon-dark.icns'),
+]) {
+  const iconPath = join(resourcesDirectory, iconPathFromResources);
+  if (!existsSync(iconPath)) throw new Error(`Packaged app is missing ICNS resource ${iconPathFromResources}`);
+  if (readFileSync(iconPath).subarray(0, 4).toString('ascii') !== 'icns') {
+    throw new Error(`Packaged icon resource is not an ICNS file: ${iconPathFromResources}`);
+  }
+}
+
 function inspectEntitlementKeys(componentPath, label) {
   const entitlementResult = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', componentPath], {
     encoding: 'utf8',
