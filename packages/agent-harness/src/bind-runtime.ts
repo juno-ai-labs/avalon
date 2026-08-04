@@ -67,6 +67,7 @@ const circuitBreaker = createCircuitBreaker({
 
 type BindPlugin = ToolPlugin<HarnessToolContext> & {
   canonicalId: string;
+  modelId: string;
   shortWireName: string;
   displayName?: string;
   searchAliases: readonly string[];
@@ -720,6 +721,14 @@ async function createPluginRuntime(
   const registry = createToolRegistry<BindPlugin>({ corePlugins: [CORE_PLUGIN_ID] });
   for (const plugin of plugins) registry.register(plugin);
   const eligibleIds = new Set(plugins.map((plugin) => plugin.canonicalId));
+  const canonicalByModelId = new Map<string, string>();
+  for (const plugin of plugins) {
+    const existing = canonicalByModelId.get(plugin.modelId);
+    if (existing && existing !== plugin.canonicalId) {
+      throw new Error(`Duplicate model-facing plugin id: ${plugin.modelId}`);
+    }
+    canonicalByModelId.set(plugin.modelId, plugin.canonicalId);
+  }
   const active = new Set(initialActivePlugins(registry.corePlugins()));
   // `preload` is a host-side selection hint, not proof that activation crossed
   // the durable boundary. Only IDs the host returns after persistence may be
@@ -811,7 +820,8 @@ async function createPluginRuntime(
   const catalogTool = plugins[0]!.toolByWireName.get("avalon_load_plugin");
   if (catalogTool) {
     catalogTool.execute = async (raw) => {
-      const id = typeof raw === "object" && raw !== null && "pluginId" in raw ? String(raw.pluginId) : "";
+      const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw ? String(raw.pluginId) : "";
+      const id = canonicalByModelId.get(modelId) ?? "";
       if (!eligibleIds.has(id) || id === CORE_PLUGIN_ID) {
         return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
       }
@@ -827,8 +837,8 @@ async function createPluginRuntime(
         description: tool.description,
       }));
       return {
-        output: { loaded: id, tools },
-        summary: `Loaded ${plugin.displayName ?? id}; ${tools.length} tools are now available`,
+        output: { loaded: plugin.modelId, tools },
+        summary: `Loaded ${plugin.displayName ?? plugin.modelId}; ${tools.length} tools are now available`,
         loadedPluginName: id,
       } as HarnessToolResult;
     };
@@ -894,6 +904,7 @@ function corePlugin(input: RunHarnessInput): BindPlugin {
   }
   return buildPlugin({
     canonicalId: CORE_PLUGIN_ID,
+    modelId: "avalon_core",
     shortWireName: "avalon",
     description: "Core Avalon work-stream tools and connector plugin activation.",
     systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use connector plugins only when their catalog description is relevant. Use list_connector_plugins or search_connector_plugins when the compact catalog is insufficient. Loading a plugin never expands the run's original authority.",
@@ -945,6 +956,7 @@ function buildPlugin(plugin: HarnessPlugin): BindPlugin {
   return {
     ...generated,
     canonicalId: plugin.canonicalId,
+    modelId: plugin.modelId,
     shortWireName: plugin.shortWireName,
     ...(plugin.displayName ? { displayName: plugin.displayName } : {}),
     searchAliases: [...(plugin.searchAliases ?? [])],
@@ -956,6 +968,11 @@ function buildPlugin(plugin: HarnessPlugin): BindPlugin {
 
 function stableWireToolName(prefix: string, toolName: string): string {
   const normalized = normalizeToolIdentity(toolName);
+  const providerPrefix = prefix.replace(/_[2-9][0-9]*$/u, "");
+  const instanceSuffix = prefix.slice(providerPrefix.length);
+  if (normalized === providerPrefix || normalized.startsWith(`${providerPrefix}_`)) {
+    return `${providerPrefix}${instanceSuffix}${normalized.slice(providerPrefix.length)}`.slice(0, 64);
+  }
   return `${prefix}_${normalized}`.slice(0, 64);
 }
 
@@ -998,7 +1015,7 @@ function connectorCatalog(registry: ToolRegistry<BindPlugin>): Array<{
     .map((plugin) => {
       const registered = registry.get(plugin.name);
       return {
-        id: plugin.name,
+        id: registered?.modelId ?? plugin.name,
         ...(registered?.displayName ? { displayName: registered.displayName } : {}),
         searchAliases: registered?.searchAliases ?? [],
         description: plugin.description,
@@ -1016,7 +1033,7 @@ function renderStableSystemPrompt(
     .sort()
     .flatMap((id) => {
       const plugin = registry.get(id);
-      return plugin?.systemMessage ? [`<plugin id="${id}">\n${plugin.systemMessage}\n</plugin>`] : [];
+      return plugin?.systemMessage ? [`<plugin id="${plugin.modelId}">\n${plugin.systemMessage}\n</plugin>`] : [];
     });
   const catalog = partitionPluginCatalog(active, registry.summaries());
   const catalogLines = catalog.loadable
@@ -1029,7 +1046,7 @@ function renderStableSystemPrompt(
         ...(displayName ? [`name=${JSON.stringify(displayName)}`] : []),
         ...(aliases.length > 0 ? [`aliases=${JSON.stringify(aliases)}`] : []),
       ].join("; ");
-      return `- id=${JSON.stringify(plugin.name)}${discovery ? `; ${discovery}` : ""}; description=${plugin.description}`;
+      return `- id=${JSON.stringify(registered?.modelId ?? plugin.name)}${discovery ? `; ${discovery}` : ""}; description=${plugin.description}`;
     });
   const maxChars = Math.max(256, catalogTokens * 4);
   let used = 0;

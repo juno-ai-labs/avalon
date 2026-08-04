@@ -7,6 +7,7 @@
  * but cannot overrun it because of optimistic character/token heuristics.
  */
 export const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS: Readonly<Record<string, number>> = Object.freeze({
+  "x-ai/grok-4.3": 1_000_000,
   "google/gemini-2.5-flash-lite": 1_048_576,
   "google/gemini-2.5-pro": 1_048_576,
   "anthropic/claude-sonnet-4.5": 200_000,

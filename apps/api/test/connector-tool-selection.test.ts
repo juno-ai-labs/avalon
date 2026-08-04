@@ -52,19 +52,30 @@ interface ConnectionRow extends Record<string, unknown> {
   granted_scopes_json: string;
   status: "healthy" | "error";
   created_at: string;
+  model_plugin_id?: string;
   encrypted_credentials?: string;
   credential_iv?: string;
 }
 
 class ToolSelectionDatabase {
   readonly binding: D1Database;
+  readonly connections: ConnectionRow[];
   memberStatus = "active";
 
   constructor(
-    readonly connections: ConnectionRow[],
+    connections: ConnectionRow[],
     readonly automationBindings: Array<{ capability: string; connection_id: string }> = [],
     readonly attachedConnectionIds: string[] = [],
   ) {
+    const counts = new Map<string, number>();
+    this.connections = connections.map((row) => {
+      const base = row.connector_type === "web_monitor" ? "plugin_web_monitor" : "plugin_google";
+      const key = `${row.workspace_id}:${base}`;
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      row.model_plugin_id ??= count === 1 ? base : `${base}_${count}`;
+      return row;
+    });
     this.binding = {
       prepare: (sql: string) => new ToolSelectionStatement(this, sql) as unknown as D1PreparedStatement,
     } as unknown as D1Database;
@@ -446,7 +457,7 @@ describe("connector tools selected for harness runs", () => {
     await expect(tool.execute(
       {
         objective: "Read the private plan",
-        pluginIds: [`connection:${OWNER_CONNECTION_ID}`],
+        pluginIds: ["plugin_google_2"],
       },
       {
         workspaceId: WORKSPACE_ID,
@@ -611,6 +622,8 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.plugins).toHaveLength(1);
     expect(selected.plugins[0]).toMatchObject({
       canonicalId: `connection:${WORKSPACE_CONNECTION_ID}`,
+      modelId: "plugin_google",
+      shortWireName: "google",
       preload: true,
       explicit: true,
     });
@@ -690,7 +703,7 @@ describe("connector tools selected for harness runs", () => {
     vi.stubGlobal("fetch", providerFetch);
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
     const plugin = selected.plugins[0]!;
-    const wireToolName = `${plugin.shortWireName}_google_drive_search`;
+    const wireToolName = "google_drive_search";
     const events: HarnessEvent[] = [];
     let modelTurn = 0;
     const modelFetch = vi.fn<typeof globalThis.fetch>(async () => {

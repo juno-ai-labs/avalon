@@ -119,6 +119,54 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("assigns readable plugin ids uniquely among active workspace connections", () => {
+    const database = migrateDatabaseThrough("0027_inline_child_runs.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-plugin', 'google-plugin', 'plugin@example.com', 'Plugin Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-plugin', 'Plugin Workspace', 'plugin-workspace', 'global', 'user-plugin', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, display_name, status, created_at, updated_at)
+      VALUES
+        ('google-first', 'workspace-plugin', 'google', 'workspace', 'Google one', 'healthy', '2026-01-01', '2026-01-01'),
+        ('google-second', 'workspace-plugin', 'google', 'workspace', 'Google two', 'error', '2026-01-02', '2026-01-02'),
+        ('google-disabled', 'workspace-plugin', 'google', 'workspace', 'Google removed', 'disabled', '2025-01-01', '2025-01-01'),
+        ('webhook-first', 'workspace-plugin', 'generic_webhook', 'workspace', 'Webhook', 'healthy', '2026-01-03', '2026-01-03');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0028_connector_model_plugin_ids.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT id, model_plugin_id FROM connector_connections ORDER BY id",
+    ).all()).toEqual([
+      { id: "google-disabled", model_plugin_id: null },
+      { id: "google-first", model_plugin_id: "plugin_google" },
+      { id: "google-second", model_plugin_id: "plugin_google_2" },
+      { id: "webhook-first", model_plugin_id: "plugin_webhook" },
+    ]);
+
+    database.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = 'google-first'");
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, display_name, model_plugin_id, status, created_at, updated_at)
+      VALUES ('google-readded', 'workspace-plugin', 'google', 'workspace', 'Google three',
+              'plugin_google', 'healthy', '2026-01-04', '2026-01-04');
+    `);
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, display_name, model_plugin_id, status, created_at, updated_at)
+      VALUES ('google-duplicate', 'workspace-plugin', 'google', 'workspace', 'Google duplicate',
+              'plugin_google', 'healthy', '2026-01-05', '2026-01-05');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    database.close();
+  });
+
   it("corrects the pre-release plural work-stream email domain without changing its reserved name", () => {
     const database = migrateDatabaseThrough("0020_workstream_email_route_lifecycle.sql");
     database.exec(`
