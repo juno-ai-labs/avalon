@@ -12,6 +12,18 @@ export const HarnessStatusSchema = z.enum([
   "failed",
   "idle"
 ]);
+export const HarnessFailureCodeSchema = z.enum([
+  "run_wall_time_limit_exceeded",
+  "run_iteration_limit_exceeded",
+  "run_tool_call_limit_exceeded",
+  "run_token_limit_exceeded",
+  "run_cost_limit_exceeded",
+  "harness_execution_failed",
+  "context_limit_exceeded",
+  "tool_surface_too_large",
+  "ambiguous_external_write"
+]);
+export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
 export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
   try {
@@ -477,12 +489,31 @@ const ServerEventBaseSchema = z.object({
   sequence: z.number().int().nonnegative(),
   occurredAt: TimestampSchema
 });
+const StreamEventBaseSchema = ServerEventBaseSchema.extend({
+  /** Stable identity for one model turn, across retries and route fallbacks. */
+  turnId: z.string().min(1).max(180),
+  /** Increments whenever a turn restarts on the same or a fallback route. */
+  epoch: z.number().int().nonnegative(),
+  /** Monotonic within one turn epoch; distinct from the room event sequence. */
+  streamSeq: z.number().int().nonnegative()
+});
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("stream_started"), messageId: IdSchema, harnessRunId: IdSchema }),
-  ServerEventBaseSchema.extend({ type: z.literal("stream_delta"), messageId: IdSchema, delta: z.string() }),
+  StreamEventBaseSchema.extend({
+    type: z.literal("stream_started"),
+    messageId: IdSchema,
+    harnessRunId: IdSchema,
+    reset: z.literal(false)
+  }),
+  StreamEventBaseSchema.extend({
+    type: z.literal("stream_delta"),
+    messageId: IdSchema,
+    delta: z.string(),
+    /** Replaces text from the prior attempt instead of concatenating it. */
+    reset: z.boolean()
+  }),
   ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), message: MessageSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("tool_started"), invocation: ToolInvocationSchema }),

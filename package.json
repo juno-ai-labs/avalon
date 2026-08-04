@@ -1,6 +1,6 @@
 {
   "name": "avalon",
-  "version": "0.7.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.0",
@@ -12,6 +12,7 @@
     "dev:site": "pnpm --filter @avalon/site dev",
     "env:sync": "node scripts/sync-dev-env.mjs",
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
+    "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
     "dev:api": "pnpm env:sync && concurrently -k -n global,eu -c blue,cyan \"pnpm --filter @avalon/api dev\" \"pnpm --filter @avalon/api dev:eu\"",
     "dev:desktop": "dotenv -e .env.local -- pnpm --filter @avalon/desktop dev",
     "dev:desktop:prod": "VITE_API_GLOBAL_URL=https://api.with-avalon.com VITE_API_EU_URL=https://eu.api.with-avalon.com AVALON_DEV_AUTH=false pnpm --filter @avalon/desktop dev",
@@ -20,6 +21,7 @@
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:model": "node scripts/smoke-gemini.mjs",
     "test": "pnpm -r --if-present test",
+    "test:observability": "node --test scripts/configure-cloudflare-observability.test.mjs",
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "eslint . --max-warnings=0",

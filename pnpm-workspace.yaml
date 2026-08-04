@@ -16,3 +16,6 @@ catalog:
   typescript: ^5.9.3
   zod: latest
   vitest: latest
+
+minimumReleaseAgeExclude:
+  - '@juno-ai/bind@10.0.0'

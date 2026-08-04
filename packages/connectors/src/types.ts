@@ -4,6 +4,7 @@ import type {
   ExecutionPrincipal,
   NormalizedActivity,
   Scope,
+  ToolDefinition,
 } from "@avalon/contracts";
 
 export interface ConnectorConnectionContext {
@@ -20,6 +21,8 @@ export interface ConnectorConnectionContext {
 export interface ConnectorToolContext {
   connection: ConnectorConnectionContext;
   principal: ExecutionPrincipal;
+  /** Stable host receipt key when the provider supports idempotent writes. */
+  providerIdempotencyKey?: string;
   signal: AbortSignal;
 }
 
@@ -72,8 +75,46 @@ export interface ConnectorAuthorizationCallbackInput extends Record<string, unkn
   connectionScope?: Scope;
 }
 
+/**
+ * Trusted, provider-level metadata used to construct one model plugin for each
+ * installed credential. Every field in this descriptor must be a static,
+ * code-authored value. Connection labels, account names, provider resources,
+ * credential values, and other remotely controlled content must never be
+ * interpolated into it.
+ *
+ * The runtime owns credential-specific identity. It derives the canonical
+ * `connection:<uuid>` plugin ID and its short wire name from the connection ID;
+ * this descriptor intentionally contains no installed-connection metadata.
+ */
+export interface ConnectorAgentPluginDescriptor {
+  /** Stable provider type. Must equal `manifest.type`. */
+  readonly providerType: string;
+  /** Stable, identifier-safe prefix for a runtime-generated short wire name. */
+  readonly wireNamePrefix: string;
+  /** Compact trusted description shown in the progressive plugin catalog. */
+  readonly description: string;
+  /** Static provider guidance included only while this plugin is active. */
+  readonly systemMessage: string;
+  /** Provider tool definitions. Runtime capability grants may narrow this set. */
+  readonly tools: readonly ToolDefinition[];
+}
+
+/**
+ * Freeze a code-authored connector plugin descriptor at its trust boundary.
+ * This helper deliberately accepts no connection context.
+ */
+export function defineConnectorAgentPlugin(
+  descriptor: ConnectorAgentPluginDescriptor,
+): ConnectorAgentPluginDescriptor {
+  return Object.freeze({
+    ...descriptor,
+    tools: Object.freeze([...descriptor.tools]),
+  });
+}
+
 export interface ConnectorAdapter {
   manifest: ConnectorManifestInput;
+  agentPlugin: ConnectorAgentPluginDescriptor;
   /**
    * Optional per-capability narrowing of the connector-wide supported scopes.
    * Omitted capabilities inherit `manifest.supportedScopes`.

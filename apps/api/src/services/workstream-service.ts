@@ -436,31 +436,18 @@ export class WorkstreamService {
   async stop(id: string): Promise<void> {
     await this.requireWorkstream(id);
     const at = nowIso();
-    const activeRuns = await this.env.DB.prepare(
-      `SELECT id, workflow_instance_id FROM harness_runs
-       WHERE workstream_id = ? AND workspace_id = ? AND status IN ('scheduled', 'running')`,
-    ).bind(id, this.auth.workspaceId).all<{ id: string; workflow_instance_id: string | null }>();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `UPDATE harness_runs SET status = 'stopped', completed_at = ?
-         WHERE workstream_id = ? AND workspace_id = ? AND status IN ('scheduled', 'running')`,
-      ).bind(at, id, this.auth.workspaceId),
-      this.env.DB.prepare(
-        `UPDATE workstreams SET harness_status = 'idle', updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND harness_status IN ('scheduled', 'running')`,
-      ).bind(at, id, this.auth.workspaceId),
-      this.env.DB.prepare(
-        `UPDATE automation_runs SET status = 'failed', completed_at = ?, result_summary = COALESCE(result_summary, 'Stopped by a person')
-         WHERE workstream_id = ? AND workspace_id = ? AND status IN ('scheduled', 'running')`,
-      ).bind(at, id, this.auth.workspaceId),
-    ]);
-    await Promise.allSettled((activeRuns.results ?? [])
-      .filter((run) => Boolean(run.workflow_instance_id))
-      .map(async (run) => {
-        const instance = await this.env.WORKSTREAM_LOOP_WORKFLOW.get(run.workflow_instance_id!);
-        await instance.terminate();
-      }));
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "harness_status_changed", status: "idle" });
+    // Cancellation is a durable request, not a competing terminal write. The
+    // leased workflow observes it through liveness, persists the final fenced
+    // terminal lifecycle event, and only then publishes idle realtime state.
+    // Terminating the Workflow here would bypass that durable boundary and
+    // could leave a run permanently running.
+    await this.env.DB.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
+              cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user')
+        WHERE workstream_id = ? AND workspace_id = ?
+          AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
+    ).bind(at, id, this.auth.workspaceId).run();
   }
 
   async socketTicket(id: string) {

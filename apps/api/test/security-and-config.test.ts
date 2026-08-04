@@ -516,17 +516,27 @@ describe("environment guardrails", () => {
     });
   });
 
-  it("bounds aggregate model context by UTF-8 bytes", () => {
+  it("bounds aggregate model context by dropping only complete oldest messages", () => {
     const bounded = __integrationTesting.boundModelContext(
-      `system-${"🛡️".repeat(100)}`,
+      "stable-system-policy",
       [
         { role: "user", content: "old-".repeat(100) },
-        { role: "assistant", content: "new-".repeat(100) },
+        { role: "assistant", content: "new-".repeat(40) },
       ],
       256,
     );
     expect(bounded.byteLength).toBeLessThanOrEqual(256);
     expect(bounded.messages.at(-1)?.content).toContain("new-");
+    expect(bounded.messages).toHaveLength(1);
+    expect(bounded.messages[0]?.content).not.toContain("old-");
+  });
+
+  it("fails with a typed context error instead of byte-slicing stable policy", () => {
+    expect(() => __integrationTesting.boundModelContext(
+      `system-${"🛡️".repeat(100)}`,
+      [],
+      256,
+    )).toThrowError(expect.objectContaining({ code: "context_limit_exceeded" }));
   });
 
   it.each([
