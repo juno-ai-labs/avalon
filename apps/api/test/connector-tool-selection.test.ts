@@ -182,8 +182,8 @@ function env(database: ToolSelectionDatabase): Env {
   return {
     DB: database.binding,
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
-    GOOGLE_OAUTH_CLIENT_ID: "google-client",
-    GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-connector-client",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-connector-secret",
     CONNECTOR_CREDENTIALS_KEY: "must-not-be-used-after-revocation",
     AVALON_REGION: "global",
   } as Env;

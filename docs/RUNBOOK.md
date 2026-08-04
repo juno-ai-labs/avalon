@@ -34,18 +34,20 @@ Create independent resource sets for `global` and `eu`:
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
 
-Set these as Worker secrets separately in each deployment:
+Set these shared Worker secrets separately in each regional deployment:
 
 - `OPENROUTER_API_KEY`
 - `FIRECRAWL_API_KEY`
 - `RESEND_API_KEY`
-- `GOOGLE_OAUTH_CLIENT_ID`
-- `GOOGLE_OAUTH_CLIENT_SECRET`
+- `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID`
+- `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET`
 - `SESSION_SIGNING_KEY`
 - `OAUTH_STATE_ENCRYPTION_KEY`
 - `CONNECTOR_CREDENTIALS_KEY`
 
 Generate independent signing/encryption material per region. Cloudflare administration credentials belong only in the local deployment environment; they must never become Worker variables.
+
+Set `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` only on the Global Worker. They belong exclusively to the platform login client and are never used by Google service connectors.
 
 Set `RESEND_WEBHOOK_SIGNING_SECRET` and `WORKSTREAM_EMAIL_ADDRESS_KEY` only on the
 Global Worker. `RESEND_API_KEY` is required in both regions with Resend's
@@ -92,7 +94,7 @@ Every new Avalon release advances exactly one minor version and resets the patch
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](DESKTOP_ICONS.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site and both regional APIs are deployed, migrations through `0026_bind_runtime_durability.sql` are live in both D1 databases, and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; connector OAuth callbacks remain regional. Base Google credentials and callbacks are configured, but expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
+Current production status: the site and both regional APIs are deployed, migrations through `0026_bind_runtime_durability.sql` are live in both D1 databases, and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
@@ -117,13 +119,18 @@ Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers af
 
 ## Provider configuration
 
-Google identity and connector OAuth use different consent purposes but may share one Google Cloud OAuth **Web application** client. Enable the Gmail, Google Calendar, Google Drive, Google Docs, and Google Sheets APIs in that client's project, then configure these authorized redirect URIs exactly:
+Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Avalon Login** client requests only platform identity scopes and has this one redirect URI:
 
 - Global identity: `https://api.with-avalon.com/auth/google/callback`
+
+The **Avalon Google Connectors** client owns the Gmail, Calendar, Drive, Docs, and Sheets scopes and has these redirect URIs:
+
 - Global connector: `https://api.with-avalon.com/connections/google/callback`
 - EU connector: `https://eu.api.with-avalon.com/connections/google/callback`
 
 `https://with-avalon.com/auth/desktop/` is Avalon's browser handoff and `avalon://auth/complete` is the allowlisted desktop return URI; neither belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
+
+Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on both regional Workers. The connector runtime deliberately has no fallback to the login credentials.
 
 Settings exposes two authorization presets over one `google` connector family:
 

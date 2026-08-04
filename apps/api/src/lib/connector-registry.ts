@@ -44,20 +44,22 @@ export function notionConnectorConfig(env: Env): NotionConnectorConfig | null {
   };
 }
 
+export function googleConnectorConfig(env: Env) {
+  if (!env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID || !env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET) return null;
+  return {
+    clientId: env.GOOGLE_CONNECTOR_OAUTH_CLIENT_ID,
+    clientSecret: env.GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET,
+    redirectUri: new URL("/connections/google/callback", env.PUBLIC_API_BASE_URL).toString(),
+  };
+}
+
 export function connectorRegistryForEnv(env: Env) {
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
   const notion = notionConnectorConfig(env);
+  const google = googleConnectorConfig(env);
   return createConnectorRegistry({
-    ...(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET
-      ? {
-          google: {
-            clientId: env.GOOGLE_OAUTH_CLIENT_ID,
-            clientSecret: env.GOOGLE_OAUTH_CLIENT_SECRET,
-            redirectUri: new URL("/connections/google/callback", env.PUBLIC_API_BASE_URL).toString(),
-          },
-        }
-      : {}),
+    ...(google ? { google } : {}),
     ...(github ? { github } : {}),
     ...(linear ? { linear } : {}),
     ...(notion ? { notion } : {}),

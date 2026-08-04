@@ -60,6 +60,31 @@ describe('New automation composer', () => {
     expect(composer).toHaveStyle({ height: 'auto' });
   });
 
+  it('sends an example prompt and opens the automation conversation immediately', async () => {
+    let resolveCompile!: (value: unknown) => void;
+    api.compileAutomation.mockImplementation(() => new Promise((resolve) => {
+      resolveCompile = resolve;
+    }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }));
+    expect(await screen.findByText('You')).toBeInTheDocument();
+    expect(screen.getByText(example)).toBeInTheDocument();
+    expect(screen.getByText('Compiling the automation…')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
+
+    resolveCompile({
+      draftId: 'draft-example',
+      assistantMessage: 'Which blog should Avalon monitor?',
+      question: { id: 'question-example', prompt: 'Which blog should Avalon monitor?' },
+    });
+    expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
+    expect(screen.getAllByText(example)).toHaveLength(1);
+  });
+
   it('starts a personal Linear authorization for a personal automation', async () => {
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-linear-personal',
