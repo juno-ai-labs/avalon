@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ActivityQueueMessageSchema,
+  AnswerElicitationRequestSchema,
   AutomationDraftSchema,
   ClientSocketEventSchema,
   CreateWorkspaceInvitationRequestSchema,
@@ -18,6 +19,19 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("accepts selected, custom, and skipped elicitation responses", () => {
+    expect(AnswerElicitationRequestSchema.parse({ answer: "first" })).toEqual({ answer: "first" });
+    expect(AnswerElicitationRequestSchema.parse({
+      answer: ["first", "A custom response"],
+      customResponse: "A custom response",
+    })).toEqual({
+      answer: ["first", "A custom response"],
+      customResponse: "A custom response",
+    });
+    expect(AnswerElicitationRequestSchema.parse({ skipped: true })).toEqual({ skipped: true });
+    expect(AnswerElicitationRequestSchema.safeParse({ skipped: true, answer: "hidden" }).success).toBe(false);
+  });
+
   it("exposes stable member-safe harness failure codes", () => {
     expect(HarnessFailureCodeSchema.options).toEqual(expect.arrayContaining([
       "run_wall_time_limit_exceeded",

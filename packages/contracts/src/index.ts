@@ -468,9 +468,20 @@ export const CreateMessageRequestSchema = z.object({
 });
 
 export const AddParticipantRequestSchema = z.object({ userId: IdSchema });
-export const AnswerElicitationRequestSchema = z.object({
-  answer: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)])
-});
+const ElicitationAnswerValueSchema = z.union([
+  z.string().trim().min(1).max(4000),
+  z.array(z.string().trim().min(1).max(4000)).min(1).max(30)
+]);
+export const AnswerElicitationRequestSchema = z.union([
+  z.object({
+    answer: ElicitationAnswerValueSchema,
+    customResponse: z.string().trim().min(1).max(4000).optional(),
+    skipped: z.literal(false).optional()
+  }).strict(),
+  z.object({
+    skipped: z.literal(true)
+  }).strict()
+]);
 export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,

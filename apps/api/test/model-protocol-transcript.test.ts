@@ -114,6 +114,87 @@ function streamResponse(content: string): Response {
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("renders selected labels, custom text, and skips into the continuation turn", () => {
+    const selected = __integrationTesting.renderElicitationResponseMessage({
+      prompt: "What should I review?",
+      response_type: "multi_select",
+      options_json: JSON.stringify([
+        { value: "offer", label: "Draft offer", description: "Review the offer on its own terms." },
+      ]),
+      answer_json: JSON.stringify(["offer", "Also check the cap table"]),
+    });
+    const skipped = __integrationTesting.renderElicitationResponseMessage({
+      prompt: "Which environment?",
+      response_type: "single_select",
+      options_json: JSON.stringify([{ value: "staging", label: "Staging", description: null }]),
+      answer_json: null,
+    });
+
+    expect(selected.role).toBe("user");
+    expect(selected.content).toContain('"label":"Draft offer"');
+    expect(selected.content).toContain('"customResponse":"Also check the cap table"');
+    expect(skipped.content).toContain('"skipped":true');
+
+    const persisted = __integrationTesting.projectElicitationResponseMessage({
+      kind: "elicitation_response",
+      elicitation: {
+        id: "00000000-0000-4000-8000-000000000031",
+        workstreamId: WORKSTREAM_ID,
+        harnessRunId: PRIOR_RUN_ID,
+        prompt: "What should I review?",
+        responseType: "multi_select",
+        options: [{ value: "offer", label: "Draft offer", description: null }],
+        minimumSelections: 1,
+        maximumSelections: 2,
+        targetUserId: null,
+        status: "answered",
+        answer: ["offer", "Also check the cap table"],
+        answeredByUserId: USER_ID,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        answeredAt: "2026-08-01T00:01:00.000Z",
+      },
+    });
+    expect(persisted?.content).toContain('"customResponse":"Also check the cap table"');
+  });
+
+  it("keeps the durable elicitation response in chronological model history", async () => {
+    const response = message("00000000-0000-4000-8000-000000000032", 2, {
+      author: "human",
+      messageType: "elicitation",
+      structuredContent: {
+        kind: "elicitation_response",
+        elicitation: {
+          id: "00000000-0000-4000-8000-000000000031",
+          workstreamId: WORKSTREAM_ID,
+          harnessRunId: PRIOR_RUN_ID,
+          prompt: "Which environment?",
+          responseType: "single_select",
+          options: [{ value: "staging", label: "Staging", description: null }],
+          minimumSelections: 1,
+          maximumSelections: 1,
+          targetUserId: null,
+          status: "answered",
+          answer: "staging",
+          answeredByUserId: USER_ID,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          answeredAt: "2026-08-01T00:01:00.000Z",
+        },
+      },
+    });
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      [
+        message("00000000-0000-4000-8000-000000000030", 1, { author: "human", textContent: "Deploy the app" }),
+        response,
+        message("00000000-0000-4000-8000-000000000033", 3, { author: "agent", textContent: "Deploying to staging." }),
+      ],
+    );
+
+    expect(projection.messages.map((entry) => entry.role)).toEqual(["user", "user", "assistant"]);
+    expect(projection.messages[1]?.content).toContain('"label":"Staging"');
+  });
+
   it("fences an earlier attempt at its trigger while a later message is already queued", async () => {
     const prior = message("00000000-0000-4000-8000-000000000021", 1, {
       author: "human",
