@@ -455,7 +455,22 @@ export function MessageBlock({
       )}
       {sending
         ? <span aria-hidden="true" className="message-skeleton" />
-        : (
+        : human ? (
+            <div className="human-message-content">
+              {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
+                <MessageAttachments
+                  attachments={message.attachments}
+                  loadContent={loadAttachmentContent}
+                  onOpen={onOpenAttachment}
+                />
+              ) : null}
+              {message.text ? (
+                <div className="human-message-bubble">
+                  <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody>
+                </div>
+              ) : null}
+            </div>
+          ) : (
             <>
               {message.attachments?.length && loadAttachmentContent && onOpenAttachment ? (
                 <MessageAttachments
