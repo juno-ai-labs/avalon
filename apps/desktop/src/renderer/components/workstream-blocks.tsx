@@ -315,7 +315,7 @@ export function ElicitationPanel({
 
   if (isAnswered) {
     return (
-      <div aria-label="Elicitation response" className="elicitation-resolved-answer">
+      <div aria-label="Elicitation response" className="elicitation-resolved-answer human-message-bubble">
         {elicitationAnswerLabel(elicitation)}
       </div>
     );
@@ -579,6 +579,22 @@ export function MessageBlock({
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
   if (message.messageType === 'artifact') return <div className="transcript-event" id={`message-${message.id}`}><ArtifactBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {
+    if (message.elicitation.status === 'answered') {
+      return (
+        <article
+          aria-label="Human elicitation response"
+          className="message-block human-message own-human-message elicitation-response-message"
+          id={`message-${message.id}`}
+        >
+          <div className="human-message-content">
+            <ElicitationPanel
+              elicitation={message.elicitation}
+              onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)}
+            />
+          </div>
+        </article>
+      );
+    }
     return <div className="transcript-event" id={`message-${message.id}`}><ElicitationPanel elicitation={message.elicitation} onAnswer={(answer, customResponse) => onAnswerElicitation(message.elicitation!.id, answer, customResponse)} /></div>;
   }
   if (message.messageType === 'activity_suggestion' && message.activitySuggestion) {
