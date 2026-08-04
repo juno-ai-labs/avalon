@@ -1,4 +1,5 @@
 import type { ErrorHandler, NotFoundHandler } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { RepositoryError } from "@avalon/db";
 import { ConnectorError } from "@avalon/connectors";
 import type { HonoAppEnv } from "../env";
@@ -25,6 +26,12 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
 
   if (error instanceof ApiError) {
     ({ status, code, message, details } = error);
+  } else if (error instanceof HTTPException && error.status === 400) {
+    // Hono raises this before Zod runs when a JSON body cannot be parsed. Keep
+    // parser details behind the same public boundary as schema failures.
+    status = 400;
+    code = "invalid_request";
+    message = "The request is invalid";
   } else if (error instanceof RepositoryError) {
     status = error.code === "not_found" ? 404 : error.code === "conflict" ? 409 : 500;
     code = error.code;

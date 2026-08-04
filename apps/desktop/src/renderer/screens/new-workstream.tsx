@@ -73,6 +73,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const submittingRef = useRef(false);
   const [message, setMessage] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -98,11 +99,14 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   );
 
   const create = useMutation({
-    mutationFn: () =>
-      api!.createWorkstream({
-        openingMessage: message.trim(),
-        participantIds: selectedMembers.map((member) => member.id),
-      }),
+    mutationFn: (input: { openingMessage: string; participantIds: string[] }) =>
+      api!.createWorkstream(input),
+    onError: (_error, input) => {
+      setMessage((current) => current.length > 0 ? current : input.openingMessage);
+    },
+    onSettled: () => {
+      submittingRef.current = false;
+    },
     onSuccess: (workstream) => {
       void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
       void navigate(`/workstreams/${workstream.id}`);
@@ -110,8 +114,13 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   });
 
   const submit = (): void => {
-    if (!message.trim() || create.isPending) return;
-    create.mutate();
+    const openingMessage = message.trim();
+    if (!openingMessage || submittingRef.current) return;
+    submittingRef.current = true;
+    const participantIds = selectedMembers.map((member) => member.id);
+    setMessage('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+    create.mutate({ openingMessage, participantIds });
   };
 
   const participants = [workspace.currentUser, ...selectedMembers];
@@ -179,7 +188,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           />
           <div className="hero-composer-footer">
             <span>Enter to create · Shift+Enter for a new line</span>
-            <button aria-label="Create work stream" disabled={!message.trim() || create.isPending} onClick={submit} type="button">
+            <button aria-label="Create work stream" disabled={!message.trim() || create.isPending || submittingRef.current} onClick={submit} type="button">
               {create.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ArrowUp aria-hidden="true" size={16} />}
             </button>
           </div>

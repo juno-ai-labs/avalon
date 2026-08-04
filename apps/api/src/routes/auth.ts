@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { zValidator } from "@hono/zod-validator";
+import { zValidator } from "../middleware/validation";
 import { DesktopExchangeRequestSchema, RefreshRequestSchema, RefreshTokenSchema } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";

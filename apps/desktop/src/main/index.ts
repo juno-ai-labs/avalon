@@ -32,6 +32,8 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
+import { parseDesktopSettingsSection } from '../common/settings';
+import type { DesktopSettingsSection } from '../common/settings';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { normalizeLegacyStoredSession } from './stored-session';
@@ -772,9 +774,11 @@ function registerIpc(): void {
     }
     await shell.openExternal(rawUrl);
   });
-  ipcMain.handle('system:open-settings', async (event) => {
+  ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);
-    await createSettingsWindow();
+    const section = rawSection === undefined ? undefined : parseDesktopSettingsSection(rawSection);
+    if (rawSection !== undefined && !section) throw new Error('Invalid settings section');
+    await createSettingsWindow(section ?? undefined);
   });
 }
 
@@ -891,17 +895,25 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
   }
 }
 
-function rendererUrl(surface?: 'settings'): string {
+function rendererUrl(surface?: 'settings', settingsSection?: DesktopSettingsSection): string {
   const target = rendererDevelopmentUrl
     ? new URL(rendererDevelopmentUrl)
     : new URL(`${rendererProtocol}://${rendererHost}/index.html`);
   if (surface) target.searchParams.set('surface', surface);
+  if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
   return target.toString();
 }
 
-async function createSettingsWindow(): Promise<void> {
+function requestSettingsSection(window: BrowserWindow, section: DesktopSettingsSection): void {
+  const deliver = (): void => window.webContents.send('settings:section-requested', section);
+  if (window.webContents.isLoadingMainFrame()) window.webContents.once('did-finish-load', deliver);
+  else deliver();
+}
+
+async function createSettingsWindow(section?: DesktopSettingsSection): Promise<void> {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (section) requestSettingsSection(settingsWindow, section);
     if (settingsWindow.isMinimized()) settingsWindow.restore();
     settingsWindow.show();
     settingsWindow.focus();
@@ -937,7 +949,7 @@ async function createSettingsWindow(): Promise<void> {
   settingsWindow.on('closed', () => {
     settingsWindow = null;
   });
-  await loadRenderer(settingsWindow, rendererUrl('settings'), 'settings');
+  await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
 }
 
 function installApplicationMenu(): void {
