@@ -24,6 +24,13 @@ describe("connectors", () => {
 
   it("requires a native-agent manifest surface to have a matching protocol facet", () => {
     expect(() => new ConnectorRegistry([{
+      agentPlugin: {
+        providerType: "missing-native-protocol",
+        wireNamePrefix: "missing_native",
+        description: "Test-only native protocol connector.",
+        systemMessage: "Use only the tools exposed by this test connector.",
+        tools: [],
+      },
       manifest: {
         type: "missing-native-protocol",
         displayName: "Missing native protocol",

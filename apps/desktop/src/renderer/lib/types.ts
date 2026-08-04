@@ -323,8 +323,26 @@ export type WorkstreamSocketEvent =
   | { type: 'snapshot'; workstream: WorkstreamDetail; messages: Message[]; sequence: number }
   | { type: 'presence_changed'; viewers: Participant[]; sequence: number }
   | { type: 'message_created'; message: Message; sequence: number }
-  | { type: 'stream_started'; message: Message; sequence: number }
-  | { type: 'stream_delta'; messageId: string; delta: string; sequence: number }
+  | {
+      type: 'stream_started';
+      messageId: string;
+      harnessRunId: string;
+      turnId: string;
+      epoch: number;
+      streamSeq: number;
+      reset: false;
+      sequence: number;
+    }
+  | {
+      type: 'stream_delta';
+      messageId: string;
+      delta: string;
+      turnId: string;
+      epoch: number;
+      streamSeq: number;
+      reset: boolean;
+      sequence: number;
+    }
   | { type: 'stream_completed'; message: Message; sequence: number }
   | { type: 'harness_status_changed'; status: HarnessStatus; sequence: number }
   | { type: 'resource_updated'; resource: WorkstreamResource; sequence: number }

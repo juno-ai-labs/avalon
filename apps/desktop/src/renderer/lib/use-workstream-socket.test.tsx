@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonApi } from './api';
 import type { Message } from './types';
 import {
+  applyStreamingSocketEvent,
   insertMessage,
   mergeCanonicalTranscript,
   nextTranscriptSequence,
@@ -154,7 +155,119 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
-  it('keeps observed tool order before the canonical assistant response across REST refreshes', async () => {
+  it('deduplicates replayed chunks and replaces only the retried Bind turn on reset', () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000021';
+    const messageId = '00000000-0000-7000-8000-000000000051';
+    const harnessRunId = '00000000-0000-7000-8000-000000000052';
+    const cursors = new Map();
+    let transcript = applyStreamingSocketEvent([], {
+      type: 'stream_started',
+      sequence: 10,
+      occurredAt: '2026-07-31T19:21:00.000Z',
+      messageId,
+      harnessRunId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }, workstreamId, cursors);
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 11,
+      occurredAt: '2026-07-31T19:21:01.000Z',
+      messageId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'Hel',
+    }, workstreamId, cursors);
+    // A replay can receive a fresh room sequence while repeating an already
+    // applied stream sequence. It must not concatenate the chunk twice.
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 12,
+      occurredAt: '2026-07-31T19:21:01.000Z',
+      messageId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'Hel',
+    }, workstreamId, cursors);
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 13,
+      occurredAt: '2026-07-31T19:21:02.000Z',
+      messageId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 2,
+      reset: false,
+      delta: 'lo',
+    }, workstreamId, cursors);
+    expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello');
+
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_started',
+      sequence: 14,
+      occurredAt: '2026-07-31T19:21:03.000Z',
+      messageId,
+      harnessRunId,
+      turnId: 'turn-two',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }, workstreamId, cursors);
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 15,
+      occurredAt: '2026-07-31T19:21:04.000Z',
+      messageId,
+      turnId: 'turn-two',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: ' discard this',
+    }, workstreamId, cursors);
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 16,
+      occurredAt: '2026-07-31T19:21:05.000Z',
+      messageId,
+      turnId: 'turn-two',
+      epoch: 1,
+      streamSeq: 2,
+      reset: true,
+      delta: '',
+    }, workstreamId, cursors);
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 17,
+      occurredAt: '2026-07-31T19:21:06.000Z',
+      messageId,
+      turnId: 'turn-two',
+      epoch: 1,
+      streamSeq: 3,
+      reset: false,
+      delta: ' world',
+    }, workstreamId, cursors);
+    // A delayed frame from the abandoned route cannot overwrite the fallback.
+    transcript = applyStreamingSocketEvent(transcript, {
+      type: 'stream_delta',
+      sequence: 18,
+      occurredAt: '2026-07-31T19:21:07.000Z',
+      messageId,
+      turnId: 'turn-two',
+      epoch: 0,
+      streamSeq: 99,
+      reset: false,
+      delta: ' stale',
+    }, workstreamId, cursors);
+    expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello world');
+  });
+
+  it('appends Bind post-tool turns and keeps tool order across REST refreshes', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000021';
@@ -191,6 +304,21 @@ describe('useWorkstreamSocket', () => {
       occurredAt: '2026-07-31T19:21:00.000Z',
       messageId: assistantMessageId,
       harnessRunId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'stream_delta',
+      sequence: 205,
+      occurredAt: '2026-07-31T19:21:00.500Z',
+      messageId: assistantMessageId,
+      turnId: 'turn-one',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'I will check. ',
     }));
     const invocation = (id: string, toolCallId: string, toolName: string, status: 'started' | 'completed') => ({
       id,
@@ -207,13 +335,13 @@ describe('useWorkstreamSocket', () => {
     });
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_started',
-      sequence: 205,
+      sequence: 206,
       occurredAt: '2026-07-31T19:21:01.000Z',
       invocation: invocation(toolOneId, 'tool-one', 'First tool', 'started'),
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_started',
-      sequence: 206,
+      sequence: 207,
       occurredAt: '2026-07-31T19:21:02.000Z',
       invocation: invocation(toolTwoId, 'tool-two', 'Second tool', 'started'),
     }));
@@ -221,16 +349,41 @@ describe('useWorkstreamSocket', () => {
     // place rather than moving it below the second tool.
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_completed',
-      sequence: 207,
+      sequence: 208,
       occurredAt: '2026-07-31T19:21:05.000Z',
       invocation: invocation(toolTwoId, 'tool-two', 'Second tool', 'completed'),
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'tool_completed',
-      sequence: 208,
+      sequence: 209,
       occurredAt: '2026-07-31T19:21:06.000Z',
       invocation: invocation(toolOneId, 'tool-one', 'First tool', 'completed'),
     }));
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'stream_started',
+      sequence: 210,
+      occurredAt: '2026-07-31T19:21:06.500Z',
+      messageId: assistantMessageId,
+      harnessRunId,
+      turnId: 'turn-two',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'stream_delta',
+      sequence: 211,
+      occurredAt: '2026-07-31T19:21:06.750Z',
+      messageId: assistantMessageId,
+      turnId: 'turn-two',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'Here is the result.',
+    }));
+
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])
+      ?.find((message) => message.id === assistantMessageId)?.text).toBe('I will check. Here is the result.');
 
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -238,12 +391,12 @@ describe('useWorkstreamSocket', () => {
       sequenceNumber: 20,
       authorType: 'agent',
       messageType: 'text',
-      text: 'Here is the result.',
+      text: 'I will check. Here is the result.',
       createdAt: '2026-07-31T19:21:07.000Z',
     };
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_completed',
-      sequence: 209,
+      sequence: 212,
       occurredAt: '2026-07-31T19:21:07.000Z',
       message: {
         id: assistantMessage.id,
@@ -259,6 +412,17 @@ describe('useWorkstreamSocket', () => {
         createdAt: assistantMessage.createdAt,
         editedAt: null,
       },
+    }));
+    act(() => FakeWebSocket.instances[0]?.message({
+      type: 'stream_delta',
+      sequence: 213,
+      occurredAt: '2026-07-31T19:21:08.000Z',
+      messageId: assistantMessageId,
+      turnId: 'turn-two',
+      epoch: 0,
+      streamSeq: 2,
+      reset: false,
+      delta: 'This late chunk must be ignored.',
     }));
 
     const live = queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? [];
@@ -305,6 +469,79 @@ describe('useWorkstreamSocket', () => {
       assistantMessage.id,
     ]);
     expect(reconciled.filter((message) => message.messageType === 'tool_event')).toHaveLength(2);
+    expect(reconciled.find((message) => message.id === assistantMessage.id)?.text).toBe('I will check. Here is the result.');
+  });
+
+  it('retains per-epoch stream cursors across a socket reconnect', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000061';
+    const messageId = '00000000-0000-7000-8000-000000000062';
+    const harnessRunId = '00000000-0000-7000-8000-000000000063';
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.message({
+      type: 'stream_started',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:21:00.000Z',
+      messageId,
+      harnessRunId,
+      turnId: 'turn-reconnect',
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => first.message({
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:21:01.000Z',
+      messageId,
+      turnId: 'turn-reconnect',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'One',
+    }));
+    act(() => first.close());
+    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2 }));
+
+    act(() => second.message({
+      type: 'stream_delta',
+      sequence: 3,
+      occurredAt: '2026-07-31T19:21:02.000Z',
+      messageId,
+      turnId: 'turn-reconnect',
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'One',
+    }));
+    act(() => second.message({
+      type: 'stream_delta',
+      sequence: 4,
+      occurredAt: '2026-07-31T19:21:03.000Z',
+      messageId,
+      turnId: 'turn-reconnect',
+      epoch: 0,
+      streamSeq: 2,
+      reset: false,
+      delta: ' two',
+    }));
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text).toBe('One two');
   });
 
   it('resets the replay sequence when the selected workstream changes', async () => {

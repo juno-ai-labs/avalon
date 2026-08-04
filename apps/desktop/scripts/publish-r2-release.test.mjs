@@ -91,6 +91,26 @@ test('dry-run resolves the complete release transaction without cloud access or 
   }
 });
 
+test('accepts pnpm argument separators forwarded by the root release command', async () => {
+  const fixture = await createFixture();
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [
+      publisherPath.pathname,
+      '--',
+      '--dry-run',
+      '--release-dir', fixture.releaseDirectory,
+      '--site-config', fixture.configPath,
+    ], {
+      env: environmentWithoutReleaseCredentials(),
+      encoding: 'utf8',
+    });
+    assert.equal(JSON.parse(stdout).dryRun, true);
+    assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test('live publishing requires an exact version confirmation before cloud credentials', async () => {
   const fixture = await createFixture();
   try {

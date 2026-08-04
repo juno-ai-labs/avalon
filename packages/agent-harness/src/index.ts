@@ -2,6 +2,7 @@ import type {
   AddressingClassification,
   AutomationDraft,
   ExecutionPrincipal,
+  HarnessFailureCode,
   ToolDefinition
 } from "@avalon/contracts";
 import {
@@ -9,6 +10,7 @@ import {
   AutomationDraftSchema
 } from "@avalon/contracts";
 import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { z } from "zod";
 import {
   renderAddressingMessages,
@@ -26,6 +28,12 @@ export interface OpenRouterConfig {
   appUrl?: string;
   appName?: string;
   fetch?: typeof globalThis.fetch;
+  /** Maximum time to establish an HTTP response from OpenRouter. */
+  requestEstablishmentTimeoutMs?: number;
+  /** Maximum time from response establishment to the first answer/tool bytes. */
+  ttftTimeoutMs?: number;
+  /** Maximum silence between streamed answer/tool bytes. */
+  streamIdleTimeoutMs?: number;
 }
 
 export interface ModelMessage {
@@ -80,13 +88,15 @@ interface ChatRequest {
   signal?: AbortSignal | undefined;
 }
 
-interface StreamResult {
+export interface StreamResult {
   model: string;
   content: string;
   toolCalls: ModelToolCall[];
   usage: Record<string, number> | null;
   finishReason: string | null;
   generationId: string | null;
+  ttftMs: number | null;
+  responseBytes: number;
 }
 
 export class OpenRouterError extends Error {
@@ -319,6 +329,23 @@ export class OpenRouterClient {
     onDelta: (delta: string) => void | Promise<void>,
     onOutput: () => void
   ): Promise<StreamResult> {
+    const requestStartedAt = Date.now();
+    let firstOutputAt: number | null = null;
+    const watchdog = createStreamWatchdog({
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+      interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
+      maxCallDurationMs: Math.max(
+        this.config.ttftTimeoutMs ?? 120_000,
+        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
+      ),
+      external: input.signal ?? null,
+    });
+    const establishment = new AbortController();
+    let establishmentTimedOut = false;
+    const establishmentTimer = setTimeout(() => {
+      establishmentTimedOut = true;
+      establishment.abort(new DOMException("OpenRouter request establishment timed out", "TimeoutError"));
+    }, this.config.requestEstablishmentTimeoutMs ?? 30_000);
     const tools = [...(input.tools ?? [])];
     if (input.includeWebSearch) {
       tools.push({
@@ -327,19 +354,22 @@ export class OpenRouterClient {
         max_total_results: input.maxWebResults ?? 8
       });
     }
-    const response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({
-        model,
-        messages: input.messages,
-        stream: true,
-        stream_options: { include_usage: true },
-        tools: tools.length > 0 ? tools : undefined,
-        tool_choice: tools.length > 0 ? (input.toolChoice ?? "auto") : undefined
-      }),
-      ...(input.signal ? { signal: input.signal } : {})
-    });
+    try {
+      const response = await this.fetcher("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          model,
+          messages: input.messages,
+          stream: true,
+          stream_options: { include_usage: true },
+          tools: tools.length > 0 ? tools : undefined,
+          tool_choice: tools.length > 0 ? (input.toolChoice ?? "auto") : undefined
+        }),
+        signal: AbortSignal.any([watchdog.signal, establishment.signal]),
+      });
+      clearTimeout(establishmentTimer);
+      watchdog.open();
     if (!response.ok || !response.body) {
       let details: unknown;
       try {
@@ -347,7 +377,14 @@ export class OpenRouterClient {
       } catch {
         details = await response.text();
       }
-      throw new OpenRouterError(`OpenRouter stream failed (${response.status})`, response.status, details);
+      throw new OpenRouterError(`OpenRouter stream failed (${response.status})`, response.status, {
+        // Preserve only retry metadata for routing. Provider response bodies are
+        // deliberately not retained by the durable runtime or structured logs.
+        headers: {
+          "retry-after": response.headers.get("retry-after") ?? undefined,
+        },
+        providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
+      });
     }
 
     let content = "";
@@ -371,7 +408,11 @@ export class OpenRouterClient {
         if (choice.finish_reason) finishReason = choice.finish_reason;
         const text = choice.delta?.content;
         const toolCallDeltas = choice.delta?.tool_calls ?? [];
-        if (text || toolCallDeltas.length > 0) onOutput();
+        watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+        if (text || toolCallDeltas.length > 0) {
+          firstOutputAt ??= Date.now();
+          onOutput();
+        }
         if (text) {
           content += text;
           deltaChain = deltaChain.then(() => onDelta(text));
@@ -391,14 +432,16 @@ export class OpenRouterClient {
     });
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    let responseBytes = 0;
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      responseBytes += value.byteLength;
       parser.feed(decoder.decode(value, { stream: true }));
     }
     parser.feed(decoder.decode());
     await deltaChain;
-    return {
+      return {
       model,
       content,
       toolCalls: [...pendingCalls.entries()]
@@ -406,8 +449,25 @@ export class OpenRouterClient {
         .map(([, call]) => call),
       usage,
       finishReason,
-      generationId: response.headers.get("x-generation-id")
-    };
+      generationId: response.headers.get("x-generation-id"),
+      ttftMs: firstOutputAt === null ? null : Math.max(0, firstOutputAt - requestStartedAt),
+      responseBytes,
+      };
+    } catch (error) {
+      const stall = watchdog.stall();
+      if (stall) {
+        throw new OpenRouterError(`OpenRouter stream stalled (${stall.kind})`, 408, { stall });
+      }
+      if (establishmentTimedOut && !input.signal?.aborted) {
+        throw new OpenRouterError("OpenRouter request establishment timed out", 408, {
+          timeoutMs: this.config.requestEstablishmentTimeoutMs ?? 30_000,
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(establishmentTimer);
+      watchdog.dispose();
+    }
   }
 
   private headers(): HeadersInit {
@@ -723,6 +783,8 @@ export interface HarnessToolContext {
   workstreamId: string;
   harnessRunId: string;
   executionPrincipal: ExecutionPrincipal;
+  /** Stable per-receipt key for provider APIs that support idempotent writes. */
+  providerIdempotencyKey?: string;
   signal: AbortSignal;
 }
 
@@ -731,6 +793,8 @@ export interface HarnessToolResult {
   summary: string;
   providerOperationId?: string;
   halt?: "needs_input";
+  /** Bind control signal used only by Avalon's core plugin loader. */
+  loadedPluginName?: string;
 }
 
 export interface HarnessTool {
@@ -738,17 +802,52 @@ export interface HarnessTool {
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
 }
 
+/** A credential-scoped Bind plugin whose trusted prose is authored in code. */
+export interface HarnessPlugin {
+  canonicalId: string;
+  shortWireName: string;
+  description: string;
+  systemMessage?: string;
+  tools: HarnessTool[];
+  /** Host-side request to persist this plugin before supplying an activation hint. */
+  preload: boolean;
+  explicit?: boolean;
+}
+
 export type HarnessEvent =
-  | { type: "stream_started"; model: string }
-  | { type: "stream_delta"; delta: string }
-  | { type: "tool_started"; toolCallId: string; toolName: string; input: unknown }
-  | { type: "tool_completed"; toolCallId: string; toolName: string; result: HarnessToolResult }
+  | {
+      type: "stream_started";
+      model: string;
+      turnId: string;
+      epoch: number;
+      streamSeq: number;
+      reset: false;
+    }
+  | {
+      type: "stream_delta";
+      delta: string;
+      turnId: string;
+      epoch: number;
+      streamSeq: number;
+      reset: boolean;
+    }
+  | {
+      type: "tool_started";
+      toolCallId: string;
+      toolName: string;
+      pluginId?: string;
+      input: unknown;
+      providerIdempotencyKey?: string;
+    }
+  | { type: "tool_completed"; toolCallId: string; toolName: string; pluginId?: string; result: HarnessToolResult }
   | {
       type: "tool_failed";
       toolCallId: string;
       toolName: string;
+      pluginId?: string;
       error: string;
       phase: "validation" | "execution";
+      outcome: "definitive_failure" | "timed_out" | "aborted" | "ambiguous_external_write";
     }
   | { type: "stream_completed"; content: string; usage: Record<string, number> | null }
   | { type: "needs_input"; toolCallId: string };
@@ -758,8 +857,20 @@ export interface RunHarnessInput {
     maxIterations: number;
     maxToolCalls: number;
     maxWallClockMs: number;
+    /** Maximum UTF-8 bytes in the complete logical context for each selected route model. */
+    maxContextBytes: number;
     toolTimeoutMs: number;
     maxWebResults: number;
+    maxRunTokens?: number;
+    maxCostCents?: number;
+    /** Optional exact overrides for provider/model context windows in tokens. */
+    modelContextWindowTokens?: Readonly<Record<string, number>>;
+    maxCatalogTokens?: number;
+    maxActivePlugins?: number;
+    maxToolSchemaBytes?: number;
+    maxToolResultBytes?: number;
+    maxStreamResets?: number;
+    completionDefectRetries?: number;
   };
   workspaceId: string;
   workstreamId: string;
@@ -768,9 +879,76 @@ export interface RunHarnessInput {
   systemPrompt: string;
   messages: ModelMessage[];
   tools: HarnessTool[];
+  plugins?: HarnessPlugin[];
+  /** Connector activations already durably persisted by the host. */
+  activationHints?: string[];
   includeWebSearch?: boolean;
   onEvent(event: HarnessEvent): void | Promise<void>;
+  onBestEffortEventDropped?: (event: {
+    type: "stream_started" | "stream_delta";
+    turnId: string;
+    epoch: number;
+    streamSeq: number;
+  }) => void | Promise<void>;
   findCompletedToolResult?: (toolCallId: string, inputHash: string) => Promise<HarnessToolResult | null>;
+  reauthorizePlugin?: (canonicalId: string) => boolean | Promise<boolean>;
+  persistActivation?: (canonicalId: string) => void | Promise<void>;
+  onActivationDropped?: (drop: unknown) => void | Promise<void>;
+  beforeToolCall?: (input: {
+    pluginId: string;
+    toolName: string;
+    inputHash: string;
+    signal: AbortSignal;
+  }) => void | Promise<void>;
+  persistToolExecutionPlan?: (plan: {
+    toolCallId: string;
+    pluginId: string;
+    wireToolName: string;
+    canonicalToolName: string;
+    inputHash: string;
+    executionPlanHash: string;
+    providerIdempotencyKey: string | null;
+    mode: "read" | "write";
+    idempotency: ToolDefinition["idempotency"];
+  }) => void | Promise<void>;
+  checkpointToolInvocation?: (checkpoint: {
+    toolCallId: string;
+    state: "executing" | "provider_acknowledged" | "completed" | "failed" | "timed_out";
+    providerOperationId?: string;
+  }) => void | Promise<void>;
+  onAmbiguousExternalWrite?: (event: { toolCallId: string; pluginId: string; toolName: string }) => void | Promise<void>;
+  onInferenceAttempt?: (attempt: {
+    success: boolean;
+    turnId: string;
+    model: string;
+    provider: string;
+    cursor: {
+      structuredOutputAttempt: number;
+      stageIndex: number;
+      candidateIndex: number;
+      endpointAttempt: number;
+    };
+    latencyMs: number;
+    disposition?: "success" | "retry" | "defect" | "fallback" | "failed" | "cancelled";
+    ttftMs?: number | null;
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cachedInputTokens?: number | null;
+    costCents?: number;
+    responseBytes?: number;
+    failureKind?: string;
+  }) => void | Promise<void>;
+  onTranscriptIssues?: (issues: Array<{ kind: string; index?: number; healed?: boolean }>) => void | Promise<void>;
+  onToolCallRejected?: (event: { toolCallId: string; code: string }) => void | Promise<void>;
+  onProgress?: (progress: { outputTokens: number; toolCalls: number }) => void | Promise<void>;
+  flushProgress?: (progress: {
+    inputTokens: number;
+    outputTokens: number;
+    costCents: number;
+    toolCalls: number;
+  }) => void | Promise<void>;
+  onLiveness?: (stage: "before_model" | "during_stream" | "after_tool" | "iteration_boundary") => void | Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -802,421 +980,37 @@ export interface HarnessRunStats {
 }
 
 export interface HarnessFailure {
-  kind: "deadline" | "execution";
-  code: "harness_deadline_exceeded" | "harness_execution_failed";
+  kind: "deadline" | "execution" | "context" | "limit" | "authorization" | "ambiguous_external_write";
+  code: HarnessFailureCode;
   message: string;
 }
 
+const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, string>> = Object.freeze({
+  run_wall_time_limit_exceeded: "This run reached its time limit",
+  run_iteration_limit_exceeded: "This run reached its model-turn limit",
+  run_tool_call_limit_exceeded: "This run reached its tool-call limit",
+  run_token_limit_exceeded: "This run reached its token limit",
+  run_cost_limit_exceeded: "This run reached its cost limit",
+  harness_execution_failed: "The Avalon harness could not complete this run",
+  context_limit_exceeded: "This run could not fit safely in the selected model context",
+  tool_surface_too_large: "The authorized tool surface is too large for one run",
+  ambiguous_external_write: "An external write may have completed, so Avalon did not retry it",
+});
+
+export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {
+  return MEMBER_SAFE_HARNESS_FAILURE_MESSAGES[code];
+}
+
+export {
+  DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
+  modelContextBudget,
+  resolveModelContextWindowTokens,
+  type ModelContextBudget,
+} from "./context-budget";
+
 export async function runHarness(input: RunHarnessInput): Promise<HarnessOutcome> {
-  const deadlineController = new AbortController();
-  let abortSource: "deadline" | "external" | null = input.signal?.aborted ? "external" : null;
-  const markExternalAbort = () => {
-    abortSource ??= "external";
-  };
-  input.signal?.addEventListener("abort", markExternalAbort, { once: true });
-  const deadline = setTimeout(() => {
-    abortSource ??= "deadline";
-    deadlineController.abort("wall_clock_limit");
-  }, Math.max(0, input.config.maxWallClockMs));
-  const signal = combineSignals([input.signal, deadlineController.signal]);
-  const client = new OpenRouterClient(input.config);
-  const tools = new Map(input.tools.map((tool) => [tool.definition.name, tool]));
-  const modelTools = input.tools.map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.definition.name,
-      description: tool.definition.description,
-      parameters: tool.definition.inputSchema
-    }
-  }));
-  const messages: ModelMessage[] = [
-    { role: "system", content: input.systemPrompt },
-    ...input.messages
-  ];
-  const aggregateUsage: Record<string, number> = {};
-  const runStats = emptyHarnessRunStats();
-  let content = "";
-  let toolCallCount = 0;
-  let model: string | null = null;
-  let completedIterations = 0;
-
-  const finish = (
-    status: HarnessOutcome["status"],
-    failure?: HarnessFailure
-  ): HarnessOutcome => ({
-    status,
-    content,
-    model,
-    iterations: completedIterations,
-    toolCalls: toolCallCount,
-    usage: aggregateUsage,
-    stats: snapshotHarnessRunStats(runStats, toolCallCount),
-    ...(failure ? { error: failure.message, failure } : {})
-  });
-
-  const finishAbort = (): HarnessOutcome => {
-    if (abortSource === "external") return finish("stopped");
-    return finish("failed", deadlineFailure(input.config.maxWallClockMs));
-  };
-
-  try {
-    for (let iteration = 1; iteration <= input.config.maxIterations; iteration += 1) {
-      if (signal.aborted) return finishAbort();
-      await input.onEvent({ type: "stream_started", model: input.config.primaryModel });
-      const modelStartedAt = monotonicNow();
-      let streamed: StreamResult;
-      try {
-        streamed = await client.stream(
-          {
-            messages,
-            tools: modelTools,
-            includeWebSearch: input.includeWebSearch,
-            maxWebResults: input.config.maxWebResults,
-            signal
-          },
-          async (delta) => {
-            await input.onEvent({ type: "stream_delta", delta });
-          }
-        );
-      } finally {
-        runStats.modelTimeMs += elapsedMs(modelStartedAt);
-      }
-      if (signal.aborted) return finishAbort();
-      model = streamed.model;
-      for (const [key, value] of Object.entries(streamed.usage ?? {})) {
-        if (Number.isFinite(value)) aggregateUsage[key] = (aggregateUsage[key] ?? 0) + value;
-      }
-      accumulateHarnessUsage(runStats, streamed.usage);
-      runStats.turns += 1;
-      completedIterations = iteration;
-      content += streamed.content;
-      if (streamed.toolCalls.length === 0) {
-        await input.onEvent({ type: "stream_completed", content, usage: streamed.usage });
-        return finish("completed");
-      }
-      messages.push({
-        role: "assistant",
-        content: streamed.content || null,
-        tool_calls: streamed.toolCalls
-      });
-
-      toolCallCount += streamed.toolCalls.length;
-      if (toolCallCount > input.config.maxToolCalls) {
-        throw new Error(`Harness exceeded ${input.config.maxToolCalls} tool calls`);
-      }
-
-      const plannedCalls = streamed.toolCalls.map((call, originalIndex): PlannedToolCall => ({
-        call,
-        originalIndex,
-        stableToolCallId: stableHarnessToolCallId(input.harnessRunId, iteration, originalIndex)
-      }));
-      const reads = plannedCalls.filter(({ call }) => tools.get(call.function.name)?.definition.mode === "read");
-      const writes = plannedCalls.filter(({ call }) => tools.get(call.function.name)?.definition.mode !== "read");
-      const resultByIndex = new Map<number, ToolCallExecution>();
-
-      // Read-only calls may overlap, but wait for every started read to settle
-      // so cancellation cannot leave a terminal event racing after run finish.
-      const settledReads = await Promise.allSettled(
-        reads.map((planned) => executeToolCall(planned, input, tools, signal))
-      );
-      for (let index = 0; index < settledReads.length; index += 1) {
-        const settled = settledReads[index]!;
-        if (settled.status === "rejected") throw settled.reason;
-        resultByIndex.set(reads[index]!.originalIndex, settled.value);
-      }
-      const haltedRead = [...resultByIndex.values()].find((result) => result.halt);
-      if (haltedRead) {
-        appendToolResultsInOriginalOrder(plannedCalls, resultByIndex, messages, runStats);
-        await input.onEvent({ type: "needs_input", toolCallId: haltedRead.toolCallId });
-        return finish("needs_input");
-      }
-
-      let haltedWrite: ToolCallExecution | null = null;
-      for (const planned of writes) {
-        const result = await executeToolCall(planned, input, tools, signal);
-        resultByIndex.set(planned.originalIndex, result);
-        if (result.halt) {
-          haltedWrite = result;
-          break;
-        }
-      }
-      // The model transcript must always match the provider's original call
-      // order even though safe reads may have completed out of order.
-      appendToolResultsInOriginalOrder(plannedCalls, resultByIndex, messages, runStats);
-      if (haltedWrite) {
-        await input.onEvent({ type: "needs_input", toolCallId: haltedWrite.toolCallId });
-        return finish("needs_input");
-      }
-    }
-    throw new Error(`Harness exceeded ${input.config.maxIterations} model iterations`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown harness failure";
-    if (signal.aborted) return finishAbort();
-    return finish("failed", {
-      kind: "execution",
-      code: "harness_execution_failed",
-      message
-    });
-  } finally {
-    clearTimeout(deadline);
-    input.signal?.removeEventListener("abort", markExternalAbort);
-  }
-}
-
-interface ToolCallExecution {
-  message: ModelMessage;
-  halt: boolean;
-  toolCallId: string;
-  toolName: string;
-  durationMs: number | null;
-}
-
-interface PlannedToolCall {
-  call: ModelToolCall;
-  originalIndex: number;
-  stableToolCallId: string;
-}
-
-export function stableHarnessToolCallId(
-  harnessRunId: string,
-  turnIndex: number,
-  originalToolIndex: number
-): string {
-  return `${harnessRunId}:turn:${turnIndex}:tool:${originalToolIndex}`;
-}
-
-async function executeToolCall(
-  planned: PlannedToolCall,
-  input: RunHarnessInput,
-  tools: Map<string, HarnessTool>,
-  parentSignal: AbortSignal
-): Promise<ToolCallExecution> {
-  if (parentSignal.aborted) throw abortReason(parentSignal);
-  const { call, stableToolCallId } = planned;
-  const tool = tools.get(call.function.name);
-  if (!tool) {
-    const error = `Unknown or unauthorized tool: ${call.function.name}`;
-    await input.onEvent({
-      type: "tool_failed",
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      error,
-      phase: "validation"
-    });
-    return {
-      message: { role: "tool", tool_call_id: call.id, content: JSON.stringify({ error }) },
-      halt: false,
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      durationMs: null
-    };
-  }
-  let args: unknown;
-  try {
-    args = JSON.parse(call.function.arguments || "{}") as unknown;
-  } catch {
-    const error = "Tool arguments were not valid JSON";
-    await input.onEvent({
-      type: "tool_failed",
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      error,
-      phase: "validation"
-    });
-    return {
-      message: { role: "tool", tool_call_id: call.id, content: JSON.stringify({ error }) },
-      halt: false,
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      durationMs: null
-    };
-  }
-  const inputHash = await canonicalToolInputHash(args);
-  const completed = await input.findCompletedToolResult?.(stableToolCallId, inputHash);
-  if (completed) {
-    return {
-      message: { role: "tool", tool_call_id: call.id, content: JSON.stringify(completed.output) },
-      halt: completed.halt === "needs_input",
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      durationMs: null
-    };
-  }
-  if (parentSignal.aborted) throw abortReason(parentSignal);
-  await input.onEvent({ type: "tool_started", toolCallId: stableToolCallId, toolName: call.function.name, input: args });
-  const timeout = AbortSignal.timeout(input.config.toolTimeoutMs);
-  const signal = combineSignals([parentSignal, timeout]);
-  const toolStartedAt = monotonicNow();
-  let result: HarnessToolResult | null = null;
-  let executionError: unknown = null;
-  const abortWaiter = rejectionOnAbort(signal);
-  const execution = Promise.resolve().then(() => tool.execute(args, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    harnessRunId: input.harnessRunId,
-    executionPrincipal: input.executionPrincipal,
-    signal
-  }));
-  try {
-    result = await Promise.race([execution, abortWaiter.promise]);
-  } catch (error) {
-    executionError = error;
-  } finally {
-    abortWaiter.dispose();
-  }
-  if (signal.aborted && executionError == null) {
-    executionError = parentSignal.aborted
-      ? abortReason(parentSignal)
-      : new Error(`Tool execution exceeded ${input.config.toolTimeoutMs}ms timeout`);
-  }
-  const durationMs = elapsedMs(toolStartedAt);
-  if (executionError != null) {
-    const message = executionError instanceof Error ? executionError.message : "Tool execution failed";
-    await input.onEvent({
-      type: "tool_failed",
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      error: message,
-      phase: "execution"
-    });
-    // Cancellation is a run-level outcome, not a synthetic tool response for
-    // the model. Emit the terminal tool event, then let the harness classify it.
-    if (parentSignal.aborted) throw abortReason(parentSignal);
-    return {
-      message: { role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: message }) },
-      halt: false,
-      toolCallId: stableToolCallId,
-      toolName: call.function.name,
-      durationMs
-    };
-  }
-  if (!result) throw new Error("Tool execution completed without a result");
-  await input.onEvent({
-    type: "tool_completed",
-    toolCallId: stableToolCallId,
-    toolName: call.function.name,
-    result
-  });
-  return {
-    message: { role: "tool", tool_call_id: call.id, content: JSON.stringify(result.output) },
-    halt: result.halt === "needs_input",
-    toolCallId: stableToolCallId,
-    toolName: call.function.name,
-    durationMs
-  };
-}
-
-function appendToolResultsInOriginalOrder(
-  plannedCalls: PlannedToolCall[],
-  resultByIndex: Map<number, ToolCallExecution>,
-  messages: ModelMessage[],
-  stats: HarnessRunStats
-): void {
-  for (const planned of plannedCalls) {
-    const result = resultByIndex.get(planned.originalIndex);
-    if (!result) continue;
-    accumulateToolTiming(stats, result);
-    messages.push(result.message);
-  }
-}
-
-function emptyHarnessRunStats(): HarnessRunStats {
-  return {
-    turns: 0,
-    toolCalls: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    modelTimeMs: 0,
-    toolTimeMs: 0,
-    outputTokensPerSecond: null,
-    toolTimeBreakdownMs: {}
-  };
-}
-
-function snapshotHarnessRunStats(stats: HarnessRunStats, toolCalls: number): HarnessRunStats {
-  return {
-    ...stats,
-    toolCalls,
-    outputTokensPerSecond:
-      stats.modelTimeMs > 0 && stats.outputTokens > 0
-        ? (stats.outputTokens / stats.modelTimeMs) * 1_000
-        : null,
-    toolTimeBreakdownMs: { ...stats.toolTimeBreakdownMs }
-  };
-}
-
-function accumulateHarnessUsage(
-  stats: HarnessRunStats,
-  usage: Record<string, number> | null
-): void {
-  if (!usage) return;
-  stats.inputTokens += numericUsageValue(usage, "prompt_tokens", "input_tokens");
-  stats.outputTokens += numericUsageValue(usage, "completion_tokens", "output_tokens");
-}
-
-function numericUsageValue(
-  usage: Record<string, number>,
-  primaryKey: string,
-  alternateKey: string
-): number {
-  const value = usage[primaryKey] ?? usage[alternateKey] ?? 0;
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function accumulateToolTiming(stats: HarnessRunStats, result: ToolCallExecution): void {
-  if (result.durationMs == null) return;
-  stats.toolTimeMs += result.durationMs;
-  stats.toolTimeBreakdownMs[result.toolName] =
-    (stats.toolTimeBreakdownMs[result.toolName] ?? 0) + result.durationMs;
-}
-
-function deadlineFailure(timeoutMs: number): HarnessFailure {
-  return {
-    kind: "deadline",
-    code: "harness_deadline_exceeded",
-    message: `Harness exceeded ${Math.max(0, timeoutMs)}ms wall-clock deadline`
-  };
-}
-
-function abortReason(signal: AbortSignal): Error {
-  if (signal.reason instanceof Error) return signal.reason;
-  return new DOMException(
-    typeof signal.reason === "string" ? signal.reason : "Harness execution was cancelled",
-    "AbortError"
-  );
-}
-
-function rejectionOnAbort(signal: AbortSignal): { promise: Promise<never>; dispose(): void } {
-  let onAbort: (() => void) | null = null;
-  const promise = new Promise<never>((_resolve, reject) => {
-    if (signal.aborted) {
-      reject(abortReason(signal));
-      return;
-    }
-    onAbort = () => reject(abortReason(signal));
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-  return {
-    promise,
-    dispose() {
-      if (onAbort) signal.removeEventListener("abort", onAbort);
-    }
-  };
-}
-
-function monotonicNow(): number {
-  return typeof performance === "undefined" ? Date.now() : performance.now();
-}
-
-function elapsedMs(startedAt: number): number {
-  return Math.max(0, Math.round(monotonicNow() - startedAt));
-}
-
-function combineSignals(signals: Array<AbortSignal | undefined>): AbortSignal {
-  const active = signals.filter((signal): signal is AbortSignal => Boolean(signal));
-  if (active.length === 0) return new AbortController().signal;
-  if (active.length === 1) return active[0]!;
-  return AbortSignal.any(active);
+  const { runHarnessWithBind } = await import("./bind-runtime");
+  return runHarnessWithBind(input);
 }
 
 function canonicalJson(value: unknown): string {

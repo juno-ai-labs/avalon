@@ -1,4 +1,5 @@
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
+import { runHarness, type HarnessEvent } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -48,12 +49,15 @@ interface ConnectionRow extends Record<string, unknown> {
   scope: "personal" | "workspace";
   owner_user_id: string | null;
   granted_scopes_json: string;
-  status: "healthy";
+  status: "healthy" | "error";
   created_at: string;
+  encrypted_credentials?: string;
+  credential_iv?: string;
 }
 
 class ToolSelectionDatabase {
   readonly binding: D1Database;
+  memberStatus = "active";
 
   constructor(
     readonly connections: ConnectionRow[],
@@ -96,6 +100,32 @@ class ToolSelectionStatement {
     }
     return { success: true, results } as unknown as D1Result<T>;
   }
+
+  async first<T>(): Promise<T | null> {
+    const sql = this.sql.replace(/\s+/gu, " ").trim();
+    if (sql.includes("FROM workspace_members wm")) {
+      expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
+      return { status: this.database.memberStatus } as T;
+    }
+    if (sql.includes("FROM workstreams") && sql.includes("automation_subscription_id")) {
+      expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
+      return {
+        archived_at: null,
+        automation_subscription_id: null,
+        automation_run_id: null,
+      } as T;
+    }
+    if (sql.includes("FROM connector_connections") && sql.includes("WHERE id = ? AND workspace_id = ?")) {
+      const [connectionId, workspaceId] = this.values;
+      return (this.database.connections.find((row) =>
+        row.id === connectionId && row.workspace_id === workspaceId
+      ) ?? null) as T | null;
+    }
+    if (sql.includes("SELECT id FROM workspaces")) {
+      return { id: WORKSPACE_ID } as T;
+    }
+    throw new Error(`Unexpected tool-selection first query: ${sql}`);
+  }
 }
 
 function connection(
@@ -132,6 +162,7 @@ function env(database: ToolSelectionDatabase): Env {
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     GOOGLE_OAUTH_CLIENT_ID: "google-client",
     GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
+    CONNECTOR_CREDENTIALS_KEY: "must-not-be-used-after-revocation",
     AVALON_REGION: "global",
   } as Env;
 }
@@ -154,6 +185,12 @@ function googleToolNames(tools: Awaited<ReturnType<typeof __integrationTesting.l
   return tools
     .map((tool) => tool.definition.name)
     .filter((name) => name.startsWith("google."));
+}
+
+function pluginConnectionIds(
+  selected: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>,
+): string[] {
+  return selected.plugins.map((plugin) => plugin.canonicalId.slice("connection:".length));
 }
 
 describe("connector tools selected for harness runs", () => {
@@ -215,9 +252,9 @@ describe("connector tools selected for harness runs", () => {
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
-    expect([...selected.connectionByTool.values()]).toEqual(
-      Array.from({ length: GOOGLE_WORKSPACE_TOOLS.length }, () => WORKSPACE_CONNECTION_ID),
-    );
+    expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
+    expect(pluginConnectionIds(selected)).toEqual([WORKSPACE_CONNECTION_ID]);
+    expect(selected.plugins[0]?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(selected.modeByTool.get("google.drive.search")).toBe("read");
     expect(selected.modeByTool.get("google.docs.create_document")).toBe("write");
     expect(selected.modeByTool.get("google.sheets.update_values")).toBe("write");
@@ -235,7 +272,7 @@ describe("connector tools selected for harness runs", () => {
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([OWNER_CONNECTION_ID]));
   });
 
-  it("prefers the user's personal identity over a workspace identity for ad-hoc tools", async () => {
+  it("retains each eligible credential as a separate plugin while preferring personal identity in the diagnostic view", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null, GOOGLE_WORKSPACE_CAPABILITIES, "2026-07-01T00:00:00.000Z"),
       connection(OWNER_CONNECTION_ID, "personal", USER_ID, GOOGLE_WORKSPACE_CAPABILITIES, "2026-08-01T00:00:00.000Z"),
@@ -244,10 +281,11 @@ describe("connector tools selected for harness runs", () => {
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
-    expect(new Set(selected.connectionByTool.values())).toEqual(new Set([OWNER_CONNECTION_ID]));
+    expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
+    expect(selected.connectionByTool.get("google.drive.search")).toBe(OWNER_CONNECTION_ID);
   });
 
-  it("prefers an explicitly attached workspace identity over the user's personal identity", async () => {
+  it("preloads an explicitly attached workspace identity without dropping another eligible personal plugin", async () => {
     const database = new ToolSelectionDatabase([
       connection(OWNER_CONNECTION_ID, "personal", USER_ID),
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
@@ -255,7 +293,12 @@ describe("connector tools selected for harness runs", () => {
 
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
 
-    expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
+    expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
+    expect(selected.connectionByTool.get("google.drive.search")).toBe(WORKSPACE_CONNECTION_ID);
+    expect(selected.plugins.find((plugin) => plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`)).toMatchObject({
+      preload: true,
+      explicit: true,
+    });
   });
 
   it("limits automation tools to capabilities explicitly bound to a connection", async () => {
@@ -284,6 +327,27 @@ describe("connector tools selected for harness runs", () => {
     expect(googleToolNames(selected.tools)).not.toContain("google.docs.read_document");
     expect(googleToolNames(selected.tools)).not.toContain("google.sheets.read_values");
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
+  });
+
+  it("preloads every granted capability from a workstream-attached connection during an automation", async () => {
+    const database = new ToolSelectionDatabase(
+      [connection(WORKSPACE_CONNECTION_ID, "workspace", null)],
+      [],
+      [WORKSPACE_CONNECTION_ID],
+    );
+
+    const selected = await __integrationTesting.loadHarnessTools(
+      env(database),
+      workflowInput(SUBSCRIPTION_ID),
+    );
+
+    expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+    expect(selected.plugins).toHaveLength(1);
+    expect(selected.plugins[0]).toMatchObject({
+      canonicalId: `connection:${WORKSPACE_CONNECTION_ID}`,
+      preload: true,
+      explicit: true,
+    });
   });
 
   it("keeps connector reads but removes connector writes from inbound-email automations", async () => {
@@ -315,4 +379,125 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.modeByTool.has("google.docs.create_document")).toBe(false);
     expect(selected.connectionByTool.has("google.sheets.update_values")).toBe(false);
   });
+
+  it.each([
+    {
+      authority: "workspace membership",
+      revoke: (database: ToolSelectionDatabase, row: ConnectionRow) => {
+        database.memberStatus = "removed";
+        void row;
+      },
+      message: "User is not an active workspace member",
+    },
+    {
+      authority: "personal connection ownership",
+      revoke: (_database: ToolSelectionDatabase, row: ConnectionRow) => {
+        row.owner_user_id = OTHER_USER_ID;
+      },
+      message: "Connector is no longer healthy or authorized for this run",
+    },
+    {
+      authority: "capability grant",
+      revoke: (_database: ToolSelectionDatabase, row: ConnectionRow) => {
+        row.granted_scopes_json = "[]";
+      },
+      message: "Connector capability was revoked",
+    },
+    {
+      authority: "connection health",
+      revoke: (_database: ToolSelectionDatabase, row: ConnectionRow) => {
+        row.status = "error";
+      },
+      message: "Connector is no longer healthy or authorized for this run",
+    },
+  ])("blocks credential access when $authority changes between model selection and tool execution", async ({
+    revoke,
+    message,
+  }) => {
+    const row = connection(OWNER_CONNECTION_ID, "personal", USER_ID, ["drive.read"]);
+    // Deliberately invalid ciphertext: reaching decryption would produce a
+    // crypto failure instead of the member-safe authorization failure below.
+    row.encrypted_credentials = "credential-ciphertext-must-not-be-read";
+    row.credential_iv = "credential-iv-must-not-be-read";
+    const database = new ToolSelectionDatabase([row]);
+    const providerFetch = vi.fn<typeof globalThis.fetch>();
+    vi.stubGlobal("fetch", providerFetch);
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const plugin = selected.plugins[0]!;
+    const wireToolName = `${plugin.shortWireName}_google_drive_search`;
+    const events: HarnessEvent[] = [];
+    let modelTurn = 0;
+    const modelFetch = vi.fn<typeof globalThis.fetch>(async () => {
+      modelTurn += 1;
+      if (modelTurn === 1) {
+        // The run scope and active plugin were already authorized before this
+        // response. Mutating now proves the tool boundary independently checks
+        // the durable authority before credentials can be decrypted.
+        revoke(database, row);
+        return authorityStreamResponse([{
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "provider-authority-read",
+                type: "function",
+                function: { name: wireToolName, arguments: JSON.stringify({ query: "quarterly plan" }) },
+              }],
+            },
+            finish_reason: "tool_calls",
+          }],
+        }]);
+      }
+      return authorityStreamResponse([{
+        choices: [{ delta: { content: "Authorization changed; tool was not executed." }, finish_reason: "stop" }],
+      }]);
+    });
+
+    const outcome = await runHarness({
+      config: {
+        apiKey: "test-key",
+        primaryModel: "google/gemini-2.5-flash-lite",
+        fetch: modelFetch,
+        maxIterations: 3,
+        maxToolCalls: 2,
+        maxWallClockMs: 1_000,
+        maxContextBytes: 200_000,
+        toolTimeoutMs: 100,
+        maxWebResults: 4,
+      },
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      harnessRunId: HARNESS_RUN_ID,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      systemPrompt: "Use only currently authorized connector tools.",
+      messages: [{ role: "user", content: "Search my Drive." }],
+      tools: [],
+      plugins: selected.plugins,
+      activationHints: [plugin.canonicalId],
+      // Connector execution performs the authoritative database check. This
+      // callback remains true so Bind keeps the frozen plugin active long
+      // enough to exercise that exact boundary.
+      reauthorizePlugin: () => true,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      content: "Authorization changed; tool was not executed.",
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_failed",
+      pluginId: plugin.canonicalId,
+      error: message,
+      phase: "execution",
+      outcome: "definitive_failure",
+    }));
+    expect(events.some((event) => event.type === "tool_completed")).toBe(false);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
 });
+
+function authorityStreamResponse(events: unknown[]): Response {
+  const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}

@@ -5,12 +5,12 @@ Avalon is a work-stream-first desktop workspace where people and an agent collab
 The product includes:
 
 - Ad-hoc and automation-created work streams with multiplayer presence, participants, resources, messages, structured questions, and activity suggestions.
-- A bounded OpenRouter agent harness with streamed responses, validated tools, persisted tool events, fallback models, and retry-safe side effects.
+- A bounded Bind 10 adapter over OpenRouter with credential-scoped connector plugins, immutable run authority, streamed responses, durable tool receipts, and classified fallback routing.
 - Versioned natural-language automations with calendar, interval, connector-activity, semantic-activity, and manual triggers.
 - Google Mail + Calendar and Google Drive + Docs + Sheets presets backed by one incrementally scoped Google connector family; one smart-routed public GitHub App; public Linear OAuth; public Notion connection; signed generic webhook; and deterministic web-monitor connector paths.
 - Firecrawl-backed public web search and clean-markdown page fetch tools, available only from the server-side agent harness.
 - Global and European Union workspace regions with separate deployment configurations.
-- Hibernating, sequence-aware work-stream WebSockets with bounded replay and REST resynchronization.
+- Hibernating work-stream WebSockets with bounded room replay, turn/epoch stream resets, duplicate suppression, and REST resynchronization.
 - Electron organization signup, Resend-delivered regional invitations, and a native Settings window available with **Command-,**.
 - A contextual right sidebar for people and resources, background tasks, run history, and focused item details.
 
@@ -21,7 +21,7 @@ apps/desktop           Electron main/preload and React renderer
 apps/api               Hono Cloudflare Worker and runtime components
 packages/contracts     Shared Zod contracts
 packages/db            D1 migration, repositories, and explicit local seed
-packages/agent-harness OpenRouter loop, classifiers, and tool execution
+packages/agent-harness Bind 10/OpenRouter adapter, prompts, classifiers, and tool execution
 packages/connectors    Google, GitHub, Linear, Notion, webhook, and web-monitor adapters
 docs                   Product, architecture, security, and operations
 ```
@@ -89,6 +89,6 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 ## Hosted deployment
 
-`with-avalon.com`, `api.with-avalon.com`, and `eu.api.with-avalon.com` are deployed. The Global and EU D1 migrations are current, both regional infrastructure health checks pass, and Firecrawl and Resend invitation delivery are configured in both Workers. Base Google OAuth credentials and callbacks are configured; the expanded Google APIs, consent-screen review, and both preset acceptance flows remain release gates. The public `Avalon Workstreams` GitHub App, regional secrets, callbacks, and signed smart ingress at `github.with-avalon.com` are deployed, and GitHub's registration ping succeeds; a user-started installation/OAuth acceptance run is still required. The one public Linear app and the regional Notion registrations remain provider-setup release gates. Follow [the provider-app runbook](docs/PROVIDER_APPS.md) before end-user acceptance.
+`with-avalon.com`, `api.with-avalon.com`, and `eu.api.with-avalon.com` are deployed. The Global and EU D1 migrations are current, both regional infrastructure health checks pass, and Firecrawl, Resend invitation delivery, and inbound work-stream and automation email are configured. Base Google OAuth credentials and callbacks are configured; the expanded Google APIs, consent-screen review, and both preset acceptance flows remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are deployed with their regional secrets, callbacks, and signed ingress. A user-started GitHub installation/OAuth acceptance run and the regional Notion registrations remain provider-acceptance gates. Follow [the provider-app runbook](docs/PROVIDER_APPS.md) before end-user acceptance.
 
 Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Google provider credentials are stored only as encrypted Worker secrets. Follow [the runbook](docs/RUNBOOK.md) for regional secret management, migrations, health verification, deployment, and provider acceptance.
