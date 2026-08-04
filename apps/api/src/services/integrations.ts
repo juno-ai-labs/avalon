@@ -17,17 +17,18 @@ import {
   type ModelMessage,
   type StructuredModelDiagnostic,
 } from "@avalon/agent-harness";
-import type {
-  AddressingClassification,
-  AutomationDraft,
-  ConnectorPollWorkflowInput,
-  ExecutionPrincipal,
-  Message,
-  NormalizedActivity,
-  ServerSocketEvent,
-  ToolInvocation,
-  ToolDefinition,
-  WorkstreamWorkflowInput,
+import {
+  ElicitationSchema,
+  type AddressingClassification,
+  type AutomationDraft,
+  type ConnectorPollWorkflowInput,
+  type ExecutionPrincipal,
+  type Message,
+  type NormalizedActivity,
+  type ServerSocketEvent,
+  type ToolInvocation,
+  type ToolDefinition,
+  type WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import {
@@ -452,8 +453,14 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    // Artifact, elicitation, suggestion, and system rows are UI state. Their
-    // relevant human answer or durable final text is represented separately.
+    if (message.messageType === "elicitation") {
+      const response = projectElicitationResponseMessage(message.structuredContent);
+      if (response) projected.push(response);
+      continue;
+    }
+
+    // Artifact, suggestion, and system rows are UI state. Their relevant
+    // durable content is represented separately.
     if (message.messageType !== "text") continue;
     const content = modelMessageContent(message);
     if (content.trim().length === 0) {
@@ -2215,6 +2222,58 @@ async function loadRunPromptContext(
     }),
     additionalMessages,
   };
+}
+
+type ElicitationResponseRow = {
+  prompt: string;
+  response_type: "text" | "radio" | "single_select" | "multi_select";
+  options_json: string;
+  answer_json: string | null;
+};
+
+function renderElicitationResponseMessage(row: ElicitationResponseRow): ModelMessage {
+  const answer = parseJson<string | string[] | null>(row.answer_json, null);
+  const options = parseJson<Array<{ value: string; label: string; description?: string | null }>>(
+    row.options_json,
+    [],
+  );
+  const optionsByValue = new Map(options.map((option) => [option.value, option]));
+  const values = answer == null ? [] : Array.isArray(answer) ? answer : [answer];
+  const response = answer == null
+    ? { skipped: true }
+    : row.response_type === "text"
+      ? { skipped: false, text: String(answer) }
+      : {
+          skipped: false,
+          selections: values.map((value) => {
+            const option = optionsByValue.get(value);
+            return option
+              ? { value, label: option.label, ...(option.description ? { description: option.description } : {}) }
+              : { customResponse: value };
+          }),
+        };
+  return {
+    role: "user",
+    content: [
+      "The person responded to Avalon's blocking question. Continue the original task using this response.",
+      JSON.stringify({ kind: "elicitation_response", question: row.prompt, response }),
+    ].join("\n"),
+  };
+}
+
+function projectElicitationResponseMessage(structuredContent: unknown): ModelMessage | null {
+  const parsed = z.object({
+    kind: z.literal("elicitation_response"),
+    elicitation: ElicitationSchema,
+  }).safeParse(structuredContent);
+  if (!parsed.success || parsed.data.elicitation.status !== "answered") return null;
+  const elicitation = parsed.data.elicitation;
+  return renderElicitationResponseMessage({
+    prompt: elicitation.prompt,
+    response_type: elicitation.responseType,
+    options_json: JSON.stringify(elicitation.options),
+    answer_json: elicitation.answer == null ? null : JSON.stringify(elicitation.answer),
+  });
 }
 
 function boundModelContext(
@@ -4055,6 +4114,8 @@ export const __integrationTesting = {
   loadHarnessTools,
   loadTriggerFencedTranscriptMessages,
   projectModelProtocolTranscript,
+  projectElicitationResponseMessage,
+  renderElicitationResponseMessage,
   serializeToolReplayOutput,
   toolReplayOutputKey,
   persistSuccessfulToolResult,

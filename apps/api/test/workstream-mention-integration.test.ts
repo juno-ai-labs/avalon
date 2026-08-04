@@ -190,6 +190,76 @@ describe("work-stream person mention persistence", () => {
   });
 });
 
+describe("work-stream elicitation answers", () => {
+  it("persists selected and custom responses before starting the continuation", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    const { elicitationId, harnessRunId } = seedElicitation(database, "multi_select", 1, 3);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const result = await service.answerElicitation(workstreamId, elicitationId, {
+      answer: ["compare", "Summarize the payment terms"],
+      customResponse: "Summarize the payment terms",
+    });
+
+    expect(result.harnessRunId).toEqual(expect.any(String));
+    expect(database.prepare("SELECT status, answer_json FROM elicitations WHERE id = ?").get(elicitationId)).toEqual({
+      status: "answered",
+      answer_json: JSON.stringify(["compare", "Summarize the payment terms"]),
+    });
+    const responseMessage = database.prepare(
+      "SELECT message_type, author_type, structured_content_json FROM messages WHERE client_message_id = ?",
+    ).get(`elicitation-response:${elicitationId}`) as {
+      message_type: string;
+      author_type: string;
+      structured_content_json: string;
+    };
+    expect(responseMessage).toMatchObject({ message_type: "elicitation", author_type: "human" });
+    expect(JSON.parse(responseMessage.structured_content_json)).toMatchObject({
+      kind: "elicitation_response",
+      elicitation: {
+        answer: ["compare", "Summarize the payment terms"],
+        status: "answered",
+      },
+    });
+    expect(database.prepare("SELECT origin, parent_harness_run_id FROM harness_runs WHERE id = ?").get(result.harnessRunId)).toEqual({
+      origin: "elicitation_answer",
+      parent_harness_run_id: harnessRunId,
+    });
+    expect(startWorkstreamWorkflow).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      harnessRunId: result.harnessRunId,
+      reason: "elicitation_answer",
+    }));
+  });
+
+  it("records an explicit skip and still resumes the blocked run", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    const { elicitationId } = seedElicitation(database, "single_select", 1, 1);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const result = await service.answerElicitation(workstreamId, elicitationId, { skipped: true });
+
+    expect(result.harnessRunId).toEqual(expect.any(String));
+    expect(database.prepare("SELECT status, answer_json FROM elicitations WHERE id = ?").get(elicitationId)).toEqual({
+      status: "answered",
+      answer_json: null,
+    });
+    expect(startWorkstreamWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it("rejects arbitrary values that were not declared as the custom response", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    const { elicitationId } = seedElicitation(database, "single_select", 1, 1);
+    const service = new WorkstreamService(environment(database), auth());
+
+    await expect(service.answerElicitation(workstreamId, elicitationId, { answer: "undeclared" }))
+      .rejects.toMatchObject({ code: "invalid_elicitation_option", status: 422 });
+    expect(startWorkstreamWorkflow).not.toHaveBeenCalled();
+  });
+});
+
 function auth(): AuthContext {
   return {
     sessionId: "session-1",
@@ -288,6 +358,42 @@ function seedConversationHistory(database: DatabaseSync): void {
     );
   }
   database.prepare("UPDATE workstreams SET next_sequence_number = 13 WHERE id = ?").run(workstreamId);
+}
+
+function seedElicitation(
+  database: DatabaseSync,
+  responseType: "single_select" | "multi_select",
+  minimumSelections: number,
+  maximumSelections: number,
+): { elicitationId: string; harnessRunId: string } {
+  const harnessRunId = "00000000-0000-7000-8000-000000000005";
+  const elicitationId = "00000000-0000-7000-8000-000000000006";
+  database.prepare(
+    `INSERT INTO harness_runs
+     (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+     VALUES (?, ?, ?, 'human_message', ?, 'needs_input', ?)`,
+  ).run(harnessRunId, workspaceId, workstreamId, JSON.stringify({ type: "user", userId: authorId }), at);
+  database.prepare(
+    `INSERT INTO elicitations
+     (id, workspace_id, workstream_id, harness_run_id, prompt, response_type, options_json,
+      minimum_selections, maximum_selections, status, created_at)
+     VALUES (?, ?, ?, ?, 'What should Avalon do?', ?, ?, ?, ?, 'open', ?)`,
+  ).run(
+    elicitationId,
+    workspaceId,
+    workstreamId,
+    harnessRunId,
+    responseType,
+    JSON.stringify([
+      { value: "compare", label: "Compare documents", description: null },
+      { value: "review", label: "Review the draft", description: null },
+    ]),
+    minimumSelections,
+    maximumSelections,
+    at,
+  );
+  database.prepare("UPDATE workstreams SET harness_status = 'needs_input' WHERE id = ?").run(workstreamId);
+  return { elicitationId, harnessRunId };
 }
 
 function sqliteD1(database: DatabaseSync): D1Database {

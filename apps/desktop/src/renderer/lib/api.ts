@@ -890,10 +890,17 @@ export class AvalonApi {
     return this.getWorkstream(id);
   }
 
-  async answerElicitation(id: string, elicitationId: string, answer: unknown): Promise<void> {
+  async answerElicitation(
+    id: string,
+    elicitationId: string,
+    answer: string | string[] | null,
+    customResponse?: string,
+  ): Promise<void> {
     await this.request(`/workstreams/${encodeURIComponent(id)}/elicitations/${encodeURIComponent(elicitationId)}/answer`, {
       method: 'POST',
-      body: { answer },
+      body: answer == null
+        ? { skipped: true }
+        : { answer, ...(customResponse ? { customResponse } : {}) },
       schema: z.object({ elicitation: WireElicitationSchema.optional(), harnessRunId: z.string().nullable() }),
     });
   }

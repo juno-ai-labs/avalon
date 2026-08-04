@@ -435,22 +435,76 @@ export class WorkstreamService {
     if (elicitation.target_user_id != null && elicitation.target_user_id !== this.auth.userId) {
       throw new ApiError(403, "elicitation_target_mismatch", "This question is targeted to another participant");
     }
-    this.validateElicitationAnswer(elicitation, input.answer);
+    const skipped = "skipped" in input && input.skipped;
+    const answer = skipped ? null : input.answer;
+    if (!skipped) this.validateElicitationAnswer(elicitation, input.answer, input.customResponse);
     const at = nowIso();
-    const claimed = await this.env.DB.prepare(
-      `UPDATE elicitations SET status = 'answered', answer_json = ?, answered_by_user_id = ?, answered_at = ?
-       WHERE id = ? AND workstream_id = ? AND workspace_id = ? AND status = 'open'
-       RETURNING id`,
-    ).bind(
-      JSON.stringify(input.answer),
-      this.auth.userId,
-      at,
-      elicitationId,
-      id,
-      this.auth.workspaceId,
-    ).first<{ id: string }>();
-    if (!claimed) {
+    const responseMessageId = newId();
+    const persistedElicitation = {
+      id: elicitationId,
+      workstreamId: id,
+      harnessRunId: String(elicitation.harness_run_id),
+      prompt: String(elicitation.prompt),
+      responseType: String(elicitation.response_type),
+      options: json(elicitation.options_json, []),
+      minimumSelections: Number(elicitation.minimum_selections ?? 0),
+      maximumSelections: elicitation.maximum_selections == null ? null : Number(elicitation.maximum_selections),
+      targetUserId: elicitation.target_user_id == null ? null : String(elicitation.target_user_id),
+      status: "answered",
+      answer,
+      answeredByUserId: this.auth.userId,
+      createdAt: String(elicitation.created_at),
+      answeredAt: at,
+    };
+    const responseWrites = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE elicitations SET status = 'answered', answer_json = ?, answered_by_user_id = ?, answered_at = ?
+         WHERE id = ? AND workstream_id = ? AND workspace_id = ? AND status = 'open'`,
+      ).bind(
+        answer == null ? null : JSON.stringify(answer),
+        this.auth.userId,
+        at,
+        elicitationId,
+        id,
+        this.auth.workspaceId,
+      ),
+      this.env.DB.prepare(
+        `INSERT INTO messages
+         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+          message_type, text_content, structured_content_json, sequence_number, created_at)
+         SELECT ?, ?, ?, w.id, 'human', ?, 'elicitation', '', ?, w.next_sequence_number, ?
+         FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
+           AND EXISTS (
+             SELECT 1 FROM elicitations e
+             WHERE e.id = ? AND e.workstream_id = w.id AND e.workspace_id = w.workspace_id
+               AND e.status = 'answered' AND e.answered_by_user_id = ? AND e.answered_at = ?
+           )
+         ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+      ).bind(
+        responseMessageId,
+        `elicitation-response:${elicitationId}`,
+        this.auth.workspaceId,
+        this.auth.userId,
+        JSON.stringify({ kind: "elicitation_response", elicitation: persistedElicitation }),
+        at,
+        id,
+        this.auth.workspaceId,
+        elicitationId,
+        this.auth.userId,
+        at,
+      ),
+      this.env.DB.prepare(
+        `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
+         last_activity_at = ?, updated_at = ?
+         WHERE id = ? AND workspace_id = ?
+           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
+      ).bind(at, at, id, this.auth.workspaceId, responseMessageId),
+    ]);
+    if (Number(responseWrites[0]?.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
+    }
+    if (Number(responseWrites[1]?.meta.changes ?? 0) !== 1) {
+      throw new ApiError(500, "elicitation_response_write_failed", "The response could not be stored");
     }
     await this.database.workstreams.addParticipant(this.auth.workspaceId, id, this.auth.userId, this.auth.userId, "elicitation");
     const remaining = await this.env.DB.prepare(
@@ -998,13 +1052,28 @@ export class WorkstreamService {
     }));
   }
 
-  private validateElicitationAnswer(elicitation: Record<string, unknown>, answer: string | string[]): void {
+  private validateElicitationAnswer(
+    elicitation: Record<string, unknown>,
+    answer: string | string[],
+    customResponse?: string,
+  ): void {
     const type = String(elicitation.response_type);
     if (type === "text" && typeof answer !== "string") throw new ApiError(422, "invalid_elicitation_answer", "This question requires text");
-    if (type !== "text" && !Array.isArray(answer) && type === "multi_select") throw new ApiError(422, "invalid_elicitation_answer", "This question requires one or more selections");
+    if (type === "multi_select" && !Array.isArray(answer)) throw new ApiError(422, "invalid_elicitation_answer", "This question requires one or more selections");
+    if (type !== "text" && type !== "multi_select" && Array.isArray(answer)) throw new ApiError(422, "invalid_elicitation_answer", "This question requires one selection");
     const values = Array.isArray(answer) ? answer : [answer];
     const options = json<Array<{ value: string }>>(elicitation.options_json, []);
-    if (type !== "text" && values.some((value) => !options.some((option) => option.value === value))) throw new ApiError(422, "invalid_elicitation_option", "An answer is not one of the available choices");
+    if (type !== "text") {
+      const customMatches = customResponse == null
+        ? 0
+        : values.filter((value) => value === customResponse).length;
+      if (customResponse != null && customMatches !== 1) {
+        throw new ApiError(422, "invalid_custom_elicitation_answer", "The custom response is not part of the answer");
+      }
+      if (values.some((value) => !options.some((option) => option.value === value) && value !== customResponse)) {
+        throw new ApiError(422, "invalid_elicitation_option", "An answer is not one of the available choices");
+      }
+    }
     const minimum = Number(elicitation.minimum_selections ?? 0);
     const maximum = elicitation.maximum_selections == null ? null : Number(elicitation.maximum_selections);
     if (values.length < minimum || (maximum != null && values.length > maximum)) throw new ApiError(422, "invalid_selection_count", "The answer has an invalid number of selections");

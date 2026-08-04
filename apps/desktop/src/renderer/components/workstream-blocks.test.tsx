@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { Message } from '../lib/types';
-import { MessageBlock } from './workstream-blocks';
+import type { ElicitationData, Message } from '../lib/types';
+import { ElicitationPanel, MessageBlock } from './workstream-blocks';
 
 const copyText = vi.hoisted(() => vi.fn());
 
@@ -24,6 +24,84 @@ const actions = {
   onAnswerElicitation: vi.fn(async () => undefined),
   onResolveSuggestion: vi.fn(async () => undefined),
 };
+
+const singleSelectElicitation: ElicitationData = {
+  id: 'elicitation-single',
+  prompt: 'What should Avalon do with these attachments?',
+  responseType: 'single_select',
+  options: [
+    { value: 'compare', label: 'Compare offer vs. RSPA', description: 'Diff the two agreements and flag mismatches.' },
+    { value: 'review', label: 'Review the draft offer', description: 'Flag risks and internal inconsistencies.' },
+  ],
+  minimumSelections: 1,
+  maximumSelections: 1,
+  status: 'open',
+};
+
+describe('ElicitationPanel', () => {
+  it('submits a numbered single selection with the keyboard shortcut', async () => {
+    const onAnswer = vi.fn(async () => undefined);
+    const { container } = render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={onAnswer} />);
+
+    expect(screen.getByRole('button', { name: /Submit/u })).toBeDisabled();
+    fireEvent.keyDown(container.querySelector('.elicitation-panel')!, { key: '1' });
+    expect(screen.getByRole('radio', { name: /Compare offer vs\. RSPA/u })).toBeChecked();
+    expect(screen.getByRole('button', { name: /Submit/u })).toBeEnabled();
+
+    fireEvent.keyDown(container.querySelector('.elicitation-panel')!, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith('compare', undefined));
+  });
+
+  it('combines checked options with an inline custom response', async () => {
+    const onAnswer = vi.fn(async () => undefined);
+    render(
+      <ElicitationPanel
+        elicitation={{
+          ...singleSelectElicitation,
+          id: 'elicitation-multi',
+          responseType: 'multi_select',
+          maximumSelections: 3,
+        }}
+        onAnswer={onAnswer}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Compare offer vs\. RSPA/u }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Other response' }), { target: { value: 'Summarize the payment terms' } });
+    expect(screen.getByRole('checkbox', { name: 'Other' })).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Other' }).closest('.elicitation-option')!);
+    expect(screen.getByRole('checkbox', { name: 'Other' })).not.toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Other' }).closest('.elicitation-option')!);
+    fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
+
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(
+      ['compare', 'Summarize the payment terms'],
+      'Summarize the payment terms',
+    ));
+  });
+
+  it('resumes explicitly when the person skips the question', async () => {
+    const onAnswer = vi.fn(async () => undefined);
+    render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={onAnswer} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith(null));
+  });
+
+  it('collapses into the compact input bar and reopens without resolving the question', () => {
+    const onAnswer = vi.fn(async () => undefined);
+    render(<ElicitationPanel elicitation={singleSelectElicitation} onAnswer={onAnswer} />);
+
+    expect(screen.queryByRole('button', { name: 'Dismiss question' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse question' }));
+    expect(screen.queryByRole('button', { name: /Submit/u })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Avalon needs input/u }));
+
+    expect(screen.getByRole('button', { name: /Submit/u })).toBeInTheDocument();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+});
 
 describe('MessageBlock human identity', () => {
   it('renders an optimistic turn as a neutral skeleton instead of previewing client text', () => {
