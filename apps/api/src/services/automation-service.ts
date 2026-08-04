@@ -639,7 +639,9 @@ export class AutomationService {
        h.workflow_instance_id AS harness_workflow_instance_id,
        m.id AS trigger_message_id
        FROM automation_runs r
-       LEFT JOIN harness_runs h ON h.workstream_id = r.workstream_id
+       LEFT JOIN harness_runs h
+         ON h.workstream_id = r.workstream_id
+        AND h.parent_tool_call_id IS NULL
        LEFT JOIN messages m ON m.workstream_id = r.workstream_id AND m.client_message_id = ?4
        WHERE r.workspace_id = ?1 AND r.automation_subscription_id = ?2 AND r.idempotency_key = ?3
        ORDER BY h.created_at DESC LIMIT 1`,

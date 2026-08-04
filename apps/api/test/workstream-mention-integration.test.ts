@@ -32,6 +32,7 @@ const databases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -70,6 +71,43 @@ describe("work-stream addressing", () => {
     expect(result.harnessRunId).toBeNull();
     expect(classifyWorkstreamMessage).toHaveBeenCalledOnce();
     expect(startWorkstreamWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("persists static member-safe copy while logging workflow launch diagnostics", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    const diagnostic = "provider response included a private upstream detail";
+    vi.mocked(startWorkstreamWorkflow).mockRejectedValueOnce(new Error(diagnostic));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const service = new WorkstreamService(environment(database), auth());
+
+    await expect(service.createMessage(workstreamId, {
+      text: "Start a safe run",
+      clientMessageId: "launch-failure-message",
+      mentions: [],
+      confirmedParticipantUserIds: [],
+    })).rejects.toMatchObject({
+      status: 503,
+      code: "workflow_unavailable",
+      message: "The Avalon harness could not be started",
+    });
+
+    const row = database.prepare(
+      "SELECT id, error_json FROM harness_runs WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1",
+    ).get(workstreamId) as { id: string; error_json: string };
+    expect(JSON.parse(row.error_json)).toEqual({
+      code: "workflow_unavailable",
+      message: "Avalon could not start this run",
+    });
+    expect(row.error_json).not.toContain(diagnostic);
+    expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({
+      event: "workstream_harness_launch_failed",
+      request_id: row.id,
+      workspace_id: workspaceId,
+      workstream_id: workstreamId,
+      error_name: "Error",
+      error_message: diagnostic,
+    }));
   });
 });
 

@@ -1470,6 +1470,24 @@ pre {
 .suggestion-resolution { align-items: center; color: var(--green); display: flex; font-size: 10.5px; gap: 5px; margin: 10px 0 0; }
 
 .agent-thinking { align-items: center; color: var(--muted); display: flex; font-size: 11px; gap: 8px; margin: 2px 0 26px; }
+.run-failure-notice {
+  align-items: flex-start;
+  background: color-mix(in srgb, var(--red) 10%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--red) 42%, var(--line));
+  border-radius: 9px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  margin: 6px 0 26px;
+  padding: 12px;
+}
+.run-failure-icon { color: var(--red); display: grid; padding-top: 1px; place-items: center; }
+.run-failure-copy { min-width: 0; }
+.run-failure-copy strong { color: var(--ink); display: block; font-size: 12px; margin-bottom: 3px; }
+.run-failure-copy p { color: var(--ink-soft); font-size: 11px; line-height: 1.45; margin: 0 0 5px; }
+.run-failure-copy code { color: var(--muted); font-size: 10px; }
+.run-failure-actions { align-items: center; display: flex; gap: 7px; }
+.run-failure-actions .button { white-space: nowrap; }
 .thinking-mark { animation: active-pulse 1.2s infinite; background: var(--orange); border-radius: 50%; height: 7px; width: 7px; }
 .thinking-dots { letter-spacing: 2px; }
 .jump-bottom { align-items: center; background: #30312c; border: 1px solid #44453f; border-radius: 999px; box-shadow: 0 5px 18px rgba(0,0,0,.25); color: var(--ink-soft); display: flex; height: 30px; justify-content: center; left: 50%; padding: 0; pointer-events: auto; position: absolute; top: 5px; transform: translateX(-50%); width: 30px; z-index: 4; }

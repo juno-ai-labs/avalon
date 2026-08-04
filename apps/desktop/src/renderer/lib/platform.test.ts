@@ -29,6 +29,15 @@ describe('browser fallback single-platform identity boundary', () => {
     vi.unstubAllGlobals();
   });
 
+  it('prefers the hardened preload bridge for clipboard writes', async () => {
+    const copyText = vi.fn(async () => undefined);
+    window.avalon = { copyText } as unknown as typeof window.avalon;
+
+    await desktopBridge().copyText('copied through preload');
+
+    expect(copyText).toHaveBeenCalledWith('copied through preload');
+  });
+
   it('refuses to create or exchange an EU authentication attempt', async () => {
     const bridge = desktopBridge();
     await expect(bridge.createDesktopAuthAttempt({ apiBaseUrl: euApiBaseUrl, region: 'eu' }))

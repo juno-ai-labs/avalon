@@ -1,4 +1,6 @@
 import { createDatabase, newId, nowIso } from "@avalon/db";
+import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
+import { HarnessFailureCodeSchema } from "@avalon/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -22,6 +24,7 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
+import { logStructuredEvent } from "../observability/logger";
 import { issueSocketTicket } from "./socket-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
@@ -78,6 +81,22 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   WHERE ti.workspace_id = ? AND ti.workstream_id = ?
   ORDER BY COALESCE(ti.started_at, hr.created_at) DESC
   LIMIT 500`;
+
+const ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS = Object.freeze({
+  empty_completion: "The model provider returned an empty response",
+  model_output_invalid: "The model provider returned an invalid response",
+  provider_error: "The model provider could not complete this run",
+  run_admission_timeout: "This work stream stayed busy too long to start the run",
+  run_cancelled: "This run was cancelled",
+  run_ownership_lost: "This run was superseded by another executor",
+  stale_run_reaped: "This run stopped after its execution lease expired",
+  workflow_unavailable: "Avalon could not start this run",
+} satisfies Readonly<Record<string, string>>);
+
+const GENERIC_MEMBER_SAFE_HARNESS_ERROR = Object.freeze({
+  code: "harness_execution_failed",
+  message: "The Avalon harness could not complete this run",
+});
 
 function json<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
@@ -183,8 +202,10 @@ export class WorkstreamService {
       this.loadElicitations(id),
       this.loadSuggestions(id),
       this.env.DB.prepare(
-        `SELECT id, origin, status, model, started_at, completed_at, created_at
-         FROM harness_runs WHERE workspace_id = ? AND workstream_id = ?
+        `SELECT id, origin, status, model, error_json, started_at, completed_at, created_at
+         FROM harness_runs
+         WHERE workspace_id = ? AND workstream_id = ?
+           AND parent_tool_call_id IS NULL
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
       this.loadViewers(id),
@@ -205,6 +226,8 @@ export class WorkstreamService {
         origin: String(latestHarness.origin),
         status: String(latestHarness.status),
         model: latestHarness.model == null ? null : String(latestHarness.model),
+        error: memberSafeHarnessError(latestHarness.error_json),
+        requestId: String(latestHarness.id),
         startedAt: latestHarness.started_at == null ? null : String(latestHarness.started_at),
         completedAt: latestHarness.completed_at == null ? null : String(latestHarness.completed_at),
         createdAt: String(latestHarness.created_at),
@@ -450,6 +473,28 @@ export class WorkstreamService {
     ).bind(at, id, this.auth.workspaceId).run();
   }
 
+  async retry(id: string): Promise<{ harnessRunId: string }> {
+    const workstream = await this.requireWorkstream(id);
+    if (workstream.harnessStatus === "running" || workstream.harnessStatus === "scheduled" || workstream.harnessStatus === "needs_input") {
+      throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
+    }
+    const latest = await this.env.DB.prepare(
+      `SELECT status FROM harness_runs
+       WHERE workspace_id = ? AND workstream_id = ?
+         AND parent_tool_call_id IS NULL
+       ORDER BY created_at DESC LIMIT 1`,
+    ).bind(this.auth.workspaceId, id).first<{ status: string }>();
+    if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
+      throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
+    }
+    const trigger = await this.env.DB.prepare(
+      `SELECT id FROM messages
+       WHERE workspace_id = ? AND workstream_id = ? AND author_type = 'human'
+       ORDER BY sequence_number DESC LIMIT 1`,
+    ).bind(this.auth.workspaceId, id).first<{ id: string }>();
+    return { harnessRunId: await this.launchHarness(id, trigger?.id ?? null, "manual_retry") };
+  }
+
   async socketTicket(id: string) {
     await this.requireWorkstream(id);
     const ticket = await issueSocketTicket(this.env, this.auth, id);
@@ -646,9 +691,19 @@ export class WorkstreamService {
     try {
       await startWorkstreamWorkflow(this.env, workflowInput);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Workflow start failed";
+      const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
+      logStructuredEvent(this.env, "error", "workstream_harness_launch_failed", {
+        request_id: id,
+        workspace_id: this.auth.workspaceId,
+        workstream_id: workstreamId,
+        origin,
+        error_name: error instanceof Error ? error.name : "UnknownError",
+        error_message: diagnosticMessage,
+      });
+      const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
+        ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
       await this.env.DB.batch([
-        this.env.DB.prepare("UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?").bind(nowIso(), JSON.stringify({ message }), id),
+        this.env.DB.prepare("UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?").bind(nowIso(), JSON.stringify(memberSafeError), id),
         this.env.DB.prepare("UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?").bind(nowIso(), workstreamId),
       ]);
       throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
@@ -975,9 +1030,35 @@ export const __workstreamServiceTesting = {
   workstreamToolTasksSql: WORKSTREAM_TOOL_TASKS_SQL,
   backgroundTaskStatus,
   harnessTaskTitle,
+  memberSafeHarnessError,
   mimeTypeForArtifact,
   safeArtifactFileName,
 };
+
+function memberSafeHarnessError(value: unknown): { code: string; message: string } | null {
+  if (value == null) return null;
+  const parsed = typeof value === "string" ? json<unknown>(value, null) : value;
+  const rawCode = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as { code?: unknown }).code
+    : null;
+  const code = typeof rawCode === "string" ? rawCode.trim() : "";
+  const harnessFailureCode = HarnessFailureCodeSchema.safeParse(code);
+  if (harnessFailureCode.success) {
+    return {
+      code: harnessFailureCode.data,
+      message: memberSafeHarnessFailureMessage(harnessFailureCode.data),
+    };
+  }
+  if (Object.hasOwn(ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS, code)) {
+    return {
+      code,
+      message: ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS[
+        code as keyof typeof ADDITIONAL_MEMBER_SAFE_HARNESS_ERRORS
+      ],
+    };
+  }
+  return { ...GENERIC_MEMBER_SAFE_HARNESS_ERROR };
+}
 
 function numericTokenCount(value: unknown): number | null {
   const count = typeof value === "number" ? value : Number(value);

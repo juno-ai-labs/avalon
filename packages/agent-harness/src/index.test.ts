@@ -499,17 +499,20 @@ describe("agent harness", () => {
     expect(executionOrder.filter((entry) => entry.startsWith("write"))).toEqual([
       "write_one:start", "write_one:end", "write_two:start", "write_two:end",
     ]);
-    // Bind intentionally runs the serial phase first, preserving order within
-    // that phase, and then starts the concurrently safe read phase. The model
-    // transcript below must still preserve the provider's original call order.
-    expect(events.filter((event) => event.type === "tool_started").map((event) =>
+    // Bind intentionally runs the serial phase first. Concurrently safe reads
+    // may begin in either scheduler order, while the model transcript below
+    // must still preserve the provider's original call order.
+    const startedReceipts = events.filter((event) => event.type === "tool_started").map((event) =>
       event.type === "tool_started" ? event.toolCallId : ""
-    )).toEqual([
+    );
+    expect(startedReceipts.slice(0, 2)).toEqual([
       "run-1:turn:1:tool:0",
       "run-1:turn:1:tool:3",
+    ]);
+    expect(new Set(startedReceipts.slice(2))).toEqual(new Set([
       "run-1:turn:1:tool:1",
       "run-1:turn:1:tool:2",
-    ]);
+    ]));
     expect(requestBodies[1]!.messages.filter((message) => message.role === "tool").map((message) => message.tool_call_id))
       .toEqual(["provider-write-1", "provider-read-1", "provider-read-2", "provider-write-2"]);
   });
@@ -736,9 +739,12 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const order: string[] = [];
+    const events: HarnessEvent[] = [];
     const plugin: HarnessPlugin = {
       canonicalId: "connection:github-1",
       shortWireName: "gh1",
+      displayName: "GitHub",
+      searchAliases: ["repositories", "pull requests"],
       description: "Search authorized GitHub repositories.",
       systemMessage: "Use GitHub search only when repository context is relevant.",
       preload: false,
@@ -763,6 +769,7 @@ describe("agent harness", () => {
       plugins: [plugin],
       reauthorizePlugin: () => true,
       persistActivation: (id) => { order.push(`persist:${id}`); },
+      onEvent: (event) => { events.push(event); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "done", toolCalls: 2 });
@@ -773,6 +780,270 @@ describe("agent harness", () => {
     expect(requestBodies[1]!.messages[0]!.content).toContain(
       '<plugin id="connection:github-1">\nUse GitHub search only when repository context is relevant.',
     );
+    const loadResult = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    expect(loadResult?.content).toBe(JSON.stringify({
+      success: true,
+      data: {
+        loaded: "connection:github-1",
+        tools: [{ name: "gh1_search", description: "Search repositories" }],
+      },
+    }));
+    expect(events.find((event) =>
+      event.type === "tool_started" && event.toolName === "avalon_load_plugin"
+    )).toMatchObject({
+      pluginId: "avalon:core",
+      policy: {
+        canonicalToolName: "load_plugin",
+        capability: "avalon.plugins.load",
+        mode: "read",
+        idempotency: "safe",
+      },
+    });
+  });
+
+  it("emits canonical read-safe policy for the connector catalog tool", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(0, "provider-list", "list_connector_plugins", "{}")],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "catalog listed" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const events: HarnessEvent[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [credentialPlugin("connection:catalog", "catalog", "Catalog policy")],
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "catalog listed", toolCalls: 1 });
+    expect(events.find((event) => event.type === "tool_started")).toMatchObject({
+      pluginId: "avalon:core",
+      policy: {
+        canonicalToolName: "list_connector_plugins",
+        capability: "avalon.plugins.list",
+        mode: "read",
+        idempotency: "safe",
+      },
+    });
+  });
+
+  it("executes one uniquely resolved active tool when a provider rewrites its post-load wire name", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+      tools?: Array<{ function: { name: string } }>;
+    }> = [];
+    const pluginId = "connection:00000000-0000-7000-8000-000000000040";
+    const advertisedWireName = "web_monitor_1aikdhro7bwp_web_monitor_fetch";
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(
+              0,
+              "provider-load-monitor",
+              "avalon_load_plugin",
+              JSON.stringify({ pluginId }),
+            )],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      // This is the provider shape observed in the real Gemini 2.5 Flash Lite
+      // stress run. It is not the stable wire name Avalon advertised above.
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(
+              0,
+              "provider-monitor-fetch",
+              "avalon_core.web_monitor_fetch",
+              JSON.stringify({ url: "https://example.com/status" }),
+            )],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "monitor fetched" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const order: string[] = [];
+    const events: HarnessEvent[] = [];
+    const findCompletedToolResult = vi.fn(async () => null);
+    const plugin: HarnessPlugin = {
+      canonicalId: pluginId,
+      shortWireName: "web_monitor_1aikdhro7bwp",
+      displayName: "Web monitor",
+      searchAliases: ["web_monitor", "website monitor"],
+      description: "Fetch an authorized public web monitor.",
+      systemMessage: "Fetch only the explicitly requested public monitor URL.",
+      preload: false,
+      tools: [{
+        definition: {
+          name: "web_monitor.fetch",
+          description: "Fetch one public web monitor",
+          capability: "web_monitor.fetch",
+          mode: "read",
+          idempotency: "safe",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: { url: { type: "string" } },
+            required: ["url"],
+          },
+        },
+        execute: async () => {
+          order.push("execute");
+          return { output: { status: 200 }, summary: "Fetched public web monitor" };
+        },
+      }],
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => true,
+      persistActivation: (id) => { order.push(`persist:${id}`); },
+      onEvent: (event) => { events.push(event); },
+      findCompletedToolResult,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "monitor fetched", toolCalls: 2 });
+    expect(order).toEqual([`persist:${pluginId}`, "execute"]);
+    expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain(advertisedWireName);
+    expect(requestBodies[0]!.messages[0]!.content).toContain(`id=${JSON.stringify(pluginId)}`);
+    expect(requestBodies[0]!.messages[0]!.content).toContain('name="Web monitor"');
+    expect(requestBodies[0]!.messages[0]!.content).toContain('aliases=["web_monitor","website monitor"]');
+    expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain(advertisedWireName);
+    expect(requestBodies[1]!.messages[0]!.content).toContain(
+      `<plugin id="${pluginId}">\nFetch only the explicitly requested public monitor URL.`,
+    );
+    expect(events.find((event) =>
+      event.type === "tool_started" && event.toolName === "avalon_core.web_monitor_fetch"
+    )).toMatchObject({
+      pluginId,
+      policy: {
+        canonicalToolName: "web_monitor.fetch",
+        capability: "web_monitor.fetch",
+        mode: "read",
+        idempotency: "safe",
+      },
+    });
+    expect(findCompletedToolResult).toHaveBeenCalledWith(
+      "run-1:turn:2:tool:0",
+      expect.any(String),
+      {
+        pluginId,
+        canonicalToolName: "web_monitor.fetch",
+        capability: "web_monitor.fetch",
+        mode: "read",
+        idempotency: "safe",
+      },
+    );
+  });
+
+  it("rejects a provider tool alias when two active plugins expose the same canonical tool name", async () => {
+    const firstExecute = vi.fn(async () => ({ output: { source: "first" }, summary: "First search" }));
+    const secondExecute = vi.fn(async () => ({ output: { source: "second" }, summary: "Second search" }));
+    const first = credentialPlugin("connection:first-search", "first", "First plugin policy");
+    const second = credentialPlugin("connection:second-search", "second", "Second plugin policy");
+    first.tools[0]!.execute = firstExecute;
+    second.tools[0]!.execute = secondExecute;
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(0, "ambiguous-search", "avalon_core.search", "{}")],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "could not choose" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [first, second],
+      activationHints: [first.canonicalId, second.canonicalId],
+      reauthorizePlugin: () => true,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "could not choose" });
+    expect(firstExecute).not.toHaveBeenCalled();
+    expect(secondExecute).not.toHaveBeenCalled();
+    const rejection = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    expect(rejection?.content).toContain("is not active or authorized");
+  });
+
+  it.each([
+    ["Linear", "display name"],
+    ["issue tracker", "trusted alias"],
+  ])("discovers an opaque credential plugin by its %s %s", async (query) => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(
+              0,
+              "provider-plugin-search",
+              "search_connector_plugins",
+              JSON.stringify({ query }),
+            )],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "found it" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const plugin: HarnessPlugin = {
+      ...credentialPlugin("connection:019f0000-opaque", "lin1", "Trusted Linear policy"),
+      displayName: "Linear",
+      searchAliases: ["issue tracker", "project management"],
+      // Keep the description intentionally generic so the assertion proves the
+      // static display metadata, rather than provider/account content, matched.
+      description: "Authorized workspace connector.",
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => true,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "found it", toolCalls: 1 });
+    const searchResult = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    expect(searchResult?.content).toBe(JSON.stringify({
+      success: true,
+      data: {
+        plugins: [{
+          id: "connection:019f0000-opaque",
+          displayName: "Linear",
+          searchAliases: ["issue tracker", "project management"],
+          description: "Authorized workspace connector.",
+        }],
+      },
+    }));
   });
 
   it("does not activate a preload candidate without a durable activation hint", async () => {
@@ -1248,6 +1519,118 @@ describe("agent harness", () => {
       type: "tool_completed",
       result: { output: largeOutput },
     });
+  });
+
+  it("keeps a bounded child research result viable for a synthesis turn", async () => {
+    const fetchedPage = {
+      url: "https://www.nasa.gov/official-source",
+      title: "NASA official source",
+      markdown: "Official NASA evidence. ".repeat(8_000),
+      statusCode: 200,
+    };
+    const fetchTool: HarnessTool = {
+      definition: {
+        name: "research_fetch",
+        description: "Fetch one official research source",
+        capability: "web.fetch",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute: async () => ({ output: fetchedPage, summary: "Fetched official NASA source" }),
+    };
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-research-fetch", "research_fetch")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 600, completion_tokens: 50 },
+      }]),
+      streamResponse([{
+        choices: [{ delta: { content: "NASA synthesis complete" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 7_000, completion_tokens: 300 },
+      }]),
+    ];
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: string }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const base = runInput(fetcher);
+
+    const result = await runHarness({
+      ...base,
+      config: {
+        ...base.config,
+        maxRunTokens: 12_000,
+        maxToolResultBytes: 24_000,
+      },
+      tools: [fetchTool],
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      content: "NASA synthesis complete",
+      toolCalls: 1,
+      stats: {
+        inputTokens: 7_600,
+        outputTokens: 350,
+      },
+    });
+    expect(requestBodies).toHaveLength(2);
+    const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
+    expect(toolMessage?.content).toContain('"truncated":true');
+    expect(new TextEncoder().encode(toolMessage?.content ?? "").byteLength).toBeLessThanOrEqual(24_256);
+  });
+
+  it("still fails deterministically when bounded child research exceeds its hard token ceiling", async () => {
+    const fetchTool: HarnessTool = {
+      definition: {
+        name: "research_fetch",
+        description: "Fetch one official research source",
+        capability: "web.fetch",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false },
+      },
+      execute: async () => ({
+        output: { markdown: "Official source evidence. ".repeat(8_000) },
+        summary: "Fetched an official source",
+      }),
+    };
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-limit-fetch", "research_fetch")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 600, completion_tokens: 50 },
+      }]),
+      streamResponse([{
+        choices: [{ delta: { content: "over budget" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 11_500, completion_tokens: 100 },
+      }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const base = runInput(fetcher);
+
+    const result = await runHarness({
+      ...base,
+      config: {
+        ...base.config,
+        maxRunTokens: 12_000,
+        maxToolResultBytes: 24_000,
+      },
+      tools: [fetchTool],
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      toolCalls: 1,
+      failure: { kind: "limit", code: "run_token_limit_exceeded" },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("retries truncated tool completions on the same endpoint and resets streamed text", async () => {

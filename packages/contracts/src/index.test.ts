@@ -123,12 +123,23 @@ describe("boundary contracts", () => {
     expect(HarnessRunMetadataSchema.parse({
       id,
       origin: "human_message",
-      status: "completed",
+      status: "failed",
       model: "google/gemini-2.5-flash-lite",
+      error: {
+        code: "context_limit_exceeded",
+        message: "The run exceeded the selected model context window."
+      },
+      requestId: id,
       startedAt: "2026-07-31T20:00:00.000Z",
       completedAt: "2026-07-31T20:00:12.000Z",
       createdAt: "2026-07-31T20:00:00.000Z"
-    })).toMatchObject({ id, origin: "human_message", status: "completed" });
+    })).toMatchObject({
+      id,
+      origin: "human_message",
+      status: "failed",
+      error: { code: "context_limit_exceeded" },
+      requestId: id
+    });
   });
 
   it("carries durable work-stream outputs and task records across reloads", () => {

@@ -222,6 +222,11 @@ export const HarnessRunMetadataSchema = z.object({
   origin: z.string().min(1).max(80),
   status: z.enum(["scheduled", "running", "needs_input", "completed", "failed", "stopped"]),
   model: z.string().max(160).nullable(),
+  error: z.object({
+    code: z.string().min(1).max(120),
+    message: z.string().min(1).max(1200)
+  }).nullable().optional(),
+  requestId: z.string().min(1).max(160).nullable().optional(),
   startedAt: TimestampSchema.nullable(),
   completedAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
@@ -623,7 +628,9 @@ export const ToolDefinitionSchema = z.object({
   inputSchema: z.record(z.string(), z.unknown()),
   capability: z.string().min(1),
   mode: z.enum(["read", "write"]),
-  idempotency: z.enum(["safe", "provider_key", "record_before_execute"])
+  idempotency: z.enum(["safe", "provider_key", "record_before_execute"]),
+  /** Optional per-tool ceiling. The host still applies its overall run limit. */
+  timeoutMs: z.number().int().positive().max(300_000).optional()
 });
 
 /**

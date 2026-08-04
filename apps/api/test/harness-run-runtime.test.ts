@@ -6,18 +6,27 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Env } from "../src/env";
 import {
+  type ImmutableRunScope,
+  admitInlineChildAttempt,
+  assertInlineChildAttemptOwned,
+  cancelDescendantHarnessRuns,
   claimHarnessAttempt,
   checkpointToolInvocation,
   completeToolInvocation,
   finalizeToolInvocationFailure,
+  heartbeatInlineChildAttempt,
   heartbeatHarnessAttempt,
+  loadInlineChildResult,
+  loadPersistedHarnessFinalOutcome,
   markToolInvocationTimedOut,
   persistHarnessFinalMessage,
+  persistInlineChildScope,
   persistImmutableRunScope,
   persistRunPluginActivation,
   persistToolExecutionPlan,
   reapStaleHarnessRuns,
   recordInferenceAttempt,
+  terminalizeInlineChildAttempt,
   terminalizeQueuedHarnessRun,
   terminalizeHarnessAttempt,
 } from "../src/runtime/harness-run-runtime";
@@ -59,23 +68,28 @@ class SqliteD1Statement {
 
 class SqliteD1Database {
   readonly binding: D1Database;
+  private batchTail: Promise<void> = Promise.resolve();
 
   constructor(readonly database: DatabaseSync) {
     this.binding = {
       prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
-      batch: async (statements: D1PreparedStatement[]) => {
-        const results: D1Result<unknown>[] = [];
-        database.exec("BEGIN");
-        try {
-          for (const statement of statements) {
-            results.push(await (statement as unknown as SqliteD1Statement).run());
+      batch: (statements: D1PreparedStatement[]) => {
+        const batch = this.batchTail.then(async () => {
+          const results: D1Result<unknown>[] = [];
+          database.exec("BEGIN");
+          try {
+            for (const statement of statements) {
+              results.push(await (statement as unknown as SqliteD1Statement).run());
+            }
+            database.exec("COMMIT");
+            return results;
+          } catch (error) {
+            database.exec("ROLLBACK");
+            throw error;
           }
-          database.exec("COMMIT");
-          return results;
-        } catch (error) {
-          database.exec("ROLLBACK");
-          throw error;
-        }
+        });
+        this.batchTail = batch.then(() => undefined, () => undefined);
+        return batch;
       },
     } as unknown as D1Database;
   }
@@ -115,6 +129,44 @@ afterEach(() => {
 
 function input(harnessRunId: string) {
   return { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, harnessRunId };
+}
+
+const PARENT_SCOPE = {
+  executionPrincipal: { type: "user", userId: "user-runtime" },
+  eligibleConnectionIds: ["connection-read", "connection-write"],
+  eligibleCapabilities: ["documents.read", "documents.write"],
+  eligibleConnectionCapabilities: {
+    "connection-read": ["documents.read"],
+    "connection-write": ["documents.read", "documents.write"],
+  },
+  triggerPolicy: { kind: "interactive" },
+  routingPolicyVersion: "routing-v1",
+  promptVersion: "prompt-v1",
+  toolSurfaceHash: "parent-tools-v1",
+  limits: { maxIterations: 8, maxToolCalls: 16 },
+} satisfies ImmutableRunScope;
+
+async function claimScopedParent(sqlite: SqliteD1Database) {
+  const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+    attemptId: "attempt-parent",
+    owner: "owner-parent",
+  });
+  if (claim.state !== "claimed") throw new Error("expected claimed parent attempt");
+  await persistImmutableRunScope(sqlite.binding, input(RUN_ONE), claim.lease, PARENT_SCOPE);
+  return claim.lease;
+}
+
+function childScope(overrides: Partial<ImmutableRunScope> = {}): ImmutableRunScope {
+  return {
+    ...PARENT_SCOPE,
+    eligibleConnectionIds: ["connection-read"],
+    eligibleCapabilities: ["documents.read"],
+    eligibleConnectionCapabilities: { "connection-read": ["documents.read"] },
+    triggerPolicy: { kind: "sub_agent", readOnly: true },
+    toolSurfaceHash: "child-tools-v1",
+    limits: { maxIterations: 4, maxToolCalls: 8 },
+    ...overrides,
+  };
 }
 
 describe("durable harness attempt runtime", () => {
@@ -174,7 +226,7 @@ describe("durable harness attempt runtime", () => {
       sequenceNumber: 1,
       text: "Done",
       createdAt: "2026-08-03T00:00:00.000Z",
-    });
+    }, { status: "completed" });
 
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
@@ -213,7 +265,22 @@ describe("durable harness attempt runtime", () => {
       sequenceNumber: 1,
       text: "Durable before terminalization",
       createdAt: "2026-08-03T00:00:00.000Z",
-    });
+    }, { status: "completed" });
+    await persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), original.lease, {
+      id: "message-recoverable",
+      sequenceNumber: 1,
+      text: "Durable before terminalization",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    }, { status: "completed" });
+    await expect(persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), original.lease, {
+      id: "message-recoverable",
+      sequenceNumber: 1,
+      text: "Durable before terminalization",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    }, {
+      status: "failed",
+      error: { code: "changed_outcome", message: "Must not replace the durable outcome" },
+    })).rejects.toThrow("final_message_host_outcome_mismatch");
     expect(sqlite.database.prepare(
       `SELECT harness_attempt_id FROM messages WHERE id = 'message-recoverable'`,
     ).get()).toEqual({ harness_attempt_id: "attempt-original" });
@@ -230,7 +297,7 @@ describe("durable harness attempt runtime", () => {
       sequenceNumber: 2,
       text: "Must not persist",
       createdAt: "2026-08-03T00:00:01.000Z",
-    })).rejects.toThrow("durable attempt lease");
+    }, { status: "completed" })).rejects.toThrow("durable attempt lease");
     expect(sqlite.database.prepare(
       `SELECT COUNT(*) AS count FROM messages WHERE id = 'message-from-stale-owner'`,
     ).get()).toEqual({ count: 0 });
@@ -245,6 +312,74 @@ describe("durable harness attempt runtime", () => {
       status: "completed",
       finalMessageId: "message-recoverable",
     })).toBe("terminalized");
+  });
+
+  it.each([
+    {
+      status: "failed" as const,
+      error: {
+        code: "context_limit_exceeded",
+        message: "The selected model could not fit the durable context",
+      },
+    },
+    { status: "stopped" as const, error: undefined },
+    { status: "needs_input" as const, error: undefined },
+  ])("recovers the exact $status outcome after a crash following final-message persistence", async ({
+    status,
+    error,
+  }) => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: `attempt-crash-${status}`,
+      owner: `owner-crash-${status}`,
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    if (status === "stopped") {
+      sqlite.database.prepare(
+        `UPDATE harness_runs
+            SET cancellation_requested_at = '2026-08-03T00:00:00.000Z',
+                cancellation_reason = 'stopped_by_user'
+          WHERE id = ?`,
+      ).run(RUN_ONE);
+    }
+
+    const messageId = `message-crash-${status}`;
+    await persistHarnessFinalMessage(sqlite.binding, input(RUN_ONE), claim.lease, {
+      id: messageId,
+      sequenceNumber: 1,
+      text: `Partial durable output before ${status}`,
+      createdAt: "2026-08-03T00:00:01.000Z",
+    }, {
+      status,
+      ...(error ? { error } : {}),
+    });
+
+    // Simulate the host disappearing before the Workflow's terminalization
+    // step. Recovery must use the immutable checkpoint, not infer completion
+    // merely because the final message row exists.
+    expect(sqlite.database.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "running", terminalized_at: null });
+    expect(await loadPersistedHarnessFinalOutcome(sqlite.binding, input(RUN_ONE))).toEqual({
+      messageId,
+      status,
+      ...(error ? { error } : {}),
+    });
+    const lifecycle = sqlite.database.prepare(
+      `SELECT status, member_safe_payload_json
+         FROM harness_run_lifecycle_events
+        WHERE harness_run_id = ? AND event_key = 'final_message'`,
+    ).get(RUN_ONE) as { status: string; member_safe_payload_json: string };
+    expect(lifecycle.status).toBe(status);
+    expect(JSON.parse(lifecycle.member_safe_payload_json)).toEqual({
+      finalMessageId: messageId,
+      hostOutcome: {
+        status,
+        ...(error ? { error } : {}),
+      },
+    });
   });
 
   it("terminalizes a queued run without disturbing the active attempt", async () => {
@@ -601,7 +736,15 @@ describe("durable harness attempt runtime", () => {
       toolName: "linear.issue.get",
       inputHash: "input-read",
       input: { id: "AVA-1" },
-      plan: { connectionId: "connection-linear", operation: "issue.get" },
+      plan: {
+        pluginId: "connection:connection-linear",
+        canonicalToolName: "linear.issue.get",
+        capability: "issues.read",
+        connectionId: "connection-linear",
+        mode: "read",
+        idempotency: "safe",
+        toolSurfaceHash: "linear-surface-v1",
+      },
       mode: "read" as const,
     };
     expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, readPlan))
@@ -621,8 +764,18 @@ describe("durable harness attempt runtime", () => {
       outputRef: "payloads/runtime/read.json",
       outputSummary: "Issue AVA-1",
     })).toBe("persisted");
-    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, readPlan))
+    // A provider-facing alias may change between attempts. It is not part of
+    // the immutable execution plan, so replay remains bound to canonical policy.
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...readPlan,
+      toolName: "default_api.linear_issue_get",
+    }))
       .toMatchObject({ state: "replay_completed", invocationId: "invocation-read" });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...readPlan,
+      toolName: "default_api.linear_issue_get",
+      plan: { ...readPlan.plan, canonicalToolName: "linear.issue.update", mode: "write" },
+    })).toMatchObject({ state: "ambiguous_external_write", invocationId: "invocation-read" });
 
     const writePlan = await persistToolExecutionPlan(sqlite.binding, claim.lease, {
       invocationId: "invocation-write",
@@ -1186,7 +1339,7 @@ describe("durable harness attempt runtime", () => {
       sequenceNumber: 1,
       text: "Durable despite the realtime outage",
       createdAt: "2026-08-03T00:00:00.000Z",
-    });
+    }, { status: "completed" });
     await expect(terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), claim.lease, {
       status: "completed",
       finalMessageId: "message-realtime-outage",
@@ -1269,6 +1422,749 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.database.prepare(
       "SELECT COUNT(*) AS count FROM harness_run_plugin_activations WHERE harness_run_id = ? AND plugin_id = ?",
     ).get(RUN_ONE, plugin.pluginId)).toEqual({ count: 1 });
+  });
+});
+
+describe("inline child-run durability", () => {
+  it("keeps ordinary elicitation continuations in the normal queue", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const continuationId = "00000000-0000-4000-8000-000000000005";
+    sqlite.database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json,
+        parent_harness_run_id, status, created_at)
+       VALUES (?, ?, ?, 'elicitation_resume', '{"type":"user","userId":"user-runtime"}',
+               ?, 'scheduled', '2026-08-03')`,
+    ).run(continuationId, WORKSPACE_ID, WORKSTREAM_ID, RUN_ONE);
+
+    const claim = await claimHarnessAttempt(sqlite.binding, input(continuationId), {
+      attemptId: "attempt-continuation",
+      owner: "owner-continuation",
+    });
+    expect(claim.state).toBe("claimed");
+    if (claim.state !== "claimed") throw new Error("expected claimed continuation");
+
+    expect(await cancelDescendantHarnessRuns(sqlite.binding, RUN_ONE, "parent_cancelled"))
+      .toBe(0);
+    expect(sqlite.database.prepare(
+      `SELECT parent_harness_run_id, parent_tool_call_id, cancellation_requested_at
+         FROM harness_runs WHERE id = ?`,
+    ).get(continuationId)).toEqual({
+      parent_harness_run_id: RUN_ONE,
+      parent_tool_call_id: null,
+      cancellation_requested_at: null,
+    });
+
+    await persistHarnessFinalMessage(sqlite.binding, input(continuationId), claim.lease, {
+      id: "message-continuation-final",
+      sequenceNumber: 1,
+      text: "Continuation complete",
+      createdAt: "2026-08-03T00:00:00.000Z",
+    }, { status: "completed" });
+    expect(await terminalizeHarnessAttempt(
+      sqlite.binding,
+      input(continuationId),
+      claim.lease,
+      { status: "completed", finalMessageId: "message-continuation-final" },
+    )).toBe("terminalized");
+  });
+
+  it("freezes a read-only narrowing of parent authority before activating child plugins", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const admitted = await admitInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      {
+        parentToolCallId: "tool-child-scope",
+        objective: "Read the authorized document metadata",
+        childHarnessRunId: "child-scope",
+        attemptId: "attempt-child-scope",
+        owner: "owner-child-scope",
+      },
+    );
+    if (admitted.state !== "claimed") throw new Error("expected claimed child attempt");
+
+    const persisted = await persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      admitted.childInput,
+      admitted.lease,
+      childScope(),
+    );
+    expect(persisted.reused).toBe(false);
+    expect(await persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      admitted.childInput,
+      admitted.lease,
+      childScope(),
+    )).toEqual({ scopeHash: persisted.scopeHash, reused: true });
+
+    await persistRunPluginActivation(sqlite.binding, admitted.childInput, admitted.lease, {
+      pluginId: "connection:connection-read",
+      toolSurfaceHash: "child-plugin-tools-v1",
+    });
+    expect(sqlite.database.prepare(
+      `SELECT eligible_connection_ids_json, eligible_capabilities_json,
+              eligible_connection_capabilities_json, trigger_policy_json
+         FROM harness_run_scopes WHERE harness_run_id = ?`,
+    ).get(admitted.childInput.harnessRunId)).toEqual({
+      eligible_connection_ids_json: '["connection-read"]',
+      eligible_capabilities_json: '["documents.read"]',
+      eligible_connection_capabilities_json: '{"connection-read":["documents.read"]}',
+      trigger_policy_json: '{"kind":"sub_agent","readOnly":true}',
+    });
+    expect(sqlite.database.prepare(
+      `SELECT plugin_id FROM harness_run_plugin_activations WHERE harness_run_id = ?`,
+    ).all(admitted.childInput.harnessRunId)).toEqual([
+      { plugin_id: "connection:connection-read" },
+    ]);
+
+    await expect(persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      admitted.childInput,
+      admitted.lease,
+      childScope({
+        eligibleConnectionIds: ["connection-not-in-parent"],
+        eligibleConnectionCapabilities: { "connection-not-in-parent": ["documents.read"] },
+      }),
+    )).rejects.toThrow("inline_child_scope_widened");
+    await expect(persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      admitted.childInput,
+      admitted.lease,
+      childScope({ triggerPolicy: { kind: "sub_agent", readOnly: false } }),
+    )).rejects.toThrow("inline_child_scope_not_read_only");
+  });
+
+  it("uses the parent tool-call receipt as the deterministic child replay key", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const options = {
+      parentToolCallId: "tool-replay",
+      objective: "Summarize the two read-only findings",
+      childHarnessRunId: "child-replay",
+      attemptId: "attempt-child-replay",
+      owner: "owner-child-replay",
+    };
+    const first = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, options);
+    if (first.state !== "claimed") throw new Error("expected claimed child attempt");
+    expect(first.reused).toBe(false);
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, options))
+      .toMatchObject({ state: "busy", childInput: first.childInput });
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      ...options,
+      childHarnessRunId: "ignored-child-id",
+      attemptId: "another-attempt",
+      owner: "another-owner",
+    })).toMatchObject({ state: "busy", childInput: first.childInput });
+
+    await persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      first.childInput,
+      first.lease,
+      childScope(),
+    );
+    const outcome = {
+      status: "completed" as const,
+      result: { answer: "Two findings", citations: ["resource:one", "resource:two"] },
+      model: "google/gemini-2.5-flash-lite",
+      usage: { inputTokens: 31, outputTokens: 12 },
+    };
+    expect(await terminalizeInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      first.childInput,
+      first.lease,
+      outcome,
+    )).toBe("terminalized");
+    expect(await terminalizeInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      first.childInput,
+      first.lease,
+      outcome,
+    )).toBe("already_terminal");
+    await expect(terminalizeInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      first.childInput,
+      first.lease,
+      { ...outcome, result: { answer: "Changed after completion" } },
+    )).rejects.toThrow("durable attempt lease");
+
+    expect(await loadInlineChildResult(sqlite.binding, RUN_ONE, options.parentToolCallId))
+      .toEqual({ state: "replay", childInput: first.childInput, outcome });
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      ...options,
+      childHarnessRunId: "another-ignored-child-id",
+      attemptId: "attempt-after-completion",
+      owner: "owner-after-completion",
+    })).toEqual({ state: "replay", childInput: first.childInput, outcome });
+    await expect(admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      ...options,
+      objective: "A different task must not reuse the receipt",
+    })).rejects.toThrow("inline_child_objective_mismatch");
+  });
+
+  it("reclaims an expired child with its durable attempt ID and a fresh fenced owner", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const options = {
+      parentToolCallId: "tool-child-takeover",
+      objective: "Resume the same durable investigation",
+      childHarnessRunId: "child-takeover",
+      attemptId: "attempt-child-takeover",
+      owner: "owner-child-obsolete",
+    };
+    const original = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, options);
+    if (original.state !== "claimed") throw new Error("expected original child claim");
+    await persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      original.childInput,
+      original.lease,
+      childScope(),
+    );
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(original.childInput.harnessRunId);
+
+    const takeover = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      ...options,
+      attemptId: "ignored-new-attempt-id",
+      owner: "owner-child-takeover",
+    });
+    if (takeover.state !== "claimed") throw new Error("expected reclaimed child");
+    expect(takeover).toMatchObject({
+      childInput: original.childInput,
+      reused: true,
+      lease: {
+        attemptId: original.lease.attemptId,
+        owner: "owner-child-takeover",
+        attemptNumber: 2,
+      },
+    });
+    await expect(assertInlineChildAttemptOwned(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      original.childInput,
+      original.lease,
+    )).rejects.toThrow("durable attempt lease");
+    await expect(assertInlineChildAttemptOwned(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      takeover.childInput,
+      takeover.lease,
+    )).resolves.toBeUndefined();
+    expect(await persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      takeover.childInput,
+      takeover.lease,
+      childScope(),
+    )).toMatchObject({ reused: true });
+  });
+
+  it("does not reclaim an expired child through an occupied workspace child slot", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const firstOptions = {
+      parentToolCallId: "tool-expired-at-capacity",
+      objective: "Resume only when a child slot is available",
+      childHarnessRunId: "child-expired-at-capacity",
+      attemptId: "attempt-expired-at-capacity",
+      owner: "owner-expired-at-capacity",
+      maxActiveWorkspaceChildren: 1,
+      maxChainRuns: 64,
+    };
+    const first = await admitInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      firstOptions,
+    );
+    if (first.state !== "claimed") throw new Error("expected first child claim");
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(first.childInput.harnessRunId);
+
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-live-capacity-holder",
+      objective: "Occupy the only workspace child slot",
+      childHarnessRunId: "child-live-capacity-holder",
+      attemptId: "attempt-live-capacity-holder",
+      owner: "owner-live-capacity-holder",
+      maxActiveWorkspaceChildren: 1,
+      maxChainRuns: 64,
+    })).toMatchObject({ state: "claimed" });
+
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      ...firstOptions,
+      owner: "owner-reclaim-blocked-by-capacity",
+    })).toEqual({ state: "refused", reason: "workspace_child_capacity" });
+    expect(sqlite.database.prepare(
+      "SELECT lease_owner, attempt_number, lease_expires_at FROM harness_runs WHERE id = ?",
+    ).get(first.childInput.harnessRunId)).toEqual({
+      lease_owner: first.lease.owner,
+      attempt_number: 1,
+      lease_expires_at: "2020-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("atomically reserves parallel child capacity and frees it after terminalization", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const [first, second] = await Promise.all([
+      admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+        parentToolCallId: "tool-parallel-one",
+        objective: "Investigate source one",
+        childHarnessRunId: "child-parallel-one",
+        attemptId: "attempt-parallel-one",
+        owner: "owner-parallel-one",
+        maxChainRuns: 64,
+        maxActiveWorkspaceChildren: 2,
+      }),
+      admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+        parentToolCallId: "tool-parallel-two",
+        objective: "Investigate source two",
+        childHarnessRunId: "child-parallel-two",
+        attemptId: "attempt-parallel-two",
+        owner: "owner-parallel-two",
+        maxChainRuns: 64,
+        maxActiveWorkspaceChildren: 2,
+      }),
+    ]);
+    expect([first.state, second.state]).toEqual(["claimed", "claimed"]);
+    if (first.state !== "claimed" || second.state !== "claimed") {
+      throw new Error("expected both parallel children to claim capacity");
+    }
+    expect(sqlite.database.prepare(
+      `SELECT COUNT(*) AS count FROM harness_runs
+        WHERE parent_harness_run_id = ? AND status = 'running'`,
+    ).get(RUN_ONE)).toEqual({ count: 2 });
+
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-parallel-overflow",
+      objective: "Investigate source three",
+      childHarnessRunId: "child-parallel-overflow",
+      attemptId: "attempt-parallel-overflow",
+      owner: "owner-parallel-overflow",
+      maxChainRuns: 64,
+      maxActiveWorkspaceChildren: 2,
+    })).toEqual({ state: "refused", reason: "workspace_child_capacity" });
+
+    expect(await terminalizeInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      first.childInput,
+      first.lease,
+      { status: "completed", result: { finding: "one" } },
+    )).toBe("terminalized");
+    expect(await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-parallel-after-slot",
+      objective: "Investigate source three",
+      childHarnessRunId: "child-parallel-after-slot",
+      attemptId: "attempt-parallel-after-slot",
+      owner: "owner-parallel-after-slot",
+      maxChainRuns: 64,
+      maxActiveWorkspaceChildren: 2,
+    })).toMatchObject({ state: "claimed" });
+  });
+
+  it("enforces chain and depth budgets independently of workspace capacity", async () => {
+    const chainSqlite = fixture();
+    openDatabases.push(chainSqlite.database);
+    const chainParentLease = await claimScopedParent(chainSqlite);
+    expect(await admitInlineChildAttempt(chainSqlite.binding, input(RUN_ONE), chainParentLease, {
+      parentToolCallId: "tool-chain-one",
+      objective: "Use the only chain slot",
+      childHarnessRunId: "child-chain-one",
+      attemptId: "attempt-chain-one",
+      owner: "owner-chain-one",
+      maxChainRuns: 2,
+      maxActiveWorkspaceChildren: 64,
+    })).toMatchObject({ state: "claimed" });
+    expect(await admitInlineChildAttempt(chainSqlite.binding, input(RUN_ONE), chainParentLease, {
+      parentToolCallId: "tool-chain-overflow",
+      objective: "Exceed the chain budget",
+      childHarnessRunId: "child-chain-overflow",
+      attemptId: "attempt-chain-overflow",
+      owner: "owner-chain-overflow",
+      maxChainRuns: 2,
+      maxActiveWorkspaceChildren: 64,
+    })).toEqual({ state: "refused", reason: "chain_budget_exhausted" });
+
+    const depthSqlite = fixture();
+    openDatabases.push(depthSqlite.database);
+    const depthParentLease = await claimScopedParent(depthSqlite);
+    const child = await admitInlineChildAttempt(depthSqlite.binding, input(RUN_ONE), depthParentLease, {
+      parentToolCallId: "tool-depth-one",
+      objective: "Create the first level",
+      childHarnessRunId: "child-depth-one",
+      attemptId: "attempt-depth-one",
+      owner: "owner-depth-one",
+      maxDepth: 2,
+      maxChainRuns: 64,
+    });
+    if (child.state !== "claimed") throw new Error("expected first-level child");
+    await persistInlineChildScope(
+      depthSqlite.binding,
+      input(RUN_ONE),
+      depthParentLease,
+      child.childInput,
+      child.lease,
+      childScope(),
+    );
+    expect(await admitInlineChildAttempt(depthSqlite.binding, child.childInput, child.lease, {
+      parentToolCallId: "tool-depth-overflow",
+      objective: "Attempt a disallowed second level",
+      childHarnessRunId: "child-depth-overflow",
+      attemptId: "attempt-depth-overflow",
+      owner: "owner-depth-overflow",
+      maxDepth: 1,
+      maxChainRuns: 64,
+    })).toEqual({ state: "refused", reason: "depth_limit" });
+  });
+
+  it("propagates cancellation to descendants while permitting fenced stopped terminalization", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-cancel",
+      objective: "Wait for cancellation",
+      childHarnessRunId: "child-cancel",
+      attemptId: "attempt-child-cancel",
+      owner: "owner-child-cancel",
+    });
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    await persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+      childScope(),
+    );
+
+    expect(await cancelDescendantHarnessRuns(sqlite.binding, RUN_ONE, "parent_cancelled"))
+      .toBe(1);
+    await expect(assertInlineChildAttemptOwned(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+    )).rejects.toThrow("cancelled");
+    await expect(heartbeatInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+    )).rejects.toThrow("cancelled");
+    expect(await terminalizeInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+      {
+        status: "stopped",
+        error: { code: "run_cancelled", message: "The parent cancelled this child" },
+      },
+    )).toBe("terminalized");
+  });
+
+  it("fences child heartbeats, scope writes, and completion after parent lease loss", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-parent-lease-loss",
+      objective: "Must stop when the parent loses ownership",
+      childHarnessRunId: "child-parent-lease-loss",
+      attemptId: "attempt-parent-lease-loss",
+      owner: "owner-parent-lease-loss",
+    });
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(RUN_ONE);
+
+    await expect(heartbeatInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+    )).rejects.toThrow("durable attempt lease");
+    await expect(persistInlineChildScope(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+      childScope(),
+    )).rejects.toThrow("durable attempt lease");
+    await expect(terminalizeInlineChildAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      parentLease,
+      child.childInput,
+      child.lease,
+      { status: "completed", result: { shouldNotPersist: true } },
+    )).rejects.toThrow("durable attempt lease");
+    expect(sqlite.database.prepare(
+      "SELECT status, terminalized_at, child_result_json FROM harness_runs WHERE id = ?",
+    ).get(child.childInput.harnessRunId)).toEqual({
+      status: "running",
+      terminalized_at: null,
+      child_result_json: null,
+    });
+  });
+
+  it("leaves a stale child reclaimable while its parent owns a live attempt", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const options = {
+      parentToolCallId: "tool-stale-live-parent",
+      objective: "Resume after a child executor disappears",
+      childHarnessRunId: "child-stale-live-parent",
+      attemptId: "attempt-child-stale-live-parent",
+      owner: "owner-child-stale-live-parent",
+    };
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, options);
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(child.childInput.harnessRunId);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(await loadInlineChildResult(sqlite.binding, RUN_ONE, options.parentToolCallId))
+      .toMatchObject({ state: "running", childInput: child.childInput });
+
+    const reclaimed = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      ...options,
+      owner: "owner-child-reclaimed-after-reaper",
+    });
+    expect(reclaimed).toMatchObject({
+      state: "claimed",
+      childInput: child.childInput,
+      reused: true,
+      lease: {
+        attemptId: child.lease.attemptId,
+        owner: "owner-child-reclaimed-after-reaper",
+        attemptNumber: 2,
+      },
+    });
+  });
+
+  it("cleans up an expired child after its parent terminalizes without changing workstream state", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    sqlite.database.exec(`
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES ('automation-template-child', '${WORKSPACE_ID}', 'user-runtime',
+              'Child safety', 'Child safety', 'workspace', 1, '2026-08-03', '2026-08-03');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         required_capabilities_json, expected_outputs_json, default_behavior_json,
+         created_by_user_id, created_at)
+      VALUES ('automation-template-version-child', 'automation-template-child', 1,
+              'Run', '[]', '[]', '[]', '{}', 'user-runtime', '2026-08-03');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, connector_bindings_json, overrides_json,
+         status, created_at, updated_at)
+      VALUES ('automation-subscription-child', '${WORKSPACE_ID}', 'automation-template-child',
+              'automation-template-version-child', 'workspace', NULL,
+              '{"type":"workspace"}', '{}', '{}', 'active', '2026-08-03', '2026-08-03');
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+         started_at, status, created_at)
+      VALUES ('automation-run-child', '${WORKSPACE_ID}', 'automation-subscription-child',
+              '${WORKSTREAM_ID}', 'scheduled', '2026-08-03', 'running', '2026-08-03');
+    `);
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-stale-child",
+      objective: "Become stale",
+      childHarnessRunId: "child-stale",
+      attemptId: "attempt-child-stale",
+      owner: "owner-child-stale",
+    });
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(child.childInput.harnessRunId);
+    sqlite.database.prepare(
+      `UPDATE harness_runs
+          SET status = 'completed', completed_at = '2026-08-03T00:00:00.000Z',
+              terminalized_at = '2026-08-03T00:00:00.000Z',
+              lease_owner = NULL, lease_expires_at = NULL
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([child.childInput.harnessRunId]);
+    expect(sqlite.database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+    expect(sqlite.database.prepare(
+      "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = 'automation-run-child'",
+    ).get()).toEqual({ status: "running", completed_at: null, result_summary: null });
+    expect(await loadInlineChildResult(sqlite.binding, RUN_ONE, "tool-stale-child"))
+      .toEqual({
+        state: "replay",
+        childInput: child.childInput,
+        outcome: {
+          status: "failed",
+          error: {
+            code: "parent_run_unavailable",
+            message: "The parent run no longer owns a live attempt",
+          },
+        },
+      });
+    const persisted = sqlite.database.prepare(
+      "SELECT child_result_json, child_result_hash FROM harness_runs WHERE id = ?",
+    ).get(child.childInput.harnessRunId) as {
+      child_result_json: string;
+      child_result_hash: string;
+    };
+    const actualHash = Array.from(new Uint8Array(await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(persisted.child_result_json),
+    ))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    expect(persisted.child_result_hash).toBe(actualHash);
+
+    sqlite.database.prepare(
+      `UPDATE harness_runs
+          SET child_result_json = '{"status":"failed","error":{"code":"tampered","message":"tampered"}}'
+        WHERE id = ?`,
+    ).run(child.childInput.harnessRunId);
+    await expect(loadInlineChildResult(sqlite.binding, RUN_ONE, "tool-stale-child"))
+      .rejects.toThrow("inline_child_result_hash_mismatch");
+  });
+
+  it("cleans up an expired child after cancellation is requested", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-cancelled-child-cleanup",
+      objective: "Stop after cancellation",
+      childHarnessRunId: "child-cancelled-cleanup",
+      attemptId: "attempt-child-cancelled-cleanup",
+      owner: "owner-child-cancelled-cleanup",
+    });
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    expect(await cancelDescendantHarnessRuns(sqlite.binding, RUN_ONE, "parent_cancelled"))
+      .toBe(1);
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(child.childInput.harnessRunId);
+
+    expect(await reapStaleHarnessRuns(sqlite.binding, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([child.childInput.harnessRunId]);
+    expect(await loadInlineChildResult(sqlite.binding, RUN_ONE, "tool-cancelled-child-cleanup"))
+      .toEqual({
+        state: "replay",
+        childInput: child.childInput,
+        outcome: {
+          status: "stopped",
+          error: { code: "run_cancelled", message: "The child run was cancelled" },
+        },
+      });
+    expect(sqlite.database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+  });
+
+  it("does not clean up a child snapshot whose lease is renewed before the CAS batch", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const parentLease = await claimScopedParent(sqlite);
+    const child = await admitInlineChildAttempt(sqlite.binding, input(RUN_ONE), parentLease, {
+      parentToolCallId: "tool-child-reaper-race",
+      objective: "Win the cleanup race",
+      childHarnessRunId: "child-reaper-race",
+      attemptId: "attempt-child-reaper-race",
+      owner: "owner-child-reaper-race",
+    });
+    if (child.state !== "claimed") throw new Error("expected claimed child");
+    sqlite.database.prepare(
+      "UPDATE harness_runs SET lease_expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+    ).run(child.childInput.harnessRunId);
+    sqlite.database.prepare(
+      `UPDATE harness_runs
+          SET status = 'completed', terminalized_at = '2026-08-03T00:00:00.000Z',
+              lease_owner = NULL, lease_expires_at = NULL
+        WHERE id = ?`,
+    ).run(RUN_ONE);
+
+    let intercepted = false;
+    const racingBinding = {
+      prepare: sqlite.binding.prepare.bind(sqlite.binding),
+      batch: async (statements: D1PreparedStatement[]) => {
+        if (!intercepted) {
+          intercepted = true;
+          sqlite.database.prepare(
+            "UPDATE harness_runs SET heartbeat_at = '2026-08-03T00:00:00.000Z', lease_expires_at = '2099-01-01T00:00:00.000Z' WHERE id = ?",
+          ).run(child.childInput.harnessRunId);
+        }
+        return sqlite.binding.batch(statements);
+      },
+    } as unknown as D1Database;
+
+    expect(await reapStaleHarnessRuns(racingBinding, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+    })).toEqual([]);
+    expect(intercepted).toBe(true);
+    expect(sqlite.database.prepare(
+      "SELECT status, lease_owner, lease_expires_at, terminalized_at FROM harness_runs WHERE id = ?",
+    ).get(child.childInput.harnessRunId)).toEqual({
+      status: "running",
+      lease_owner: child.lease.owner,
+      lease_expires_at: "2099-01-01T00:00:00.000Z",
+      terminalized_at: null,
+    });
   });
 });
 

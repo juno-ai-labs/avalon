@@ -3,7 +3,13 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
 import type { BackgroundTask, WorkstreamResource } from '../lib/types';
-import { AddResourceDialog, JumpToLatestButton, mergeBackgroundTasks, workspaceMemberFromSession } from './workstream';
+import {
+  AddResourceDialog,
+  JumpToLatestButton,
+  mergeBackgroundTasks,
+  RunFailureNotice,
+  workspaceMemberFromSession,
+} from './workstream';
 
 describe('JumpToLatestButton', () => {
   it('is compact and icon-only while retaining an accessible action name', () => {
@@ -18,6 +24,44 @@ describe('JumpToLatestButton', () => {
     expect(button).not.toHaveTextContent('Latest');
     fireEvent.click(button);
     expect(onJump).toHaveBeenCalledOnce();
+  });
+});
+
+describe('RunFailureNotice', () => {
+  it('shows a typed member-safe error and exposes retry and request-id actions', () => {
+    const onCopyRequestId = vi.fn();
+    const onRetry = vi.fn();
+    render(
+      <RunFailureNotice
+        code="context_limit_exceeded"
+        message="The run exceeded the model context window."
+        onCopyRequestId={onCopyRequestId}
+        onRetry={onRetry}
+        requestId="run-request-123"
+        retrying={false}
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent('The run exceeded the model context window.');
+    expect(screen.getByRole('alert')).toHaveTextContent('context_limit_exceeded');
+    fireEvent.click(screen.getByRole('button', { name: 'Copy request ID' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onCopyRequestId).toHaveBeenCalledOnce();
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('prevents a duplicate retry while the retry request is pending', () => {
+    render(
+      <RunFailureNotice
+        code="provider_timeout"
+        message="The provider timed out."
+        onCopyRequestId={vi.fn()}
+        onRetry={vi.fn()}
+        retrying
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
   });
 });
 

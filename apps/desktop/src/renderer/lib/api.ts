@@ -344,6 +344,8 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
             origin: workstream.latestHarnessRun.origin,
             status: workstream.latestHarnessRun.status,
             ...(workstream.latestHarnessRun.model ? { model: workstream.latestHarnessRun.model } : {}),
+            ...(workstream.latestHarnessRun.error ? { error: workstream.latestHarnessRun.error } : {}),
+            ...(workstream.latestHarnessRun.requestId ? { requestId: workstream.latestHarnessRun.requestId } : {}),
             ...(workstream.latestHarnessRun.startedAt ? { startedAt: workstream.latestHarnessRun.startedAt } : {}),
             ...(workstream.latestHarnessRun.completedAt ? { completedAt: workstream.latestHarnessRun.completedAt } : {}),
             createdAt: workstream.latestHarnessRun.createdAt,
@@ -870,6 +872,13 @@ export class AvalonApi {
 
   async stopHarness(id: string): Promise<void> {
     await this.requestVoid(`/workstreams/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+  }
+
+  async retryHarness(id: string): Promise<{ harnessRunId: string }> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/retry`, {
+      method: 'POST',
+      schema: z.object({ harnessRunId: z.string().uuid() }),
+    });
   }
 
   async addParticipant(id: string, userId: string): Promise<WorkstreamDetail> {

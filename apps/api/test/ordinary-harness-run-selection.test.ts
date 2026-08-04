@@ -1,0 +1,45 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it } from "vitest";
+
+function source(relativePath: string): string {
+  return readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8")
+    .replace(/\s+/gu, " ");
+}
+
+describe("ordinary harness-run selection", () => {
+  it("keeps inline child rows out of workstream latest-run and retry state", () => {
+    const service = source("../src/services/workstream-service.ts");
+    expect(service).toMatch(
+      /SELECT id, origin, status, model, error_json, started_at, completed_at, created_at FROM harness_runs WHERE workspace_id = \? AND workstream_id = \? AND parent_tool_call_id IS NULL ORDER BY created_at DESC LIMIT 1/u,
+    );
+    expect(service).toMatch(
+      /SELECT status FROM harness_runs WHERE workspace_id = \? AND workstream_id = \? AND parent_tool_call_id IS NULL ORDER BY created_at DESC LIMIT 1/u,
+    );
+  });
+
+  it("keeps inline child rows out of automation and activity recovery", () => {
+    const automation = source("../src/services/automation-service.ts");
+    expect(automation).toContain(
+      "LEFT JOIN harness_runs h ON h.workstream_id = r.workstream_id AND h.parent_tool_call_id IS NULL",
+    );
+
+    const activityConsumer = source("../src/queues/activity-consumer.ts");
+    expect(activityConsumer).toMatch(
+      /SELECT id FROM harness_runs WHERE workstream_id = \?1 AND parent_tool_call_id IS NULL ORDER BY created_at DESC LIMIT 1/u,
+    );
+  });
+
+  it("keeps inline child rows out of scheduler reuse and socket snapshots", () => {
+    const scheduler = source("../src/durable-objects/workspace-scheduler.ts");
+    expect(scheduler).toMatch(
+      /FROM harness_runs WHERE workspace_id = \?1 AND workstream_id = \?2 AND origin = 'automation' AND parent_tool_call_id IS NULL AND status IN \('scheduled', 'running'\)/u,
+    );
+
+    const room = source("../src/durable-objects/workstream-room.ts");
+    expect(room).toMatch(
+      /SELECT id FROM harness_runs WHERE workstream_id = \?1 AND parent_tool_call_id IS NULL ORDER BY started_at DESC LIMIT 1/u,
+    );
+  });
+});

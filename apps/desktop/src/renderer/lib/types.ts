@@ -236,6 +236,8 @@ export interface HarnessRunMetadata {
   origin: string;
   status: 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
   model?: string;
+  error?: { code: string; message: string };
+  requestId?: string;
   startedAt?: string;
   completedAt?: string;
   createdAt: string;

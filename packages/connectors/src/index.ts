@@ -2935,8 +2935,7 @@ export const webMonitorTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { url: { type: "string", format: "uri" } },
-      required: ["url"]
+      properties: {}
     }
   }
 ];
@@ -3015,14 +3014,42 @@ export function createWebMonitorConnector(fetcher = globalThis.fetch): Connector
     async executeTool(name, args, context) {
       assertPrincipalAccess(context.connection, context.principal);
       if (name !== "web_monitor.fetch") throw new ConnectorError("unsupported_capability", `Unsupported tool: ${name}`);
-      const url = z.object({ url: z.string().url() }).parse(args).url;
-      const result = await pollWebMonitor({ url, previous: {}, fetch: fetcher });
-      return { output: result.snapshot ?? {}, summary: `Fetched ${new URL(url).hostname}` };
+      const configuredUrl = parseConfiguredWebMonitorUrl(context.connection.config.url);
+      const requestedUrl = z.object({ url: z.string().url().optional() }).strict().parse(args).url;
+      if (requestedUrl && normalizeWebMonitorTarget(requestedUrl) !== normalizeWebMonitorTarget(configuredUrl)) {
+        throw new ConnectorError(
+          "unsafe_url",
+          "The web-monitor tool cannot fetch a URL other than the one configured for this connection",
+        );
+      }
+      const result = await pollWebMonitor({
+        url: configuredUrl,
+        previous: {},
+        fetch: fetcher,
+        signal: context.signal,
+      });
+      return { output: result.snapshot ?? {}, summary: `Fetched ${new URL(configuredUrl).hostname}` };
     },
     async healthCheck() {
       return { ok: true, message: "Web monitor is available" };
     }
   };
+}
+
+function parseConfiguredWebMonitorUrl(value: unknown): string {
+  const parsed = z.string().url().safeParse(value);
+  if (!parsed.success) {
+    throw new ConnectorError("invalid_configuration", "This web-monitor connection does not have a valid configured URL");
+  }
+  return parsed.data;
+}
+
+function normalizeWebMonitorTarget(value: string): string {
+  const url = new URL(value);
+  // Fragments are never sent in an HTTP request and therefore cannot widen
+  // the configured monitor's network authority.
+  url.hash = "";
+  return url.toString();
 }
 
 export const GenericWebhookAgentPluginDescriptor = defineConnectorAgentPlugin({

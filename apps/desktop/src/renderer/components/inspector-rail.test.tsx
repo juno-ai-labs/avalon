@@ -5,6 +5,12 @@ import type { Message, WorkstreamDetail } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from './inspector-rail';
 
+const copyText = vi.hoisted(() => vi.fn());
+
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({ copyText }),
+}));
+
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Monday invoice review',
@@ -46,6 +52,8 @@ const workstream: WorkstreamDetail = {
 
 describe('InspectorRail details', () => {
   beforeEach(() => {
+    copyText.mockReset();
+    copyText.mockResolvedValue(undefined);
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -76,12 +84,6 @@ describe('InspectorRail details', () => {
   });
 
   it('shows the complete work-stream email address in Details and copies it with feedback', async () => {
-    const writeText = vi.fn(async () => undefined);
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
-
     render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
@@ -95,18 +97,14 @@ describe('InspectorRail details', () => {
     expect(copyButton).toHaveAttribute('title', 'Copy work-stream email address');
     fireEvent.click(copyButton);
 
-    expect(writeText).toHaveBeenCalledWith(emailAddress);
+    expect(copyText).toHaveBeenCalledWith(emailAddress);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Work-stream email address copied' })).toHaveAttribute('title', 'Copied');
     });
   });
 
   it('keeps the icon copy control retryable when the clipboard rejects the write', async () => {
-    const writeText = vi.fn(async () => Promise.reject(new Error('clipboard unavailable')));
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText },
-    });
+    copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
 
     render(
       <Tooltip.Provider>

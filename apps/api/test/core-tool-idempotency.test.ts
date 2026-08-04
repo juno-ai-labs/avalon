@@ -137,6 +137,7 @@ function context(providerIdempotencyKey?: string) {
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
     harnessRunId: HARNESS_RUN_ID,
+    toolCallId: providerIdempotencyKey ?? "tool-call-without-provider-key",
     executionPrincipal: { type: "user" as const, userId: USER_ID },
     ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
     signal: new AbortController().signal,

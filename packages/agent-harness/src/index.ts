@@ -18,6 +18,14 @@ import {
 } from "./prompts";
 
 export * from "./prompts";
+export {
+  admitChildRun,
+  descendChain,
+  rootChain,
+  type ChainRef,
+  type ChainRule,
+  type ChildAdmission,
+} from "@juno-ai/bind/run";
 
 export interface OpenRouterConfig {
   apiKey: string;
@@ -782,6 +790,8 @@ export interface HarnessToolContext {
   workspaceId: string;
   workstreamId: string;
   harnessRunId: string;
+  /** Stable durable receipt ID for this exact tool request. */
+  toolCallId: string;
   executionPrincipal: ExecutionPrincipal;
   /** Stable per-receipt key for provider APIs that support idempotent writes. */
   providerIdempotencyKey?: string;
@@ -797,6 +807,59 @@ export interface HarnessToolResult {
   loadedPluginName?: string;
 }
 
+/**
+ * Immutable policy identity selected by Bind when it resolves a model tool
+ * call. The provider-facing wire name is intentionally absent: providers may
+ * rewrite that alias, while authorization and durable receipts must remain
+ * bound to the canonical tool definition.
+ */
+export interface HarnessToolPolicyIdentity {
+  canonicalToolName: string;
+  capability: string;
+  mode: ToolDefinition["mode"];
+  idempotency: ToolDefinition["idempotency"];
+}
+
+/** Bind-owned catalog policies mirrored and verified by the durable host. */
+export const BIND_RUNTIME_CORE_TOOL_DEFINITIONS = [
+  {
+    name: "list_connector_plugins",
+    description: "List authorized connector plugins available to this frozen run scope.",
+    capability: "avalon.plugins.list",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    name: "search_connector_plugins",
+    description: "Search authorized connector plugins available to this frozen run scope.",
+    capability: "avalon.plugins.search",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "load_plugin",
+    description: "Load one authorized connector plugin from the catalog for this run.",
+    capability: "avalon.plugins.load",
+    // Activation changes only Avalon's durable run surface. It does not write
+    // to an external provider and is safe to resume from the same receipt.
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { pluginId: { type: "string" } },
+      required: ["pluginId"],
+    },
+  },
+] as const satisfies readonly ToolDefinition[];
+
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
@@ -806,6 +869,10 @@ export interface HarnessTool {
 export interface HarnessPlugin {
   canonicalId: string;
   shortWireName: string;
+  /** Static, code-authored label used only for catalog display and discovery. */
+  displayName?: string;
+  /** Additional static, code-authored aliases accepted by plugin search. */
+  searchAliases?: readonly string[];
   description: string;
   systemMessage?: string;
   tools: HarnessTool[];
@@ -835,16 +902,18 @@ export type HarnessEvent =
       type: "tool_started";
       toolCallId: string;
       toolName: string;
-      pluginId?: string;
+      pluginId: string;
+      policy: HarnessToolPolicyIdentity;
       input: unknown;
       providerIdempotencyKey?: string;
     }
-  | { type: "tool_completed"; toolCallId: string; toolName: string; pluginId?: string; result: HarnessToolResult }
+  | { type: "tool_completed"; toolCallId: string; toolName: string; pluginId: string; policy: HarnessToolPolicyIdentity; result: HarnessToolResult }
   | {
       type: "tool_failed";
       toolCallId: string;
       toolName: string;
-      pluginId?: string;
+      pluginId: string;
+      policy: HarnessToolPolicyIdentity;
       error: string;
       phase: "validation" | "execution";
       outcome: "definitive_failure" | "timed_out" | "aborted" | "ambiguous_external_write";
@@ -890,7 +959,11 @@ export interface RunHarnessInput {
     epoch: number;
     streamSeq: number;
   }) => void | Promise<void>;
-  findCompletedToolResult?: (toolCallId: string, inputHash: string) => Promise<HarnessToolResult | null>;
+  findCompletedToolResult?: (
+    toolCallId: string,
+    inputHash: string,
+    policy: { pluginId: string } & HarnessToolPolicyIdentity,
+  ) => Promise<HarnessToolResult | null>;
   reauthorizePlugin?: (canonicalId: string) => boolean | Promise<boolean>;
   persistActivation?: (canonicalId: string) => void | Promise<void>;
   onActivationDropped?: (drop: unknown) => void | Promise<void>;

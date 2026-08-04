@@ -9,6 +9,7 @@ import {
   insertMessage,
   mergeCanonicalTranscript,
   nextTranscriptSequence,
+  replaceWithCanonicalTranscript,
   SOCKET_STABLE_CONNECTION_MS,
   socketHeartbeatDelay,
   socketReconnectDelay,
@@ -63,6 +64,17 @@ async function flushPromises(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }
 
 afterEach(() => {
@@ -153,6 +165,34 @@ describe('useWorkstreamSocket', () => {
       canonicalHuman,
       pendingHuman,
     ]);
+  });
+
+  it('drops synthetic realtime tool rows after a terminal canonical refresh', () => {
+    const canonicalTool: Message = {
+      id: '00000000-0000-7000-8000-000000000081',
+      workstreamId: 'workstream-one',
+      sequenceNumber: 11,
+      authorType: 'agent',
+      messageType: 'tool_event',
+      createdAt: '2026-07-31T19:20:02.000Z',
+      toolEvent: {
+        id: '00000000-0000-7000-8000-000000000081',
+        name: 'google.drive.search',
+        status: 'completed',
+      },
+    };
+    const staleRealtimeTool: Message = {
+      ...canonicalTool,
+      id: `tool-${canonicalTool.id}`,
+      toolEvent: { ...canonicalTool.toolEvent!, status: 'started' },
+      realtimeOrder: {
+        anchorSequenceNumber: 12,
+        eventSequence: 91,
+        placement: 'before_anchor',
+      },
+    };
+
+    expect(replaceWithCanonicalTranscript([staleRealtimeTool], [canonicalTool])).toEqual([canonicalTool]);
   });
 
   it('deduplicates replayed chunks and replaces only the retried Bind turn on reset', () => {
@@ -542,6 +582,184 @@ describe('useWorkstreamSocket', () => {
       delta: ' two',
     }));
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text).toBe('One two');
+  });
+
+  it('self-heals stale and duplicate realtime tool rows after reconnect without a reload', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000091';
+    const invocationId = '00000000-0000-7000-8000-000000000092';
+    const staleTool: Message = {
+      id: `tool-${invocationId}`,
+      workstreamId,
+      sequenceNumber: 4,
+      authorType: 'agent',
+      messageType: 'tool_event',
+      createdAt: '2026-07-31T19:20:00.000Z',
+      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
+      toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'started' },
+    };
+    const canonicalTool: Message = {
+      ...staleTool,
+      id: invocationId,
+      sequenceNumber: 5,
+      realtimeOrder: undefined,
+      toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'completed' },
+    };
+    queryClient.setQueryData(['messages', workstreamId], [staleTool]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
+      getMessages: vi.fn(async () => [canonicalTool]),
+      getWorkstreams: vi.fn(async () => []),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.close());
+    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    await flushPromises();
+
+    expect(api.getMessages).toHaveBeenCalledOnce();
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
+  });
+
+  it('does not lose socket messages that arrive while terminal reconciliation is in flight', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workspaceId = '00000000-0000-7000-8000-000000000101';
+    const workstreamId = '00000000-0000-7000-8000-000000000102';
+    const messageId = '00000000-0000-7000-8000-000000000103';
+    const firstMessages = deferred<Message[]>();
+    const secondMessages = deferred<Message[]>();
+    const socketMessage = {
+      id: messageId,
+      clientMessageId: null,
+      workspaceId,
+      workstreamId,
+      author: { type: 'agent' as const },
+      messageType: 'text' as const,
+      textContent: 'Arrived while reconciling.',
+      structuredContent: null,
+      mentions: [],
+      sequenceNumber: 12,
+      createdAt: '2026-07-31T19:20:02.000Z',
+      editedAt: null,
+    };
+    const canonicalMessage: Message = {
+      id: messageId,
+      workstreamId,
+      sequenceNumber: 12,
+      authorType: 'agent',
+      messageType: 'text',
+      text: 'Arrived while reconciling.',
+      mentions: [],
+      createdAt: '2026-07-31T19:20:02.000Z',
+    };
+    const getMessages = vi.fn()
+      .mockImplementationOnce(() => firstMessages.promise)
+      .mockImplementationOnce(() => secondMessages.promise);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
+      getMessages,
+      getWorkstreams: vi.fn(async () => []),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      status: 'completed',
+    }));
+    expect(getMessages).toHaveBeenCalledOnce();
+
+    act(() => socket.message({
+      type: 'message_created',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:20:02.000Z',
+      message: socketMessage,
+    }));
+    await act(async () => {
+      firstMessages.resolve([]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(getMessages).toHaveBeenCalledTimes(2);
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalMessage]);
+
+    await act(async () => {
+      secondMessages.resolve([canonicalMessage]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalMessage]);
+  });
+
+  it('treats needs-input as terminal and reconciles synthetic realtime rows', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000111';
+    const invocationId = '00000000-0000-7000-8000-000000000112';
+    const staleTool: Message = {
+      id: `tool-${invocationId}`,
+      workstreamId,
+      sequenceNumber: 4,
+      authorType: 'agent',
+      messageType: 'tool_event',
+      createdAt: '2026-07-31T19:20:00.000Z',
+      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
+      toolEvent: { id: invocationId, name: 'avalon.ask', status: 'started' },
+    };
+    const canonicalTool: Message = {
+      ...staleTool,
+      id: invocationId,
+      sequenceNumber: 5,
+      realtimeOrder: undefined,
+      toolEvent: { id: invocationId, name: 'avalon.ask', status: 'completed' },
+    };
+    queryClient.setQueryData(['messages', workstreamId], [staleTool]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getMessages: vi.fn(async () => [canonicalTool]),
+      getWorkstreams: vi.fn(async () => []),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      status: 'needs_input',
+    }));
+    await flushPromises();
+
+    expect(api.getMessages).toHaveBeenCalledOnce();
+    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
   });
 
   it('resets the replay sequence when the selected workstream changes', async () => {

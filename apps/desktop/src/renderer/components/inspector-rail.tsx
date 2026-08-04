@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { formatCompactNumber, formatDateTime, formatDuration, formatRelative } from '../lib/format';
+import { desktopBridge } from '../lib/platform';
 import type {
   ArtifactData,
   AutomationRunSummary,
@@ -95,7 +96,7 @@ function ContextContent({
   const copyEmailAddress = async (): Promise<void> => {
     if (!workstream.emailAddress) return;
     try {
-      await navigator.clipboard.writeText(workstream.emailAddress);
+      await desktopBridge().copyText(workstream.emailAddress);
       setEmailCopyState('copied');
     } catch {
       setEmailCopyState('failed');
@@ -263,7 +264,7 @@ function ContextContent({
             <dt>Work-stream ID</dt>
             <dd className="copy-detail">
               <span className="mono">{workstream.id}</span>
-              <IconButton label="Copy work-stream ID" onClick={() => void navigator.clipboard.writeText(workstream.id)}><Copy size={12} /></IconButton>
+              <IconButton label="Copy work-stream ID" onClick={() => void desktopBridge().copyText(workstream.id)}><Copy size={12} /></IconButton>
             </dd>
           </div>
         </dl>
@@ -359,7 +360,7 @@ function BackgroundContent({
                   } else if (output.messageId && onJumpToMessage) {
                     onJumpToMessage(output.messageId);
                   } else {
-                    void navigator.clipboard.writeText(output.artifact.previewText ?? output.artifact.title);
+                    void desktopBridge().copyText(output.artifact.previewText ?? output.artifact.title);
                   }
                 };
                 const row = (
@@ -405,7 +406,7 @@ function BackgroundContent({
                       <ChevronRight aria-hidden="true" size={14} />
                     </button>
                   ) : (
-                    <button aria-label={`Copy run ID for ${task.title}`} className="rail-compact-row" onClick={() => void navigator.clipboard.writeText(task.harnessRunId ?? task.id)} type="button">
+                    <button aria-label={`Copy run ID for ${task.title}`} className="rail-compact-row" onClick={() => void desktopBridge().copyText(task.harnessRunId ?? task.id)} type="button">
                       <span className="rail-compact-icon"><Bot aria-hidden="true" size={15} /></span>
                       <span className="rail-compact-copy"><strong>{task.title}</strong><small>{taskStatusLabel(task.status)}{formatDuration(task.durationMs) ? ` · ${formatDuration(task.durationMs)}` : ''}</small></span>
                       <Copy aria-hidden="true" size={14} />
