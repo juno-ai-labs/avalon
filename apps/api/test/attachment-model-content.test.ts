@@ -95,7 +95,6 @@ describe("attachment model content", () => {
 
   it.each([
     ["photo.jpg", "image/jpeg", new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), "image/jpeg"],
-    ["animation.gif", "image/gif", encoder.encode("GIF89a payload"), "image/gif"],
     ["photo.webp", "image/webp", encoder.encode("RIFF0000WEBPpayload"), "image/webp"],
   ])("passes signature-validated model-native %s images without a transform binding", async (fileName, mimeType, bytes, expectedMime) => {
     const parts = await buildAttachmentModelParts(fakeBucket({ image: bytes }), [
@@ -103,6 +102,73 @@ describe("attachment model content", () => {
     ]);
     const url = parts[1]?.type === "image_url" ? parts[1].image_url.url : "";
     expect(url).toMatch(new RegExp(`^data:${expectedMime};base64,`, "u"));
+  });
+
+  it("turns an animated GIF into one timestamped storyboard and persists its metadata", async () => {
+    const bucket = trackedBucket({ original: animatedGif() });
+    const updates: unknown[][] = [];
+    const database = {
+      prepare() {
+        return {
+          bind(...values: unknown[]) {
+            updates.push(values);
+            return { async run() { return { meta: { changes: 1 } }; } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const parts = await buildAttachmentModelParts(bucket.binding, [{
+      id: "gif-resource",
+      fileName: "status.gif",
+      mimeType: "image/gif",
+      contentRef: "original",
+    }], { database });
+
+    expect(parts).toHaveLength(3);
+    expect(parts[1]).toMatchObject({
+      type: "text",
+      text: expect.stringMatching(/animated GIF; duration 0\.6s; 3 frames; approximately 5 fps; 4x3; loops indefinitely/u),
+    });
+    expect(parts[2]?.type === "image_url" ? parts[2].image_url.url : "").toMatch(/^data:image\/png;base64,/u);
+    expect(bucket.puts[0]?.key).toBe("original.model.png");
+    expect(bucket.objects.original).toEqual(animatedGif());
+    expect(updates[0]?.[3]).toBe(JSON.stringify({
+      kind: "animated_gif",
+      width: 4,
+      height: 3,
+      frameCount: 3,
+      durationMs: 600,
+      averageFps: 5,
+      loopCount: 0,
+      sampledTimestampsMs: [0, 100, 300],
+    }));
+  });
+
+  it("reuses a persisted GIF storyboard and metadata without reading the original", async () => {
+    const metadata = JSON.stringify({
+      kind: "animated_gif",
+      width: 4,
+      height: 3,
+      frameCount: 3,
+      durationMs: 600,
+      averageFps: 5,
+      loopCount: 0,
+      sampledTimestampsMs: [0, 100, 300],
+    });
+    const bucket = trackedBucket({ derivative: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) });
+    const parts = await buildAttachmentModelParts(bucket.binding, [{
+      id: "gif-resource",
+      fileName: "status.gif",
+      mimeType: "image/gif",
+      contentRef: "missing-original",
+      modelContentRef: "derivative",
+      modelMimeType: "image/png",
+      modelMetadataJson: metadata,
+    }]);
+
+    expect(parts[1]).toMatchObject({ type: "text", text: expect.stringContaining("3 frames") });
+    expect(parts[2]?.type === "image_url" ? parts[2].image_url.url : "").toMatch(/^data:image\/png;base64,/u);
   });
 
   it("does not trust an image extension or MIME type when the bytes are not an image", async () => {
@@ -198,4 +264,8 @@ function fakeImagesBinding(output: Uint8Array): ImagesBinding {
 
 function exactTestArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function animatedGif(): Uint8Array {
+  return Uint8Array.from(atob("R0lGODlhBAADAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQICgAAACwAAAAABAADAAAICAABCBxIUGBAACH5BAgUAAAALAAAAAAEAAMAgQD/AAAAAAAAAAAAAAgIAAEIHEhQYEAAIfkECB4AAAAsAAAAAAQAAwCBAAD/AAAAAAAAAAAACAgAAQgcSFBgQAA7"), (character) => character.charCodeAt(0));
 }
