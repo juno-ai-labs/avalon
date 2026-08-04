@@ -7,7 +7,7 @@ import {
   WorkspaceOnboardingStateSchema,
   type Session as WireSession,
 } from '@avalon/contracts';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -20,6 +20,7 @@ import {
   Menu,
   net,
   nativeImage,
+  nativeTheme,
   protocol,
   safeStorage,
   session as electronSession,
@@ -34,6 +35,14 @@ import type {
 } from '../common/desktop';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import {
+  applicationIconAppearance,
+  applicationIconFileName,
+  defaultApplicationIcon,
+  largestPngFromIcns,
+  type ApplicationIconAppearance,
+  type ApplicationIconName,
+} from './application-icon';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { normalizeLegacyStoredSession } from './stored-session';
@@ -830,22 +839,52 @@ async function installRendererProtocol(): Promise<void> {
   });
 }
 
-function applicationIconPath(): string {
+function applicationWindowIconPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
     : resolve(currentDirectory, '../../resources/icon.png');
 }
 
-function installApplicationIcon(): void {
-  // BrowserWindow.icon is ignored by macOS. Development builds otherwise keep
-  // Electron's default Dock mark even though packaged builds embed Avalon.icns.
+let selectedApplicationIcon: ApplicationIconName = defaultApplicationIcon;
+let appliedApplicationIcon: string | undefined;
+
+function applicationIconPath(
+  iconName: ApplicationIconName,
+  appearance: ApplicationIconAppearance,
+): string {
+  const fileName = applicationIconFileName(iconName, appearance);
+  return app.isPackaged
+    ? join(process.resourcesPath, 'icons', fileName)
+    : resolve(currentDirectory, '../../resources/icons', fileName);
+}
+
+function applyApplicationIcon(): void {
   if (process.platform !== 'darwin') return;
-  const icon = nativeImage.createFromPath(applicationIconPath());
-  if (icon.isEmpty()) {
-    console.error('[avalon] application icon could not be loaded');
-    return;
+  const appearance = applicationIconAppearance(nativeTheme.shouldUseDarkColors);
+  const selection = `${selectedApplicationIcon}:${appearance}`;
+  if (selection === appliedApplicationIcon) return;
+  const iconPath = applicationIconPath(selectedApplicationIcon, appearance);
+  try {
+    const icon = nativeImage.createFromBuffer(largestPngFromIcns(readFileSync(iconPath)));
+    if (icon.isEmpty()) throw new Error('Electron could not decode the embedded PNG');
+    app.dock?.setIcon(icon);
+    appliedApplicationIcon = selection;
+  } catch (error) {
+    console.error('[avalon] application icon could not be loaded', { iconPath, error });
   }
-  app.dock?.setIcon(icon);
+}
+
+function setApplicationIcon(iconName: ApplicationIconName): void {
+  selectedApplicationIcon = iconName;
+  applyApplicationIcon();
+}
+
+function installApplicationIcon(): void {
+  // The named family makes a later persisted user choice a call to
+  // setApplicationIcon; today its appearance follows the native system theme.
+  if (process.platform !== 'darwin') return;
+  setApplicationIcon(defaultApplicationIcon);
+  nativeTheme.on('updated', applyApplicationIcon);
 }
 
 function preloadPath(): string {
@@ -930,7 +969,7 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     title: 'Avalon Settings',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
-    icon: applicationIconPath(),
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
@@ -993,7 +1032,7 @@ async function createMainWindow(): Promise<void> {
     title: 'Avalon',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     trafficLightPosition: { x: 18, y: 17 },
-    icon: applicationIconPath(),
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
     webPreferences: {
       preload: preloadPath(),
       contextIsolation: true,
