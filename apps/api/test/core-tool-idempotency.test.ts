@@ -237,6 +237,7 @@ describe("Avalon core write-tool idempotency", () => {
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "avalon.request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
+    expect(tool?.definition.inputSchema).not.toHaveProperty("properties.targetUserId");
 
     const args = {
       prompt: "Which environment should Avalon deploy?",
@@ -247,7 +248,6 @@ describe("Avalon core write-tool idempotency", () => {
       ],
       minimumSelections: 1,
       maximumSelections: 1,
-      targetUserId: null,
     };
     const first = await tool!.execute(args, context("run:turn:2:tool:0"));
     const second = await tool!.execute(args, context("run:turn:2:tool:0"));
@@ -255,6 +255,7 @@ describe("Avalon core write-tool idempotency", () => {
     expect(second).toEqual(first);
     expect(first).toMatchObject({ halt: "needs_input" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM elicitations").get()).toEqual({ count: 1 });
+    expect(database.prepare("SELECT target_user_id FROM elicitations").get()).toEqual({ target_user_id: null });
     expect(database.prepare("SELECT harness_status FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
       .toEqual({ harness_status: "needs_input" });
   });

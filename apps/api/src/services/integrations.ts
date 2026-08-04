@@ -3339,7 +3339,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     })).max(30).default([]),
     minimumSelections: z.number().int().nonnegative().default(0),
     maximumSelections: z.number().int().positive().nullable().default(null),
-    targetUserId: z.string().uuid().nullable().default(null),
   });
   const tools: HarnessTool[] = [
     {
@@ -3496,7 +3495,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     {
       definition: {
         name: "avalon.request_elicitation",
-        description: "Ask a person a structured blocking question and pause this harness run.",
+        description: "Ask the work-stream participants a structured blocking question and pause this harness run. Any participant may answer.",
         capability: "elicitation.write",
         mode: "write",
         idempotency: "provider_key",
@@ -3515,9 +3514,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             },
             minimumSelections: { type: "integer", minimum: 0 },
             maximumSelections: { type: ["integer", "null"], minimum: 1 },
-            targetUserId: { type: ["string", "null"], format: "uuid" },
           },
-          required: ["prompt", "responseType", "options", "minimumSelections", "maximumSelections", "targetUserId"],
+          required: ["prompt", "responseType", "options", "minimumSelections", "maximumSelections"],
         },
       },
       execute: async (raw, context) => {
@@ -3540,12 +3538,6 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
             halt: "needs_input" as const,
           };
         }
-        if (args.targetUserId) {
-          const target = await env.DB.prepare(
-            `SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-          ).bind(input.workspaceId, args.targetUserId).first();
-          if (!target) throw new Error("Target responder is not an active workspace member");
-        }
         const at = nowIso();
         await env.DB.batch([
           env.DB.prepare(
@@ -3555,7 +3547,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
               status, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
              ON CONFLICT(id) DO NOTHING`,
-          ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.prompt, args.responseType, JSON.stringify(args.options), args.minimumSelections, args.maximumSelections, args.targetUserId, at),
+          ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.prompt, args.responseType, JSON.stringify(args.options), args.minimumSelections, args.maximumSelections, null, at),
           env.DB.prepare(
             `UPDATE workstreams SET harness_status = 'needs_input', last_activity_at = ?, updated_at = ?
              WHERE id = ? AND workspace_id = ?`,
@@ -3565,7 +3557,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           id, workstreamId: input.workstreamId, harnessRunId: input.harnessRunId,
           prompt: args.prompt, responseType: args.responseType, options: args.options,
           minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
-          targetUserId: args.targetUserId, status: "open" as const, answer: null,
+          targetUserId: null, status: "open" as const, answer: null,
           answeredByUserId: null, createdAt: at, answeredAt: null,
         };
         await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
