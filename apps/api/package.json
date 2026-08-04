@@ -24,6 +24,7 @@
     "@avalon/db": "workspace:*",
     "@hono/zod-validator": "latest",
     "fflate": "^0.8.3",
+    "gifuct-js": "2.1.2",
     "heic-decode": "2.1.0",
     "hono": "latest",
     "jose": "latest",

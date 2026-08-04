@@ -3,6 +3,12 @@ import { unzipSync } from "fflate";
 import decodeHeic from "heic-decode";
 import UPNG from "upng-js";
 import * as UTIF from "utif2";
+import {
+  buildGifStoryboard,
+  describeGifModelMetadata,
+  type GifModelMetadata,
+  parseGifModelMetadata,
+} from "./gif-storyboard";
 
 const MAX_EXTRACTED_CHARACTERS = 60_000;
 const MAX_UNCOMPRESSED_OFFICE_BYTES = 40_000_000;
@@ -18,6 +24,7 @@ type DetectedImageFormat = "gif" | "heif" | "jpeg" | "png" | "tiff" | "webp";
 interface NormalizedImage {
   bytes: Uint8Array;
   mimeType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+  metadata?: GifModelMetadata;
 }
 
 export interface AttachmentModelContentOptions {
@@ -32,6 +39,7 @@ export interface ModelAttachmentSource {
   contentRef: string | null;
   modelContentRef?: string | null;
   modelMimeType?: string | null;
+  modelMetadataJson?: string | null;
 }
 
 export async function buildAttachmentModelParts(
@@ -76,6 +84,9 @@ export async function buildAttachmentModelParts(
           continue;
         }
         inlinedImages += 1;
+        if (normalized.metadata) {
+          parts.push({ type: "text", text: describeGifModelMetadata(attachment.fileName, normalized.metadata) });
+        }
         parts.push({
           type: "image_url",
           image_url: { url: dataUri(normalized.bytes, normalized.mimeType), detail: "auto" },
@@ -142,12 +153,15 @@ async function loadPersistedModelImage(
   attachment: ModelAttachmentSource,
 ): Promise<NormalizedImage | null> {
   const persistedMime = supportedModelImageMime(attachment.modelMimeType ?? "");
+  const metadata = parseGifModelMetadata(attachment.modelMetadataJson);
+  const expectsGifStoryboard = isGifHint(attachment.mimeType, attachment.fileName);
+  if (expectsGifStoryboard && !metadata) return null;
   if (attachment.modelContentRef && persistedMime) {
     const persisted = await payloads.get(attachment.modelContentRef);
     if (persisted) {
       const bytes = new Uint8Array(await persisted.arrayBuffer());
       if (bytes.byteLength > 0 && bytes.byteLength <= MAX_MODEL_IMAGE_BYTES) {
-        return { bytes, mimeType: persistedMime };
+        return { bytes, mimeType: persistedMime, ...(metadata ? { metadata } : {}) };
       }
     }
   }
@@ -201,9 +215,17 @@ async function persistModelImage(
   try {
     const result = await database.prepare(
       `UPDATE resources
-          SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?, updated_at = ?
+          SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?, model_metadata_json = ?, updated_at = ?
         WHERE id = ? AND content_ref = ?`,
-    ).bind(contentRef, normalized.mimeType, sha256, new Date().toISOString(), attachment.id, attachment.contentRef).run();
+    ).bind(
+      contentRef,
+      normalized.mimeType,
+      sha256,
+      normalized.metadata ? JSON.stringify(normalized.metadata) : null,
+      new Date().toISOString(),
+      attachment.id,
+      attachment.contentRef,
+    ).run();
     if ((result.meta.changes ?? 0) === 0) await payloads.delete(contentRef);
   } catch (error) {
     await payloads.delete(contentRef).catch(() => undefined);
@@ -216,20 +238,17 @@ async function normalizeImage(
   format: DetectedImageFormat,
   images: ImagesBinding | undefined,
 ): Promise<NormalizedImage | null> {
+  if (format === "gif") {
+    const storyboard = buildGifStoryboard(bytes);
+    if (!storyboard) return null;
+    const transformed = images ? await transformWithImages(storyboard.bytes, images) : null;
+    return transformed
+      ? { ...transformed, metadata: storyboard.metadata }
+      : { bytes: storyboard.bytes, mimeType: "image/png", metadata: storyboard.metadata };
+  }
   if (images) {
-    try {
-      const transformed = await images
-        .input(new Blob([exactArrayBuffer(bytes)]).stream())
-        .transform({ width: MODEL_IMAGE_MAX_EDGE, height: MODEL_IMAGE_MAX_EDGE, fit: "scale-down" })
-        .output({ format: "image/jpeg", quality: 85, background: "#ffffff", anim: false });
-      const output = new Uint8Array(await new Response(transformed.image()).arrayBuffer());
-      if (output.byteLength > 0 && output.byteLength <= MAX_MODEL_IMAGE_BYTES) {
-        return { bytes: output, mimeType: "image/jpeg" };
-      }
-    } catch {
-      // TIFF and some HEIF variants are not accepted by every Images plan.
-      // The bounded local decoders below keep those formats available.
-    }
+    const transformed = await transformWithImages(bytes, images);
+    if (transformed) return transformed;
   }
 
   if (format === "tiff") return decodeTiffToPng(bytes);
@@ -238,6 +257,22 @@ async function normalizeImage(
     : format === "png" ? "image/png"
       : format === "webp" ? "image/webp" : "image/gif";
   return bytes.byteLength <= MAX_MODEL_IMAGE_BYTES ? { bytes, mimeType } : null;
+}
+
+async function transformWithImages(bytes: Uint8Array, images: ImagesBinding): Promise<NormalizedImage | null> {
+  try {
+    const transformed = await images
+      .input(new Blob([exactArrayBuffer(bytes)]).stream())
+      .transform({ width: MODEL_IMAGE_MAX_EDGE, height: MODEL_IMAGE_MAX_EDGE, fit: "scale-down" })
+      .output({ format: "image/jpeg", quality: 85, background: "#ffffff", anim: false });
+    const output = new Uint8Array(await new Response(transformed.image()).arrayBuffer());
+    return output.byteLength > 0 && output.byteLength <= MAX_MODEL_IMAGE_BYTES
+      ? { bytes: output, mimeType: "image/jpeg" }
+      : null;
+  } catch {
+    // Some source formats are not accepted by every Images plan.
+    return null;
+  }
 }
 
 function decodeTiffToPng(bytes: Uint8Array): NormalizedImage | null {
@@ -275,6 +310,10 @@ function supportedModelImageMime(value: string): NormalizedImage["mimeType"] | n
   return normalized === "image/jpeg" || normalized === "image/png" || normalized === "image/gif" || normalized === "image/webp"
     ? normalized
     : null;
+}
+
+function isGifHint(mimeType: string, fileName: string): boolean {
+  return mimeType.toLowerCase() === "image/gif" || /\.gif$/iu.test(fileName);
 }
 
 function hasPrefix(bytes: Uint8Array, prefix: number[]): boolean {
