@@ -40,7 +40,9 @@ resourceRoutes.post("/upload", async (c) => {
   const file = body.file;
   if (!(file instanceof File)) throw new ApiError(422, "file_required", "A file field is required");
   const title = typeof body.title === "string" ? body.title : undefined;
-  return c.json(await new ResourceService(c.env, getAuth(c)).upload(file, title), 201);
+  const draftId = IdSchema.safeParse(c.req.header("X-Avalon-Draft-Id"));
+  if (!draftId.success) throw new ApiError(422, "draft_id_required", "A valid draft attachment ID is required");
+  return c.json(await new ResourceService(c.env, getAuth(c)).upload(file, title, draftId.data), 201);
 });
 resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
   c.json(await new ResourceService(c.env, getAuth(c)).resolve(c.req.valid("json")), 201),
@@ -51,6 +53,10 @@ resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
   new ResourceService(c.env, getAuth(c)).content(c.req.valid("param").id),
 );
+resourceRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
+  await new ResourceService(c.env, getAuth(c)).deleteDraft(c.req.valid("param").id);
+  return c.body(null, 204);
+});
 resourceRoutes.post("/:id/hydrate", zValidator("param", idParam), async (c) =>
   c.json(await new ResourceService(c.env, getAuth(c)).hydrate(c.req.valid("param").id)),
 );

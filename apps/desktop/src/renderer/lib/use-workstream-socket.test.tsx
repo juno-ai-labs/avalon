@@ -662,6 +662,7 @@ describe('useWorkstreamSocket', () => {
       authorType: 'agent',
       messageType: 'text',
       text: 'Arrived while reconciling.',
+      attachments: [],
       mentions: [],
       createdAt: '2026-07-31T19:20:02.000Z',
     };

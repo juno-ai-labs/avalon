@@ -93,6 +93,7 @@ function message(
     textContent: input.textContent ?? "",
     structuredContent: input.structuredContent ?? null,
     mentions: [],
+    attachments: [],
     sequenceNumber,
     createdAt: `2026-08-01T00:00:0${sequenceNumber}.000Z`,
     editedAt: null,

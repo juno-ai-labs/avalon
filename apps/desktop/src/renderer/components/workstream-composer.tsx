@@ -2,8 +2,11 @@ import clsx from 'clsx';
 import { ArrowUp, AtSign, LoaderCircle, Paperclip, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { MentionIdentity } from '../lib/api';
+import type { PendingAttachment } from '../lib/use-file-attachments';
+import { useFileDrop } from '../lib/use-file-drop';
 import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
+import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal } from './primitives';
 
 interface MentionCandidate {
@@ -23,8 +26,12 @@ interface WorkstreamComposerProps {
   sending: boolean;
   uploading: boolean;
   error?: string;
+  attachments: PendingAttachment[];
   onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void>;
-  onAttach: (file: File) => Promise<void>;
+  onAttach: (files: FileList | File[]) => void;
+  onOpenAttachment: (preview: AttachmentPreview) => void;
+  onRemoveAttachment: (localId: string) => void;
+  onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
 }
 
@@ -62,8 +69,12 @@ export function WorkstreamComposer({
   sending,
   uploading,
   error,
+  attachments,
   onSend,
   onAttach,
+  onOpenAttachment,
+  onRemoveAttachment,
+  onRetryAttachment,
   onStop,
 }: WorkstreamComposerProps): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -74,6 +85,8 @@ export function WorkstreamComposer({
   const [selectedMentions, setSelectedMentions] = useState<MentionIdentity[]>([]);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const drop = useFileDrop(onAttach);
+  const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => [
     ...members.map((member) => ({
@@ -189,7 +202,7 @@ export function WorkstreamComposer({
 
   const send = async (): Promise<void> => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if ((!trimmed && readyAttachmentCount === 0) || uploading) return;
     const selectedPersonIds = new Set(selectedMentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
     const nonparticipants = members.filter((member) => {
       if (participantIds.has(member.id)) return false;
@@ -264,7 +277,26 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      <div className={clsx('workstream-composer', sending && 'is-sending')}>
+      <div
+        className={clsx('workstream-composer', sending && 'is-sending', drop.dragging && 'is-file-dragging')}
+        onDragEnter={drop.onDragEnter}
+        onDragLeave={drop.onDragLeave}
+        onDragOver={drop.onDragOver}
+        onDrop={drop.onDrop}
+      >
+        {attachments.length > 0 && (
+          <div className="composer-attachments" aria-label="Attachments">
+            {attachments.map((attachment) => (
+              <PendingAttachmentTile
+                attachment={attachment}
+                key={attachment.localId}
+                onOpen={onOpenAttachment}
+                onRemove={() => onRemoveAttachment(attachment.localId)}
+                onRetry={() => onRetryAttachment(attachment.localId)}
+              />
+            ))}
+          </div>
+        )}
         <textarea
           aria-label="Message the work stream"
           onChange={(event) => {
@@ -308,7 +340,7 @@ export function WorkstreamComposer({
             {workstream.harnessStatus === 'running' && (
               <Button className="stop-button" onClick={() => void onStop()}><Square fill="currentColor" size={9} /> Stop</Button>
             )}
-            <button aria-label="Send message" className="composer-send" disabled={!text.trim()} onClick={() => void send()} type="button">
+            <button aria-label="Send message" className="composer-send" disabled={uploading || (!text.trim() && readyAttachmentCount === 0)} onClick={() => void send()} type="button">
               {sending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
             </button>
           </div>
@@ -317,10 +349,9 @@ export function WorkstreamComposer({
       {error && <div className="composer-error-slot"><InlineError>{error}</InlineError></div>}
       <input
         className="sr-only"
-        multiple={false}
+        multiple
         onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void onAttach(file);
+          if (event.target.files?.length) onAttach(event.target.files);
           event.target.value = '';
         }}
         ref={fileInputRef}

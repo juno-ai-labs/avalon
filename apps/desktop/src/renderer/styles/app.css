@@ -1500,6 +1500,36 @@ pre {
 .composer-wrap { margin: 0 auto; max-width: 860px; position: relative; }
 .workstream-composer { background: #262722; border: 1px solid #41423b; border-radius: 10px; box-shadow: 0 7px 28px rgba(0, 0, 0, 0.2); overflow: hidden; }
 .workstream-composer:focus-within { border-color: #5a5b54; }
+.workstream-composer.is-file-dragging,
+.transcript-scroll.is-file-dragging,
+.inspector-rail.is-file-dragging { box-shadow: inset 0 0 0 2px var(--brand); }
+.composer-attachments,
+.message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
+.composer-attachments { padding: 11px 13px 1px; }
+.message-attachments { margin: 0 0 9px; }
+.attachment-tile { background: #343530; border: 1px solid #41423b; border-radius: 7px; height: 58px; overflow: visible; position: relative; width: 58px; }
+.attachment-tile-content { align-items: center; background: transparent; border: 0; border-radius: inherit; color: #aaa9a3; display: flex; height: 100%; justify-content: center; overflow: hidden; padding: 0; width: 100%; }
+.attachment-tile-content:not(:disabled) { cursor: zoom-in; }
+.attachment-tile-content img { height: 100%; object-fit: cover; width: 100%; }
+.attachment-extension { font-size: 12px; font-weight: 600; letter-spacing: .01em; max-width: 48px; overflow: hidden; text-overflow: ellipsis; text-transform: lowercase; }
+.attachment-remove,
+.attachment-retry { align-items: center; background: #171814; border: 1px solid #4b4c45; border-radius: 999px; color: #deddd8; display: flex; height: 21px; justify-content: center; opacity: 0; padding: 0; position: absolute; transition: opacity 120ms ease; width: 21px; z-index: 3; }
+.attachment-remove { right: -7px; top: -7px; }
+.attachment-retry { bottom: 4px; left: 50%; opacity: 1; transform: translateX(-50%); }
+.attachment-tile:hover .attachment-remove,
+.attachment-tile:focus-within .attachment-remove { opacity: 1; }
+.attachment-tile.is-failed { border-color: #a95d55; }
+.attachment-progress { align-items: center; background: rgba(20, 21, 18, .8); border-radius: inherit; display: flex; inset: 0; justify-content: center; position: absolute; }
+.attachment-progress svg { height: 42px; position: absolute; transform: rotate(-90deg); width: 42px; }
+.attachment-progress circle { fill: none; stroke-width: 3; }
+.attachment-progress-track { stroke: #55564f; }
+.attachment-progress-value { stroke: var(--brand); stroke-linecap: round; transition: stroke-dashoffset 100ms linear; }
+.attachment-progress small { color: #f1f0eb; font-size: 9px; font-variant-numeric: tabular-nums; position: relative; }
+.sent-attachment { height: 86px; width: 86px; }
+.human-message .message-attachments { justify-content: flex-end; }
+.attachment-lightbox { align-items: center; background: rgba(5, 6, 4, .88); display: flex; inset: 0; justify-content: center; padding: 54px; position: fixed; z-index: 1000; }
+.attachment-lightbox > img { border-radius: 8px; box-shadow: 0 18px 80px rgba(0, 0, 0, .56); max-height: calc(100vh - 108px); max-width: calc(100vw - 108px); object-fit: contain; }
+.attachment-lightbox-close { align-items: center; background: #272823; border: 1px solid #4b4c45; border-radius: 999px; color: #f0efea; display: flex; height: 34px; justify-content: center; position: absolute; right: 24px; top: 24px; width: 34px; }
 .workstream-composer textarea { background: transparent; border: 0; display: block; line-height: 1.5; min-height: 51px; outline: 0; padding: 13px 14px 4px; resize: none; width: 100%; }
 .workstream-composer textarea::placeholder { color: #72726b; }
 .composer-toolbar { align-items: center; display: flex; justify-content: space-between; min-height: 38px; padding: 2px 7px 6px; }

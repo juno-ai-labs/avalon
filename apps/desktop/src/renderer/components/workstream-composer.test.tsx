@@ -4,6 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
+import type { PendingAttachment } from '../lib/use-file-attachments';
 import { WorkstreamComposer } from './workstream-composer';
 
 const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
@@ -38,9 +39,13 @@ function renderComposer(
   return render(
     <Tooltip.Provider>
       <WorkstreamComposer
+        attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
         members={[creator, bob, cara]}
         onAttach={async () => undefined}
+        onOpenAttachment={() => undefined}
+        onRemoveAttachment={() => undefined}
+        onRetryAttachment={() => undefined}
         onSend={onSend}
         onStop={async () => undefined}
         sending={sending}
@@ -53,6 +58,54 @@ function renderComposer(
 }
 
 describe('WorkstreamComposer mention confirmation', () => {
+  it('sends an attachment without requiring message text', async () => {
+    const onSend = vi.fn(async () => undefined);
+    const attachment: PendingAttachment = {
+      localId: '019fcc00-0000-7000-8000-000000000001',
+      file: new File(['hello'], 'notes.txt', { type: 'text/plain' }),
+      progress: 100,
+      status: 'ready',
+      resource: {
+        id: '019fcc00-0000-7000-8000-000000000001',
+        title: 'notes.txt',
+        resourceType: 'uploaded_file',
+        provider: 'avalon_upload',
+        mimeType: 'text/plain',
+        watchEnabled: false,
+        watchStatus: 'unsupported',
+        contentAvailable: true,
+        sizeBytes: 5,
+      },
+    };
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          attachments={[attachment]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[creator]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          socketState="connected"
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('', []));
+  });
+
   it('clears immediately while a message is still being sent', async () => {
     let finishSend: (() => void) | undefined;
     const onSend = vi.fn(() => new Promise<void>((resolve) => {

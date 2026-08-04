@@ -618,6 +618,7 @@ export class ResendRegionalEmailService {
         textContent,
         structuredContent,
         mentions: [],
+        attachments: [],
         sequenceNumber: sequence.sequence_number,
         createdAt,
         editedAt: null,

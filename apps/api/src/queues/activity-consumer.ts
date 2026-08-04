@@ -370,6 +370,7 @@ async function injectActivityMessage(
       eventType: activity.event_type
     },
     mentions: [],
+    attachments: [],
     sequenceNumber: sequence.sequence_number,
     createdAt,
     editedAt: null
