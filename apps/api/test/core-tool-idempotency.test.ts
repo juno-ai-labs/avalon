@@ -161,11 +161,12 @@ describe("Avalon core write-tool idempotency", () => {
     });
     const result = await tool!.execute({}, context());
     const lines = String(result.output).split("\n");
-    expect(lines).toHaveLength(4);
-    expect(lines[0]).toMatch(/^current local time: \d{1,2}:\d{2} (AM|PM)$/u);
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toMatch(/^current local time: \d{2}:\d{2} (AM|PM)$/u);
     expect(lines[1]).toBe("local timezone: America/New_York");
-    expect(lines[2]).toMatch(/^local date: [A-Z][a-z]+ \d{1,2} \d{4}$/u);
-    expect(lines[3]).toMatch(/^iso8601 timestamp: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+    expect(lines[2]).toBe("workspace timezone: Europe/London");
+    expect(lines[3]).toMatch(/^local date: [A-Z][a-z]+ \d{1,2} \d{4}$/u);
+    expect(lines[4]).toMatch(/^iso8601 timestamp: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
     expect(result.summary).toBe(result.output);
   });
 
@@ -183,12 +184,14 @@ describe("Avalon core write-tool idempotency", () => {
       executionPrincipal: workspaceInput.executionPrincipal,
     });
     expect(String(workspaceTime.output)).toContain("local timezone: Europe/London");
+    expect(String(workspaceTime.output)).toContain("workspace timezone: Europe/London");
 
     const overrideTime = await tool!.execute({ timezone: "America/Los_Angeles" }, {
       ...context(),
       executionPrincipal: workspaceInput.executionPrincipal,
     });
     expect(String(overrideTime.output)).toContain("local timezone: America/Los_Angeles");
+    expect(String(overrideTime.output)).toContain("workspace timezone: Europe/London");
     await expect(tool!.execute({ timezone: "Mars/Olympus_Mons" }, {
       ...context(),
       executionPrincipal: workspaceInput.executionPrincipal,
