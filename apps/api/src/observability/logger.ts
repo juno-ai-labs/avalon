@@ -52,9 +52,11 @@ export function logStructuredEvent(
     build_sha: env.BUILD_SHA ?? null,
     ...fields,
   });
-  const serialized = JSON.stringify(entry);
-  if (level === "error") console.error(serialized);
-  else if (level === "warn") console.warn(serialized);
-  else if (level === "debug") console.debug(serialized);
-  else console.info(serialized);
+  // Workers Logs indexes object properties as structured fields. Serializing
+  // first would collapse every diagnostic into `$metadata.message`, making the
+  // release dashboards unable to filter on fields such as `event` or `code`.
+  if (level === "error") console.error(entry);
+  else if (level === "warn") console.warn(entry);
+  else if (level === "debug") console.debug(entry);
+  else console.info(entry);
 }

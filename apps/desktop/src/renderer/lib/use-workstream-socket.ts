@@ -90,6 +90,134 @@ export function insertMessage(messages: Message[] | undefined, message: Message)
   ]);
 }
 
+type StreamingSocketEvent = Extract<
+  ServerSocketEvent,
+  { type: 'stream_started' | 'stream_delta' }
+>;
+
+export interface StreamCursor {
+  readonly turnId: string;
+  readonly epoch: number;
+  readonly streamSeq: number;
+  readonly seenTurnIds: ReadonlySet<string>;
+  readonly turnStartText: string;
+  readonly roomSequence: number;
+  readonly completed: boolean;
+}
+
+function streamingMessageId(event: StreamingSocketEvent): string {
+  return event.messageId;
+}
+
+/**
+ * Applies a model stream frame independently of room replay ordering. Bind can
+ * retry a turn or switch routes after already emitting text, so room sequence
+ * de-duplication alone is insufficient: a newer epoch must replace only that
+ * turn's prior attempt and repeated chunks must not be appended twice. Bind
+ * assigns a new turn ID after tool execution; that is a continuation of the
+ * same assistant message, not an implicit reset.
+ */
+export function applyStreamingSocketEvent(
+  messages: Message[] | undefined,
+  event: StreamingSocketEvent,
+  workstreamId: string,
+  cursors: Map<string, StreamCursor>,
+): Message[] {
+  const messageId = streamingMessageId(event);
+  const cursor = cursors.get(messageId);
+  if (cursor) {
+    if (event.sequence <= cursor.roomSequence) return messages ?? [];
+    if (cursor.completed) return messages ?? [];
+    if (event.turnId === cursor.turnId) {
+      if (event.epoch < cursor.epoch) return messages ?? [];
+      if (event.epoch === cursor.epoch) {
+        if (event.streamSeq <= cursor.streamSeq) return messages ?? [];
+      }
+    } else if (cursor.seenTurnIds.has(event.turnId)) {
+      // Once Bind advances past a tool-using turn, a delayed frame for that
+      // earlier turn cannot be allowed to append out of order.
+      return messages ?? [];
+    }
+  }
+
+  const existing = (messages ?? []).find((message) => message.id === messageId);
+  const startsNewTurn = !cursor || event.turnId !== cursor.turnId;
+  const turnStartText = startsNewTurn ? existing?.text ?? '' : cursor.turnStartText;
+  const replacesAttempt = event.reset
+    || (!startsNewTurn && event.epoch > cursor.epoch);
+  const seenTurnIds = new Set(cursor?.seenTurnIds);
+  seenTurnIds.add(event.turnId);
+  cursors.set(messageId, {
+    turnId: event.turnId,
+    epoch: event.epoch,
+    streamSeq: event.streamSeq,
+    seenTurnIds,
+    turnStartText,
+    roomSequence: event.sequence,
+    completed: false,
+  });
+
+  if (event.type === 'stream_started') {
+    if (existing) {
+      return (messages ?? []).map((message) => message.id === messageId
+        ? {
+            ...message,
+            text: replacesAttempt ? turnStartText : message.text,
+            streaming: true,
+            realtimeOrder: message.realtimeOrder
+              ? { ...message.realtimeOrder, eventSequence: event.sequence }
+              : message.realtimeOrder,
+          }
+        : message);
+    }
+    const anchorSequenceNumber = nextTranscriptSequence(messages);
+    return insertMessage(messages, {
+      id: messageId,
+      workstreamId,
+      sequenceNumber: anchorSequenceNumber,
+      authorType: 'agent',
+      messageType: 'text',
+      text: '',
+      createdAt: event.occurredAt,
+      streaming: true,
+      realtimeOrder: {
+        anchorSequenceNumber,
+        eventSequence: event.sequence,
+        placement: 'at_anchor',
+      },
+    });
+  }
+
+  if (!existing) {
+    const anchorSequenceNumber = nextTranscriptSequence(messages);
+    return insertMessage(messages, {
+      id: messageId,
+      workstreamId,
+      sequenceNumber: anchorSequenceNumber,
+      authorType: 'agent',
+      messageType: 'text',
+      text: event.delta,
+      createdAt: event.occurredAt,
+      streaming: true,
+      realtimeOrder: {
+        anchorSequenceNumber,
+        eventSequence: event.sequence,
+        placement: 'at_anchor',
+      },
+    });
+  }
+  return (messages ?? []).map((message) => message.id === messageId
+    ? {
+        ...message,
+        text: replacesAttempt ? `${turnStartText}${event.delta}` : `${message.text ?? ''}${event.delta}`,
+        streaming: true,
+        realtimeOrder: message.realtimeOrder
+          ? { ...message.realtimeOrder, eventSequence: event.sequence }
+          : message.realtimeOrder,
+      }
+    : message);
+}
+
 /**
  * A REST refresh replaces canonical transcript rows, but realtime tool updates
  * do not share the D1 message sequence domain. Retain those blocks until a
@@ -140,6 +268,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
     let ticketRequestInFlight = false;
     let canonicalResyncInFlight = false;
     let canonicalResyncTarget: number | null = null;
+    const streamCursors = new Map<string, StreamCursor>();
     const isOffline = (): boolean => navigator.onLine === false;
 
     const syncCanonicalTranscriptAndList = (): void => {
@@ -167,6 +296,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
       if (event.type === 'snapshot') {
         if (event.sequence < lastSequence.current) return;
         lastSequence.current = event.sequence;
+        streamCursors.clear();
       } else {
         if (event.sequence <= lastSequence.current) return;
         lastSequence.current = event.sequence;
@@ -180,54 +310,22 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
         );
-      } else if (event.type === 'message_created' || event.type === 'stream_completed') {
+      } else if (event.type === 'message_created') {
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, mapMessage(event.message)));
-      } else if (event.type === 'stream_started') {
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-          const anchorSequenceNumber = nextTranscriptSequence(current);
-          return insertMessage(current, {
-            id: event.messageId,
-            workstreamId,
-            sequenceNumber: anchorSequenceNumber,
-            authorType: 'agent',
-            messageType: 'text',
-            text: '',
-            createdAt: event.occurredAt,
-            streaming: true,
-            realtimeOrder: {
-              anchorSequenceNumber,
-              eventSequence: event.sequence,
-              placement: 'at_anchor',
-            },
+      } else if (event.type === 'stream_completed') {
+        const cursor = streamCursors.get(event.message.id);
+        if (cursor) {
+          streamCursors.set(event.message.id, {
+            ...cursor,
+            roomSequence: event.sequence,
+            completed: true,
           });
-        });
-      } else if (event.type === 'stream_delta') {
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-          const existing = (current ?? []).find((message) => message.id === event.messageId);
-          if (!existing) {
-            const anchorSequenceNumber = nextTranscriptSequence(current);
-            return insertMessage(current, {
-              id: event.messageId,
-              workstreamId,
-              sequenceNumber: anchorSequenceNumber,
-              authorType: 'agent',
-              messageType: 'text',
-              text: event.delta,
-              createdAt: event.occurredAt,
-              streaming: true,
-              realtimeOrder: {
-                anchorSequenceNumber,
-                eventSequence: event.sequence,
-                placement: 'at_anchor',
-              },
-            });
-          }
-          return (current ?? []).map((message) =>
-            message.id === event.messageId
-              ? { ...message, text: `${message.text ?? ''}${event.delta}`, streaming: true }
-              : message,
-          );
-        });
+        }
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+          insertMessage(current, mapMessage(event.message)));
+      } else if (event.type === 'stream_started' || event.type === 'stream_delta') {
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
+          applyStreamingSocketEvent(current, event, workstreamId, streamCursors));
       } else if (event.type === 'harness_status_changed') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, harnessStatus: normalizeHarnessStatus(event.status) } : current,
@@ -394,6 +492,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
             mergeCanonicalTranscript(current, canonicalMessages));
           queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
+          streamCursors.clear();
           lastSequence.current = Math.max(lastSequence.current, targetSequence);
           if (canonicalResyncTarget === targetSequence) canonicalResyncTarget = null;
         } catch {

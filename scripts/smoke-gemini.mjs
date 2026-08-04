@@ -11,14 +11,18 @@ async function request(path, options = {}) {
   return { response, body };
 }
 
-const session = await request("/auth/dev/session", {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ workspaceName: "Avalon model smoke" }),
-});
-assert(session.response.status === 201 && session.body?.accessToken, "Development sign-in failed");
+let accessToken = process.env.AVALON_SMOKE_ACCESS_TOKEN?.trim();
+if (!accessToken) {
+  const session = await request("/auth/dev/session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceName: "Avalon model smoke" }),
+  });
+  assert(session.response.status === 201 && session.body?.accessToken, "Development sign-in failed");
+  accessToken = session.body.accessToken;
+}
 const headers = {
-  authorization: `Bearer ${session.body.accessToken}`,
+  authorization: `Bearer ${accessToken}`,
   "content-type": "application/json",
 };
 

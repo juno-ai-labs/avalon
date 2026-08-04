@@ -25,8 +25,9 @@ flowchart LR
   C --> D
   C --> S["WorkspaceScheduler DO"]
   S --> W["Generic Workstream Workflow"]
-  W --> O["OpenRouter"]
-  W --> T["Authorized connector tools"]
+  W --> A["Avalon Bind 10 adapter"]
+  A --> O["OpenRouter"]
+  A --> T["Authorized connection plugins"]
   W --> R
   T --> G["Google APIs"]
   T --> M["Web monitor / signed webhook"]
@@ -59,7 +60,9 @@ REST/D1 remains canonical. Within each regional workspace, every work stream map
 
 The room accepts sockets with Cloudflare's hibernation API and stores connection identity in serialized attachments. After opening, the client sends `subscribe` with its last applied `afterSequence`. Sequence zero receives a snapshot; a reconnect within the bounded in-memory event window receives only newer events. If hibernation discarded that window, the cursor is ahead, or the gap cannot be proved complete, the server sends `resync_required` and the client invalidates its canonical REST queries. The replay cache is intentionally memory-only and bounded to 256 events or 512 KB to avoid per-token Durable Object storage writes.
 
-Stream deltas are batched before broadcast. Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong` without waking a hibernated object. The desktop sends jittered keepalives, closes an unresponsive socket, and reconnects with equal-jitter exponential backoff capped at 30 seconds; it pauses retry while offline and resumes with the last sequence cursor.
+Room `sequence` orders replayable socket events. Model streaming has a second cursor domain: stable `turnId`, retry `epoch`, and per-epoch `streamSeq`; `reset` replaces only the active turn's partial text from an abandoned route, preserving completed text from earlier tool turns. Deltas are batched without crossing turn/epoch boundaries, and reset frames are emitted alone. The desktop retains stream cursors across reconnects, drops duplicate or stale frames, and still treats the final D1 message and REST snapshot as canonical.
+
+Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong` without waking a hibernated object. The desktop sends jittered keepalives, closes an unresponsive socket, and reconnects with equal-jitter exponential backoff capped at 30 seconds; it pauses retry while offline and resumes with the last room-sequence cursor.
 
 Viewing is presence only. Participant persistence occurs only through explicit addition or an authored work-stream action.
 
@@ -67,7 +70,13 @@ Viewing is presence only. Participant persistence occurs only through explicit a
 
 A lightweight structured classifier decides whether a human message is `agent_action`, `human_only`, `both`, or `uncertain`. Eligible messages start one generic Cloudflare Workflow instance parameterized by opaque IDs.
 
-The bounded loop assembles authorized context, streams an OpenRouter response, validates tool calls with Zod, runs independent reads concurrently, serializes writes, persists tool state before side effects, reuses completed results on retries, and stops for structured elicitation or configured limits. An ambiguous write is never blindly retried; the work stream becomes `needs_input`.
+The production entry point adapts `@juno-ai/bind` 10.0.0 to Avalon's OpenRouter transport and durable ports. Bind owns transcript healing, plugin activation, turn/tool iteration, completion-defect recovery, epoch-aware streaming, and classified route traversal. Avalon owns authorization, regional persistence, admission, accounting, and terminal state.
+
+Each Workflow attempt holds a renewable D1 lease; run-scope, plugin-activation, tool receipt-plan/completion, checkpoint, and terminal commits are fenced by attempt and lease ownership. The run freezes its principal, eligible connections/capabilities, trigger policy, routing/prompt versions, tool-surface hash, and limits. The host revalidates principal and work-stream state, automation subscription and pinned template version, trigger evidence, connection ownership/grants, and health at admission, before credential decryption and tools, and between model turns. Later checks may revoke authority but cannot add a new connection or grant. Expired attempts are compare-and-swap reaped, and completion commits only after the final agent message is durable.
+
+Each eligible installed connection becomes a credential-scoped Bind plugin built from static adapter metadata and narrowed to frozen grants. Bound or attached connections can preload; other eligible plugins are progressively loaded from a bounded catalog, with activation persisted before exposure. Active plugins are reauthorized before inference and again at tool execution. The loop overlaps safe reads, serializes writes, records execution plans and results, replays completed receipts, and stops rather than repeating an ambiguous external write.
+
+The run also enforces context, token, cost, iteration, tool, plugin, schema/result, wall-clock, and streaming-watchdog limits. Classified provider attempts append to an immutable inference ledger. Cancellation is a durable request observed by the lease owner, which alone commits the final `stopped` transition. Bind child-run helpers and a separate semantic-memory system are not integrated in this release.
 
 ## Automations and scheduling
 
@@ -77,7 +86,7 @@ One WorkspaceScheduler Durable Object per workspace maintains one alarm for the 
 
 ## Connectors and ingestion
 
-Connector adapters expose typed authorization, polling, webhook normalization, hydration, tools, watches, and health checks. V1 ships complete paths for:
+Connector adapters expose typed authorization, polling, webhook normalization, hydration, tools, watches, health checks, and a static agent-plugin descriptor. Runtime plugins are instantiated per eligible connection; provider content and connection labels cannot contribute trusted plugin instructions. V1 ships complete paths for:
 
 - One Google connector family presented as Mail + Calendar and Drive + Docs + Sheets presets, with incremental OAuth scopes, refresh handling, native Docs/Sheets APIs, and bounded read/write tools.
 - One public GitHub App with installation tokens, expiring user authorization, a signature-verifying smart ingress, regional fanout, resource discovery, and normalized repository activity.
@@ -98,11 +107,11 @@ apps/
 packages/
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
-  agent-harness/           Classifiers, context, OpenRouter loop, tools
-  connectors/              Core adapter, Google, webhook, web monitor
+  agent-harness/           Bind 10/OpenRouter adapter, prompts, classifiers, tools
+  connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
 ```
 
 ## Security boundaries
 
-The Electron renderer never receives provider credentials, native PKCE verifiers, OpenRouter keys, Cloudflare administration keys, raw IPC, Node integration, or arbitrary navigation. Main validates every exposed IPC call against a live Avalon window and its pinned renderer origin. API logs redact tokens, codes, bodies, file contents, model context, and unnecessary personal information. External actions and authorization decisions create audit records with structured correlation IDs.
+The Electron renderer never receives provider credentials, native PKCE verifiers, OpenRouter keys, Cloudflare administration keys, raw IPC, Node integration, or arbitrary navigation. Main validates every exposed IPC call against a live Avalon window and its pinned renderer origin. API logs redact tokens, codes, bodies, file contents, model context, and unnecessary personal information. External actions and authorization decisions create audit records with structured correlation IDs. Immutable run scopes and live connection reauthorization ensure progressive plugin activation can narrow, but never widen, a run's original authority.

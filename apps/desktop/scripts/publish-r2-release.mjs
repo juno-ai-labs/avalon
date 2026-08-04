@@ -37,6 +37,10 @@ function parseArguments(argv) {
   const result = { dryRun: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
+    // pnpm forwards its conventional argument separator to nested workspace
+    // scripts. Treat it as syntax rather than a publisher argument so the
+    // documented root command can safely delegate to this script.
+    if (argument === '--') continue;
     if (argument === '--dry-run') {
       result.dryRun = true;
       continue;

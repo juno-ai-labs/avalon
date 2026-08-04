@@ -2,11 +2,13 @@ import {
   classifyAddressing,
   compileAutomation,
   canonicalToolInputHash,
+  memberSafeHarnessFailureMessage,
   renderTriggerActivityMessage,
   renderUntrustedInboundEmailMessage,
   renderWorkstreamSystemPrompt,
   runHarness,
   type HarnessEvent,
+  type HarnessPlugin,
   type HarnessTool,
   type ModelMessage,
   type StructuredModelDiagnostic,
@@ -15,6 +17,7 @@ import type {
   AddressingClassification,
   AutomationDraft,
   ConnectorPollWorkflowInput,
+  ExecutionPrincipal,
   Message,
   NormalizedActivity,
   ServerSocketEvent,
@@ -25,11 +28,13 @@ import { createDatabase, newId, nowIso } from "@avalon/db";
 import {
   ConnectorError,
   type ConnectorConnectionContext,
+  type ConnectorToolContext,
+  type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
-import { decryptString, encryptString } from "../lib/crypto";
+import { decryptString, encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import {
@@ -38,8 +43,134 @@ import {
   FirecrawlError,
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
+import {
+  assertHarnessAttemptOwned,
+  CoalescedRunLiveness,
+  completeToolInvocation,
+  finalizeToolInvocationFailure,
+  persistImmutableRunScope,
+  persistHarnessFinalMessage,
+  persistRunPluginActivation,
+  persistToolExecutionPlan,
+  recordInferenceAttempt,
+  type AttemptLease,
+} from "../runtime/harness-run-runtime";
 
 const TOOL_REPLAY_MAX_BYTES = 256_000;
+const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
+const WORKSTREAM_PROMPT_VERSION = "workstream-v2";
+
+type WorkstreamHarnessResult = {
+  status: "completed" | "needs_input" | "failed" | "stopped";
+  messageId?: string;
+  error?: { code: string; message: string };
+};
+
+async function persistInitialPluginActivations(
+  requestedPluginIds: readonly string[],
+  reauthorize: (pluginId: string) => boolean | Promise<boolean>,
+  persist: (pluginId: string) => void | Promise<void>,
+): Promise<string[]> {
+  const activationHints: string[] = [];
+  for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
+    if (!await reauthorize(pluginId)) continue;
+    await persist(pluginId);
+    activationHints.push(pluginId);
+  }
+  return activationHints;
+}
+
+async function publishRuntimeEventBestEffort(
+  event: Record<string, unknown>,
+  publishers: readonly {
+    channel: string;
+    publish: (event: Record<string, unknown>) => void | Promise<void>;
+  }[],
+  onDropped?: (channel: string, error: unknown) => void,
+): Promise<void> {
+  for (const publisher of publishers) {
+    try {
+      await publisher.publish(event);
+    } catch (error) {
+      onDropped?.(publisher.channel, error);
+    }
+  }
+}
+
+function workstreamHarnessTerminalResult(input: {
+  outcome: Pick<Awaited<ReturnType<typeof runHarness>>, "status" | "failure">;
+  streamedText: string;
+  messageId: string;
+  ambiguousToolOutcome: boolean;
+  stoppedByUser: boolean;
+}): WorkstreamHarnessResult {
+  const { outcome, streamedText, messageId, ambiguousToolOutcome, stoppedByUser } = input;
+  const durableMessage = streamedText ? { messageId } : {};
+  if (ambiguousToolOutcome) return { status: "needs_input", ...durableMessage };
+  if (stoppedByUser) return { status: "stopped", ...durableMessage };
+  if (outcome.status === "completed" && streamedText) return { status: "completed", messageId };
+  if (outcome.status === "completed") {
+    return {
+      status: "failed",
+      error: { code: "empty_completion", message: "The model returned no durable final response" },
+    };
+  }
+  if (outcome.status === "needs_input") return { status: "needs_input", ...durableMessage };
+  if (outcome.status === "stopped") return { status: "stopped", ...durableMessage };
+  return {
+    status: "failed",
+    ...durableMessage,
+    error: {
+      code: outcome.failure?.code ?? "harness_execution_failed",
+      message: outcome.failure
+        ? memberSafeHarnessFailureMessage(outcome.failure.code)
+        : "The Avalon harness could not complete this run",
+    },
+  };
+}
+
+function classifyHarnessToolFailure(
+  event: Extract<HarnessEvent, { type: "tool_failed" }>,
+): {
+  ambiguous: boolean;
+  errorCode: "tool_validation_failed" | "ambiguous_external_write" | "tool_timeout" | "tool_aborted" | "tool_failed";
+  checkpointPhase: "ambiguous_external_write" | "timed_out" | "aborted" | "validation_failed" | "execution_failed";
+} {
+  const ambiguous = event.outcome === "ambiguous_external_write";
+  return {
+    ambiguous,
+    errorCode: event.phase === "validation"
+      ? "tool_validation_failed"
+      : ambiguous
+        ? "ambiguous_external_write"
+        : event.outcome === "timed_out"
+          ? "tool_timeout"
+          : event.outcome === "aborted"
+            ? "tool_aborted"
+            : "tool_failed",
+    checkpointPhase: ambiguous
+      ? "ambiguous_external_write"
+      : event.outcome === "timed_out"
+        ? "timed_out"
+        : event.outcome === "aborted"
+          ? "aborted"
+          : `${event.phase}_failed`,
+  };
+}
+
+function createConnectorToolContext(
+  connection: ConnectorConnectionContext,
+  principal: ExecutionPrincipal,
+  signal: AbortSignal,
+  providerIdempotencyKey?: string,
+): ConnectorToolContext {
+  return {
+    connection,
+    principal,
+    ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
+    signal,
+  };
+}
 
 function modelMessageContent(message: Message): string {
   const people = message.mentions.flatMap((mention) =>
@@ -53,6 +184,191 @@ function modelMessageContent(message: Message): string {
   );
   if (people.length === 0) return message.textContent;
   return `${message.textContent}\n\n<avalon_mentions>${JSON.stringify(people)}</avalon_mentions>`;
+}
+
+type ModelTranscriptProjectionIssue = {
+  kind:
+    | "tool_message_without_invocation"
+    | "dangling_tool_invocation"
+    | "unlinked_tool_invocation"
+    | "invalid_tool_arguments"
+    | "empty_ui_message_omitted";
+  healed: true;
+};
+
+type ModelProtocolToolRow = {
+  message_id: string;
+  harness_run_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  input_json: string;
+  output_ref: string | null;
+  output_summary: string | null;
+  status: "pending" | "started" | "completed" | "failed" | "ambiguous";
+  error_json: string | null;
+};
+
+type ProjectedProtocolTool = {
+  groupKey: string;
+  order: number;
+  call: NonNullable<ModelMessage["tool_calls"]>[number];
+  result: ModelMessage;
+};
+
+/**
+ * Project the durable product transcript into provider protocol messages.
+ *
+ * `messages` is deliberately a UI/history table: tool rows contain presentation
+ * state and therefore must never be replayed as empty assistant messages. The
+ * authoritative protocol data lives in the fenced tool receipt plus its R2
+ * result. This projector reconstructs only complete assistant-call/tool-result
+ * pairs. Unfinished or malformed receipts are omitted as one healed unit, so a
+ * later run can never inherit a dangling call or an orphaned result.
+ */
+async function projectModelProtocolTranscript(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">,
+  storedMessages: Message[],
+): Promise<{ messages: ModelMessage[]; issues: ModelTranscriptProjectionIssue[] }> {
+  const toolMessageIds = storedMessages
+    .filter((message) => message.messageType === "tool")
+    .map((message) => message.id);
+  const toolsByMessageId = new Map<string, ProjectedProtocolTool>();
+  const intentionallyOmittedToolMessageIds = new Set<string>();
+  const issues: ModelTranscriptProjectionIssue[] = [];
+
+  if (toolMessageIds.length > 0) {
+    const placeholders = toolMessageIds.map(() => "?").join(", ");
+    const rows = await env.DB.prepare(
+      `SELECT m.id AS message_id, ti.harness_run_id, ti.tool_call_id, ti.tool_name,
+              ti.input_json, ti.output_ref, ti.output_summary, ti.status, ti.error_json
+         FROM messages m
+         JOIN tool_invocations ti ON ti.id = m.id
+        WHERE m.workspace_id = ? AND m.workstream_id = ?
+          AND m.message_type = 'tool'
+          AND m.id IN (${placeholders})`,
+    ).bind(input.workspaceId, input.workstreamId, ...toolMessageIds)
+      .all<ModelProtocolToolRow>();
+
+    for (const row of rows.results ?? []) {
+      if (row.status === "pending" || row.status === "started") {
+        intentionallyOmittedToolMessageIds.add(row.message_id);
+        issues.push({ kind: "dangling_tool_invocation", healed: true });
+        continue;
+      }
+
+      let argumentsJson: string;
+      try {
+        argumentsJson = JSON.stringify(JSON.parse(row.input_json));
+      } catch {
+        intentionallyOmittedToolMessageIds.add(row.message_id);
+        issues.push({ kind: "invalid_tool_arguments", healed: true });
+        continue;
+      }
+
+      const stablePosition = /:turn:(\d+):tool:(\d+)$/u.exec(row.tool_call_id);
+      if (!stablePosition) {
+        intentionallyOmittedToolMessageIds.add(row.message_id);
+        issues.push({ kind: "unlinked_tool_invocation", healed: true });
+        continue;
+      }
+      const groupKey = `${row.harness_run_id}:turn:${stablePosition[1]}`;
+      const order = Number(stablePosition[2]);
+      let resultContent: unknown;
+      if (row.status === "completed") {
+        const exactOutput = row.output_ref ? await loadToolReplayOutput(env, row.output_ref) : null;
+        resultContent = {
+          success: true,
+          data: exactOutput ?? {
+            summary: row.output_summary ?? "The prior tool call completed, but its detailed result is no longer available.",
+            resultAvailability: "summary_only",
+          },
+        };
+      } else {
+        const durableError = parseJson<{ code?: unknown }>(row.error_json, {});
+        resultContent = {
+          success: false,
+          kind: row.status === "ambiguous" ? "ambiguous_external_write" : "external",
+          error: typeof durableError.code === "string"
+            ? durableError.code.slice(0, 120)
+            : row.status === "ambiguous"
+              ? "ambiguous_external_write"
+              : "tool_failed",
+        };
+      }
+
+      toolsByMessageId.set(row.message_id, {
+        groupKey,
+        order,
+        call: {
+          id: row.tool_call_id,
+          type: "function",
+          function: { name: row.tool_name, arguments: argumentsJson },
+        },
+        result: {
+          role: "tool",
+          tool_call_id: row.tool_call_id,
+          content: JSON.stringify(resultContent),
+        },
+      });
+    }
+  }
+
+  const projected: ModelMessage[] = [];
+  let pendingTools: ProjectedProtocolTool[] = [];
+  let pendingGroupKey: string | null = null;
+  const flushTools = () => {
+    if (pendingTools.length === 0) return;
+    pendingTools.sort((left, right) => left.order - right.order);
+    projected.push({
+      role: "assistant",
+      content: null,
+      tool_calls: pendingTools.map((tool) => tool.call),
+    });
+    projected.push(...pendingTools.map((tool) => tool.result));
+    pendingTools = [];
+    pendingGroupKey = null;
+  };
+
+  for (const message of storedMessages) {
+    if (message.messageType === "tool") {
+      const tool = toolsByMessageId.get(message.id);
+      if (!tool) {
+        if (!intentionallyOmittedToolMessageIds.has(message.id)) {
+          issues.push({ kind: "tool_message_without_invocation", healed: true });
+        }
+        continue;
+      }
+      if (pendingGroupKey !== null && pendingGroupKey !== tool.groupKey) flushTools();
+      pendingGroupKey = tool.groupKey;
+      pendingTools.push(tool);
+      continue;
+    }
+    flushTools();
+
+    // Provider-controlled mail remains visible in the human transcript, but is
+    // not implicit model history. Only the selected trigger email is admitted
+    // as explicitly labelled, untrusted user data.
+    if (message.structuredContent?.kind === "inbound_email") {
+      if (message.id === input.triggerMessageId) {
+        projected.push(renderUntrustedInboundEmailMessage(modelMessageContent(message)));
+      }
+      continue;
+    }
+
+    // Artifact, elicitation, suggestion, and system rows are UI state. Their
+    // relevant human answer or durable final text is represented separately.
+    if (message.messageType !== "text") continue;
+    const content = modelMessageContent(message);
+    if (content.trim().length === 0) {
+      issues.push({ kind: "empty_ui_message_omitted", healed: true });
+      continue;
+    }
+    if (message.author.type === "human") projected.push({ role: "user", content });
+    else if (message.author.type === "agent") projected.push({ role: "assistant", content });
+  }
+  flushTools();
+  return { messages: projected, issues };
 }
 
 export async function classifyWorkstreamMessage(
@@ -149,6 +465,53 @@ interface StreamDeltaBatcher {
   flush(): Promise<void>;
 }
 
+interface SequencedStreamDeltaBatcher {
+  push(event: Extract<HarnessEvent, { type: "stream_delta" }>): Promise<void>;
+  flush(): Promise<void>;
+}
+
+function createSequencedStreamDeltaBatcher(
+  publish: (event: Extract<HarnessEvent, { type: "stream_delta" }>) => Promise<void>,
+  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
+): SequencedStreamDeltaBatcher {
+  const maxCharacters = options.maxCharacters ?? 2_048;
+  const maxDelayMs = options.maxDelayMs ?? 75;
+  const now = options.now ?? Date.now;
+  let pending: Extract<HarnessEvent, { type: "stream_delta" }> | null = null;
+  let lastFlushAt = now();
+
+  const flush = async () => {
+    if (!pending) return;
+    const event = pending;
+    pending = null;
+    lastFlushAt = now();
+    await publish(event);
+  };
+
+  return {
+    async push(event) {
+      // A reset is an epoch boundary and must reach the client on its own. It
+      // may never be coalesced behind text from the abandoned route.
+      if (event.reset) {
+        await flush();
+        await publish(event);
+        lastFlushAt = now();
+        return;
+      }
+      if (pending && (pending.turnId !== event.turnId || pending.epoch !== event.epoch)) {
+        await flush();
+      }
+      pending = pending
+        ? { ...event, delta: pending.delta + event.delta }
+        : event;
+      if (pending.delta.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
+        await flush();
+      }
+    },
+    flush,
+  };
+}
+
 function createStreamDeltaBatcher(
   publish: (delta: string) => Promise<void>,
   options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
@@ -202,7 +565,8 @@ export async function runWorkstreamHarness(
   env: Env,
   input: WorkstreamWorkflowInput,
   onEvent?: (event: Record<string, unknown>) => void | Promise<void>,
-): Promise<{ status: "completed" | "needs_input" | "failed" | "stopped"; messageId?: string; error?: { code: string; message: string } }> {
+  runtime?: { lease: AttemptLease },
+): Promise<WorkstreamHarnessResult> {
   const database = createDatabase(env.DB);
   const workstream = await database.workstreams.get(input.workspaceId, input.workstreamId);
   if (!workstream) return { status: "failed", error: { code: "workstream_not_found", message: "Work stream not found" } };
@@ -213,52 +577,132 @@ export async function runWorkstreamHarness(
   if (initialRun.status === "stopped") return { status: "stopped" };
   const messageId = input.harnessRunId;
   const existingMessage = await env.DB.prepare(
-    `SELECT id FROM messages WHERE workstream_id = ? AND client_message_id = ?`,
-  ).bind(input.workstreamId, `harness:${input.harnessRunId}`).first<{ id: string }>();
+    `SELECT message.id
+       FROM messages message
+       JOIN harness_run_lifecycle_events lifecycle
+         ON lifecycle.harness_run_id = ?3
+        AND lifecycle.event_key = 'final_message'
+        AND lifecycle.event_type = 'final_message_persisted'
+      WHERE message.workstream_id = ?1 AND message.client_message_id = ?2
+        AND message.harness_run_id = ?3`,
+  ).bind(
+    input.workstreamId,
+    `harness:${input.harnessRunId}`,
+    input.harnessRunId,
+  ).first<{ id: string }>();
   if (existingMessage) {
     const terminalStatus = initialRun.status === "needs_input" || initialRun.status === "failed"
       ? initialRun.status
       : "completed";
     return { status: terminalStatus, messageId: existingMessage.id };
   }
+  const runAuthoritySnapshot = await assertRunAuthorityStillValid(env.DB, input);
+  if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
+    code: "run_ownership_lost",
+  });
+  const attemptLease = runtime.lease;
+  const liveness = new CoalescedRunLiveness(env.DB, input.harnessRunId, attemptLease, {
+    leaseSeconds: 300,
+    minimumIntervalMs: 5_000,
+  });
+  await liveness.pulse("run_start", true);
+  const livenessMonitor = liveness.startMonitor(5_000);
   const storedMessages = await database.workstreams.listMessages(input.workspaceId, input.workstreamId, 80);
-  const rawModelMessages: ModelMessage[] = storedMessages
-    // Provider-controlled mail remains visible in the human transcript, but is
-    // not implicit model history. The one email explicitly selected as an
-    // automation trigger is admitted as clearly labelled untrusted user data;
-    // every other inbound email must be discovered through its attached
-    // provenance-preserving resource.
-    .filter((message) => message.structuredContent?.kind !== "inbound_email"
-      || message.id === input.triggerMessageId)
-    .map((message): ModelMessage => {
-      const isSelectedInboundEmail = message.id === input.triggerMessageId
-        && message.structuredContent?.kind === "inbound_email";
-      return isSelectedInboundEmail
-        ? renderUntrustedInboundEmailMessage(modelMessageContent(message))
-        : {
-            role: message.author.type === "human" ? "user" : "assistant",
-            content: modelMessageContent(message),
-          };
+  const transcriptProjection = await projectModelProtocolTranscript(env, input, storedMessages);
+  const rawModelMessages = transcriptProjection.messages;
+  if (transcriptProjection.issues.length > 0) {
+    logStructuredEvent(env, "warn", "harness_model_transcript_projected", {
+      request_id: input.harnessRunId,
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      issues: transcriptProjection.issues,
     });
+  }
   const promptContext = await loadRunPromptContext(env, input, {
     title: workstream.title,
     objective: workstream.objective,
     plannedFor: workstream.plannedFor,
   });
-  const boundedContext = boundModelContext(
-    promptContext.systemPrompt,
-    [...rawModelMessages, ...promptContext.additionalMessages],
+  const maxContextBytes = Math.min(
     numericEnv(env, "HARNESS_MAX_CONTEXT_BYTES", 200_000),
+    2_000_000,
   );
-  const modelMessages = boundedContext.messages;
+  const maxRunTokens = numericEnv(env, "HARNESS_MAX_RUN_TOKENS", 48_000);
+  // Bind performs the final context selection after plugin activation and
+  // authorization are settled. Pruning here would ignore active plugin
+  // instructions, the catalog, and tool schemas, then fail later even when an
+  // older complete transcript unit could have been dropped safely.
+  const modelMessages = [...rawModelMessages, ...promptContext.additionalMessages];
   let streamedText = "";
   let modelName: string | null = null;
   let streamStarted = false;
   let sequenceNumber: number | null = null;
-  const harnessTools = await loadHarnessTools(env, input);
+  const harnessTools = await loadHarnessTools(env, input, runAuthoritySnapshot);
   const stopController = new AbortController();
+  const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
+  const runLimits = {
+    maxIterations: numericEnv(env, "HARNESS_MAX_MODEL_ITERATIONS", 8),
+    maxToolCalls: numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24),
+    maxWallClockMs: numericEnv(env, "HARNESS_MAX_WALL_CLOCK_MS", 240_000),
+    maxContextBytes,
+    maxRunTokens,
+    maxCostCents: numericEnv(env, "HARNESS_MAX_COST_CENTS", 500),
+    maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
+    maxActivePlugins: numericEnv(env, "HARNESS_MAX_ACTIVE_PLUGINS", 12),
+    maxToolSchemaBytes: numericEnv(env, "HARNESS_MAX_TOOL_SCHEMA_BYTES", 128 * 1_024),
+    maxToolResultBytes: numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
+  };
+  await persistImmutableRunScope(env.DB, input, liveness.lease, {
+    executionPrincipal: input.executionPrincipal,
+    eligibleConnectionIds: [...harnessTools.frozenConnections.values()].map((plugin) => plugin.connectionId),
+    eligibleCapabilities: harnessTools.plugins.flatMap((plugin) =>
+      plugin.tools.map((tool) => tool.definition.capability)),
+    eligibleConnectionCapabilities: Object.fromEntries(
+      harnessTools.plugins.map((plugin) => [
+        harnessTools.frozenConnections.get(plugin.canonicalId)?.connectionId ?? plugin.canonicalId,
+        plugin.tools.map((tool) => tool.definition.capability),
+      ]),
+    ),
+    triggerPolicy: {
+      reason: input.reason,
+      inboundEmail: input.reason === "inbound_email",
+      automationSubscriptionId: input.automationSubscriptionId ?? null,
+      triggerMessageId: input.triggerMessageId ?? null,
+      activityId: input.activityId ?? null,
+      automationRunId: runAuthoritySnapshot.automationRunId,
+      automationTemplateVersionId: runAuthoritySnapshot.automationTemplateVersionId,
+      triggerType: runAuthoritySnapshot.triggerType,
+    },
+    routingPolicyVersion: BIND_ROUTING_POLICY_VERSION,
+    promptVersion: WORKSTREAM_PROMPT_VERSION,
+    toolSurfaceHash: await stableRunToolSurfaceHash(harnessTools),
+    limits: runLimits,
+  });
+  const priorHints = await loadAuthorizedActivationHints(
+    env,
+    input.workstreamId,
+    harnessTools.frozenConnections,
+  );
+  const requestedActivations = [
+    ...priorHints,
+    ...harnessTools.plugins.filter((plugin) => plugin.preload).map((plugin) => plugin.canonicalId),
+  ];
+  const activationHints = await persistInitialPluginActivations(
+    requestedActivations,
+    async (pluginId) => {
+      const frozen = harnessTools.frozenConnections.get(pluginId);
+      return frozen ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal) : false;
+    },
+    (pluginId) => persistWorkstreamPluginActivation(
+      env,
+      input,
+      liveness.lease,
+      pluginId,
+      harnessTools,
+    ),
+  );
 
   const ensureSequence = async (): Promise<number> => {
     if (sequenceNumber != null) return sequenceNumber;
@@ -274,13 +718,32 @@ export async function runWorkstreamHarness(
   };
 
   const publishEvent = async (event: Record<string, unknown>) => {
-    await onEvent?.(event);
-    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, event);
+    const publishers = [
+      ...(onEvent ? [{ channel: "runtime_observer", publish: onEvent }] : []),
+      {
+        channel: "workstream_realtime",
+        publish: (publishedEvent: Record<string, unknown>) => publishWorkstreamEvent(
+          env,
+          input.workspaceId,
+          input.workstreamId,
+          publishedEvent,
+        ),
+      },
+    ];
+    await publishRuntimeEventBestEffort(event, publishers, (channel) => {
+      logStructuredEvent(env, "warn", "harness_realtime_event_dropped", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        channel,
+        event_type: typeof event.type === "string" ? event.type : "unknown",
+      });
+    });
   };
-  const streamDeltaBatcher = createStreamDeltaBatcher((delta) => publishEvent({
-    type: "stream_delta",
+  const streamDeltaBatcher = createSequencedStreamDeltaBatcher((event) => publishEvent({
+    ...event,
     messageId,
-    delta,
+    harnessRunId: input.harnessRunId,
   }));
   const emit = async (event: Record<string, unknown>) => {
     // Preserve event order across the batched token stream and tool/status
@@ -291,28 +754,158 @@ export async function runWorkstreamHarness(
 
   if (await isHarnessStopped(env, input.harnessRunId)) stopController.abort("stopped_by_user");
 
-  const outcome = await runHarness({
+  let outcome: Awaited<ReturnType<typeof runHarness>>;
+  try {
+    outcome = await runHarness({
     config: {
       apiKey: env.OPENROUTER_API_KEY,
       primaryModel: env.OPENROUTER_PRIMARY_MODEL,
       fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
       appUrl: env.PUBLIC_API_BASE_URL,
       appName: "Avalon",
-      maxIterations: numericEnv(env, "HARNESS_MAX_MODEL_ITERATIONS", 8),
-      maxToolCalls: numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24),
-      maxWallClockMs: numericEnv(env, "HARNESS_MAX_WALL_CLOCK_MS", 240_000),
+      maxIterations: runLimits.maxIterations,
+      maxToolCalls: runLimits.maxToolCalls,
+      maxWallClockMs: runLimits.maxWallClockMs,
+      maxContextBytes: runLimits.maxContextBytes,
       toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
       maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
+      maxRunTokens: runLimits.maxRunTokens,
+      maxCostCents: runLimits.maxCostCents,
+      maxCatalogTokens: runLimits.maxCatalogTokens,
+      maxActivePlugins: runLimits.maxActivePlugins,
+      maxToolSchemaBytes: runLimits.maxToolSchemaBytes,
+      maxToolResultBytes: runLimits.maxToolResultBytes,
+      requestEstablishmentTimeoutMs: numericEnv(env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
+      ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
+      streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
+      sameModelRetries: 0,
     },
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
     harnessRunId: input.harnessRunId,
     executionPrincipal: input.executionPrincipal,
-    systemPrompt: boundedContext.systemPrompt,
+    systemPrompt: promptContext.systemPrompt,
     messages: modelMessages,
-    tools: harnessTools.tools,
+    tools: harnessTools.coreTools,
+    plugins: harnessTools.plugins,
+    activationHints,
     includeWebSearch: false,
-    signal: stopController.signal,
+    signal: harnessSignal,
+    reauthorizePlugin: async (pluginId) => {
+      const frozen = harnessTools.frozenConnections.get(pluginId);
+      if (!frozen) return false;
+      const healthSignal = combineAbortSignals(
+        harnessSignal,
+        AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)),
+      );
+      return reauthorizeFrozenPlugin(env, input, frozen, healthSignal);
+    },
+    persistActivation: (pluginId) =>
+      persistWorkstreamPluginActivation(env, input, liveness.lease, pluginId, harnessTools),
+    onActivationDropped: (drop) => {
+      logStructuredEvent(env, "warn", "harness_plugin_activation_dropped", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        drop,
+      });
+    },
+    onBestEffortEventDropped: (event) => {
+      logStructuredEvent(env, "warn", "harness_stream_event_dropped", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        event_type: event.type,
+        turn_id: event.turnId,
+        epoch: event.epoch,
+        stream_seq: event.streamSeq,
+      });
+    },
+    beforeToolCall: async ({ pluginId, toolName }) => {
+      await liveness.pulse("before_tool", true);
+      await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+      const frozen = harnessTools.frozenConnections.get(pluginId);
+      if (!frozen) {
+        if (pluginId !== "avalon:core") throw new ConnectorError("unauthorized", "Plugin is outside this run scope");
+        return;
+      }
+      const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
+      if (!policy) throw new ConnectorError("unauthorized", "Plugin tool is outside this run scope");
+      await assertFrozenConnectionAuthorized(env, input, frozen, policy.capability);
+    },
+    onInferenceAttempt: async (attempt) => {
+      const completedAtMs = Date.now();
+      const completedAt = new Date(completedAtMs).toISOString();
+      const failure = attempt.failureKind?.toLowerCase();
+      const ledgerOutcome = attempt.disposition ?? (attempt.success
+        ? "success" as const
+        : failure?.includes("abort") || failure?.includes("cancel")
+          ? "cancelled" as const
+          : failure?.includes("defect") || failure?.includes("empty") || failure?.includes("trunc")
+            ? "defect" as const
+            : "failed" as const);
+      await recordInferenceAttempt(env.DB, {
+        harnessRunId: input.harnessRunId,
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        attemptId: liveness.lease.attemptId,
+        turnId: attempt.turnId,
+        endpointAttempt: attempt.cursor.endpointAttempt + 1,
+        fallbackAttempt: attempt.cursor.candidateIndex,
+        provider: attempt.provider,
+        model: attempt.model,
+        credentialSourceHash: await sha256(`openrouter:${env.AVALON_REGION}`),
+        workspaceIdentityHash: await sha256(`${env.AVALON_REGION}:${input.workspaceId}`),
+        routingDecision: {
+          routingPolicyVersion: BIND_ROUTING_POLICY_VERSION,
+          stageIndex: attempt.cursor.stageIndex,
+          candidateIndex: attempt.cursor.candidateIndex,
+          structuredOutputAttempt: attempt.cursor.structuredOutputAttempt,
+          disposition: ledgerOutcome,
+          success: attempt.success,
+        },
+        outcome: ledgerOutcome,
+        ...(attempt.failureKind ? { failureClassification: attempt.failureKind } : {}),
+        latencyMs: attempt.latencyMs,
+        ...(attempt.ttftMs != null ? { ttftMs: attempt.ttftMs } : {}),
+        ...(attempt.inputTokens != null ? { inputTokens: attempt.inputTokens } : {}),
+        ...(attempt.outputTokens != null ? { outputTokens: attempt.outputTokens } : {}),
+        ...(attempt.reasoningTokens != null ? { reasoningTokens: attempt.reasoningTokens } : {}),
+        ...(attempt.cachedInputTokens != null ? { cachedTokens: attempt.cachedInputTokens } : {}),
+        ...(attempt.costCents != null ? { costMicrousd: Math.max(0, Math.round(attempt.costCents * 10_000)) } : {}),
+        ...(attempt.responseBytes != null ? { responseBytes: attempt.responseBytes } : {}),
+        startedAt: new Date(Math.max(0, completedAtMs - attempt.latencyMs)).toISOString(),
+        completedAt,
+      });
+    },
+    onTranscriptIssues: (issues) => {
+      logStructuredEvent(env, "warn", "harness_transcript_healed", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        issues,
+      });
+    },
+    onProgress: () => {
+      void liveness.pulse("stream_progress").catch((error) => stopController.abort(error));
+    },
+    flushProgress: async (progress) => {
+      await liveness.pulse("usage_flush", true);
+      await env.DB.prepare(
+        `UPDATE harness_runs SET usage_json = ?
+          WHERE id = ? AND attempt_id = ? AND lease_owner = ?
+            AND status = 'running' AND terminalized_at IS NULL`,
+      ).bind(
+        JSON.stringify(progress),
+        input.harnessRunId,
+        liveness.lease.attemptId,
+        liveness.lease.owner,
+      ).run();
+    },
+    onLiveness: async (stage) => {
+      await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
+      await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+    },
     findCompletedToolResult: async (toolCallId, inputHash) => {
       const row = await env.DB.prepare(
         `SELECT id, tool_name, input_hash, status, output_ref, output_summary
@@ -347,14 +940,19 @@ export async function runWorkstreamHarness(
         ambiguousToolOutcome = true;
         const newlyAmbiguous = row.status !== "ambiguous";
         if (row.status !== "ambiguous") {
-          await markToolInvocationAmbiguous(
-            env,
-            input.harnessRunId,
-            toolCallId,
-            row.input_hash === inputHash
-              ? "A previous write may have reached the provider and will not be repeated"
-              : "A stable tool-call ID was reused with different input",
-          );
+          await finalizeToolInvocationFailure(env.DB, liveness.lease, {
+            harnessRunId: input.harnessRunId,
+            invocationId: row.id,
+            status: "ambiguous",
+            phase: "ambiguous_external_write",
+            error: {
+              code: "ambiguous_external_write",
+              message: row.input_hash === inputHash
+                ? "A previous write may have reached the provider and will not be repeated"
+                : "A stable tool-call ID was reused with different input",
+            },
+            memberSafePayload: { code: "ambiguous_external_write" },
+          });
         }
         const invocation = await loadToolInvocation(env, input.harnessRunId, toolCallId);
         if (invocation) {
@@ -375,81 +973,89 @@ export async function runWorkstreamHarness(
     onEvent: async (event: HarnessEvent) => {
       if (Date.now() - lastStopCheck > 750) {
         lastStopCheck = Date.now();
-        const state = await env.DB.prepare("SELECT status FROM harness_runs WHERE id = ?")
-          .bind(input.harnessRunId).first<{ status: string }>();
-        if (state?.status === "stopped") stopController.abort("stopped_by_user");
+        const state = await env.DB.prepare(
+          "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
+        ).bind(input.harnessRunId).first<{
+          status: string;
+          cancellation_requested_at: string | null;
+        }>();
+        if (state?.status === "stopped" || state?.cancellation_requested_at) {
+          stopController.abort("stopped_by_user");
+        }
       }
       switch (event.type) {
         case "stream_started":
           modelName = event.model;
-          if (!streamStarted) {
-            streamStarted = true;
-            await emit({ type: "stream_started", messageId, harnessRunId: input.harnessRunId });
-          }
+          streamStarted = true;
+          await emit({
+            type: "stream_started",
+            messageId,
+            harnessRunId: input.harnessRunId,
+            turnId: event.turnId,
+            epoch: event.epoch,
+            streamSeq: event.streamSeq,
+            reset: event.reset,
+          });
           break;
         case "stream_delta":
           if (!streamStarted) {
             streamStarted = true;
-            await emit({ type: "stream_started", messageId, harnessRunId: input.harnessRunId });
+            await emit({
+              type: "stream_started",
+              messageId,
+              harnessRunId: input.harnessRunId,
+              turnId: event.turnId,
+              epoch: event.epoch,
+              streamSeq: Math.max(0, event.streamSeq - 1),
+              reset: false,
+            });
           }
-          streamedText += event.delta;
-          await streamDeltaBatcher.push(event.delta);
+          streamedText = event.reset ? event.delta : streamedText + event.delta;
+          await streamDeltaBatcher.push(event);
           break;
         case "tool_started": {
-          const invocationId = newId();
           const inputHash = await canonicalToolInputHash(event.input);
-          const startedAt = nowIso();
-          const inserted = await env.DB.prepare(
-            `INSERT INTO tool_invocations
-             (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-              connection_id, input_hash, input_json, status, started_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?)
-             ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING`,
-          )
-            .bind(
-              invocationId,
-              input.workspaceId,
-              input.workstreamId,
-              input.harnessRunId,
-              event.toolCallId,
-              event.toolName,
-              harnessTools.connectionByTool.get(event.toolName) ?? null,
-              inputHash,
-              JSON.stringify(event.input),
-              startedAt,
-            )
-            .run();
-          if (Number(inserted.meta.changes ?? 0) === 0) {
-            const existing = await env.DB.prepare(
-              `SELECT input_hash, status FROM tool_invocations
-               WHERE harness_run_id = ? AND tool_call_id = ?`,
-            ).bind(input.harnessRunId, event.toolCallId).first<{ input_hash: string; status: string }>();
-            const mode = harnessTools.modeByTool.get(event.toolName) ?? "write";
-            if (!existing || mode === "write" || existing.input_hash !== inputHash) {
-              ambiguousToolOutcome = true;
-              if (existing) {
-                await markToolInvocationAmbiguous(
-                  env,
-                  input.harnessRunId,
-                  event.toolCallId,
-                  existing.input_hash === inputHash
-                    ? "Concurrent execution encountered a pre-existing write invocation"
-                    : "A stable tool-call ID was reused with different input",
-                );
-                const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
-                if (invocation) {
-                  await persistToolTranscriptMessage(env, input, invocation);
-                  await emit({ type: "tool_failed", invocation });
-                }
-              }
-              stopController.abort("ambiguous_external_write");
-              throw new Error("ambiguous_external_write");
+          const mode = harnessTools.modeByTool.get(event.toolName) ?? "write";
+          const idempotency = harnessTools.idempotencyByTool.get(event.toolName) ?? "record_before_execute";
+          const connectionId = connectionIdForHarnessEvent(event, harnessTools);
+          const receipt = await persistToolExecutionPlan(env.DB, liveness.lease, {
+            harnessRunId: input.harnessRunId,
+            workspaceId: input.workspaceId,
+            workstreamId: input.workstreamId,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            ...(connectionId ? { connectionId } : {}),
+            inputHash,
+            input: event.input,
+            plan: {
+              pluginId: event.pluginId ?? "avalon:core",
+              mode,
+              idempotency,
+              toolSurfaceHash: event.pluginId
+                ? harnessTools.pluginSurfaceHashes.get(event.pluginId) ?? null
+                : null,
+            },
+            ...(event.providerIdempotencyKey
+              ? { providerIdempotencyKey: event.providerIdempotencyKey }
+              : {}),
+            mode,
+          });
+          if (receipt.state === "ambiguous_external_write") {
+            ambiguousToolOutcome = true;
+            const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+            if (invocation) {
+              await persistToolTranscriptMessage(env, input, invocation);
+              await emit({ type: "tool_failed", invocation });
             }
-            await env.DB.prepare(
-              `UPDATE tool_invocations SET status = 'started', started_at = ?, completed_at = NULL,
-               output_ref = NULL, output_summary = NULL, provider_operation_id = NULL, error_json = NULL
-               WHERE harness_run_id = ? AND tool_call_id = ? AND input_hash = ?`,
-            ).bind(startedAt, input.harnessRunId, event.toolCallId, inputHash).run();
+            stopController.abort("ambiguous_external_write");
+            throw new Error("ambiguous_external_write");
+          }
+          if (receipt.state === "replay_completed") {
+            // `findCompletedToolResult` runs immediately before this event. A
+            // completion appearing between the two checks is a receipt race;
+            // abort instead of executing the external operation twice.
+            stopController.abort("tool_receipt_replay_race");
+            throw new Error("tool_receipt_replay_race");
           }
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
@@ -459,24 +1065,20 @@ export async function runWorkstreamHarness(
           break;
         }
         case "tool_completed": {
-          const completedAt = nowIso();
-          const outputRef = toolReplayOutputKey(env, input, event.toolCallId);
-          const replayPayload = serializeToolReplayOutput(event.result.output);
-          await env.PAYLOADS.put(outputRef, replayPayload, {
-            httpMetadata: { contentType: "application/json; charset=utf-8" },
-            customMetadata: {
-              workspaceId: input.workspaceId,
-              workstreamId: input.workstreamId,
-              harnessRunId: input.harnessRunId,
-            },
+          const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+          if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
+          await persistSuccessfulToolResult(env, input, liveness.lease, {
+            invocationId: plannedInvocation.id,
+            toolCallId: event.toolCallId,
+            output: event.result.output,
+            outputSummary: event.result.summary,
+            ...(event.result.providerOperationId
+              ? { providerOperationId: event.result.providerOperationId }
+              : {}),
+            memberSafePayload: { toolName: event.toolName },
           });
-          await env.DB.prepare(
-            `UPDATE tool_invocations SET status = 'completed', output_ref = ?, output_summary = ?,
-             provider_operation_id = ?, completed_at = ?
-             WHERE harness_run_id = ? AND tool_call_id = ?`,
-          )
-            .bind(outputRef, event.result.summary, event.result.providerOperationId ?? null, completedAt, input.harnessRunId, event.toolCallId)
-            .run();
+          // The durable replay payload and fenced completed receipt now exist;
+          // only after this awaited boundary may Bind observe the tool result.
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
             await persistToolTranscriptMessage(env, input, invocation);
@@ -486,51 +1088,53 @@ export async function runWorkstreamHarness(
           break;
         }
         case "tool_failed": {
-          const completedAt = nowIso();
-          const ambiguous = event.phase === "execution"
-            && harnessTools.idempotencyByTool.get(event.toolName) === "record_before_execute";
-          const errorCode = event.phase === "validation"
-            ? "tool_validation_failed"
-            : ambiguous
-              ? "ambiguous_external_write"
-              : "tool_failed";
+          const { ambiguous, errorCode, checkpointPhase } = classifyHarnessToolFailure(event);
           if (ambiguous) ambiguousToolOutcome = true;
           const inputHash = await canonicalToolInputHash({});
-          await env.DB.prepare(
-            `INSERT INTO tool_invocations
-             (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
-              connection_id, input_hash, input_json, status, started_at, completed_at, error_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)
-             ON CONFLICT(harness_run_id, tool_call_id) DO NOTHING`,
-          ).bind(
-            newId(),
-            input.workspaceId,
-            input.workstreamId,
-            input.harnessRunId,
-            event.toolCallId,
-            event.toolName,
-            harnessTools.connectionByTool.get(event.toolName) ?? null,
-            inputHash,
-            ambiguous ? "ambiguous" : "failed",
-            event.phase === "execution" ? completedAt : null,
-            completedAt,
-            JSON.stringify({ code: errorCode, message: event.error }),
-          ).run();
-          await env.DB.prepare(
-            `UPDATE tool_invocations SET status = ?, error_json = ?, completed_at = ?
-             WHERE harness_run_id = ? AND tool_call_id = ?`,
-          )
-            .bind(ambiguous ? "ambiguous" : "failed", JSON.stringify({ code: errorCode, message: event.error }), completedAt, input.harnessRunId, event.toolCallId)
-            .run();
+          let invocationId: string;
+          let planAlreadyAmbiguous = false;
+          if (event.phase === "validation") {
+            const mode = harnessTools.modeByTool.get(event.toolName) ?? "read";
+            const connectionId = connectionIdForHarnessEvent(event, harnessTools);
+            const receipt = await persistToolExecutionPlan(env.DB, liveness.lease, {
+              harnessRunId: input.harnessRunId,
+              workspaceId: input.workspaceId,
+              workstreamId: input.workstreamId,
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              ...(connectionId ? { connectionId } : {}),
+              inputHash,
+              input: {},
+              plan: {
+                pluginId: event.pluginId ?? "avalon:core",
+                phase: "validation",
+                mode,
+              },
+              mode,
+            });
+            invocationId = receipt.invocationId;
+            planAlreadyAmbiguous = receipt.state === "ambiguous_external_write";
+            if (planAlreadyAmbiguous) ambiguousToolOutcome = true;
+          } else {
+            const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
+            if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
+            invocationId = plannedInvocation.id;
+          }
+          if (!planAlreadyAmbiguous) {
+            await finalizeToolInvocationFailure(env.DB, liveness.lease, {
+              harnessRunId: input.harnessRunId,
+              invocationId,
+              status: ambiguous ? "ambiguous" : "failed",
+              phase: checkpointPhase,
+              error: { code: errorCode, message: event.error },
+              memberSafePayload: { code: errorCode },
+            });
+          }
           const invocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (invocation) {
             await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_failed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, harnessTools.modeByTool.get(event.toolName) ?? "read", ambiguous ? "ambiguous" : "failed");
-          }
-          if (ambiguous) {
-            stopController.abort("ambiguous_external_write");
-            throw new Error("ambiguous_external_write");
           }
           break;
         }
@@ -542,95 +1146,45 @@ export async function runWorkstreamHarness(
           break;
       }
     },
-  });
+    });
+  } finally {
+    await livenessMonitor.stop();
+  }
 
   await streamDeltaBatcher.flush();
 
   const stoppedByUser = await isHarnessStopped(env, input.harnessRunId);
   if (streamedText) {
     const at = nowIso();
-    await env.DB.prepare(
-      `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type, message_type, text_content, sequence_number, created_at)
-       VALUES (?, ?, ?, ?, 'agent', 'text', ?, ?, ?)
-       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
-    )
-      .bind(messageId, `harness:${input.harnessRunId}`, input.workspaceId, input.workstreamId, streamedText, await ensureSequence(), at)
-      .run();
-  }
-  const finalStatus = stoppedByUser
-    ? "stopped"
-    : ambiguousToolOutcome
-    ? "needs_input"
-    : outcome.status === "stopped"
-      ? "stopped"
-      : outcome.status === "needs_input"
-        ? "needs_input"
-        : outcome.status === "completed"
-          ? "completed"
-          : "failed";
-  const workstreamStatus = finalStatus === "stopped" ? "idle" : finalStatus;
-  if (!stoppedByUser) {
-    await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE harness_runs SET status = ?, completed_at = ?, model = ?, usage_json = ?, error_json = ?
-         WHERE id = ? AND status != 'stopped'`,
-      ).bind(
-        finalStatus,
-        nowIso(),
-        outcome.model ?? modelName,
-        JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
-        outcome.failure
-          ? JSON.stringify(outcome.failure)
-          : outcome.error
-            ? JSON.stringify({ code: "harness_execution_failed", kind: "execution", message: outcome.error })
-            : null,
-        input.harnessRunId,
-      ),
-      env.DB.prepare(
-        `UPDATE workstreams SET harness_status = ?, last_activity_at = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?
-           AND NOT EXISTS (SELECT 1 FROM harness_runs WHERE id = ? AND status = 'stopped')`,
-      ).bind(workstreamStatus, nowIso(), nowIso(), input.workstreamId, input.workspaceId, input.harnessRunId),
-    ]);
-    await emit({ type: "harness_status_changed", status: workstreamStatus });
-  }
-  if (finalStatus === "completed" && streamedText) {
-    const createdAt = nowIso();
-    await emit({
-      type: "stream_completed",
-      message: {
-        id: messageId,
-        clientMessageId: null,
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        author: { type: "agent" },
-        messageType: "text",
-        textContent: streamedText,
-        structuredContent: null,
-        mentions: [],
-        sequenceNumber: await ensureSequence(),
-        createdAt,
-        editedAt: null,
-      },
+    await persistHarnessFinalMessage(env.DB, input, liveness.lease, {
+      id: messageId,
+      sequenceNumber: await ensureSequence(),
+      text: streamedText,
+      createdAt: at,
     });
   }
-  if (stoppedByUser) return { status: "stopped", ...(streamedText ? { messageId } : {}) };
-  if (ambiguousToolOutcome) return { status: "needs_input", ...(streamedText ? { messageId } : {}) };
-  return outcome.status === "completed"
-    ? { status: "completed", messageId }
-    : outcome.status === "needs_input"
-      ? { status: "needs_input", messageId }
-      : outcome.status === "stopped"
-        ? { status: "stopped", ...(streamedText ? { messageId } : {}) }
-      : {
-          status: "failed",
-          ...(streamedText ? { messageId } : {}),
-          error: {
-            code: outcome.failure?.code ?? "harness_execution_failed",
-            message: outcome.error ?? "Harness execution failed",
-          },
-        };
+  // Workflow terminalization owns the monotonic state transition and publishes
+  // terminal realtime state only after the final message + lifecycle event are
+  // durable. This host may persist model/usage metadata while its lease is live,
+  // but it must never mark the run completed directly.
+  await env.DB.prepare(
+    `UPDATE harness_runs SET model = ?, usage_json = ?
+      WHERE id = ? AND attempt_id = ? AND lease_owner = ?
+        AND status = 'running' AND terminalized_at IS NULL`,
+  ).bind(
+    outcome.model ?? modelName,
+    JSON.stringify({ ...outcome.usage, run_stats: outcome.stats }),
+    input.harnessRunId,
+    liveness.lease.attemptId,
+    liveness.lease.owner,
+  ).run();
+  return workstreamHarnessTerminalResult({
+    outcome,
+    streamedText,
+    messageId,
+    ambiguousToolOutcome,
+    stoppedByUser,
+  });
 }
 
 async function loadRunPromptContext(
@@ -694,14 +1248,34 @@ async function loadRunPromptContext(
       metadata: parseJson(activity.metadata_json, {}),
     }));
   }
+  additionalMessages.push({
+    role: "user",
+    content: [
+      "AVALON RUN CONTEXT (execution metadata, not durable policy):",
+      JSON.stringify({
+        reason: input.reason,
+        currentTime: nowIso(),
+        plannedFor: workstream.plannedFor,
+        mode: ["opening_message", "human_message", "elicitation_answer"].includes(input.reason)
+          ? "interactive"
+          : "headless",
+        requestId: input.harnessRunId,
+        triggerMessageId: input.triggerMessageId,
+        activityId: input.activityId,
+      }),
+    ].join("\n"),
+  });
   return {
+    // The prompt prefix is intentionally pure with respect to a saved task.
+    // Per-run time, reason, IDs, and trigger evidence live in user messages so
+    // OpenRouter can reuse the stable prefix and retries cannot drift policy.
     systemPrompt: renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
-      runReason: input.reason,
-      currentTime: nowIso(),
-      plannedFor: workstream.plannedFor,
-      interactive: ["opening_message", "human_message", "elicitation_answer"].includes(input.reason),
+      runReason: "provided_in_final_run_context",
+      currentTime: "provided_in_final_run_context",
+      plannedFor: null,
+      interactive: false,
       ...(automationContext ? { automation: automationContext } : {}),
     }),
     additionalMessages,
@@ -714,25 +1288,62 @@ function boundModelContext(
   configuredMaxBytes: number,
 ): { systemPrompt: string; messages: ModelMessage[]; byteLength: number } {
   const maxBytes = Math.max(1, Math.min(configuredMaxBytes, 2_000_000));
-  const systemBudget = Math.max(1, Math.floor(maxBytes * 0.6));
-  const boundedSystemPrompt = truncateUtf8(systemPrompt, systemBudget);
-  let usedBytes = utf8Length(boundedSystemPrompt);
-  const selected: ModelMessage[] = [];
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]!;
-    const content = message.content ?? "";
-    const remaining = maxBytes - usedBytes;
-    if (remaining <= 0) break;
-    const overhead = utf8Length(message.role) + 8;
-    if (remaining <= overhead) break;
-    const boundedContent = truncateUtf8(content, remaining - overhead);
-    if (!boundedContent && content) break;
-    selected.push({ ...message, content: boundedContent });
-    usedBytes += overhead + utf8Length(boundedContent);
-    if (boundedContent !== content) break;
+  const systemBytes = utf8Length(systemPrompt);
+  if (systemBytes > maxBytes) {
+    throw new ContextLimitExceededError("The stable system policy exceeds the selected model context budget");
   }
-  selected.reverse();
-  return { systemPrompt: boundedSystemPrompt, messages: selected, byteLength: usedBytes };
+  let usedBytes = systemBytes;
+  const units = modelProtocolUnits(messages);
+  const selectedUnits: ModelMessage[][] = [];
+  for (let index = units.length - 1; index >= 0; index -= 1) {
+    const unit = units[index]!;
+    // Count complete protocol rows, including arguments and IDs. An assistant
+    // tool-call row and all of its results form one indivisible context unit.
+    const unitBytes = utf8Length(JSON.stringify(unit));
+    if (usedBytes + unitBytes > maxBytes) {
+      if (selectedUnits.length === 0) {
+        throw new ContextLimitExceededError("The newest complete transcript unit exceeds the selected model context budget");
+      }
+      break;
+    }
+    selectedUnits.push(unit);
+    usedBytes += unitBytes;
+  }
+  const selected = selectedUnits.reverse().flat();
+  return { systemPrompt, messages: selected, byteLength: usedBytes };
+}
+
+function modelProtocolUnits(messages: ModelMessage[]): ModelMessage[][] {
+  const units: ModelMessage[][] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    if (message.role !== "assistant" || !message.tool_calls?.length) {
+      units.push([message]);
+      continue;
+    }
+    const expectedResults = new Set(message.tool_calls.map((call) => call.id));
+    const unit = [message];
+    let cursor = index + 1;
+    while (cursor < messages.length) {
+      const candidate = messages[cursor]!;
+      if (candidate.role !== "tool" || !candidate.tool_call_id || !expectedResults.has(candidate.tool_call_id)) break;
+      unit.push(candidate);
+      expectedResults.delete(candidate.tool_call_id);
+      cursor += 1;
+    }
+    units.push(unit);
+    index = cursor - 1;
+  }
+  return units;
+}
+
+class ContextLimitExceededError extends Error {
+  readonly code = "context_limit_exceeded";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ContextLimitExceededError";
+  }
 }
 
 function utf8Length(value: string): number {
@@ -751,9 +1362,11 @@ function truncateUtf8(value: string, maxBytes: number): string {
 function toolReplayOutputKey(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  attemptId: string,
   stableToolCallId: string,
+  contentHash: string,
 ): string {
-  return `${env.AVALON_REGION}/${input.workspaceId}/workstreams/${input.workstreamId}/harness/${input.harnessRunId}/tool-results/${encodeURIComponent(stableToolCallId)}.json`;
+  return `${env.AVALON_REGION}/${input.workspaceId}/workstreams/${input.workstreamId}/harness/${input.harnessRunId}/tool-results/${encodeURIComponent(attemptId)}/${encodeURIComponent(stableToolCallId)}/${encodeURIComponent(contentHash)}.json`;
 }
 
 function serializeToolReplayOutput(output: unknown): string {
@@ -777,6 +1390,60 @@ function serializeToolReplayOutput(output: unknown): string {
   });
 }
 
+async function persistSuccessfulToolResult(
+  env: Env,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  lease: AttemptLease,
+  result: {
+    invocationId: string;
+    toolCallId: string;
+    output: unknown;
+    outputSummary: string;
+    providerOperationId?: string;
+    memberSafePayload?: Record<string, unknown>;
+  },
+): Promise<string> {
+  const replayPayload = serializeToolReplayOutput(result.output);
+  const contentHash = await sha256(replayPayload);
+  const outputRef = toolReplayOutputKey(
+    env,
+    input,
+    lease.attemptId,
+    result.toolCallId,
+    contentHash,
+  );
+  const putOptions: R2PutOptions = {
+    httpMetadata: { contentType: "application/json; charset=utf-8" },
+    customMetadata: {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      harnessRunId: input.harnessRunId,
+      attemptId: lease.attemptId,
+      contentHash,
+    },
+  };
+
+  // This is deliberately the final awaited operation before R2. A lease lost
+  // during the upload is caught by completeToolInvocation's atomic D1 fence;
+  // the attempt/content-addressed object can then remain as a harmless orphan.
+  await assertHarnessAttemptOwned(env.DB, input.harnessRunId, lease);
+  await env.PAYLOADS.put(outputRef, replayPayload, putOptions);
+  await completeToolInvocation(env.DB, lease, {
+    harnessRunId: input.harnessRunId,
+    invocationId: result.invocationId,
+    checkpointIndex: 1,
+    outputRef,
+    outputSummary: result.outputSummary,
+    ...(result.providerOperationId
+      ? { providerOperationId: result.providerOperationId }
+      : {}),
+    ...(result.memberSafePayload
+      ? { memberSafePayload: result.memberSafePayload }
+      : {}),
+  });
+  return outputRef;
+}
+
 async function loadToolReplayOutput(env: Env, outputRef: string): Promise<unknown | null> {
   try {
     const object = await env.PAYLOADS.get(outputRef);
@@ -797,8 +1464,13 @@ function splitModels(value: string): string[] {
 async function loadHarnessTools(
   env: Env,
   input: WorkstreamWorkflowInput,
+  runAuthoritySnapshot?: RunAuthoritySnapshot,
 ): Promise<{
+  coreTools: HarnessTool[];
   tools: HarnessTool[];
+  plugins: HarnessPlugin[];
+  frozenConnections: Map<string, FrozenConnectorPlugin>;
+  pluginSurfaceHashes: Map<string, string>;
   connectionByTool: Map<string, string>;
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
@@ -827,11 +1499,18 @@ async function loadHarnessTools(
   const explicitlyBound = new Set(automationBindings.values());
   const attached = new Set((attachedRows.results ?? []).map((row) => row.connection_id));
   const registry = connectorRegistryForEnv(env);
-  const tools: HarnessTool[] = createAvalonTools(env, input);
+  const coreTools = createAvalonTools(env, input);
+  // `tools` retains the historical flattened view for API diagnostics and
+  // tests. The Bind runtime receives only `coreTools`; credential tools are
+  // exposed exclusively through the credential-scoped plugins below.
+  const tools: HarnessTool[] = [...coreTools];
+  const plugins: HarnessPlugin[] = [];
+  const frozenConnections = new Map<string, FrozenConnectorPlugin>();
+  const pluginSurfaceHashes = new Map<string, string>();
   const connectionByTool = new Map<string, string>();
   const idempotencyByTool = new Map<string, "safe" | "provider_key" | "record_before_execute">();
   const modeByTool = new Map<string, "read" | "write">(
-    tools.map((tool) => [tool.definition.name, tool.definition.mode]),
+    coreTools.map((tool) => [tool.definition.name, tool.definition.mode]),
   );
   const orderedConnectionRows = [...(connectionRows.results ?? [])].sort((left, right) => {
     const priority = connectorSelectionPriority(left, input.executionPrincipal, attached)
@@ -844,69 +1523,489 @@ async function loadHarnessTools(
     const connectionId = String(row.id);
     const scope = row.scope === "workspace" ? "workspace" : "personal";
     const eligible = input.automationSubscriptionId
-      ? explicitlyBound.has(connectionId)
+      ? explicitlyBound.has(connectionId) || attached.has(connectionId)
       : scope === "workspace" ||
-        attached.has(connectionId) ||
         (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
     if (!eligible) continue;
     if (scope === "personal" && (input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
-    let credentials: Record<string, unknown> = {};
-    if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
-      credentials = JSON.parse(
-        await decryptString(row.encrypted_credentials, row.credential_iv, env.CONNECTOR_CREDENTIALS_KEY, connectionId),
-      ) as Record<string, unknown>;
-    }
-    const connection: ConnectorConnectionContext = {
-      id: connectionId,
+    const adapter = registry.get(String(row.connector_type));
+    const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
+    const pluginId = `connection:${connectionId}`;
+    const shortWireName = await stableConnectionWireName(adapter.agentPlugin.wireNamePrefix, pluginId);
+    const frozen: FrozenConnectorPlugin = {
+      pluginId,
+      connectionId,
       workspaceId: input.workspaceId,
+      connectorType: String(row.connector_type),
       scope,
       ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id),
-      grantedScopes: parseJson(row.granted_scopes_json, []),
-      credentials,
-      cursor: parseJson(row.cursor_json, {}),
-      config: parseJson(row.config_json, {}),
+      grantedScopes: [...grantedScopes],
+      shortWireName,
+      ...(runAuthoritySnapshot ? { runAuthoritySnapshot } : {}),
     };
-    const adapter = registry.get(String(row.connector_type));
-    await withConnectorCredentialLifecycle(env, connection, async () => {
-      if (
-        adapter.refreshCredentials &&
-        typeof connection.credentials.expiresAt === "string" &&
-        Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
-      ) {
-        connection.credentials = await adapter.refreshCredentials(
-          connection,
-          AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)),
-        );
-      }
-    });
-    for (const definition of adapter.manifest.tools) {
+    const pluginTools: HarnessTool[] = [];
+    for (const definition of adapter.agentPlugin.tools) {
       // A mailbox From header is not a strong authentication primitive. Email-
       // triggered automations may inspect bound connector data, but external
       // connector writes require a subsequent human-started run.
       if (input.reason === "inbound_email" && definition.mode === "write") continue;
-      if (input.automationSubscriptionId && automationBindings.get(definition.capability) !== connectionId) continue;
-      if (!connection.grantedScopes.includes(definition.capability) || connectionByTool.has(definition.name)) continue;
-      connectionByTool.set(definition.name, connectionId);
-      idempotencyByTool.set(definition.name, definition.idempotency);
-      modeByTool.set(definition.name, definition.mode);
-      tools.push({
+      if (
+        input.automationSubscriptionId
+        && !attached.has(connectionId)
+        && automationBindings.get(definition.capability) !== connectionId
+      ) continue;
+      if (!grantedScopes.includes(definition.capability)) continue;
+      const tool: HarnessTool = {
         definition,
-        execute: async (toolInput, context) => {
-          const effectivePrincipal = connection.scope === "workspace"
-            ? { type: "workspace" as const, workspaceId: input.workspaceId }
-            : context.executionPrincipal;
-          return withConnectorCredentialLifecycle(env, connection, () =>
-            adapter.executeTool(definition.name, toolInput, {
-              connection,
-              principal: effectivePrincipal,
-              signal: context.signal,
-            }),
-          );
-        },
-      });
+        execute: (toolInput, context) => executeAuthorizedConnectorTool(
+          env,
+          input,
+          frozen,
+          definition.name,
+          definition.capability,
+          toolInput,
+          context.signal,
+          context.providerIdempotencyKey,
+        ),
+      };
+      pluginTools.push(tool);
+      const wireName = stableWireToolName(shortWireName, definition.name);
+      connectionByTool.set(wireName, connectionId);
+      idempotencyByTool.set(wireName, definition.idempotency);
+      modeByTool.set(wireName, definition.mode);
+      // Preserve the old deterministic flattened selection for diagnostics;
+      // Bind itself can expose identical provider tools from many credentials.
+      if (!connectionByTool.has(definition.name)) {
+        tools.push(tool);
+        connectionByTool.set(definition.name, connectionId);
+        idempotencyByTool.set(definition.name, definition.idempotency);
+        modeByTool.set(definition.name, definition.mode);
+      }
     }
+    const surfaceHash = await connectorToolSurfaceHash(pluginId, pluginTools);
+    frozenConnections.set(pluginId, frozen);
+    pluginSurfaceHashes.set(pluginId, surfaceHash);
+    plugins.push({
+      canonicalId: pluginId,
+      shortWireName,
+      description: adapter.agentPlugin.description,
+      systemMessage: adapter.agentPlugin.systemMessage,
+      tools: pluginTools,
+      preload: explicitlyBound.has(connectionId) || attached.has(connectionId),
+      explicit: explicitlyBound.has(connectionId) || attached.has(connectionId),
+    });
   }
-  return { tools, connectionByTool, idempotencyByTool, modeByTool };
+  return {
+    coreTools,
+    tools,
+    plugins: plugins.sort((left, right) => left.canonicalId.localeCompare(right.canonicalId)),
+    frozenConnections,
+    pluginSurfaceHashes,
+    connectionByTool,
+    idempotencyByTool,
+    modeByTool,
+  };
+}
+
+interface FrozenConnectorPlugin {
+  pluginId: string;
+  connectionId: string;
+  workspaceId: string;
+  connectorType: string;
+  scope: "personal" | "workspace";
+  ownerUserId: string | null;
+  grantedScopes: string[];
+  shortWireName: string;
+  runAuthoritySnapshot?: RunAuthoritySnapshot;
+}
+
+interface RunAuthoritySnapshot {
+  automationRunId: string | null;
+  automationTemplateVersionId: string | null;
+  triggerType: string | null;
+}
+
+async function stableConnectionWireName(prefix: string, pluginId: string): Promise<string> {
+  const safePrefix = prefix.toLowerCase().replace(/[^a-z0-9_]+/gu, "_").replace(/^_+|_+$/gu, "").slice(0, 20) || "connector";
+  const digest = (await sha256(pluginId)).replace(/[^a-z0-9]+/giu, "").toLowerCase().slice(0, 12);
+  return `${safePrefix}_${digest}`;
+}
+
+function stableWireToolName(prefix: string, toolName: string): string {
+  const normalized = toolName.toLowerCase().replace(/[^a-z0-9_]+/gu, "_").replace(/^_+|_+$/gu, "");
+  return `${prefix}_${normalized}`.slice(0, 64);
+}
+
+async function connectorToolSurfaceHash(pluginId: string, tools: readonly HarnessTool[]): Promise<string> {
+  return sha256(JSON.stringify({
+    pluginId,
+    tools: tools.map(({ definition }) => ({
+      name: definition.name,
+      capability: definition.capability,
+      mode: definition.mode,
+      idempotency: definition.idempotency,
+      inputSchema: definition.inputSchema,
+    })),
+  }));
+}
+
+async function executeAuthorizedConnectorTool(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  toolName: string,
+  capability: string,
+  toolInput: unknown,
+  signal: AbortSignal,
+  providerIdempotencyKey?: string,
+) {
+  const { connection, adapter } = await loadAuthorizedConnectionContext(
+    env,
+    input,
+    frozen,
+    capability,
+    signal,
+  );
+  return withConnectorCredentialLifecycle(env, connection, async () => {
+    if (
+      adapter.refreshCredentials &&
+      typeof connection.credentials.expiresAt === "string" &&
+      Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
+    ) {
+      connection.credentials = await adapter.refreshCredentials(connection, signal);
+    }
+    // Membership, ownership, grants, and stored health are checked again after
+    // credentials are available and immediately before external execution.
+    await assertFrozenConnectionAuthorized(env, input, frozen, capability);
+    const health = await raceWithSignal(adapter.healthCheck(connection), signal);
+    if (!health.ok) throw new ConnectorError("unauthorized", "Connector authorization is not healthy");
+    const effectivePrincipal = connection.scope === "workspace"
+      ? { type: "workspace" as const, workspaceId: input.workspaceId }
+      : input.executionPrincipal;
+    return adapter.executeTool(
+      toolName,
+      toolInput,
+      createConnectorToolContext(connection, effectivePrincipal, signal, providerIdempotencyKey),
+    );
+  });
+}
+
+async function loadAuthorizedConnectionContext(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  capability: string | undefined,
+  signal: AbortSignal,
+): Promise<{ connection: ConnectorConnectionContext; adapter: ResolvedConnectorAdapter }> {
+  const row = await assertFrozenConnectionAuthorized(env, input, frozen, capability);
+  let credentials: Record<string, unknown> = {};
+  if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
+    credentials = JSON.parse(await decryptString(
+      row.encrypted_credentials,
+      row.credential_iv,
+      env.CONNECTOR_CREDENTIALS_KEY,
+      frozen.connectionId,
+    )) as Record<string, unknown>;
+  }
+  if (signal.aborted) throw signal.reason;
+  const connection: ConnectorConnectionContext = {
+    id: frozen.connectionId,
+    workspaceId: input.workspaceId,
+    scope: frozen.scope,
+    ownerUserId: frozen.ownerUserId,
+    grantedScopes: parseJson(row.granted_scopes_json, []),
+    credentials,
+    cursor: parseJson(row.cursor_json, {}),
+    config: parseJson(row.config_json, {}),
+  };
+  return {
+    connection,
+    adapter: connectorRegistryForEnv(env).get(frozen.connectorType),
+  };
+}
+
+async function assertFrozenConnectionAuthorized(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  capability?: string,
+): Promise<Record<string, unknown>> {
+  if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
+    throw new ConnectorError("unauthorized", "Connector is outside this immutable run scope");
+  }
+  await assertRunAuthorityStillValid(env.DB, input, frozen.runAuthoritySnapshot);
+  const row = await env.DB.prepare(
+    `SELECT id, workspace_id, connector_type, scope, owner_user_id, granted_scopes_json,
+            encrypted_credentials, credential_iv, cursor_json, config_json, status
+       FROM connector_connections
+      WHERE id = ? AND workspace_id = ?`,
+  ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
+  if (
+    !row || row.status !== "healthy" || row.connector_type !== frozen.connectorType ||
+    row.scope !== frozen.scope || (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
+  ) {
+    throw new ConnectorError("unauthorized", "Connector is no longer healthy or authorized for this run");
+  }
+  if (frozen.scope === "personal" && (
+    input.executionPrincipal.type !== "user" || input.executionPrincipal.userId !== frozen.ownerUserId
+  )) {
+    throw new ConnectorError("unauthorized", "Personal connector ownership changed");
+  }
+  const currentScopes = parseJson<string[]>(row.granted_scopes_json, []);
+  if (capability && (!frozen.grantedScopes.includes(capability) || !currentScopes.includes(capability))) {
+    throw new ConnectorError("unauthorized", "Connector capability was revoked");
+  }
+  return row;
+}
+
+async function assertExecutionPrincipalAuthorized(
+  db: D1Database,
+  workspaceId: string,
+  principal: WorkstreamWorkflowInput["executionPrincipal"],
+): Promise<void> {
+  if (principal.type === "workspace") {
+    if (principal.workspaceId !== workspaceId) throw new ConnectorError("unauthorized", "Workspace principal mismatch");
+    const workspace = await db.prepare("SELECT id FROM workspaces WHERE id = ?")
+      .bind(workspaceId).first<{ id: string }>();
+    if (!workspace) throw new ConnectorError("unauthorized", "Workspace is unavailable");
+    return;
+  }
+  const member = await db.prepare(
+    `SELECT wm.status
+       FROM workspace_members wm
+       JOIN users u ON u.id = wm.user_id
+      WHERE wm.workspace_id = ? AND wm.user_id = ?`,
+  ).bind(workspaceId, principal.userId).first<{ status: string }>();
+  if (member?.status !== "active") throw new ConnectorError("unauthorized", "User is not an active workspace member");
+}
+
+async function assertRunAuthorityStillValid(
+  db: D1Database,
+  input: WorkstreamWorkflowInput,
+  expected?: RunAuthoritySnapshot,
+): Promise<RunAuthoritySnapshot> {
+  await assertExecutionPrincipalAuthorized(db, input.workspaceId, input.executionPrincipal);
+  const workstream = await db.prepare(
+    `SELECT archived_at, automation_subscription_id, automation_run_id
+       FROM workstreams
+      WHERE id = ? AND workspace_id = ?`,
+  ).bind(input.workstreamId, input.workspaceId).first<{
+    archived_at: string | null;
+    automation_subscription_id: string | null;
+    automation_run_id: string | null;
+  }>();
+  if (!workstream || workstream.archived_at != null) {
+    throw new ConnectorError("unauthorized", "Work stream is no longer active");
+  }
+
+  if (!input.automationSubscriptionId) {
+    const snapshot: RunAuthoritySnapshot = {
+      automationRunId: null,
+      automationTemplateVersionId: null,
+      triggerType: null,
+    };
+    if (expected && (
+      expected.automationRunId !== snapshot.automationRunId ||
+      expected.automationTemplateVersionId !== snapshot.automationTemplateVersionId ||
+      expected.triggerType !== snapshot.triggerType
+    )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
+    return snapshot;
+  }
+
+  if (workstream.automation_subscription_id !== input.automationSubscriptionId || !workstream.automation_run_id) {
+    throw new ConnectorError("unauthorized", "Automation authority no longer matches this work stream");
+  }
+  const automation = await db.prepare(
+    `SELECT s.status AS subscription_status, s.template_version_id,
+            s.email_route_status, t.archived_at AS template_archived_at,
+            r.id AS automation_run_id, r.status AS automation_run_status,
+            r.trigger_type, r.trigger_activity_id,
+            EXISTS (
+              SELECT 1 FROM schedules schedule
+               WHERE schedule.workspace_id = s.workspace_id
+                 AND schedule.automation_subscription_id = s.id
+                 AND schedule.enabled = 1
+            ) AS has_enabled_schedule
+       FROM automation_subscriptions s
+       JOIN automation_templates t ON t.id = s.template_id
+       JOIN automation_runs r ON r.id = ?
+        AND r.workspace_id = s.workspace_id
+        AND r.automation_subscription_id = s.id
+        AND r.workstream_id = ?
+      WHERE s.id = ? AND s.workspace_id = ?`,
+  ).bind(
+    workstream.automation_run_id,
+    input.workstreamId,
+    input.automationSubscriptionId,
+    input.workspaceId,
+  ).first<{
+    subscription_status: string;
+    template_version_id: string;
+    email_route_status: string | null;
+    template_archived_at: string | null;
+    automation_run_id: string;
+    automation_run_status: string;
+    trigger_type: string;
+    trigger_activity_id: string | null;
+    has_enabled_schedule: number;
+  }>();
+  if (
+    !automation || automation.subscription_status !== "active" ||
+    automation.template_archived_at != null ||
+    !["scheduled", "running", "needs_input"].includes(automation.automation_run_status)
+  ) throw new ConnectorError("unauthorized", "Automation is no longer active for this run");
+  if ((automation.trigger_activity_id ?? null) !== (input.activityId ?? null)) {
+    throw new ConnectorError("unauthorized", "Automation trigger evidence changed");
+  }
+  if (automation.trigger_activity_id) {
+    const activity = await db.prepare(
+      "SELECT id FROM activities WHERE id = ? AND workspace_id = ?",
+    ).bind(automation.trigger_activity_id, input.workspaceId).first<{ id: string }>();
+    if (!activity) throw new ConnectorError("unauthorized", "Automation trigger is no longer available");
+  }
+  if (automation.trigger_type === "schedule" && automation.has_enabled_schedule !== 1) {
+    throw new ConnectorError("unauthorized", "The scheduled trigger was disabled");
+  }
+  if (automation.trigger_type === "inbound_email" && automation.email_route_status !== "active") {
+    throw new ConnectorError("unauthorized", "The email trigger was disabled");
+  }
+  const snapshot: RunAuthoritySnapshot = {
+    automationRunId: automation.automation_run_id,
+    automationTemplateVersionId: automation.template_version_id,
+    triggerType: automation.trigger_type,
+  };
+  if (expected && (
+    expected.automationRunId !== snapshot.automationRunId ||
+    expected.automationTemplateVersionId !== snapshot.automationTemplateVersionId ||
+    expected.triggerType !== snapshot.triggerType
+  )) throw new ConnectorError("unauthorized", "The immutable run authority changed");
+  return snapshot;
+}
+
+async function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw signal.reason;
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function loadAuthorizedActivationHints(
+  env: Env,
+  workstreamId: string,
+  eligible: ReadonlyMap<string, FrozenConnectorPlugin>,
+): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    `SELECT plugin_id FROM workstream_plugin_activation_hints
+      WHERE workstream_id = ? ORDER BY plugin_id`,
+  ).bind(workstreamId).all<{ plugin_id: string }>();
+  return (rows.results ?? [])
+    .map((row) => row.plugin_id)
+    .filter((pluginId) => eligible.has(pluginId));
+}
+
+async function persistWorkstreamPluginActivation(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  lease: AttemptLease,
+  pluginId: string,
+  harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+): Promise<void> {
+  const surfaceHash = harnessTools.pluginSurfaceHashes.get(pluginId);
+  if (!surfaceHash || !harnessTools.frozenConnections.has(pluginId)) {
+    throw new ConnectorError("unauthorized", "Plugin is outside this immutable run scope");
+  }
+  await persistRunPluginActivation(env.DB, input, lease, {
+    pluginId,
+    toolSurfaceHash: surfaceHash,
+  });
+  const at = nowIso();
+  await env.DB.prepare(
+    `INSERT INTO workstream_plugin_activation_hints
+     (workstream_id, plugin_id, activated_at, last_authorized_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(workstream_id, plugin_id) DO UPDATE SET
+       last_authorized_at = excluded.last_authorized_at`,
+  ).bind(input.workstreamId, pluginId, at, at).run();
+}
+
+async function reauthorizeFrozenPlugin(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    const { connection, adapter } = await loadAuthorizedConnectionContext(
+      env,
+      input,
+      frozen,
+      undefined,
+      signal,
+    );
+    const health = await raceWithSignal(adapter.healthCheck(connection), signal);
+    return health.ok;
+  } catch {
+    return false;
+  }
+}
+
+function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    if (!controller.signal.aborted) controller.abort(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  };
+  for (const signal of signals) {
+    if (signal.aborted) {
+      abort(signal);
+      break;
+    }
+    signal.addEventListener("abort", () => abort(signal), { once: true });
+  }
+  return controller.signal;
+}
+
+function connectionIdForHarnessEvent(
+  event: Extract<HarnessEvent, { type: "tool_started" | "tool_completed" | "tool_failed" }>,
+  harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+): string | null {
+  if (event.pluginId?.startsWith("connection:")) {
+    const id = event.pluginId.slice("connection:".length);
+    if (harnessTools.frozenConnections.get(event.pluginId)?.connectionId === id) return id;
+  }
+  return harnessTools.connectionByTool.get(event.toolName) ?? null;
+}
+
+function toolPolicyForCall(
+  pluginId: string,
+  toolName: string,
+  harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+): HarnessTool["definition"] | null {
+  if (pluginId === "avalon:core") {
+    return harnessTools.coreTools.find((tool) => tool.definition.name === toolName)?.definition ?? null;
+  }
+  return harnessTools.plugins
+    .find((plugin) => plugin.canonicalId === pluginId)
+    ?.tools.find((tool) => tool.definition.name === toolName)?.definition ?? null;
+}
+
+async function stableRunToolSurfaceHash(
+  harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+): Promise<string> {
+  return sha256(JSON.stringify({
+    core: harnessTools.coreTools.map((tool) => tool.definition),
+    plugins: [...harnessTools.pluginSurfaceHashes.entries()].sort(([left], [right]) => left.localeCompare(right)),
+  }));
 }
 
 function connectorSelectionPriority(
@@ -924,6 +2023,40 @@ function connectorSelectionPriority(
   }
   if (row.scope === "workspace") return 2;
   return 3;
+}
+
+async function coreWriteEntityId(
+  kind: "artifact" | "elicitation",
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
+  providerIdempotencyKey: string,
+): Promise<string> {
+  const seed = new TextEncoder().encode([
+    "avalon-core-write-v1",
+    kind,
+    input.workspaceId,
+    input.workstreamId,
+    input.harnessRunId,
+    providerIdempotencyKey,
+  ].join(":"));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", seed));
+  // Keep the durable identifier compatible with Avalon's UUID-shaped public IDs
+  // while deriving it entirely from the immutable tool receipt scope.
+  digest[6] = ((digest[6] ?? 0) & 0x0f) | 0x50;
+  digest[8] = ((digest[8] ?? 0) & 0x3f) | 0x80;
+  const hex = [...digest.slice(0, 16)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function requireProviderIdempotencyKey(
+  toolName: string,
+  providerIdempotencyKey: string | undefined,
+): string {
+  if (!providerIdempotencyKey) {
+    throw new Error(`${toolName} requires a durable provider idempotency key`);
+  }
+  return providerIdempotencyKey;
 }
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
@@ -1021,9 +2154,24 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           required: ["title", "artifactType", "content"],
         },
       },
-      execute: async (raw) => {
+      execute: async (raw, context) => {
         const args = z.object({ title: z.string().min(1).max(300), artifactType: z.string().min(1).max(80), content: z.string().max(500_000) }).parse(raw);
-        const id = newId();
+        const providerIdempotencyKey = requireProviderIdempotencyKey(
+          "avalon.create_artifact",
+          context.providerIdempotencyKey,
+        );
+        const id = await coreWriteEntityId("artifact", input, providerIdempotencyKey);
+        const existing = await env.DB.prepare(
+          `SELECT id FROM artifacts
+           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND harness_run_id = ?`,
+        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId).first<{ id: string }>();
+        if (existing) {
+          return {
+            output: { artifactId: id, title: args.title },
+            summary: `Created artifact “${args.title}”`,
+            providerOperationId: id,
+          };
+        }
         const key = `${env.AVALON_REGION}/${input.workspaceId}/artifacts/${id}.txt`;
         await env.PAYLOADS.put(key, args.content, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
         const at = nowIso();
@@ -1031,7 +2179,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           `INSERT INTO artifacts
            (id, workspace_id, workstream_id, harness_run_id, artifact_type, title,
             content_ref, preview_text, status, metadata_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'complete', '{}', ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'complete', '{}', ?, ?)
+           ON CONFLICT(id) DO NOTHING`,
         ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.artifactType, args.title, key, args.content.slice(0, 1_000), at, at).run();
         return { output: { artifactId: id, title: args.title }, summary: `Created artifact “${args.title}”`, providerOperationId: id };
       },
@@ -1063,16 +2212,32 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           required: ["prompt", "responseType", "options", "minimumSelections", "maximumSelections", "targetUserId"],
         },
       },
-      execute: async (raw) => {
+      execute: async (raw, context) => {
         const args = requestElicitationSchema.parse(raw);
         if (args.responseType !== "text" && args.options.length === 0) throw new Error("Selection questions require options");
+        const providerIdempotencyKey = requireProviderIdempotencyKey(
+          "avalon.request_elicitation",
+          context.providerIdempotencyKey,
+        );
+        const id = await coreWriteEntityId("elicitation", input, providerIdempotencyKey);
+        const existing = await env.DB.prepare(
+          `SELECT id FROM elicitations
+           WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND harness_run_id = ?`,
+        ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId).first<{ id: string }>();
+        if (existing) {
+          return {
+            output: { elicitationId: id },
+            summary: "Requested human input",
+            providerOperationId: id,
+            halt: "needs_input" as const,
+          };
+        }
         if (args.targetUserId) {
           const target = await env.DB.prepare(
             `SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
           ).bind(input.workspaceId, args.targetUserId).first();
           if (!target) throw new Error("Target responder is not an active workspace member");
         }
-        const id = newId();
         const at = nowIso();
         await env.DB.batch([
           env.DB.prepare(
@@ -1080,7 +2245,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
              (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
               options_json, minimum_selections, maximum_selections, target_user_id,
               status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+             ON CONFLICT(id) DO NOTHING`,
           ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.prompt, args.responseType, JSON.stringify(args.options), args.minimumSelections, args.maximumSelections, args.targetUserId, at),
           env.DB.prepare(
             `UPDATE workstreams SET harness_status = 'needs_input', last_activity_at = ?, updated_at = ?
@@ -1666,28 +2832,13 @@ async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: st
   };
 }
 
-async function markToolInvocationAmbiguous(
-  env: Env,
-  harnessRunId: string,
-  toolCallId: string,
-  message: string,
-): Promise<void> {
-  await env.DB.prepare(
-    `UPDATE tool_invocations SET status = 'ambiguous', error_json = ?, completed_at = ?
-     WHERE harness_run_id = ? AND tool_call_id = ?`,
-  ).bind(
-    JSON.stringify({ code: "ambiguous_external_write", message }),
-    nowIso(),
-    harnessRunId,
-    toolCallId,
-  ).run();
-}
-
 async function isHarnessStopped(env: Env, harnessRunId: string): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT status FROM harness_runs WHERE id = ?")
+  const row = await env.DB.prepare(
+    "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ?",
+  )
     .bind(harnessRunId)
-    .first<{ status: string }>();
-  return row?.status === "stopped";
+    .first<{ status: string; cancellation_requested_at: string | null }>();
+  return row?.status === "stopped" || row?.cancellation_requested_at != null;
 }
 
 async function recordToolAudit(
@@ -1718,12 +2869,21 @@ async function recordToolAudit(
 
 export const __integrationTesting = {
   boundModelContext,
+  assertRunAuthorityStillValid,
   assertSafePublicUrl,
   createAvalonTools,
   loadHarnessTools,
+  projectModelProtocolTranscript,
   serializeToolReplayOutput,
+  toolReplayOutputKey,
+  persistSuccessfulToolResult,
   persistToolTranscriptMessage,
   persistPolledActivity,
   withConnectorCredentialLifecycle,
   createStreamDeltaBatcher,
+  classifyHarnessToolFailure,
+  createConnectorToolContext,
+  persistInitialPluginActivations,
+  publishRuntimeEventBestEffort,
+  workstreamHarnessTerminalResult,
 };

@@ -7,7 +7,7 @@
   "preview_urls": false,
   "vars": {
     "APP_ENV": "production",
-    "APP_VERSION": "0.3.0",
+    "APP_VERSION": "0.8.0",
     "AVALON_REGION": "global",
     "AVALON_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://api.with-avalon.com",
@@ -28,6 +28,15 @@
     "HARNESS_MAX_MODEL_ITERATIONS": "8",
     "HARNESS_MAX_TOOL_CALLS": "24",
     "HARNESS_MAX_WALL_CLOCK_MS": "240000",
+    "HARNESS_MAX_RUN_TOKENS": "48000",
+    "HARNESS_MAX_COST_CENTS": "500",
+    "HARNESS_MAX_PLUGIN_CATALOG_TOKENS": "2500",
+    "HARNESS_MAX_ACTIVE_PLUGINS": "12",
+    "HARNESS_MAX_TOOL_SCHEMA_BYTES": "131072",
+    "HARNESS_MAX_TOOL_RESULT_BYTES": "131072",
+    "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS": "20000",
+    "HARNESS_TTFT_TIMEOUT_MS": "45000",
+    "HARNESS_STREAM_IDLE_TIMEOUT_MS": "30000",
     "TOOL_DEFAULT_TIMEOUT_MS": "30000",
     "CONNECTOR_POLL_TIMEOUT_MS": "20000",
     "HARNESS_MAX_CONTEXT_BYTES": "200000",
@@ -54,6 +63,7 @@
     { "pattern": "github.with-avalon.com", "custom_domain": true },
     { "pattern": "linear.with-avalon.com", "custom_domain": true }
   ],
+  "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
     {
       "binding": "EU_IDENTITY_BRIDGE",

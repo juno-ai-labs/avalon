@@ -22,6 +22,72 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("cuts over active prototype runs and installs immutable Bind durability rails", () => {
+    const database = migrateDatabaseThrough("0025_user_workspace_timezones.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-bind', 'google-bind', 'bind@example.com', 'Bind Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-bind', 'Bind Workspace', 'bind-workspace', 'global', 'user-bind', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-bind', 'workspace-bind', 'Bind', 'Cut over safely', 'ad_hoc', 'user-bind',
+              'running', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES
+        ('run-active', 'workspace-bind', 'workstream-bind', 'test', '{}', 'running', '2026-01-01'),
+        ('run-history', 'workspace-bind', 'workstream-bind', 'test', '{}', 'completed', '2026-01-01');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0026_bind_runtime_durability.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT status, terminalized_at, error_json FROM harness_runs WHERE id = 'run-active'",
+    ).get()).toMatchObject({
+      status: "failed",
+      error_json: '{"code":"runtime_cutover","message":"The prototype run ended during the Bind 10 runtime cutover"}',
+    });
+    expect(database.prepare(
+      "SELECT status, terminalized_at FROM harness_runs WHERE id = 'run-history'",
+    ).get()).toEqual({ status: "completed", terminalized_at: null });
+    expect(database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = 'workstream-bind'",
+    ).get()).toEqual({ harness_status: "failed" });
+
+    database.exec(`
+      INSERT INTO harness_run_scopes
+        (harness_run_id, workspace_id, workstream_id, attempt_id, execution_principal_json,
+         routing_policy_version, prompt_version, tool_surface_hash, scope_hash, created_at)
+      VALUES ('run-active', 'workspace-bind', 'workstream-bind', 'attempt-1', '{}',
+              'routing-v1', 'prompt-v1', 'surface-hash', 'scope-hash', '2026-01-01');
+    `);
+    expect(() => database.exec(
+      "UPDATE harness_run_scopes SET prompt_version = 'changed' WHERE harness_run_id = 'run-active'",
+    )).toThrow(/harness_run_scope_immutable/u);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM inference_attempts",
+    ).get()).toEqual({ count: 0 });
+    expect(database.prepare("PRAGMA table_info(harness_run_scopes)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "eligible_connection_capabilities_json" }),
+      ]),
+    );
+    expect(database.prepare("PRAGMA table_info(messages)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "harness_run_id" }),
+        expect.objectContaining({ name: "harness_attempt_id" }),
+      ]),
+    );
+    database.close();
+  });
+
   it("sets fixed timezone defaults with one migration", () => {
     const database = migrateDatabaseThrough("0024_linear_connection_identity_uniqueness.sql");
     database.exec(`

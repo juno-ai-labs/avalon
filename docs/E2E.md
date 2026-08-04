@@ -13,7 +13,7 @@ pnpm smoke:local
 
 The smoke check signs in through development-only authentication, verifies protected workspace routes, validates the right-rail fixtures and persisted tool transcript, replays a human message without duplicating agent work, rejects a private-network web monitor, receives a realtime snapshot, and rejects reuse of the single-use socket ticket. It does not create provider data or send email.
 
-Set `AVALON_SMOKE_BASE_URL` to exercise another local Worker port. The command intentionally cannot authenticate against a hosted production Worker because development authentication must be disabled there.
+Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production.
 
 ## Right-sidebar and desktop acceptance
 

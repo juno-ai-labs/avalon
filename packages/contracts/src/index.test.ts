@@ -6,9 +6,11 @@ import {
   CreateWorkspaceInvitationRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
+  HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
   MentionSchema,
   RefreshRequestSchema,
+  ServerSocketEventSchema,
   WorkstreamArtifactSchema,
   WorkstreamWorkflowInputSchema
 } from "./index";
@@ -16,6 +18,18 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("exposes stable member-safe harness failure codes", () => {
+    expect(HarnessFailureCodeSchema.options).toEqual(expect.arrayContaining([
+      "run_wall_time_limit_exceeded",
+      "run_iteration_limit_exceeded",
+      "run_tool_call_limit_exceeded",
+      "run_token_limit_exceeded",
+      "run_cost_limit_exceeded",
+      "context_limit_exceeded",
+    ]));
+    expect(() => HarnessFailureCodeSchema.parse("generic_limit")).toThrow();
+  });
+
   it("carries authoritative person presentation metadata with a mention", () => {
     expect(MentionSchema.parse({
       type: "person",
@@ -64,6 +78,31 @@ describe("boundary contracts", () => {
         afterSequence: 42
       })
     ).toEqual({ type: "subscribe", afterSequence: 42 });
+  });
+
+  it("keeps room replay sequence separate from Bind stream epochs", () => {
+    expect(ServerSocketEventSchema.parse({
+      type: "stream_delta",
+      sequence: 42,
+      occurredAt: "2026-07-31T20:00:00.000Z",
+      messageId: id,
+      turnId: "turn-1",
+      epoch: 2,
+      streamSeq: 7,
+      reset: true,
+      delta: ""
+    })).toMatchObject({ sequence: 42, epoch: 2, streamSeq: 7, reset: true });
+    expect(ServerSocketEventSchema.safeParse({
+      type: "stream_started",
+      sequence: 43,
+      occurredAt: "2026-07-31T20:00:00.000Z",
+      messageId: id,
+      harnessRunId: id,
+      turnId: "turn-1",
+      epoch: 2,
+      streamSeq: 0,
+      reset: true
+    }).success).toBe(false);
   });
 
   it("requires an explicit execution principal", () => {

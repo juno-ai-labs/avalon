@@ -6,7 +6,7 @@ description = "Generated dependencies, build artifacts, release bundles, and loc
 paths = [
   '''(^|/)node_modules/''',
   '''(^|/)out/''',
-  '''(^|/)dist/''',
+  '''(^|/)dist(?:-[^/]+)?/''',
   '''(^|/)release/''',
   '''(^|/)coverage/''',
   '''(^|/)\.wrangler/''',

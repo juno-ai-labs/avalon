@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@avalon/contracts": "workspace:*",
+    "@juno-ai/bind": "10.0.0",
     "eventsource-parser": "latest",
+    "openai": "^6.49.0",
     "zod": "catalog:"
   },
   "devDependencies": {
