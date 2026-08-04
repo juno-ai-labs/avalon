@@ -3058,14 +3058,18 @@ function canonicalIanaTimezone(timezone: string): string {
   }
 }
 
-function easyEnglishCurrentTime(instant: Date, timezone: string): string {
+function easyEnglishCurrentTime(
+  instant: Date,
+  timezone: string,
+  workspaceTimezone: string,
+): string {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       year: "numeric",
       month: "long",
       day: "numeric",
-      hour: "numeric",
+      hour: "2-digit",
       minute: "2-digit",
       hour12: true,
     }).formatToParts(instant).map((part) => [part.type, part.value]),
@@ -3073,6 +3077,7 @@ function easyEnglishCurrentTime(instant: Date, timezone: string): string {
   return [
     `current local time: ${parts.hour}:${parts.minute} ${parts.dayPeriod}`,
     `local timezone: ${timezone}`,
+    `workspace timezone: ${workspaceTimezone}`,
     `local date: ${parts.month} ${parts.day} ${parts.year}`,
     `iso8601 timestamp: ${instant.toISOString()}`,
   ].join("\n");
@@ -3095,7 +3100,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
     {
       definition: {
         name: "avalon.current_time",
-        description: "Return the current local time, IANA timezone, local date, and UTC ISO-8601 timestamp. Defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
+        description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
         capability: "time.read",
         mode: "read",
         idempotency: "safe",
@@ -3114,19 +3119,20 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       },
       execute: async (raw) => {
         const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
-        let configuredTimezone: string | null = null;
+        const configuredWorkspaceTimezone = (await env.DB.prepare(
+          "SELECT timezone FROM workspaces WHERE id = ?",
+        ).bind(input.workspaceId).first<{ timezone: string }>())?.timezone ?? null;
+        const workspaceTimezone = canonicalIanaTimezone(configuredWorkspaceTimezone ?? "");
+        let configuredUserTimezone: string | null = null;
         if (!args.timezone && input.executionPrincipal.type === "user") {
-          configuredTimezone = (await env.DB.prepare(
+          configuredUserTimezone = (await env.DB.prepare(
             "SELECT timezone FROM users WHERE id = ?",
           ).bind(input.executionPrincipal.userId).first<{ timezone: string }>())?.timezone ?? null;
         }
-        if (!args.timezone && !configuredTimezone) {
-          configuredTimezone = (await env.DB.prepare(
-            "SELECT timezone FROM workspaces WHERE id = ?",
-          ).bind(input.workspaceId).first<{ timezone: string }>())?.timezone ?? null;
-        }
-        const timezone = canonicalIanaTimezone(args.timezone ?? configuredTimezone ?? "");
-        const text = easyEnglishCurrentTime(new Date(), timezone);
+        const timezone = canonicalIanaTimezone(
+          args.timezone ?? configuredUserTimezone ?? workspaceTimezone,
+        );
+        const text = easyEnglishCurrentTime(new Date(), timezone, workspaceTimezone);
         return { output: text, summary: text };
       },
     },
