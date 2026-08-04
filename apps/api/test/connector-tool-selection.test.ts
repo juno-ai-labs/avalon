@@ -356,10 +356,11 @@ describe("connector tools selected for harness runs", () => {
       "google.sheets.read_values",
     ]);
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
+      "avalon.current_time",
       "avalon.read_workstream",
-      "avalon.read_resource",
       "avalon.web_search",
       "avalon.web_fetch",
+      "avalon.read_resource",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.run_subagent");
     expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
@@ -386,6 +387,7 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
+      "avalon.current_time",
       "avalon.read_workstream",
       "avalon.read_resource",
     ]);

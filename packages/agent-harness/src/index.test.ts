@@ -1325,22 +1325,28 @@ describe("agent harness", () => {
     expect(boundedBodies[0]!.tools).toEqual(probe.tools);
   });
 
-  it("keeps the current trigger and final run context as one required context unit", async () => {
+  it("keeps the newest real user request through later tool turns", async () => {
     type RequestBody = {
       messages: Array<{ role: string; content?: string | null }>;
       tools?: unknown[];
     };
     const oldContent = `old-context-${"x".repeat(8_000)}`;
     const triggerContent = "Write the launch summary requested in this message";
-    const runContext = [
-      "AVALON RUN CONTEXT (execution metadata, not durable policy):",
-      JSON.stringify({ reason: "human_message", requestId: "run-1" }),
-    ].join("\n");
+    const toolCallId = "current-turn:turn:1:tool:0";
     const common = {
       messages: [
         { role: "user" as const, content: oldContent },
         { role: "user" as const, content: triggerContent },
-        { role: "user" as const, content: runContext },
+        {
+          role: "assistant" as const,
+          content: null,
+          tool_calls: [{
+            id: toolCallId,
+            type: "function" as const,
+            function: { name: "list_connector_plugins", arguments: "{}" },
+          }],
+        },
+        { role: "tool" as const, content: '{"plugins":[]}', tool_call_id: toolCallId },
       ],
     };
     const probeBodies: RequestBody[] = [];
@@ -1351,7 +1357,7 @@ describe("agent harness", () => {
     expect((await runHarness({ ...runInput(probeFetch), ...common })).status).toBe("completed");
     const probe = probeBodies[0]!;
     const protectedMessages = probe.messages.filter((message) =>
-      message.role === "system" || message.content === triggerContent || message.content === runContext);
+      message.role === "system" || message.content === triggerContent || message.role === "assistant" || message.role === "tool");
     const protectedBytes = new TextEncoder().encode(JSON.stringify({
       messages: protectedMessages,
       tools: probe.tools,
@@ -1370,17 +1376,17 @@ describe("agent harness", () => {
     expect(boundedBodies[0]!.messages).toEqual(protectedMessages);
     expect(boundedBodies[0]!.messages.some((message) => message.content === oldContent)).toBe(false);
 
-    const metadataOnlyMessages = probe.messages.filter((message) =>
-      message.role === "system" || message.content === runContext);
-    const metadataOnlyBytes = new TextEncoder().encode(JSON.stringify({
-      messages: metadataOnlyMessages,
+    const suffixOnlyMessages = probe.messages.filter((message) =>
+      message.role === "system" || message.role === "assistant" || message.role === "tool");
+    const suffixOnlyBytes = new TextEncoder().encode(JSON.stringify({
+      messages: suffixOnlyMessages,
       tools: probe.tools,
     })).byteLength;
     const rejectedFetch = vi.fn(async () => {
       throw new Error("provider request must not be sent without the trigger");
     }) as typeof fetch;
     const rejected = await runHarness({
-      ...runInput(rejectedFetch, { maxContextBytes: metadataOnlyBytes }),
+      ...runInput(rejectedFetch, { maxContextBytes: suffixOnlyBytes }),
       ...common,
     });
     expect(rejected).toMatchObject({
