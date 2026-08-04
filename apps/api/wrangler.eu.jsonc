@@ -86,6 +86,7 @@
   "r2_buckets": [
     { "binding": "PAYLOADS", "bucket_name": "avalon-eu-payloads", "jurisdiction": "eu" }
   ],
+  "images": { "binding": "IMAGES" },
   "durable_objects": {
     "bindings": [
       { "name": "WORKSTREAM_ROOMS", "class_name": "WorkstreamRoom" },

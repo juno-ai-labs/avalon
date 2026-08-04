@@ -65,6 +65,8 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, complete-context bytes, run tokens and cost, plugin-catalog tokens, active plugins, active tool-schema bytes, and each model-visible tool result. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Web results, fetched bytes, replay payloads, and attachments are independently bounded.
 
+Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, GIF, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Only the derivative is placed in the model protocol transcript.
+
 Oversized tool results are reduced only as valid JSON inside an explicit truncation envelope; an unsafe reduction fails. Context exhaustion uses `context_limit_exceeded`; an oversized active surface uses `tool_surface_too_large`; and wall-time, iteration, tool-call, token, and cost ceilings use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, `run_token_limit_exceeded`, and `run_cost_limit_exceeded`. Limits never silently reinterpret a write as successful.
 
 ## Elicitation
