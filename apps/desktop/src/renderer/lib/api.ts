@@ -287,7 +287,10 @@ export function mapMessage(message: WireMessage): Message {
       ? 'activity_suggestion'
       : message.messageType;
   return {
-    id: message.id,
+    // The open question arrives as a realtime-only block while its durable
+    // answer is later stored as a message. Give both representations one UI
+    // identity so the answer replaces the open card instead of duplicating it.
+    id: elicitation.success ? `elicitation-${elicitation.data.id}` : message.id,
     ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
     sequenceNumber: message.sequenceNumber,

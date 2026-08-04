@@ -101,6 +101,26 @@ describe('ElicitationPanel', () => {
     expect(screen.getByRole('button', { name: /Submit/u })).toBeInTheDocument();
     expect(onAnswer).not.toHaveBeenCalled();
   });
+
+  it('keeps the original choices and a custom answer visible after submission', () => {
+    render(
+      <ElicitationPanel
+        elicitation={{
+          ...singleSelectElicitation,
+          prompt: 'Choose one: compare, review, or something else?',
+          status: 'answered',
+          answer: 'Summarize the payment terms',
+        }}
+        onAnswer={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Choose one: compare, review, or something else?' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Response options')).toHaveTextContent('Compare offer vs. RSPA');
+    expect(screen.getByLabelText('Response options')).toHaveTextContent('Review the draft offer');
+    expect(screen.getByLabelText('Response options')).toHaveTextContent('Other');
+    expect(screen.getAllByText('Summarize the payment terms')).toHaveLength(2);
+  });
 });
 
 describe('MessageBlock human identity', () => {

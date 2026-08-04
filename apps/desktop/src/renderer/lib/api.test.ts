@@ -240,6 +240,40 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
+  it('gives the durable elicitation answer the same identity as its realtime question', () => {
+    expect(mapMessage({
+      ...message,
+      id: 'durable-elicitation-answer-message',
+      clientMessageId: `elicitation-response:${taskId}`,
+      author: { type: 'human' as const, user },
+      messageType: 'elicitation' as const,
+      textContent: '',
+      structuredContent: {
+        kind: 'elicitation_response',
+        elicitation: {
+          id: taskId,
+          workstreamId,
+          harnessRunId: messageId,
+          prompt: 'Choose one',
+          responseType: 'single_select',
+          options: [{ label: 'Foo', value: 'foo', description: null }],
+          minimumSelections: 1,
+          maximumSelections: 1,
+          targetUserId: null,
+          status: 'answered',
+          answer: 'foo',
+          answeredByUserId: userId,
+          createdAt: timestamp,
+          answeredAt: timestamp,
+        },
+      },
+    })).toMatchObject({
+      id: `elicitation-${taskId}`,
+      messageType: 'elicitation',
+      elicitation: { id: taskId, status: 'answered', answer: 'foo' },
+    });
+  });
+
   it('maps persisted artifacts and background activity into the durable rail model', () => {
     expect(mapWorkstreamDetail({
       ...detail,

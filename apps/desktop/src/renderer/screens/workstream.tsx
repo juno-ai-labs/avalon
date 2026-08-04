@@ -38,7 +38,7 @@ import type { BackgroundTask, ElicitationData, Message, WorkspaceMember, Workstr
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
-import { ElicitationPanel, MessageBlock } from '../components/workstream-blocks';
+import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -606,7 +606,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const detail = workstream.data;
   const transcript = messages.data ?? [];
-  const visibleTranscript = transcript.filter((message) => message.messageType !== 'elicitation');
+  const visibleTranscript = transcript;
   const liveBackgroundTasks = backgroundTasksFromMessages(transcript);
   const backgroundTasks = mergeBackgroundTasks(detail.backgroundTasks, liveBackgroundTasks);
   const displayedDetail: WorkstreamDetail = {
@@ -665,7 +665,7 @@ export function WorkstreamScreen(): React.JSX.Element {
               />
             ))
           )}
-          {detail.harnessStatus === 'running' && !transcript.some((message) => message.streaming) && (
+          {detail.harnessStatus === 'running' && !activeElicitation && !transcript.some((message) => message.streaming) && (
             <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
           )}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
@@ -686,13 +686,6 @@ export function WorkstreamScreen(): React.JSX.Element {
           <JumpToLatestButton onJump={() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })} />
         )}
         <div className="composer-stack">
-          {activeElicitation && (
-            <ElicitationPanel
-              elicitation={activeElicitation}
-              key={activeElicitation.id}
-              onAnswer={(answer, customResponse) => answerElicitation(activeElicitation.id, answer, customResponse)}
-            />
-          )}
           <WorkstreamComposer
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
