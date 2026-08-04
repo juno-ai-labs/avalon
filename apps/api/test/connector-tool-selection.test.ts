@@ -43,6 +43,14 @@ const GOOGLE_WORKSPACE_TOOLS = [
   "google.sheets.append_values",
 ] as const;
 
+const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
+  "gmail.read",
+  "gmail.draft",
+  "gmail.send",
+  "calendar.read",
+  "calendar.write",
+] as const;
+
 interface ConnectionRow extends Record<string, unknown> {
   id: string;
   workspace_id: string;
@@ -560,6 +568,64 @@ describe("connector tools selected for harness runs", () => {
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
     expect(selected.connectionByTool.get("google.drive.search")).toBe(OWNER_CONNECTION_ID);
+  });
+
+  it("advertises every Google credential as a distinct capability-specific loadable plugin", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(
+        OWNER_CONNECTION_ID,
+        "personal",
+        USER_ID,
+        GOOGLE_MAIL_CALENDAR_CAPABILITIES,
+        "2026-07-01T00:00:00.000Z",
+      ),
+      connection(
+        WORKSPACE_CONNECTION_ID,
+        "workspace",
+        null,
+        GOOGLE_WORKSPACE_CAPABILITIES,
+        "2026-08-01T00:00:00.000Z",
+      ),
+    ]);
+
+    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const mail = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${OWNER_CONNECTION_ID}`);
+    const drive = selected.plugins.find((plugin) => plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`);
+
+    expect(mail).toMatchObject({
+      modelId: "plugin_google",
+      displayName: "Google Mail + Calendar",
+      preload: false,
+      explicit: false,
+    });
+    expect(mail?.description).toContain("email, inbox, mail");
+    expect(mail?.searchAliases).toEqual(expect.arrayContaining(["gmail", "email", "inbox", "calendar"]));
+    expect(mail?.systemMessage).toContain("use the Gmail search tool first");
+    expect(mail?.systemMessage).toContain("do not substitute public web search");
+    expect(mail?.systemMessage).not.toContain("Drive search");
+    expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
+      "google.gmail.search",
+      "google.gmail.read_thread",
+      "google.gmail.read_message",
+      "google.gmail.create_draft",
+      "google.gmail.send",
+      "google.calendar.list_calendars",
+      "google.calendar.list_events",
+      "google.calendar.read_event",
+      "google.calendar.create_event",
+      "google.calendar.update_event",
+    ]);
+
+    expect(drive).toMatchObject({
+      modelId: "plugin_google_2",
+      displayName: "Google Drive + Docs + Sheets",
+    });
+    expect(drive?.description).toContain("file, document, spreadsheet");
+    expect(drive?.searchAliases).toEqual(expect.arrayContaining(["drive", "files", "docs", "sheets"]));
+    expect(drive?.systemMessage).toContain("use the Drive search tool");
+    expect(drive?.systemMessage).toContain("do not substitute public web search");
+    expect(drive?.systemMessage).not.toContain("Gmail search");
+    expect(drive?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
   });
 
   it("preloads an explicitly attached workspace identity without dropping another eligible personal plugin", async () => {
