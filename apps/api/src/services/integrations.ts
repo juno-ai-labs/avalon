@@ -480,7 +480,10 @@ async function projectModelProtocolTranscript(
           mimeType: attachment.mimeType,
           contentRef: null,
         });
-        const parts = await buildAttachmentModelParts(env.PAYLOADS, sources);
+        const parts = await buildAttachmentModelParts(env.PAYLOADS, sources, {
+          database: env.DB,
+          images: env.IMAGES,
+        });
         projected.push({
           role: "user",
           content: [
@@ -510,7 +513,7 @@ async function loadModelAttachmentSources(
   if (ids.length === 0) return new Map();
   const placeholders = ids.map(() => "?").join(", ");
   const rows = await env.DB.prepare(
-    `SELECT id, title, mime_type, content_ref
+    `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type
        FROM resources
       WHERE workspace_id = ? AND id IN (${placeholders})`,
   ).bind(workspaceId, ...ids).all<{
@@ -518,12 +521,16 @@ async function loadModelAttachmentSources(
     title: string;
     mime_type: string | null;
     content_ref: string | null;
+    model_content_ref: string | null;
+    model_mime_type: string | null;
   }>();
   return new Map((rows.results ?? []).map((row) => [row.id, {
     id: row.id,
     fileName: row.title,
     mimeType: row.mime_type ?? "application/octet-stream",
     contentRef: row.content_ref,
+    modelContentRef: row.model_content_ref,
+    modelMimeType: row.model_mime_type,
   }]));
 }
 
