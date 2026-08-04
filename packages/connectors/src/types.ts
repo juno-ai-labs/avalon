@@ -82,14 +82,15 @@ export interface ConnectorAuthorizationCallbackInput extends Record<string, unkn
  * credential values, and other remotely controlled content must never be
  * interpolated into it.
  *
- * The runtime owns credential-specific identity. It derives the canonical
- * `connection:<uuid>` plugin ID and its short wire name from the connection ID;
- * this descriptor intentionally contains no installed-connection metadata.
+ * The runtime owns credential-specific identity. The opaque
+ * `connection:<uuid>` ID remains the authorization identity, while the
+ * database assigns a stable workspace-local model ID such as `plugin_google`.
+ * This descriptor intentionally contains no installed-connection metadata.
  */
 export interface ConnectorAgentPluginDescriptor {
   /** Stable provider type. Must equal `manifest.type`. */
   readonly providerType: string;
-  /** Stable, identifier-safe prefix for a runtime-generated short wire name. */
+  /** Stable, identifier-safe provider prefix used by model-facing tool names. */
   readonly wireNamePrefix: string;
   /** Compact trusted description shown in the progressive plugin catalog. */
   readonly description: string;

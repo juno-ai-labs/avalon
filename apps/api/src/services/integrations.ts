@@ -91,7 +91,7 @@ type WorkstreamHarnessResult = {
 
 const InlineChildToolInputSchema = z.object({
   objective: z.string().trim().min(1).max(12_000),
-  pluginIds: z.array(z.string().regex(/^connection:[0-9a-f-]{36}$/u)).max(4).optional(),
+  pluginIds: z.array(z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u)).max(4).optional(),
 });
 
 type LoadedHarnessTools = Awaited<ReturnType<typeof loadHarnessTools>>;
@@ -1544,7 +1544,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           pluginIds: {
             type: "array",
             maxItems: 4,
-            items: { type: "string", pattern: "^connection:[0-9a-f-]{36}$" },
+            items: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$" },
             description: "Already-active credential plugin IDs required for this investigation.",
           },
         },
@@ -1558,8 +1558,18 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         workstreamId: options.input.workstreamId,
         harnessRunId: options.input.harnessRunId,
       };
+      const canonicalByModelId = new Map(
+        options.harnessTools.plugins.map((plugin) => [plugin.modelId, plugin.canonicalId]),
+      );
+      const requestedCanonicalIds = args.pluginIds?.map((modelId) => {
+        const canonicalId = canonicalByModelId.get(modelId);
+        if (!canonicalId) {
+          throw new ConnectorError("unauthorized", "A sub-agent requested a connector outside the frozen parent scope");
+        }
+        return canonicalId;
+      });
       const selectedPluginIds = [...new Set(
-        args.pluginIds ?? [...options.activeCredentialPluginIds].sort().slice(0, limits.maxActivePlugins),
+        requestedCanonicalIds ?? [...options.activeCredentialPluginIds].sort().slice(0, limits.maxActivePlugins),
       )].sort();
       if (selectedPluginIds.length > limits.maxActivePlugins) {
         return {
@@ -2434,6 +2444,7 @@ async function loadHarnessTools(
   const modeByTool = new Map<string, "read" | "write">(
     coreTools.map((tool) => [tool.definition.name, tool.definition.mode]),
   );
+  const seenModelPluginIds = new Set<string>();
   const orderedConnectionRows = [...(connectionRows.results ?? [])].sort((left, right) => {
     const priority = connectorSelectionPriority(left, input.executionPrincipal, attached)
       - connectorSelectionPriority(right, input.executionPrincipal, attached);
@@ -2453,9 +2464,18 @@ async function loadHarnessTools(
     const adapter = registry.get(String(row.connector_type));
     const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
     const pluginId = `connection:${connectionId}`;
-    const shortWireName = await stableConnectionWireName(adapter.agentPlugin.wireNamePrefix, pluginId);
+    const modelPluginId = String(row.model_plugin_id ?? "");
+    if (!/^plugin_[a-z][a-z0-9_]{0,62}$/u.test(modelPluginId)) {
+      throw new Error(`Active connector ${connectionId} is missing a valid model-facing plugin id`);
+    }
+    if (seenModelPluginIds.has(modelPluginId)) {
+      throw new Error(`Duplicate active model-facing plugin id: ${modelPluginId}`);
+    }
+    seenModelPluginIds.add(modelPluginId);
+    const shortWireName = stableConnectionWireName(modelPluginId);
     const frozen: FrozenConnectorPlugin = {
       pluginId,
+      modelPluginId,
       connectionId,
       workspaceId: input.workspaceId,
       connectorType: String(row.connector_type),
@@ -2509,6 +2529,7 @@ async function loadHarnessTools(
     pluginSurfaceHashes.set(pluginId, surfaceHash);
     plugins.push({
       canonicalId: pluginId,
+      modelId: modelPluginId,
       shortWireName,
       displayName: adapter.manifest.displayName,
       searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
@@ -2533,6 +2554,7 @@ async function loadHarnessTools(
 
 interface FrozenConnectorPlugin {
   pluginId: string;
+  modelPluginId: string;
   connectionId: string;
   workspaceId: string;
   connectorType: string;
@@ -2549,14 +2571,17 @@ interface RunAuthoritySnapshot {
   triggerType: string | null;
 }
 
-async function stableConnectionWireName(prefix: string, pluginId: string): Promise<string> {
-  const safePrefix = prefix.toLowerCase().replace(/[^a-z0-9_]+/gu, "_").replace(/^_+|_+$/gu, "").slice(0, 20) || "connector";
-  const digest = (await sha256(pluginId)).replace(/[^a-z0-9]+/giu, "").toLowerCase().slice(0, 12);
-  return `${safePrefix}_${digest}`;
+function stableConnectionWireName(modelPluginId: string): string {
+  return modelPluginId.replace(/^plugin_/u, "").slice(0, 48);
 }
 
 function stableWireToolName(prefix: string, toolName: string): string {
   const normalized = toolName.toLowerCase().replace(/[^a-z0-9_]+/gu, "_").replace(/^_+|_+$/gu, "");
+  const providerPrefix = prefix.replace(/_[2-9][0-9]*$/u, "");
+  const instanceSuffix = prefix.slice(providerPrefix.length);
+  if (normalized === providerPrefix || normalized.startsWith(`${providerPrefix}_`)) {
+    return `${providerPrefix}${instanceSuffix}${normalized.slice(providerPrefix.length)}`.slice(0, 64);
+  }
   return `${prefix}_${normalized}`.slice(0, 64);
 }
 

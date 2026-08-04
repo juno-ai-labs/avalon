@@ -867,7 +867,10 @@ export interface HarnessTool {
 
 /** A credential-scoped Bind plugin whose trusted prose is authored in code. */
 export interface HarnessPlugin {
+  /** Opaque host authorization/persistence identity (connection:<uuid>). */
   canonicalId: string;
+  /** Stable workspace-local identifier exposed to the model (plugin_google). */
+  modelId: string;
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */
   displayName?: string;

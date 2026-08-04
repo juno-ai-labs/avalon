@@ -408,6 +408,15 @@ describe("agent harness", () => {
 
   it("derives conservative input budgets from the selected route context window", () => {
     expect(modelContextBudget({
+      model: "x-ai/grok-4.3",
+      configuredMaxBytes: 2_000_000,
+      maxRunTokens: 48_000,
+    })).toMatchObject({
+      contextWindowTokens: 1_000_000,
+      reservedRunTokens: 48_000,
+      effectiveMaxBytes: 952_000,
+    });
+    expect(modelContextBudget({
       model: "google/gemini-2.5-flash-lite",
       configuredMaxBytes: 2_000_000,
       maxRunTokens: 48_000,
@@ -718,7 +727,7 @@ describe("agent harness", () => {
               0,
               "provider-load",
               "avalon_load_plugin",
-              JSON.stringify({ pluginId: "connection:github-1" }),
+              JSON.stringify({ pluginId: "plugin_github" }),
             )],
           },
           finish_reason: "tool_calls",
@@ -742,6 +751,7 @@ describe("agent harness", () => {
     const events: HarnessEvent[] = [];
     const plugin: HarnessPlugin = {
       canonicalId: "connection:github-1",
+      modelId: "plugin_github",
       shortWireName: "gh1",
       displayName: "GitHub",
       searchAliases: ["repositories", "pull requests"],
@@ -776,15 +786,16 @@ describe("agent harness", () => {
     expect(order).toEqual(["persist:connection:github-1", "execute"]);
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain("gh1_search");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Use GitHub search only");
+    expect(requestBodies[0]!.messages[0]!.content).not.toContain("connection:github-1");
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain("gh1_search");
     expect(requestBodies[1]!.messages[0]!.content).toContain(
-      '<plugin id="connection:github-1">\nUse GitHub search only when repository context is relevant.',
+      '<plugin id="plugin_github">\nUse GitHub search only when repository context is relevant.',
     );
     const loadResult = requestBodies[1]!.messages.find((message) => message.role === "tool");
     expect(loadResult?.content).toBe(JSON.stringify({
       success: true,
       data: {
-        loaded: "connection:github-1",
+        loaded: "plugin_github",
         tools: [{ name: "gh1_search", description: "Search repositories" }],
       },
     }));
@@ -849,7 +860,7 @@ describe("agent harness", () => {
               0,
               "provider-load-monitor",
               "avalon_load_plugin",
-              JSON.stringify({ pluginId }),
+              JSON.stringify({ pluginId: "plugin_web_monitor" }),
             )],
           },
           finish_reason: "tool_calls",
@@ -881,6 +892,7 @@ describe("agent harness", () => {
     const findCompletedToolResult = vi.fn(async () => null);
     const plugin: HarnessPlugin = {
       canonicalId: pluginId,
+      modelId: "plugin_web_monitor",
       shortWireName: "web_monitor_1aikdhro7bwp",
       displayName: "Web monitor",
       searchAliases: ["web_monitor", "website monitor"],
@@ -920,12 +932,12 @@ describe("agent harness", () => {
     expect(outcome).toMatchObject({ status: "completed", content: "monitor fetched", toolCalls: 2 });
     expect(order).toEqual([`persist:${pluginId}`, "execute"]);
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain(advertisedWireName);
-    expect(requestBodies[0]!.messages[0]!.content).toContain(`id=${JSON.stringify(pluginId)}`);
+    expect(requestBodies[0]!.messages[0]!.content).toContain('id="plugin_web_monitor"');
     expect(requestBodies[0]!.messages[0]!.content).toContain('name="Web monitor"');
     expect(requestBodies[0]!.messages[0]!.content).toContain('aliases=["web_monitor","website monitor"]');
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain(advertisedWireName);
     expect(requestBodies[1]!.messages[0]!.content).toContain(
-      `<plugin id="${pluginId}">\nFetch only the explicitly requested public monitor URL.`,
+      '<plugin id="plugin_web_monitor">\nFetch only the explicitly requested public monitor URL.',
     );
     expect(events.find((event) =>
       event.type === "tool_started" && event.toolName === "avalon_core.web_monitor_fetch"
@@ -1037,7 +1049,7 @@ describe("agent harness", () => {
       success: true,
       data: {
         plugins: [{
-          id: "connection:019f0000-opaque",
+          id: "plugin_lin1",
           displayName: "Linear",
           searchAliases: ["issue tracker", "project management"],
           description: "Authorized workspace connector.",
@@ -1087,7 +1099,7 @@ describe("agent harness", () => {
               0,
               "provider-load",
               "avalon_load_plugin",
-              JSON.stringify({ pluginId: "connection:not-in-run-scope" }),
+              JSON.stringify({ pluginId: "plugin_not_in_run_scope" }),
             )],
           },
           finish_reason: "tool_calls",
@@ -1321,7 +1333,7 @@ describe("agent harness", () => {
     expect(boundedBodies[0]!.messages).toEqual(prunedMessages);
     expect(boundedBodies[0]!.messages.some((message) => message.content === oldContent)).toBe(false);
     expect(boundedBodies[0]!.messages[0]!.content).toContain("Trusted plugin instructions");
-    expect(boundedBodies[0]!.messages[0]!.content).toContain("connection:budgeted-catalog");
+    expect(boundedBodies[0]!.messages[0]!.content).toContain("plugin_budgeted_catalog");
     expect(boundedBodies[0]!.tools).toEqual(probe.tools);
   });
 
@@ -1832,6 +1844,7 @@ function toolDeltaWithArguments(index: number, id: string, name: string, argumen
 function credentialPlugin(canonicalId: string, shortWireName: string, systemMessage: string): HarnessPlugin {
   return {
     canonicalId,
+    modelId: `plugin_${shortWireName}`,
     shortWireName,
     description: `Authorized ${shortWireName} connector`,
     systemMessage,
