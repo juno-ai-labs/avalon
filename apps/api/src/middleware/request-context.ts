@@ -40,7 +40,14 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
         const allowed = new Set(c.env.ALLOWED_ORIGINS.split(",").map((value: string) => value.trim()).filter(Boolean));
         return allowed.has(origin) ? origin : undefined;
       },
-      allowHeaders: ["authorization", "content-type", "idempotency-key", "x-avalon-region", "x-request-id"],
+      allowHeaders: [
+        "authorization",
+        "content-type",
+        "idempotency-key",
+        "x-avalon-draft-id",
+        "x-avalon-region",
+        "x-request-id",
+      ],
       exposeHeaders: ["x-request-id"],
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
       credentials: false,
