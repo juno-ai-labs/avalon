@@ -7,9 +7,6 @@ afterAllArtifactBuild: ./scripts/finalize-macos-release.mjs
 directories:
   output: release
   buildResources: resources
-extraResources:
-  - from: resources/icon.png
-    to: icon.png
 files:
   - out/**/*
   - package.json
@@ -22,6 +19,11 @@ publish:
     url: https://downloads.with-avalon.com/stable/darwin/arm64
 mac:
   icon: resources/icon.icns
+  extraResources:
+    - from: resources/icons
+      to: icons
+      filter:
+        - "*.icns"
   category: public.app-category.productivity
   hardenedRuntime: true
   forceCodeSigning: true
@@ -41,10 +43,16 @@ dmg:
   sign: false
 win:
   icon: resources/icon.png
+  extraResources:
+    - from: resources/icon.png
+      to: icon.png
   target:
     - nsis
 linux:
   icon: resources/icon.png
+  extraResources:
+    - from: resources/icon.png
+      to: icon.png
   category: Office
   target:
     - AppImage
