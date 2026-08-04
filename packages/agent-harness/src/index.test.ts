@@ -793,10 +793,20 @@ describe("agent harness", () => {
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain("gh1_search");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Use GitHub search only");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("connection:github-1");
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      '<available_connector_plugins>\n- id="plugin_github"; name="GitHub"; aliases=["repositories","pull requests"]; description=Search authorized GitHub repositories.',
+    );
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      "Use avalon_load_plugin with the exact plugin id before using one.",
+    );
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      "Before claiming that a service or its data is unavailable, inspect the compact catalog",
+    );
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain("gh1_search");
     expect(requestBodies[1]!.messages[0]!.content).toContain(
       '<plugin id="plugin_github">\nUse GitHub search only when repository context is relevant.',
     );
+    expect(requestBodies[1]!.messages[0]!.content).not.toContain("<available_connector_plugins>");
     const loadResult = requestBodies[1]!.messages.find((message) => message.role === "tool");
     expect(loadResult?.content).toBe(JSON.stringify({
       success: true,
@@ -816,6 +826,69 @@ describe("agent harness", () => {
         idempotency: "safe",
       },
     });
+  });
+
+  it("renders the exact authorized connector set as a stable model-facing loadable catalog", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return streamResponse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const plugin = (
+      canonicalId: string,
+      modelId: string,
+      displayName: string,
+      searchAliases: string[],
+      description: string,
+    ): HarnessPlugin => ({
+      canonicalId,
+      modelId,
+      shortWireName: modelId.replace(/^plugin_/u, ""),
+      displayName,
+      searchAliases,
+      description,
+      systemMessage: `Active instructions for ${displayName}.`,
+      preload: false,
+      tools: [],
+    });
+
+    await runHarness({
+      ...runInput(fetcher),
+      plugins: [
+        plugin(
+          "connection:mail-secret-id",
+          "plugin_google",
+          "Google Mail + Calendar",
+          ["gmail", "email", "inbox", "calendar"],
+          "Search authorized Gmail and Calendar data.",
+        ),
+        plugin(
+          "connection:drive-secret-id",
+          "plugin_google_2",
+          "Google Drive + Docs + Sheets",
+          ["drive", "files", "docs", "sheets"],
+          "Search authorized Drive, Docs, and Sheets data.",
+        ),
+        plugin(
+          "connection:linear-secret-id",
+          "plugin_linear",
+          "Linear",
+          ["issues", "projects"],
+          "Work with authorized Linear issues and projects.",
+        ),
+      ],
+      reauthorizePlugin: () => true,
+      persistActivation: () => undefined,
+    });
+
+    const system = String(requestBodies[0]!.messages[0]!.content);
+    expect(system).toContain('<available_connector_plugins>');
+    expect(system).toContain('id="plugin_google"; name="Google Mail + Calendar"; aliases=["gmail","email","inbox","calendar"]');
+    expect(system).toContain('id="plugin_google_2"; name="Google Drive + Docs + Sheets"; aliases=["drive","files","docs","sheets"]');
+    expect(system).toContain('id="plugin_linear"; name="Linear"; aliases=["issues","projects"]');
+    expect(system).not.toContain("connection:mail-secret-id");
+    expect(system).not.toContain("connection:drive-secret-id");
+    expect(system).not.toContain("connection:linear-secret-id");
   });
 
   it("emits canonical read-safe policy for the connector catalog tool", async () => {

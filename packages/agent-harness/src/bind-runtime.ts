@@ -907,7 +907,7 @@ function corePlugin(input: RunHarnessInput): BindPlugin {
     modelId: "avalon_core",
     shortWireName: "avalon",
     description: "Core Avalon work-stream tools and connector plugin activation.",
-    systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use connector plugins only when their catalog description is relevant. Use list_connector_plugins or search_connector_plugins when the compact catalog is insufficient. Loading a plugin never expands the run's original authority.",
+    systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps. Connector plugins are groups of tools backed by credentials already authorized for this run. When a request needs an external service, load the relevant available connector plugin before answering. Before claiming that a service or its data is unavailable, inspect the compact catalog and, when needed, use list_connector_plugins or search_connector_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
     tools,
     preload: true,
     explicit: true,
