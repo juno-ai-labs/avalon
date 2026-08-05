@@ -174,6 +174,7 @@ export function mapResource(resource: WireResource): WorkstreamResource {
 function mapConnection(connection: WireConnection): WorkstreamConnection {
   return {
     id: connection.id,
+    modelPluginId: connection.modelPluginId,
     connectorType: connection.connectorType,
     displayName: connection.displayName,
     scope: connection.scope === 'personal' ? 'you' : 'workspace',
@@ -410,11 +411,14 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     ...mapAutomationSummary(detail),
     description: detail.description,
     versionNumber: detail.versionNumber,
+    overview: detail.overview,
     instructions: detail.instructions,
     triggerSummary: detail.triggers.map(triggerSummary).join(' · '),
     ...(schedule ? { scheduleSummary: triggerSummary(schedule) } : {}),
     capabilities: detail.requiredCapabilities,
     expectedOutputs: detail.expectedOutputs,
+    recommendedPlugins: detail.recommendedPlugins,
+    defaultPluginIds: detail.defaultPluginIds,
     executionScope: detail.executionPrincipal['type'] === 'workspace' ? 'Workspace' : 'You',
     runs,
     ...(detail.templateUpdate
@@ -422,10 +426,12 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
           templateUpdate: {
             versionId: detail.templateUpdate.versionId,
             versionNumber: detail.templateUpdate.versionNumber,
+            overview: detail.templateUpdate.overview,
             instructions: detail.templateUpdate.instructions,
             triggerSummary: detail.templateUpdate.triggers.map(triggerSummary).join(' · '),
             capabilities: detail.templateUpdate.requiredCapabilities,
             expectedOutputs: detail.templateUpdate.expectedOutputs,
+            recommendedPlugins: detail.templateUpdate.recommendedPlugins,
           },
         }
       : {}),
@@ -1007,21 +1013,35 @@ export class AvalonApi {
       messages: assistantMessage ? [...messages, { role: 'assistant', content: assistantMessage }] : messages,
       draft: raw,
     });
-    const steps = raw.instructions
-      .split(/\r?\n/u)
-      .map((line) => line.replace(/^\s*(?:\d+[.)]|[-*])\s*/u, '').trim())
-      .filter(Boolean)
-      .slice(0, 8);
+    const elicitation = raw.elicitation;
     return {
       draftId,
       ...(assistantMessage ? { assistantMessage } : {}),
-      ...(raw.followUpQuestion ? { question: { id: crypto.randomUUID(), prompt: raw.followUpQuestion } } : {}),
+      ...(raw.followUpQuestion
+        ? {
+            question: {
+              id: crypto.randomUUID(),
+              prompt: elicitation?.prompt ?? raw.followUpQuestion,
+              ...(elicitation?.placeholder ? { placeholder: elicitation.placeholder } : {}),
+              responseType: elicitation?.responseType ?? 'free_text',
+              options: (elicitation?.options ?? []).map((option) => ({
+                label: option.label,
+                value: option.value,
+                ...(option.description ? { description: option.description } : {}),
+              })),
+              ...(elicitation ? { minimumSelections: elicitation.minimumSelections } : {}),
+              ...(elicitation?.maximumSelections != null ? { maximumSelections: elicitation.maximumSelections } : {}),
+              allowOther: elicitation?.allowOther ?? false,
+            },
+          }
+        : {}),
       ...(raw.ready
         ? {
             summary: {
               name: raw.name,
               description: raw.description,
-              steps: steps.length ? steps : raw.expectedOutputs,
+              overview: raw.overview,
+              recommendedPlugins: raw.recommendedPlugins,
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
@@ -1031,12 +1051,12 @@ export class AvalonApi {
     };
   }
 
-  async createAutomation(draftId: string, connectorBindings: Record<string, string>): Promise<AutomationDetail> {
+  async createAutomation(draftId: string, defaultPluginIds: string[]): Promise<AutomationDetail> {
     const state = this.drafts.get(draftId);
     if (!state?.draft?.ready) throw new ApiError('Finish the automation conversation before creating it.', 422, 'automation_not_ready');
     const raw = await this.request('/automations', {
       method: 'POST',
-      body: { draft: state.draft, scope: state.draft.suggestedScope, connectorBindings },
+      body: { draft: state.draft, scope: state.draft.suggestedScope, defaultPluginIds },
       schema: WireAutomationDetailSchema,
     });
     this.automationDetails.set(raw.id, raw);
@@ -1057,10 +1077,10 @@ export class AvalonApi {
     }));
   }
 
-  async subscribeTemplate(templateId: string, connectorBindings: Record<string, string>): Promise<AutomationDetail> {
+  async subscribeTemplate(templateId: string, defaultPluginIds: string[]): Promise<AutomationDetail> {
     const raw = await this.request(`/automation-templates/${encodeURIComponent(templateId)}/subscribe`, {
       method: 'POST',
-      body: { connectorBindings },
+      body: { defaultPluginIds },
       schema: WireAutomationDetailSchema,
     });
     this.automationDetails.set(raw.id, raw);

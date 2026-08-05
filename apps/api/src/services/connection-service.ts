@@ -1208,7 +1208,7 @@ export class ConnectionService {
 
 function toConnection(row: Record<string, unknown>) {
   return {
-    id: String(row.id), workspaceId: String(row.workspace_id), connectorType: String(row.connector_type), scope: String(row.scope),
+    id: String(row.id), modelPluginId: String(row.model_plugin_id), workspaceId: String(row.workspace_id), connectorType: String(row.connector_type), scope: String(row.scope),
     ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id), ownerName: row.owner_name == null ? null : String(row.owner_name),
     displayName: String(row.display_name), grantedCapabilities: parseJson<string[]>(row.granted_scopes_json, []), status: String(row.status),
     lastSyncAt: row.last_sync_at == null ? null : String(row.last_sync_at), createdAt: String(row.created_at),

@@ -107,6 +107,7 @@ interface ChatRequest {
   includeWebSearch?: boolean | undefined;
   maxWebResults?: number | undefined;
   plugins?: Array<Record<string, unknown>> | undefined;
+  reasoningEffort?: "low" | "medium" | "high" | undefined;
   signal?: AbortSignal | undefined;
 }
 
@@ -149,6 +150,7 @@ export class OpenRouterClient {
     jsonSchema: Record<string, unknown>;
     parse: (value: unknown) => T;
     model?: string;
+    reasoningEffort?: "low" | "medium" | "high";
     signal?: AbortSignal | undefined;
     onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   }): Promise<T> {
@@ -186,7 +188,8 @@ export class OpenRouterClient {
                   schema: input.jsonSchema
                 }
               },
-              plugins: [{ id: "response-healing" }]
+              plugins: [{ id: "response-healing" }],
+              reasoning: input.reasoningEffort ? { effort: input.reasoningEffort } : undefined,
             }),
             ...(input.signal ? { signal: input.signal } : {})
           });
@@ -388,6 +391,7 @@ export class OpenRouterClient {
           tools: tools.length > 0 ? tools : undefined,
           tool_choice: tools.length > 0 ? (input.toolChoice ?? "auto") : undefined,
           plugins: input.plugins?.length ? input.plugins : undefined,
+          reasoning: input.reasoningEffort ? { effort: input.reasoningEffort } : undefined,
         }),
         signal: AbortSignal.any([watchdog.signal, establishment.signal]),
       });
@@ -633,6 +637,7 @@ const automationJsonSchema = {
   properties: {
     name: { type: "string" },
     description: { type: "string" },
+    overview: { type: "string" },
     instructions: { type: "string" },
     triggers: {
       type: "array",
@@ -684,23 +689,86 @@ const automationJsonSchema = {
       type: "string",
       description: "A JSON-encoded object of default behavior settings; use {} when none are needed."
     },
+    recommendedPlugins: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          pluginId: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$" },
+          recommendedTools: { type: "array", items: { type: "string" } },
+          reason: { type: "string" }
+        },
+        required: ["pluginId", "recommendedTools", "reason"]
+      }
+    },
     suggestedScope: { type: "string", enum: ["personal", "workspace"] },
     followUpQuestion: { type: ["string", "null"] },
+    elicitation: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            responseType: { type: "string", enum: ["free_text", "single_select", "multi_select"] },
+            prompt: { type: "string" },
+            placeholder: { type: ["string", "null"] },
+            options: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  value: { type: "string" },
+                  label: { type: "string" },
+                  description: { type: ["string", "null"] }
+                },
+                required: ["value", "label", "description"]
+              }
+            },
+            minimumSelections: { type: "integer", minimum: 0 },
+            maximumSelections: { type: ["integer", "null"], minimum: 1 },
+            allowOther: { type: "boolean" }
+          },
+          required: ["responseType", "prompt", "placeholder", "options", "minimumSelections", "maximumSelections", "allowOther"]
+        }
+      ]
+    },
     ready: { type: "boolean" }
   },
   required: [
     "name",
     "description",
+    "overview",
     "instructions",
     "triggers",
     "requiredCapabilities",
     "expectedOutputs",
     "defaultBehavior",
+    "recommendedPlugins",
     "suggestedScope",
     "followUpQuestion",
+    "elicitation",
     "ready"
   ]
 };
+
+export interface AutomationCreatorPluginCatalogEntry {
+  pluginId: string;
+  displayName: string;
+  description: string;
+  scope: "personal" | "workspace";
+  searchAliases: string[];
+  systemMessage: string;
+  tools: Array<{
+    name: string;
+    description: string;
+    capability: string;
+    mode: "read" | "write";
+    inputSchema: Record<string, unknown>;
+  }>;
+}
 
 export async function compileAutomation(input: {
   apiKey: string;
@@ -709,27 +777,226 @@ export async function compileAutomation(input: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   currentDraft?: AutomationDraft | null;
   defaultTimezones?: { personal: string; workspace: string };
+  pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
+  maxResearchIterations?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
 }): Promise<AutomationDraft> {
-  const client = new OpenRouterClient({
-    apiKey: input.apiKey,
-    primaryModel: input.model,
-    ...(input.fallbackModels ? { fallbackModels: input.fallbackModels } : {}),
-    ...(input.fetch ? { fetch: input.fetch } : {})
+  const rendered = renderAutomationCompilerMessages({
+    messages: input.messages,
+    currentDraft: input.currentDraft ?? null,
   });
-  return client.structured({
-    messages: renderAutomationCompilerMessages({
-      messages: input.messages,
-      currentDraft: input.currentDraft ?? null,
-    }),
+  const catalog = input.pluginCatalog ?? [];
+  let submittedDraft: AutomationDraft | null = null;
+  const creatorTools: HarnessTool[] = [
+    {
+      definition: {
+        name: "automation_plugins_list",
+        description: "List every connector plugin authorized for this automation creator, with compact trusted metadata.",
+        capability: "avalon.automation.plugins.list",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      },
+      execute: async () => ({
+        output: executeAutomationCreatorDiscoveryTool("automation_plugins_list", {}, catalog),
+        summary: "Listed authorized automation plugins",
+      }),
+    },
+    {
+      definition: {
+        name: "automation_plugins_search",
+        description: "Search authorized connector plugins and their tools by capability, provider, action, or keyword.",
+        capability: "avalon.automation.plugins.search",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { query: { type: "string", minLength: 1 } },
+          required: ["query"],
+        },
+      },
+      execute: async (raw) => ({
+        output: executeAutomationCreatorDiscoveryTool("automation_plugins_search", asRecord(raw), catalog),
+        summary: "Searched authorized automation plugins",
+      }),
+    },
+    {
+      definition: {
+        name: "automation_plugin_inspect",
+        description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
+        capability: "avalon.automation.plugins.inspect",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { pluginId: { type: "string" } },
+          required: ["pluginId"],
+        },
+      },
+      execute: async (raw) => ({
+        output: executeAutomationCreatorDiscoveryTool("automation_plugin_inspect", asRecord(raw), catalog),
+        summary: "Inspected an authorized automation plugin",
+      }),
+    },
+    {
+      definition: {
+        name: "submit_automation_draft",
+        description: "Submit the best current automation draft. This is the only way to finish the automation-creator run.",
+        capability: "avalon.automation.submit",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: automationJsonSchema,
+      },
+      execute: async (raw) => {
+        await input.onDiagnostic?.({
+          stage: "normalize",
+          schemaName: "automation_draft",
+          model: input.model,
+          attempt: 1,
+          fallbackAttempt: 0,
+          repairAttempt: 0,
+        });
+        const normalized = normalizeAutomationDraft(raw, input.defaultTimezones);
+        const parsed = AutomationDraftSchema.safeParse(normalized);
+        await input.onDiagnostic?.({
+          stage: "validate",
+          schemaName: "automation_draft",
+          model: input.model,
+          attempt: 1,
+          fallbackAttempt: 0,
+          repairAttempt: 0,
+          ...(!parsed.success
+            ? {
+                validationIssues: parsed.error.issues.map((issue) => ({
+                  path: issue.path.join("."),
+                  code: issue.code,
+                })),
+              }
+            : {}),
+        });
+        if (!parsed.success) throw parsed.error;
+        submittedDraft = parsed.data;
+        await input.onDiagnostic?.({
+          stage: "complete",
+          schemaName: "automation_draft",
+          model: input.model,
+          attempt: 1,
+          fallbackAttempt: 0,
+          repairAttempt: 0,
+        });
+        return {
+          output: { accepted: true, ready: submittedDraft.ready },
+          summary: submittedDraft.ready ? "Submitted automation draft" : "Submitted automation elicitation",
+          halt: "needs_input",
+        };
+      },
+    },
+  ];
+  await input.onDiagnostic?.({
+    stage: "model_request",
     schemaName: "automation_draft",
-    jsonSchema: automationJsonSchema,
-    parse: (value) => AutomationDraftSchema.parse(normalizeAutomationDraft(value, input.defaultTimezones)),
-    ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
-    ...(input.signal ? { signal: input.signal } : {})
+    model: input.model,
+    attempt: 1,
+    fallbackAttempt: 0,
+    repairAttempt: 0,
   });
+  const outcome = await runHarness({
+    config: {
+      apiKey: input.apiKey,
+      primaryModel: input.model,
+      fallbackModels: input.fallbackModels ?? [],
+      ...(input.fetch ? { fetch: input.fetch } : {}),
+      sameModelRetries: 0,
+      maxIterations: Math.max(12, Math.min(32, input.maxResearchIterations ?? 20)),
+      maxToolCalls: 80,
+      maxWallClockMs: 180_000,
+      maxContextBytes: 512 * 1024,
+      toolTimeoutMs: 10_000,
+      maxWebResults: 0,
+      maxRunTokens: 240_000,
+      maxCostCents: 1_000,
+      maxCatalogTokens: 500,
+      maxActivePlugins: 1,
+      maxToolSchemaBytes: 256 * 1024,
+      maxToolResultBytes: 256 * 1024,
+      reasoningEffort: "high",
+    },
+    workspaceId: "00000000-0000-7000-8000-000000000001",
+    workstreamId: "00000000-0000-7000-8000-000000000002",
+    harnessRunId: crypto.randomUUID(),
+    executionPrincipal: { type: "user", userId: "00000000-0000-7000-8000-000000000003" },
+    systemPrompt: String(rendered[0]?.content ?? ""),
+    messages: [
+      ...rendered.slice(1),
+      {
+        role: "user",
+        content: "Research the authorized plugin ecosystem as deeply as this task requires. Then call submit_automation_draft with either a specific executable automation or one focused elicitation. Do not finish with plain text.",
+      },
+    ],
+    tools: creatorTools,
+    onEvent: () => undefined,
+    onInferenceAttempt: async (attempt) => {
+      await input.onDiagnostic?.({
+        stage: "model_response",
+        schemaName: "automation_draft",
+        model: attempt.model,
+        attempt: attempt.cursor.endpointAttempt + 1,
+        fallbackAttempt: attempt.cursor.candidateIndex,
+        repairAttempt: attempt.cursor.structuredOutputAttempt,
+        latencyMs: attempt.latencyMs,
+        ...(attempt.responseBytes === undefined ? {} : { responseBytes: attempt.responseBytes }),
+      });
+    },
+    ...(input.signal ? { signal: input.signal } : {}),
+  });
+  if (submittedDraft) return submittedDraft;
+  throw new Error(outcome.failure?.message ?? "Automation creator ended without submitting a draft");
+}
+
+function executeAutomationCreatorDiscoveryTool(
+  toolName: string,
+  args: Record<string, unknown>,
+  catalog: AutomationCreatorPluginCatalogEntry[],
+): unknown {
+  if (toolName === "automation_plugins_list") {
+    return {
+      plugins: catalog.map((plugin) => ({
+        pluginId: plugin.pluginId,
+        displayName: plugin.displayName,
+        description: plugin.description,
+        scope: plugin.scope,
+        aliases: plugin.searchAliases,
+        tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode })),
+      })),
+    };
+  }
+  if (toolName === "automation_plugins_search") {
+    const query = String(args.query ?? "").trim().toLocaleLowerCase();
+    const matches = catalog.filter((plugin) => JSON.stringify({
+      pluginId: plugin.pluginId,
+      displayName: plugin.displayName,
+      description: plugin.description,
+      aliases: plugin.searchAliases,
+      tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability })),
+    }).toLocaleLowerCase().includes(query));
+    return { query, plugins: matches.slice(0, 40) };
+  }
+  if (toolName === "automation_plugin_inspect") {
+    const pluginId = String(args.pluginId ?? "");
+    const plugin = catalog.find((entry) => entry.pluginId === pluginId);
+    return plugin ? { plugin } : { error: "plugin_not_found", pluginId };
+  }
+  return { error: "unknown_discovery_tool" };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 function normalizeAutomationDraft(
@@ -746,7 +1013,12 @@ function normalizeAutomationDraft(
   return {
     ...draft,
     triggers,
-    defaultBehavior: parseJsonObject(draft.defaultBehavior)
+    defaultBehavior: parseJsonObject(draft.defaultBehavior),
+    followUpQuestion: draft.ready === true
+      ? null
+      : typeof draft.followUpQuestion === "string"
+        ? draft.followUpQuestion
+        : (draft.elicitation as { prompt?: unknown } | null)?.prompt ?? null,
   };
 }
 
@@ -968,6 +1240,8 @@ export interface RunHarnessInput {
     maxToolResultBytes?: number;
     maxStreamResets?: number;
     completionDefectRetries?: number;
+    /** Model reasoning effort passed consistently through Bind's routed turns. */
+    reasoningEffort?: "low" | "medium" | "high";
   };
   workspaceId: string;
   workstreamId: string;

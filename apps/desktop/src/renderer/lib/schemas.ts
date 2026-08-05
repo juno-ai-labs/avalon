@@ -201,10 +201,17 @@ export const workstreamDetailSchema = workstreamSummarySchema.extend({
 
 export const automationDetailSchema = automationSummarySchema.extend({
   description: z.string(),
+  overview: z.string().default(''),
   instructions: z.string(),
   triggerSummary: z.string(),
   scheduleSummary: z.string().optional(),
   capabilities: z.array(z.string()).default([]),
+  recommendedPlugins: z.array(z.object({
+    pluginId: z.string(),
+    recommendedTools: z.array(z.string()).default([]),
+    reason: z.string(),
+  })).default([]),
+  defaultPluginIds: z.array(z.string()).default([]),
   executionScope: z.string(),
   owner: workspaceMemberSchema.optional(),
   runs: z.array(automationRunSchema).default([]),
@@ -220,13 +227,27 @@ export const automationDraftResponseSchema = z
         id: z.string(),
         prompt: z.string(),
         placeholder: z.string().optional(),
+        responseType: z.enum(['free_text', 'single_select', 'multi_select']).default('free_text'),
+        options: z.array(z.object({
+          label: z.string(),
+          value: z.string(),
+          description: z.string().optional(),
+        })).default([]),
+        minimumSelections: z.number().int().positive().optional(),
+        maximumSelections: z.number().int().positive().optional(),
+        allowOther: z.boolean().default(false),
       })
       .optional(),
     summary: z
       .object({
         name: z.string(),
         description: z.string(),
-        steps: z.array(z.string()),
+        overview: z.string(),
+        recommendedPlugins: z.array(z.object({
+          pluginId: z.string(),
+          recommendedTools: z.array(z.string()).default([]),
+          reason: z.string(),
+        })).default([]),
         scope: scopeSchema,
         triggerSummary: z.string(),
         capabilities: z.array(z.string()),
