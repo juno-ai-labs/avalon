@@ -1,5 +1,7 @@
 import {
   BIND_RUNTIME_CORE_TOOL_DEFINITIONS,
+  AutomationCompilerError,
+  OpenRouterError,
   classifyAddressing,
   compileAutomation,
   canonicalToolInputHash,
@@ -569,32 +571,50 @@ export async function compileAutomationDraft(
   },
 ): Promise<AutomationDraft> {
   const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
-  return compileAutomation({
-    apiKey: env.OPENROUTER_API_KEY,
-    model: env.OPENROUTER_AUTOMATION_MODEL,
-    fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
-    messages: input.messages,
-    currentDraft: input.currentDraft ?? null,
-    defaultTimezones: input.defaultTimezones,
-    pluginCatalog,
-    maxResearchIterations: 20,
-    onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
-      logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
-        request_id: input.requestId,
-        workspace_id: input.workspaceId,
-        stage: diagnostic.stage,
-        schema_name: diagnostic.schemaName,
-        provider: "openrouter",
-        model: diagnostic.model,
-        attempt: diagnostic.attempt,
-        fallback_attempt: diagnostic.fallbackAttempt,
-        repair_attempt: diagnostic.repairAttempt,
-        latency_ms: diagnostic.latencyMs,
-        response_bytes: diagnostic.responseBytes,
-        validation_issues: diagnostic.validationIssues,
-      });
-    },
-  });
+  try {
+    return await compileAutomation({
+      apiKey: env.OPENROUTER_API_KEY,
+      model: env.OPENROUTER_AUTOMATION_MODEL,
+      fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
+      messages: input.messages,
+      currentDraft: input.currentDraft ?? null,
+      defaultTimezones: input.defaultTimezones,
+      pluginCatalog,
+      maxResearchIterations: 20,
+      onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
+        logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
+          request_id: input.requestId,
+          workspace_id: input.workspaceId,
+          stage: diagnostic.stage,
+          schema_name: diagnostic.schemaName,
+          provider: "openrouter",
+          model: diagnostic.model,
+          attempt: diagnostic.attempt,
+          fallback_attempt: diagnostic.fallbackAttempt,
+          repair_attempt: diagnostic.repairAttempt,
+          latency_ms: diagnostic.latencyMs,
+          response_bytes: diagnostic.responseBytes,
+          validation_issues: diagnostic.validationIssues,
+        });
+      },
+    });
+  } catch (error) {
+    const compilerFailure = error instanceof AutomationCompilerError ? error : null;
+    const providerFailure = error instanceof OpenRouterError ? error : null;
+    logStructuredEvent(env, "error", "automation_compiler", {
+      request_id: input.requestId,
+      workspace_id: input.workspaceId,
+      stage: "failed",
+      schema_name: "automation_draft",
+      provider: "openrouter",
+      model: env.OPENROUTER_AUTOMATION_MODEL,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      failure_code: compilerFailure?.code ?? (providerFailure ? "provider_failure" : error instanceof z.ZodError ? "validation_failure" : "unknown_failure"),
+      failure_kind: compilerFailure?.kind ?? (providerFailure ? "provider" : error instanceof z.ZodError ? "validation" : "unknown"),
+      retryable: compilerFailure?.retryable ?? (providerFailure ? providerFailure.status !== 401 && providerFailure.status !== 402 && providerFailure.status !== 403 : false),
+    });
+    throw error;
+  }
 }
 
 async function loadAutomationCreatorPluginCatalog(
