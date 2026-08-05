@@ -240,4 +240,38 @@ describe('New automation composer', () => {
     expect(resolvedQuestion.compareDocumentPosition(answerMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(answerMessage!.compareDocumentPosition(finalMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
+
+  it('resolves a submitted elicitation while the follow-up is still compiling', async () => {
+    api.compileAutomation
+      .mockResolvedValueOnce({
+        draftId: 'draft-choice',
+        assistantMessage: 'Choose where Avalon should send the update.',
+        question: {
+          id: 'question-choice',
+          prompt: 'Where should Avalon send it?',
+          responseType: 'single_select',
+          options: [
+            { label: 'Email', value: 'email' },
+            { label: 'Slack', value: 'slack' },
+          ],
+          allowOther: false,
+        },
+      })
+      .mockImplementationOnce(() => new Promise(() => undefined));
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Send me a daily update' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('heading', { name: 'Where should Avalon send it?' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Email' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
+
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('heading', { name: 'Where should Avalon send it?' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Email');
+    expect(screen.getByText('Avalon is working')).toBeInTheDocument();
+  });
 });
