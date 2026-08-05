@@ -309,6 +309,48 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
+  it('loads durable rail context from the deferred work-stream endpoint', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return json({
+        artifacts: [{
+          id: artifactId,
+          workspaceId,
+          workstreamId,
+          harnessRunId: messageId,
+          artifactType: 'markdown',
+          title: 'Launch brief.md',
+          previewText: '# Launch brief',
+          status: 'complete',
+          mimeType: 'text/markdown; charset=utf-8',
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }],
+        backgroundTasks: [{
+          id: taskId,
+          harnessRunId: messageId,
+          title: 'Respond to message',
+          taskType: 'agent',
+          status: 'completed',
+          startedAt: timestamp,
+          completedAt: '2026-07-31T20:00:12.000Z',
+          tokenCount: 1_250,
+          toolUses: 3,
+          transcriptMessageId: messageId,
+        }],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getWorkstreamContext(workstreamId)).resolves.toMatchObject({
+      artifacts: [{ id: artifactId, title: 'Launch brief.md' }],
+      backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000 }],
+      automationRuns: [],
+    });
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}/context`);
+  });
+
   it('surfaces nested service errors with their code and details', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({
       error: {
@@ -582,7 +624,7 @@ describe('Avalon API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ versionId: nextVersionId });
   });
 
-  it('loads every transcript page in chronological order', async () => {
+  it('loads one transcript page at a time and exposes the earlier-page cursor', async () => {
     const older = {
       ...message,
       id: '00000000-0000-7000-8000-000000000009',
@@ -593,15 +635,19 @@ describe('Avalon API wire adapter', () => {
       const url = String(input);
       if (url.includes('/messages?') && url.includes('before=4')) return json({ items: [older], nextCursor: null });
       if (url.includes('/messages?')) return json({ items: [message], nextCursor: '4' });
-      if (url.endsWith(`/workstreams/${workstreamId}`)) return json(detail);
       return json({ error: { message: 'Unexpected request' } }, { status: 500 });
     });
     vi.stubGlobal('fetch', fetchMock);
     const api = new AvalonApi('https://api.avalon.test', session);
 
-    const transcript = await api.getMessages(workstreamId);
+    const newest = await api.getMessagePage(workstreamId);
+    const earlier = await api.getMessagePage(workstreamId, newest.nextCursor ?? undefined);
 
-    expect(transcript.map((item) => item.sequenceNumber)).toEqual([3, 4]);
+    expect(newest.items.map((item) => item.sequenceNumber)).toEqual([4]);
+    expect(newest.nextCursor).toBe('4');
+    expect(earlier.items.map((item) => item.sequenceNumber)).toEqual([3]);
+    expect(earlier.nextCursor).toBeNull();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('before=4'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/workstreams/${workstreamId}`))).toBe(false);
   });
 });

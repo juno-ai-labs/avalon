@@ -146,6 +146,7 @@ export interface ElicitationData {
   status: 'open' | 'answered';
   answer?: unknown;
   answeredByName?: string;
+  createdAt?: string;
 }
 
 export interface ActivitySuggestionData {
@@ -207,6 +208,11 @@ export interface Message {
   artifact?: ArtifactData;
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;
+}
+
+export interface MessagePage {
+  items: Message[];
+  nextCursor: string | null;
 }
 
 export interface BackgroundTask {
@@ -282,6 +288,22 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   automationRunId?: string;
   latestHarnessRunId?: string;
   latestHarnessRun?: HarnessRunMetadata;
+  openElicitations?: ElicitationData[];
+  suggestions?: ActivitySuggestionData[];
+}
+
+export interface WorkstreamDeferredContext {
+  artifacts: ArtifactData[];
+  backgroundTasks: BackgroundTask[];
+  automationRuns: AutomationRunSummary[];
+  automationSubscription?: WorkstreamAutomationSubscription;
+}
+
+export interface CreatedWorkstream {
+  workstream: WorkstreamSummary;
+  messageId: string;
+  clientMessageId: string;
+  createdAt: string;
 }
 
 export interface AutomationDetail extends AutomationSummary {

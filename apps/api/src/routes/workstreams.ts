@@ -32,6 +32,9 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
 workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).create(c.req.valid("json")), 201),
 );
+workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
+  c.json(await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id)),
+);
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).get(c.req.valid("param").id)),
 );

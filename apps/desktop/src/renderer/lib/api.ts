@@ -11,6 +11,7 @@ import {
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
   ToolInvocationSchema as WireToolInvocationSchema,
+  WorkstreamContextSchema as WireWorkstreamContextSchema,
   type ViewerSchema as WireViewerSchema,
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
@@ -41,9 +42,11 @@ import type {
   AutomationRunSummary,
   AutomationSummary,
   BackgroundTask,
+  CreatedWorkstream,
   ElicitationData,
   HarnessStatus,
   Message,
+  MessagePage,
   Participant,
   Region,
   SocketTicket,
@@ -56,6 +59,7 @@ import type {
   WorkspaceMember,
   WorkspaceTemplate,
   WorkstreamConnection,
+  WorkstreamDeferredContext,
   WorkstreamDetail,
   WorkstreamResource,
   WorkstreamSummary,
@@ -218,6 +222,7 @@ export function mapElicitation(elicitation: WireElicitation): ElicitationData {
     ...(elicitation.targetUserId ? { targetUserId: elicitation.targetUserId } : {}),
     status: elicitation.status === 'open' ? 'open' : 'answered',
     ...(elicitation.answer !== null ? { answer: elicitation.answer } : {}),
+    createdAt: elicitation.createdAt,
   };
 }
 
@@ -340,6 +345,8 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     connections: workstream.connections.map(mapConnection),
     artifacts: (workstream.artifacts ?? []).map(mapWorkstreamArtifact),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
+    openElicitations: workstream.openElicitations.map(mapElicitation),
+    suggestions: workstream.suggestions.map(mapSuggestion),
     automationRuns: [],
     ...(workstream.automationSubscriptionId ? { automationSubscriptionId: workstream.automationSubscriptionId } : {}),
     ...(workstream.automationRunId ? { automationRunId: workstream.automationRunId } : {}),
@@ -360,6 +367,29 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
         }
       : {}),
   };
+}
+
+export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
+  let sequence = mapped.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
+  const elicitationMessages = (detail.openElicitations ?? []).map<Message>((elicitation) => ({
+    id: `elicitation-${elicitation.id}`,
+    workstreamId: detail.id,
+    sequenceNumber: ++sequence,
+    authorType: 'agent',
+    messageType: 'elicitation',
+    createdAt: elicitation.createdAt ?? detail.lastActivityAt,
+    elicitation,
+  }));
+  const suggestionMessages = (detail.suggestions ?? []).map<Message>((suggestion) => ({
+    id: `suggestion-${suggestion.id}`,
+    workstreamId: detail.id,
+    sequenceNumber: ++sequence,
+    authorType: 'system',
+    messageType: 'activity_suggestion',
+    createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
+    activitySuggestion: suggestion,
+  }));
+  return [...mapped, ...elicitationMessages, ...suggestionMessages];
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
@@ -681,7 +711,7 @@ export class AvalonApi {
     return page.items.map(mapWorkstreamSummary);
   }
 
-  async createWorkstream(input: { openingMessage: string; participantIds: string[] }): Promise<WorkstreamDetail> {
+  async createWorkstream(input: { openingMessage: string; participantIds: string[] }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
     const response = await this.request('/workstreams', {
       method: 'POST',
@@ -693,17 +723,38 @@ export class AvalonApi {
       },
       schema: createWorkstreamResponseSchema,
     });
-    return this.getWorkstream(response.workstream.id);
+    return {
+      workstream: mapWorkstreamSummary(response.workstream),
+      messageId: response.messageId,
+      clientMessageId,
+      createdAt: response.workstream.createdAt,
+    };
   }
 
   async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamDetail> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamDetailSchema, signal });
-    const detail = mapWorkstreamDetail(raw);
-    if (!raw.automationSubscriptionId) return detail;
+    return mapWorkstreamDetail(raw);
+  }
+
+  async getWorkstreamContext(
+    id: string,
+    automationSubscriptionId?: string,
+    signal?: AbortSignal,
+  ): Promise<WorkstreamDeferredContext> {
+    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}/context`, {
+      schema: WireWorkstreamContextSchema,
+      signal,
+    });
+    const context: WorkstreamDeferredContext = {
+      artifacts: raw.artifacts.map(mapWorkstreamArtifact),
+      backgroundTasks: raw.backgroundTasks.map(mapBackgroundTask),
+      automationRuns: [],
+    };
+    if (!automationSubscriptionId) return context;
     try {
-      const automation = await this.getAutomation(raw.automationSubscriptionId, signal);
+      const automation = await this.getAutomation(automationSubscriptionId, signal);
       return {
-        ...detail,
+        ...context,
         automationRuns: automation.runs,
         automationSubscription: {
           id: automation.id,
@@ -716,48 +767,22 @@ export class AvalonApi {
       };
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      return detail;
+      return context;
     }
   }
 
+  async getMessagePage(id: string, before?: string, signal?: AbortSignal): Promise<MessagePage> {
+    const query = new URLSearchParams({ limit: '200' });
+    if (before) query.set('before', before);
+    const page = await this.request(`/workstreams/${encodeURIComponent(id)}/messages?${query.toString()}`, {
+      schema: wireMessagePageSchema,
+      signal,
+    });
+    return { items: page.items.map(mapMessage), nextCursor: page.nextCursor };
+  }
+
   async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
-    const wireMessages: WireMessage[] = [];
-    const seenCursors = new Set<string>();
-    let before: string | null = null;
-    do {
-      const query = new URLSearchParams({ limit: '200' });
-      if (before) query.set('before', before);
-      const page = await this.request(`/workstreams/${encodeURIComponent(id)}/messages?${query.toString()}`, {
-        schema: wireMessagePageSchema,
-        signal,
-      });
-      wireMessages.unshift(...page.items);
-      before = page.nextCursor;
-      if (before && seenCursors.has(before)) throw new ApiError('Avalon received a repeated transcript cursor.', 502, 'invalid_cursor');
-      if (before) seenCursors.add(before);
-    } while (before);
-    const detail = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamDetailSchema, signal });
-    const mapped = wireMessages.map(mapMessage);
-    let sequence = mapped.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
-    const elicitationMessages = detail.openElicitations.map<Message>((elicitation) => ({
-      id: `elicitation-${elicitation.id}`,
-      workstreamId: id,
-      sequenceNumber: ++sequence,
-      authorType: 'agent',
-      messageType: 'elicitation',
-      createdAt: elicitation.createdAt,
-      elicitation: mapElicitation(elicitation),
-    }));
-    const suggestionMessages = detail.suggestions.map<Message>((suggestion) => ({
-      id: `suggestion-${suggestion.id}`,
-      workstreamId: id,
-      sequenceNumber: ++sequence,
-      authorType: 'system',
-      messageType: 'activity_suggestion',
-      createdAt: suggestion.createdAt,
-      activitySuggestion: mapSuggestion(suggestion),
-    }));
-    return [...mapped, ...elicitationMessages, ...suggestionMessages];
+    return (await this.getMessagePage(id, undefined, signal)).items;
   }
 
   async downloadArtifact(workstreamId: string, artifactId: string, signal?: AbortSignal): Promise<{

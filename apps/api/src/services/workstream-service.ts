@@ -13,7 +13,6 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import {
   isCanonicalPersonMention,
   prepareMentionMarkdown,
@@ -193,12 +192,10 @@ export class WorkstreamService {
 
   async get(id: string) {
     const workstream = await this.requireWorkstream(id);
-    const [participants, resources, connections, artifacts, backgroundTasks, openElicitations, suggestions, latestHarness, viewers] = await Promise.all([
+    const [participants, resources, connections, openElicitations, suggestions, latestHarness] = await Promise.all([
       this.loadParticipants(id),
       this.loadResources(id),
       this.loadConnections(),
-      this.loadArtifacts(id),
-      this.loadBackgroundTasks(id),
       this.loadElicitations(id),
       this.loadSuggestions(id),
       this.env.DB.prepare(
@@ -208,16 +205,15 @@ export class WorkstreamService {
            AND parent_tool_call_id IS NULL
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
-      this.loadViewers(id),
     ]);
     return {
       ...workstream,
       participants,
-      viewers,
+      viewers: [],
       resources,
       connections,
-      artifacts,
-      backgroundTasks,
+      artifacts: [],
+      backgroundTasks: [],
       openElicitations,
       suggestions,
       latestHarnessRunId: latestHarness?.id ?? null,
@@ -233,6 +229,15 @@ export class WorkstreamService {
         createdAt: String(latestHarness.created_at),
       } : null,
     };
+  }
+
+  async context(id: string) {
+    await this.requireWorkstream(id);
+    const [artifacts, backgroundTasks] = await Promise.all([
+      this.loadArtifacts(id),
+      this.loadBackgroundTasks(id),
+    ]);
+    return { artifacts, backgroundTasks };
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
@@ -612,37 +617,27 @@ export class WorkstreamService {
   }
 
   private async requireWorkstream(id: string) {
-    let workstream = await this.database.workstreams.get(this.auth.workspaceId, id);
-    if (!workstream) throw new ApiError(404, "workstream_not_found", "Work stream not found");
-    await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
-      region: this.env.AVALON_REGION,
-      workspaceId: this.auth.workspaceId,
-      workstreamId: id,
-    });
-    workstream = await this.database.workstreams.get(this.auth.workspaceId, id);
-    if (!workstream) throw new ApiError(404, "workstream_not_found", "Work stream not found");
-    const visible = await this.env.DB.prepare(
-      `SELECT 1 FROM workstreams w
-       LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-       WHERE w.id = ? AND w.workspace_id = ? AND (
-         w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
-         OR EXISTS (
-           SELECT 1 FROM workstream_participants p
-           WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-         )
-       )`,
-    ).bind(id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first();
-    if (!visible) throw new ApiError(404, "workstream_not_found", "Work stream not found");
-    return workstream;
+    let row = await this.loadVisibleWorkstreamRow(id, false);
+    const desiredEmailStatus = row.archived_at == null ? "active" : "disabled";
+    if (row.email_address == null || row.email_route_status !== desiredEmailStatus) {
+      await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
+        region: this.env.AVALON_REGION,
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
+      });
+      row = await this.loadVisibleWorkstreamRow(id, false);
+    }
+    return toWorkstream(row);
   }
 
-  private async requireWorkstreamForUpdate(id: string): Promise<Record<string, unknown>> {
+  private async loadVisibleWorkstreamRow(id: string, includeArchived: boolean): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
-      `SELECT w.*, t.name AS origin_label
-       FROM workstreams w
+      `SELECT w.*, t.name AS origin_label FROM workstreams w
        LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
        LEFT JOIN automation_templates t ON t.id = s.template_id
-       WHERE w.id = ? AND w.workspace_id = ? AND (
+       WHERE w.id = ? AND w.workspace_id = ?
+         ${includeArchived ? "" : "AND w.archived_at IS NULL"}
+         AND (
          w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
          OR EXISTS (
            SELECT 1 FROM workstream_participants p
@@ -652,6 +647,10 @@ export class WorkstreamService {
     ).bind(id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
+  }
+
+  private async requireWorkstreamForUpdate(id: string): Promise<Record<string, unknown>> {
+    return this.loadVisibleWorkstreamRow(id, true);
   }
 
   private async persistHumanMessage(
@@ -981,19 +980,6 @@ export class WorkstreamService {
        WHERE workstream_id = ? AND removed_at IS NULL`,
     ).bind(id).first<{ participant_count: number }>();
     return Number(row?.participant_count ?? 0);
-  }
-
-  private async loadViewers(id: string): Promise<unknown[]> {
-    try {
-      const rooms = durableObjectNamespaceForRegion(this.env.WORKSTREAM_ROOMS, this.env.AVALON_REGION, this.env.APP_ENV);
-      const durableId = rooms.idFromName(`${this.env.AVALON_REGION}:${this.auth.workspaceId}:${id}`);
-      const response = await rooms.get(durableId).fetch("https://room.internal/presence");
-      if (!response.ok) return [];
-      const payload = await response.json<{ viewers?: unknown[] }>();
-      return payload.viewers ?? [];
-    } catch {
-      return [];
-    }
   }
 
   private async loadResources(id: string) {

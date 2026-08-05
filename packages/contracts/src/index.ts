@@ -342,6 +342,11 @@ export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   latestHarnessRun: HarnessRunMetadataSchema.nullable().optional()
 });
 
+export const WorkstreamContextSchema = z.object({
+  artifacts: z.array(WorkstreamArtifactSchema),
+  backgroundTasks: z.array(BackgroundTaskSchema)
+});
+
 export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("manual") }),
   z.object({
@@ -859,6 +864,7 @@ export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSc
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
+export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
