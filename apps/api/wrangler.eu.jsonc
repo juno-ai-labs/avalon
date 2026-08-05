@@ -60,6 +60,10 @@
       "migrations_dir": "../../packages/db/migrations"
     }
   ],
+  "ai": { "binding": "AI" },
+  "vectorize": [
+    { "binding": "MEMORY_INDEX", "index_name": "avalon-eu-memory" }
+  ],
   "routes": [
     { "pattern": "eu.api.with-avalon.com", "custom_domain": true }
   ],

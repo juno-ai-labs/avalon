@@ -75,6 +75,7 @@ export interface ImmutableRunScope {
   routingPolicyVersion: string;
   promptVersion: string;
   toolSurfaceHash: string;
+  memoryContextHash?: string | null;
   limits: Record<string, unknown>;
 }
 
@@ -878,6 +879,7 @@ export async function persistImmutableRunScope(
     routingPolicyVersion: scope.routingPolicyVersion,
     promptVersion: scope.promptVersion,
     toolSurfaceHash: scope.toolSurfaceHash,
+    memoryContextHash: scope.memoryContextHash ?? null,
     limits: scope.limits,
   };
   const scopeHash = await sha256Hex(stableJson(canonicalScope));
@@ -886,9 +888,9 @@ export async function persistImmutableRunScope(
     `INSERT INTO harness_run_scopes
      (harness_run_id, workspace_id, workstream_id, attempt_id, execution_principal_json,
       eligible_connection_ids_json, eligible_capabilities_json, eligible_connection_capabilities_json,
-      trigger_policy_json, routing_policy_version, prompt_version, tool_surface_hash, limits_json,
-      scope_hash, created_at)
-     SELECT ?1, ?2, ?3, ?4, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+      trigger_policy_json, routing_policy_version, prompt_version, tool_surface_hash,
+      memory_context_hash, limits_json, scope_hash, created_at)
+     SELECT ?1, ?2, ?3, ?4, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
        FROM harness_runs
       WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3
         AND attempt_id = ?4 AND lease_owner = ?5 AND status = 'running'
@@ -909,6 +911,7 @@ export async function persistImmutableRunScope(
     canonicalScope.routingPolicyVersion,
     canonicalScope.promptVersion,
     canonicalScope.toolSurfaceHash,
+    canonicalScope.memoryContextHash,
     stableJson(canonicalScope.limits),
     scopeHash,
     now,
