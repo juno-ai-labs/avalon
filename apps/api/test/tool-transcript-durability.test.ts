@@ -122,7 +122,7 @@ describe("durable inline tool transcript", () => {
     });
   });
 
-  it("keeps replay output exact within the bound and marks oversized previews", () => {
+  it("keeps replay output exact regardless of serialized size", () => {
     const exactOutput = { body: "x".repeat(3_000), nested: [1, 2, 3] };
     expect(JSON.parse(__integrationTesting.serializeToolReplayOutput(exactOutput))).toEqual({
       replayVersion: 1,
@@ -130,10 +130,10 @@ describe("durable inline tool transcript", () => {
     });
 
     const oversized = __integrationTesting.serializeToolReplayOutput({ body: "x".repeat(300_000) });
-    expect(new TextEncoder().encode(oversized).byteLength).toBeLessThanOrEqual(256_000);
-    expect(JSON.parse(oversized)).toMatchObject({
+    expect(new TextEncoder().encode(oversized).byteLength).toBeGreaterThan(300_000);
+    expect(JSON.parse(oversized)).toEqual({
       replayVersion: 1,
-      output: { truncated: true },
+      output: { body: "x".repeat(300_000) },
     });
   });
 });

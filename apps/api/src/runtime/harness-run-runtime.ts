@@ -1986,9 +1986,6 @@ export async function terminalizeInlineChildAttempt(
     ...(outcome.usage ? { usage: outcome.usage } : {}),
   };
   const resultJson = stableJson(sanitizedOutcome);
-  if (new TextEncoder().encode(resultJson).byteLength > 65_536) {
-    throw new Error("child_result_too_large");
-  }
   const resultHash = await sha256Hex(resultJson);
   const now = new Date().toISOString();
   const lifecycleId = crypto.randomUUID();

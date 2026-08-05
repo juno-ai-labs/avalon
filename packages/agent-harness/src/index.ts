@@ -792,7 +792,6 @@ const automationJsonSchema = {
         ]
       }
     },
-    requiredCapabilities: { type: "array", items: { type: "string" } },
     expectedOutputs: { type: "array", items: { type: "string" } },
     defaultBehavior: {
       type: "string",
@@ -812,7 +811,6 @@ const automationJsonSchema = {
       }
     },
     suggestedScope: { type: "string", enum: ["personal", "workspace"] },
-    followUpQuestion: { type: ["string", "null"] },
     elicitation: {
       anyOf: [
         { type: "null" },
@@ -843,8 +841,7 @@ const automationJsonSchema = {
           required: ["responseType", "prompt", "placeholder", "options", "minimumSelections", "maximumSelections", "allowOther"]
         }
       ]
-    },
-    ready: { type: "boolean" }
+    }
   },
   required: [
     "name",
@@ -852,14 +849,11 @@ const automationJsonSchema = {
     "overview",
     "instructions",
     "triggers",
-    "requiredCapabilities",
     "expectedOutputs",
     "defaultBehavior",
     "recommendedPlugins",
     "suggestedScope",
-    "followUpQuestion",
-    "elicitation",
-    "ready"
+    "elicitation"
   ]
 };
 
@@ -902,7 +896,6 @@ export class AutomationCompilerError extends Error {
 
 export type AutomationCompilerStreamEvent =
   | { type: "started" }
-  | { type: "delta"; delta: string; reset: boolean }
   | {
       type: "tool";
       toolCallId: string;
@@ -912,7 +905,7 @@ export type AutomationCompilerStreamEvent =
       plugins: AutomationPluginActivity[];
       durationMs?: number;
     }
-  | { type: "completed"; content: string };
+  | { type: "completed" };
 
 const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   started: string;
@@ -950,7 +943,6 @@ function automationPluginActivities(
 ): AutomationPluginActivity[] {
   return catalog
     .filter((plugin) => !pluginIds || pluginIds.has(plugin.pluginId))
-    .slice(0, 20)
     .map((plugin) => ({
       pluginId: plugin.pluginId,
       displayName: plugin.displayName,
@@ -1070,7 +1062,6 @@ export async function compileAutomation(input: {
   }));
   let submittedDraft: AutomationDraft | null = null;
   let submissionReminderSent = false;
-  let assistantContent = "";
   const toolStartedAt = new Map<string, number>();
   const toolPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
@@ -1129,7 +1120,7 @@ export async function compileAutomation(input: {
     {
       definition: {
         name: "submit_automation_draft",
-        description: "Submit the best current automation draft. This is the only way to finish the automation-creator run.",
+        description: "Submit the best current automation draft, including one elicitation only when a blocking detail remains. Avalon derives readiness from elicitation.",
         capability: "avalon.automation.submit",
         mode: "read",
         idempotency: "safe",
@@ -1173,11 +1164,33 @@ export async function compileAutomation(input: {
           repairAttempt: 0,
         });
         return {
-          output: { accepted: true, ready: submittedDraft.ready },
+          output: { accepted: true },
           summary: submittedDraft.ready ? "Submitted automation draft" : "Submitted automation elicitation",
           halt: "needs_input",
         };
       },
+    },
+  ];
+  const timeTool = automationCurrentTimeTool(input.defaultTimezones);
+  const corePlugins: HarnessPlugin[] = [
+    {
+      canonicalId: AVALON_TIME_PLUGIN_ID,
+      modelId: "avalon_time",
+      shortWireName: "avalon",
+      description: "Read the exact current time and applicable timezones.",
+      systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps.",
+      tools: [timeTool],
+      preload: true,
+      explicit: true,
+    },
+    {
+      canonicalId: AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID,
+      modelId: "avalon_automation_architect",
+      shortWireName: "automation",
+      description: "Research authorized plugins and submit automation drafts.",
+      tools: creatorTools,
+      preload: true,
+      explicit: true,
     },
   ];
   await input.onDiagnostic?.({
@@ -1202,9 +1215,6 @@ export async function compileAutomation(input: {
       maxWebResults: 0,
       maxCostCents: 1_000,
       maxCatalogTokens: 2_500,
-      maxActivePlugins: 12,
-      maxToolSchemaBytes: 256 * 1024,
-      maxToolResultBytes: 256 * 1024,
       reasoningEffort: "high",
     },
     workspaceId: input.workspaceId ?? "00000000-0000-7000-8000-000000000001",
@@ -1220,10 +1230,8 @@ export async function compileAutomation(input: {
       {
         role: "user",
         content: [
-          "If an essential task detail is missing, call submit_automation_draft now with one focused elicitation. Otherwise research the authorized plugin ecosystem as deeply as the task requires, then call submit_automation_draft with a specific executable automation.",
           "The arguments to submit_automation_draft are the expected structured output and must match this rendered schema exactly:",
           renderExpectedJsonSchema("automation_draft", automationJsonSchema),
-          "On the final turn, first emit one concise user-facing message, then call submit_automation_draft with one arguments object matching the schema. Do not print the JSON as Markdown. The assistant message never replaces the tool call.",
         ].join("\n\n"),
       },
     ],
@@ -1238,14 +1246,10 @@ export async function compileAutomation(input: {
             ].map((modelId) => [modelId, 200_000])) }
           : {}),
     },
-    tools: creatorTools,
+    corePlugins,
     onEvent: async (event) => {
       if (event.type === "stream_started") {
-        assistantContent = "";
         await input.onStreamEvent?.({ type: "started" });
-      } else if (event.type === "stream_delta") {
-        assistantContent = event.reset ? event.delta : assistantContent + event.delta;
-        await input.onStreamEvent?.({ type: "delta", delta: event.delta, reset: event.reset });
       } else if (event.type === "tool_started") {
         const runtimePlugin = event.pluginId.startsWith("automation:")
           ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
@@ -1344,21 +1348,21 @@ export async function compileAutomation(input: {
       });
     },
     ...(input.onInferenceRequest ? { onInferenceRequest: input.onInferenceRequest } : {}),
-    onTurnWouldEnd: () => {
-      if (submittedDraft || submissionReminderSent) return null;
+    onTurnWouldEnd: ({ assistantContent }) => {
+      if (submittedDraft || submissionReminderSent || assistantContent !== "") return null;
       submissionReminderSent = true;
       return [
         "You ended the previous turn without successfully calling submit_automation_draft, so no automation draft has been submitted.",
-        "Call submit_automation_draft now with the best current draft. If an essential detail is still missing, submit ready:false with exactly one focused elicitation. Otherwise submit ready:true with the complete executable automation.",
+        "Call submit_automation_draft now with the best current draft. If an essential detail is still missing, include exactly one focused elicitation. Otherwise set elicitation to null.",
         "The tool arguments must match this rendered JSON Schema exactly:",
         renderExpectedJsonSchema("automation_draft", automationJsonSchema),
-        "First emit one concise user-facing message, then call submit_automation_draft in the same turn. Do not print the JSON as Markdown. You must call submit_automation_draft.",
+        "Call submit_automation_draft without assistant text in the same turn. Do not print the JSON as Markdown.",
       ].join("\n\n");
     },
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (submittedDraft) {
-    await input.onStreamEvent?.({ type: "completed", content: assistantContent.trim() });
+    await input.onStreamEvent?.({ type: "completed" });
     return submittedDraft;
   }
   if (outcome.failure) {
@@ -1405,7 +1409,7 @@ function executeAutomationCreatorDiscoveryTool(
     }).toLocaleLowerCase().includes(query));
     return {
       query,
-      plugins: matches.slice(0, 40).map((plugin) => ({
+      plugins: matches.map((plugin) => ({
         pluginId: plugin.pluginId,
         displayName: plugin.displayName,
         description: plugin.description,
@@ -1451,6 +1455,56 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function automationCurrentTimeTool(
+  defaultTimezones?: { personal: string; workspace: string },
+): HarnessTool {
+  return {
+    definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
+    execute: async (raw) => {
+      const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
+      const workspaceTimezone = canonicalIanaTimezone(defaultTimezones?.workspace ?? "UTC");
+      const timezone = canonicalIanaTimezone(
+        args.timezone ?? defaultTimezones?.personal ?? workspaceTimezone,
+      );
+      const text = easyEnglishCurrentTime(new Date(), timezone, workspaceTimezone);
+      return { output: text, summary: text };
+    },
+  };
+}
+
+function canonicalIanaTimezone(timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: timezone }).resolvedOptions().timeZone;
+  } catch {
+    throw new Error(`Invalid IANA timezone: ${timezone}`);
+  }
+}
+
+function easyEnglishCurrentTime(
+  instant: Date,
+  timezone: string,
+  workspaceTimezone: string,
+): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).formatToParts(instant).map((part) => [part.type, part.value]),
+  );
+  return [
+    `current local time: ${parts.hour}:${parts.minute} ${parts.dayPeriod}`,
+    `local timezone: ${timezone}`,
+    `workspace timezone: ${workspaceTimezone}`,
+    `local date: ${parts.month} ${parts.day} ${parts.year}`,
+    `iso8601 timestamp: ${instant.toISOString()}`,
+  ].join("\n");
+}
+
 function normalizeAutomationDraft(
   value: unknown,
   defaultTimezones?: { personal: string; workspace: string },
@@ -1462,15 +1516,17 @@ function normalizeAutomationDraft(
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger, defaultTimezone))
     : draft.triggers;
+  const elicitation = draft.elicitation ?? null;
+  const ready = elicitation === null;
   return {
     ...draft,
     triggers,
+    requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
-    followUpQuestion: draft.ready === true
+    ready,
+    followUpQuestion: ready
       ? null
-      : typeof draft.followUpQuestion === "string"
-        ? draft.followUpQuestion
-        : (draft.elicitation as { prompt?: unknown } | null)?.prompt ?? null,
+      : (elicitation as { prompt?: unknown }).prompt ?? null,
   };
 }
 
@@ -1552,7 +1608,7 @@ export interface HarnessToolResult {
   summary: string;
   providerOperationId?: string;
   halt?: "needs_input";
-  /** Bind control signal used only by Avalon's core plugin loader. */
+  /** Bind control signal used only by Avalon's discovery plugin loader. */
   loadedPluginName?: string;
 }
 
@@ -1570,7 +1626,32 @@ export interface HarnessToolPolicyIdentity {
 }
 
 /** Bind-owned catalog policies mirrored and verified by the durable host. */
-export const BIND_RUNTIME_CORE_TOOL_DEFINITIONS = [
+export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
+export const AVALON_TIME_PLUGIN_ID = "avalon:time";
+export const AVALON_WORKSTREAM_PLUGIN_ID = "avalon:workstream";
+export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "avalon:automation_architect";
+
+export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
+  name: "avalon.current_time",
+  description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
+  capability: "time.read",
+  mode: "read",
+  idempotency: "safe",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      timezone: {
+        type: "string",
+        minLength: 1,
+        maxLength: 100,
+        description: "Optional IANA timezone, for example America/New_York.",
+      },
+    },
+  },
+} as const satisfies ToolDefinition;
+
+export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   {
     name: "list_connector_plugins",
     description: "List authorized connector plugins available to this frozen run scope.",
@@ -1614,11 +1695,11 @@ export interface HarnessTool {
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
 }
 
-/** A credential-scoped Bind plugin whose trusted prose is authored in code. */
+/** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
 export interface HarnessPlugin {
-  /** Opaque host authorization/persistence identity (connection:<uuid>). */
+  /** Stable host authorization/persistence identity (`avalon:*` or `connection:<uuid>`). */
   canonicalId: string;
-  /** Stable workspace-local identifier exposed to the model (plugin_google). */
+  /** Stable identifier exposed to the model (`avalon_time` or `plugin_google`). */
   modelId: string;
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */
@@ -1628,7 +1709,7 @@ export interface HarnessPlugin {
   description: string;
   systemMessage?: string;
   tools: HarnessTool[];
-  /** Host-side request to persist this plugin before supplying an activation hint. */
+  /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;
 }
@@ -1701,9 +1782,6 @@ export interface RunHarnessInput {
     maxWebResults: number;
     maxCostCents?: number;
     maxCatalogTokens?: number;
-    maxActivePlugins?: number;
-    maxToolSchemaBytes?: number;
-    maxToolResultBytes?: number;
     maxStreamResets?: number;
     completionDefectRetries?: number;
     /** Model reasoning effort passed consistently through Bind's routed turns. */
@@ -1721,7 +1799,8 @@ export interface RunHarnessInput {
    * model's advertised context window; it never estimates the prompt locally.
    */
   compaction?: HarnessCompactionConfig;
-  tools: HarnessTool[];
+  /** Stable always-active plugin bundles registered for this runtime. */
+  corePlugins?: HarnessPlugin[];
   plugins?: HarnessPlugin[];
   /** Connector activations already durably persisted by the host. */
   activationHints?: string[];

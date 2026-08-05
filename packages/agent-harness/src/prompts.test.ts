@@ -67,7 +67,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "f71df976564a515457dd4e6de3bf43944b2286f6f4b65daae41d7cd0e10f9fc3",
+        hash: "53817217a637506e960508719d09470c7ab48688342197bd50e0a0fa6fd59b9b",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -78,7 +78,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "06fd6951cce2011792b0e2ce1f471169689a64319c119eee47b4bd6fdf318f66",
+        hash: "7130302ce3d761ac45eb65403cfd359dba89f450cadcfc84db0232c84d91e010",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -299,12 +299,19 @@ describe("prompt renderers", () => {
     ]) {
       expect(policy).toContain(trigger);
     }
-    expect(policy).toContain("Default scope to personal");
-    expect(policy).toContain("requiredCapabilities: always []");
+    expect(policy).toContain("# Goal");
+    expect(policy).toContain("# Plan");
+    expect(policy).toContain("# Submission");
+    expect(policy).toContain("Use these phases flexibly rather than as a fixed sequence");
+    expect(policy).toContain("Once the automation is well defined, call submit_automation_draft");
+    expect(policy).toContain("Default suggestedScope to personal");
+    expect(policy).toContain("Avalon derives readiness and the follow-up question from elicitation");
+    expect(policy).toContain("Tool-call turns must contain no assistant text");
+    expect(policy).toContain("Do not emit a separate confirmation or question");
     expect(policy).toContain("medium-sized model");
     expect(policy).toContain("automation_plugins_list");
     expect(policy).toContain("single_select or multi_select");
-    expect(policy).toContain("3-4 short lines");
+    expect(policy).toContain("3–4 short Markdown lines");
   });
 
   it("defines conservative confidence semantics for both activity classifiers", () => {

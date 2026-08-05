@@ -159,13 +159,27 @@ describe("agent harness", () => {
     const messages = requestBody!.messages as Array<{ role: string; content: string }>;
     expect(messages[0]).toMatchObject({ role: "system" });
     expect(messages[0]!.content).not.toContain(currentDraft.instructions);
+    expect(messages[0]!.content).toContain("Once the automation is well defined, call submit_automation_draft");
     expect(messages[1]).toMatchObject({ role: "user" });
     expect(messages[1]!.content).toContain(currentDraft.instructions);
     expect(messages[2]).toEqual({ role: "user", content: "Run it every morning in Pacific time." });
-    expect(messages.at(-1)!.content).toContain("call submit_automation_draft");
+    expect(messages.at(-1)!.content).not.toContain("If an essential task detail is missing");
+    expect(messages.at(-1)!.content).not.toContain("On the final turn");
     expect(messages.at(-1)!.content).toContain("Expected structured output JSON Schema (automation_draft):");
     expect(messages.at(-1)!.content).toContain('"recommendedPlugins"');
     expect(messages.at(-1)!.content).toContain('"required"');
+    const submitTool = (requestBody!.tools as Array<{
+      function: { name: string; parameters: { properties: Record<string, unknown>; required: string[] } };
+    }>).find((tool) => tool.function.name === "submit_automation_draft");
+    expect(submitTool).toBeDefined();
+    expect(submitTool!.function.parameters.properties).not.toHaveProperty("ready");
+    expect(submitTool!.function.parameters.properties).not.toHaveProperty("followUpQuestion");
+    expect(submitTool!.function.parameters.properties).not.toHaveProperty("requiredCapabilities");
+    expect(submitTool!.function.parameters.required).not.toEqual(expect.arrayContaining([
+      "ready",
+      "followUpQuestion",
+      "requiredCapabilities",
+    ]));
   });
 
   it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
@@ -290,6 +304,64 @@ describe("agent harness", () => {
     ]));
   });
 
+  it("returns every matching automation plugin in discovery results and activity", async () => {
+    const valid = {
+      name: "Broad workflow",
+      description: "Use all relevant services.",
+      overview: "Runs a broad workflow across the relevant services.",
+      instructions: "Use every relevant authorized service.",
+      triggers: [{ type: "manual" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["Workflow result"],
+      defaultBehavior: "{}",
+      suggestedScope: "workspace",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const bodies: Array<Record<string, unknown>> = [];
+    const compilerEvents: AutomationCompilerStreamEvent[] = [];
+    const pluginCatalog = Array.from({ length: 45 }, (_, index) => ({
+      pluginId: `plugin_service${index}`,
+      displayName: `Service ${index}`,
+      icon: "plug" as const,
+      description: `Authorized service ${index}`,
+      scope: "workspace" as const,
+      searchAliases: ["service"],
+      systemMessage: `Use service ${index} through its authorized tools.`,
+      tools: [],
+    }));
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return bodies.length === 1
+        ? automationToolResponse("automation_plugins_search", { query: "service" })
+        : automationSubmitResponse(valid);
+    }) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Use every relevant service." }],
+      fetch: fetcher,
+      pluginCatalog,
+      onStreamEvent: (event) => { compilerEvents.push(event); },
+    })).resolves.toMatchObject({ name: "Broad workflow" });
+
+    const discoveryResult = (bodies[1]!.messages as Array<{ role: string; content: string }>)
+      .find((message) => message.role === "tool");
+    const discoveryPayload = JSON.parse(discoveryResult!.content) as {
+      data: { plugins: unknown[] };
+    };
+    expect(discoveryPayload.data.plugins).toHaveLength(45);
+    const searchActivity = compilerEvents.find((event) =>
+      event.type === "tool" && event.status === "completed"
+    );
+    expect(searchActivity?.type).toBe("tool");
+    if (searchActivity?.type !== "tool") throw new Error("Expected completed search activity");
+    expect(searchActivity.plugins).toHaveLength(45);
+  });
+
   it("renders, loads, and executes authorized plugins while compiling an automation", async () => {
     const valid = {
       name: "Drive folder brief",
@@ -359,10 +431,17 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
     const firstSystem = String((bodies[0]!.messages as Array<{ content: string }>)[0]!.content);
     expect(firstSystem).toContain("Available to load:\n- plugin_google_2 (Google Drive · Work; aliases: drive, files)");
-    expect((bodies[0]!.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name))
-      .not.toContain("google_2_drive_search");
+    const firstToolNames = (bodies[0]!.tools as Array<{ function: { name: string } }>)
+      .map((tool) => tool.function.name);
+    expect(firstToolNames).toContain("avalon.current_time");
+    expect(firstToolNames).toContain("submit_automation_draft");
+    expect(firstToolNames).toContain("avalon_load_plugin");
+    expect(firstToolNames).not.toContain("google_2_drive_search");
+    expect(firstSystem).not.toContain("avalon_core");
     const secondSystem = String((bodies[1]!.messages as Array<{ content: string }>)[0]!.content);
-    expect(secondSystem).toContain("Currently active:\n- avalon_core:");
+    expect(secondSystem).toContain("- avalon_discovery:");
+    expect(secondSystem).toContain("- avalon_time:");
+    expect(secondSystem).toContain("- avalon_automation_architect:");
     expect(secondSystem).toContain("- plugin_google_2 (Google Drive · Work; aliases: drive, files)");
     expect(secondSystem).toContain("# Active Plugin Instructions");
     expect(secondSystem).toContain("## plugin_google_2 — Google Drive · Work\nUse Drive tools");
@@ -422,7 +501,7 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("streams only the user-facing assistant text from the submitted draft turn", async () => {
+  it("submits a draft without requiring parallel assistant text", async () => {
     const incomplete = {
       name: "Blog monitor",
       description: "Check a blog for a new post.",
@@ -443,23 +522,7 @@ describe("agent harness", () => {
       ready: false,
     };
     const events: AutomationCompilerStreamEvent[] = [];
-    const fetcher = vi.fn(async () => streamResponse([
-      { choices: [{ delta: { content: "Which blog " }, finish_reason: null }] },
-      { choices: [{ delta: { content: "should I monitor?" }, finish_reason: null }] },
-      {
-        choices: [{
-          delta: {
-            tool_calls: [toolDeltaWithArguments(
-              0,
-              "creator-submit",
-              "submit_automation_draft",
-              JSON.stringify(incomplete),
-            )],
-          },
-          finish_reason: "tool_calls",
-        }],
-      },
-    ])) as typeof fetch;
+    const fetcher = vi.fn(async () => automationSubmitResponse(incomplete)) as typeof fetch;
 
     await expect(compileAutomation({
       apiKey: "key",
@@ -470,10 +533,7 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ ready: false });
 
     expect(events).toEqual([
-      { type: "started" },
-      { type: "delta", delta: "Which blog ", reset: false },
-      { type: "delta", delta: "should I monitor?", reset: false },
-      { type: "completed", content: "Which blog should I monitor?" },
+      { type: "completed" },
     ]);
   });
 
@@ -514,7 +574,7 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("adds one user reminder when the creator stops before submitting a draft", async () => {
+  it("adds one failsafe reminder after an empty stop turn", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
     const valid = {
       name: "Periodic check",
@@ -535,7 +595,7 @@ describe("agent harness", () => {
       requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return requestBodies.length === 1
         ? streamResponse([{
-            choices: [{ delta: { content: "I have enough information." }, finish_reason: "stop" }],
+            choices: [{ delta: { content: "" }, finish_reason: "stop" }],
           }])
         : automationSubmitResponse(valid);
     }) as typeof fetch;
@@ -548,15 +608,35 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ name: "Periodic check", ready: true });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
-    const recoveryMessages = requestBodies[1]!.messages as Array<{ role: string; content: string }>;
-    expect(recoveryMessages.at(-2)).toEqual({ role: "assistant", content: "I have enough information." });
-    expect(recoveryMessages.at(-1)).toMatchObject({ role: "user" });
-    expect(recoveryMessages.at(-1)!.content).toContain("without successfully calling submit_automation_draft");
-    expect(recoveryMessages.at(-1)!.content).toContain("Expected structured output JSON Schema (automation_draft):");
-    expect(recoveryMessages.at(-1)!.content).toContain("You must call submit_automation_draft");
+    const recoveryMessages = requestBodies[1]!.messages as Array<{ role: string; content: string | null }>;
+    const recoveryReminder = recoveryMessages.find((message) =>
+      message.role === "user" && message.content?.includes("without successfully calling submit_automation_draft")
+    );
+    expect(recoveryReminder).toBeDefined();
+    expect(recoveryReminder!.content).toContain("Expected structured output JSON Schema (automation_draft):");
+    expect(recoveryReminder!.content).toContain("Call submit_automation_draft now");
   });
 
   it("returns a typed retryable failure after one bounded submission reminder", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Check something periodically." }],
+      fetch: fetcher,
+    })).rejects.toMatchObject({
+      name: "AutomationCompilerError",
+      code: "automation_draft_not_submitted",
+      kind: "completion",
+      retryable: true,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not inject the submission failsafe after a non-empty stop turn", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "I need more information." }, finish_reason: "stop" }],
     }])) as typeof fetch;
@@ -572,7 +652,7 @@ describe("agent harness", () => {
       kind: "completion",
       retryable: true,
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("canonicalizes tool inputs for stable hashes", () => {
@@ -742,10 +822,10 @@ describe("agent harness", () => {
     await expect(runHarness({
       ...toolInput,
       config: { ...toolInput.config, maxToolCalls: 1 },
-      tools: [
+      corePlugins: [testCorePlugin([
         harnessTool("read_one", "read", executions),
         harnessTool("read_two", "read", executions),
-      ],
+      ])],
     })).resolves.toMatchObject({
       status: "failed",
       failure: { kind: "limit", code: "run_tool_call_limit_exceeded" },
@@ -762,7 +842,7 @@ describe("agent harness", () => {
     await expect(runHarness({
       ...iterationInput,
       config: { ...iterationInput.config, maxIterations: 1 },
-      tools: [harnessTool("read_once", "read", [])],
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
     })).resolves.toMatchObject({
       status: "failed",
       failure: { kind: "limit", code: "run_iteration_limit_exceeded" },
@@ -803,7 +883,7 @@ describe("agent harness", () => {
 
     const outcome = await runHarness({
       ...runInput(fetcher),
-      tools: [harnessTool("read_once", "read", [])],
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", [])])],
       compaction: {
         contextWindowTokensByModel: { "test/model": 100 },
         persist,
@@ -940,7 +1020,7 @@ describe("agent harness", () => {
 
     const outcome = await runHarness({
       ...runInput(fetcher),
-      tools,
+      corePlugins: [testCorePlugin(tools)],
       onEvent: (event) => { events.push(event); },
       onInferenceRequest: (request) => { inferenceRequests.push(request); },
       onInferenceAttempt: (attempt) => { inferenceAttempts.push(attempt); },
@@ -1017,7 +1097,7 @@ describe("agent harness", () => {
     const slowTool = harnessTool("slow_read", "read", [], () => new Promise(() => {}));
     const outcome = await runHarness({
       ...runInput(fetcher, { toolTimeoutMs: 5 }),
-      tools: [slowTool],
+      corePlugins: [testCorePlugin([slowTool])],
       onEvent: (event) => { events.push(event); },
     });
 
@@ -1039,7 +1119,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       signal: controller.signal,
-      tools: [harnessTool("slow_read", "read", [], () => new Promise(() => {}))],
+      corePlugins: [testCorePlugin([harnessTool("slow_read", "read", [], () => new Promise(() => {}))])],
       onEvent: (event) => {
         events.push(event);
         if (event.type === "tool_started") controller.abort("stopped_by_user");
@@ -1066,9 +1146,9 @@ describe("agent harness", () => {
     const onAmbiguousExternalWrite = vi.fn();
     const outcome = await runHarness({
       ...runInput(fetcher),
-      tools: [recordBeforeExecuteTool("create_record", async () => {
+      corePlugins: [testCorePlugin([recordBeforeExecuteTool("create_record", async () => {
         throw new Error("Provider rejected the request with status 400");
-      })],
+      })])],
       onAmbiguousExternalWrite,
       onEvent: (event) => { events.push(event); },
     });
@@ -1092,7 +1172,7 @@ describe("agent harness", () => {
     const onAmbiguousExternalWrite = vi.fn();
     const outcome = await runHarness({
       ...runInput(fetcher, { toolTimeoutMs: 5 }),
-      tools: [recordBeforeExecuteTool("create_record", () => new Promise(() => {}))],
+      corePlugins: [testCorePlugin([recordBeforeExecuteTool("create_record", () => new Promise(() => {}))])],
       onAmbiguousExternalWrite,
       onEvent: (event) => { events.push(event); },
     });
@@ -1124,7 +1204,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       signal: controller.signal,
-      tools: [recordBeforeExecuteTool("create_record", () => new Promise(() => {}))],
+      corePlugins: [testCorePlugin([recordBeforeExecuteTool("create_record", () => new Promise(() => {}))])],
       onAmbiguousExternalWrite,
       onEvent: (event) => {
         events.push(event);
@@ -1173,7 +1253,7 @@ describe("agent harness", () => {
 
     const outcome = await runHarness({
       ...runInput(fetcher),
-      tools: [tool],
+      corePlugins: [testCorePlugin([tool])],
       persistToolExecutionPlan,
       onEvent: (event) => { events.push(event); },
     });
@@ -1288,7 +1368,7 @@ describe("agent harness", () => {
     expect(events.find((event) =>
       event.type === "tool_started" && event.toolName === "avalon_load_plugin"
     )).toMatchObject({
-      pluginId: "avalon:core",
+      pluginId: "avalon:discovery",
       policy: {
         canonicalToolName: "load_plugin",
         capability: "avalon.plugins.load",
@@ -1384,7 +1464,7 @@ describe("agent harness", () => {
 
     expect(outcome).toMatchObject({ status: "completed", content: "catalog listed", toolCalls: 1 });
     expect(events.find((event) => event.type === "tool_started")).toMatchObject({
-      pluginId: "avalon:core",
+      pluginId: "avalon:discovery",
       policy: {
         canonicalToolName: "list_connector_plugins",
         capability: "avalon.plugins.list",
@@ -1702,30 +1782,40 @@ describe("agent harness", () => {
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Revoked plugin policy");
   });
 
-  it("fails explicitly when preserved active plugins exceed the configured tool surface", async () => {
-    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
-    const base = runInput(fetcher);
+  it("allows active plugin and schema surfaces without runtime ceilings", async () => {
+    let requestBody: { tools?: Array<{ function: { name: string; description: string } }> } | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body)) as typeof requestBody;
+      return streamResponse([{ choices: [{ delta: { content: "all plugins available" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const plugins = Array.from({ length: 13 }, (_, index) => {
+      const plugin = credentialPlugin(`connection:plugin-${index}`, `plugin${index}`, `Plugin ${index} policy`);
+      return index === 0
+        ? {
+            ...plugin,
+            tools: plugin.tools.map((tool) => ({
+              ...tool,
+              definition: { ...tool.definition, description: "x".repeat(140_000) },
+            })),
+          }
+        : plugin;
+    });
 
     const outcome = await runHarness({
-      ...base,
-      config: { ...base.config, maxActivePlugins: 0 },
-      plugins: [{
-        ...credentialPlugin("connection:required", "required", "Required plugin policy"),
-        preload: true,
-      }],
-      activationHints: ["connection:required"],
+      ...runInput(fetcher),
+      plugins,
+      activationHints: plugins.map((plugin) => plugin.canonicalId),
       reauthorizePlugin: () => true,
     });
 
-    expect(outcome).toMatchObject({
-      status: "failed",
-      failure: { kind: "context", code: "tool_surface_too_large" },
-    });
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ status: "completed", content: "all plugins available" });
+    expect(requestBody!.tools).toHaveLength(16);
+    expect(requestBody!.tools!.find((tool) => tool.function.name === "plugin0_search")?.function.description)
+      .toHaveLength(140_000);
   });
 
 
-  it("keeps a bounded child research result viable for a synthesis turn", async () => {
+  it("preserves complete tool results for the next model turn", async () => {
     const fetchedPage = {
       url: "https://www.nasa.gov/official-source",
       title: "NASA official source",
@@ -1765,11 +1855,7 @@ describe("agent harness", () => {
 
     const result = await runHarness({
       ...base,
-      config: {
-        ...base.config,
-        maxToolResultBytes: 24_000,
-      },
-      tools: [fetchTool],
+      corePlugins: [testCorePlugin([fetchTool])],
     });
 
     expect(result).toMatchObject({
@@ -1783,8 +1869,8 @@ describe("agent harness", () => {
     });
     expect(requestBodies).toHaveLength(2);
     const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
-    expect(toolMessage?.content).toContain('"truncated":true');
-    expect(new TextEncoder().encode(toolMessage?.content ?? "").byteLength).toBeLessThanOrEqual(24_256);
+    expect(toolMessage?.content).not.toContain('"truncated":true');
+    expect(new TextEncoder().encode(toolMessage?.content ?? "").byteLength).toBeGreaterThan(128 * 1_024);
   });
 
   it("retries truncated tool completions on the same endpoint and resets streamed text", async () => {
@@ -1872,12 +1958,10 @@ describe("agent harness", () => {
           condition: null,
           resourceId: null
         }],
-        requiredCapabilities: [],
         expectedOutputs: ["changelog"],
         defaultBehavior: "{\"tone\":\"concise\"}",
         suggestedScope: "workspace",
-        followUpQuestion: null,
-        ready: true
+        elicitation: null
       })
     ).toMatchObject({
       triggers: [{
@@ -1885,9 +1969,16 @@ describe("agent harness", () => {
         rrule: "FREQ=WEEKLY;BYDAY=FR",
         timezone: "America/Los_Angeles"
       }],
-      defaultBehavior: { tone: "concise" }
+      requiredCapabilities: [],
+      defaultBehavior: { tone: "concise" },
+      followUpQuestion: null,
+      ready: true
     });
-    expect(JSON.stringify(__testing.automationJsonSchema)).not.toContain('"oneOf"');
+    const schema = JSON.stringify(__testing.automationJsonSchema);
+    expect(schema).not.toContain('"oneOf"');
+    expect(schema).not.toContain('"ready"');
+    expect(schema).not.toContain('"followUpQuestion"');
+    expect(schema).not.toContain('"requiredCapabilities"');
   });
 
   it("normalizes every supported automation trigger shape", () => {
@@ -1895,12 +1986,10 @@ describe("agent harness", () => {
       name: "Automation",
       description: "Exercise every trigger shape",
       instructions: "1. Do the work.\n2. Record the result.\n3. Record when nothing changed.",
-      requiredCapabilities: [],
       expectedOutputs: ["Result"],
       defaultBehavior: "{}",
       suggestedScope: "personal",
-      followUpQuestion: null,
-      ready: true,
+      elicitation: null,
     };
     const unused = {
       rrule: null,
@@ -1974,7 +2063,14 @@ function automationToolResponse(name: string, input: unknown): Response {
 }
 
 function automationSubmitResponse(draft: unknown): Response {
-  return automationToolResponse("submit_automation_draft", draft);
+  const submission = draft && typeof draft === "object" && !Array.isArray(draft)
+    ? Object.fromEntries(Object.entries(draft).filter(([key]) => ![
+        "ready",
+        "followUpQuestion",
+        "requiredCapabilities",
+      ].includes(key)))
+    : draft;
+  return automationToolResponse("submit_automation_draft", submission);
 }
 
 function toolDelta(index: number, id: string, name: string) {
@@ -2012,6 +2108,18 @@ function credentialPlugin(canonicalId: string, shortWireName: string, systemMess
   };
 }
 
+function testCorePlugin(tools: HarnessTool[]): HarnessPlugin {
+  return {
+    canonicalId: "avalon:test",
+    modelId: "avalon_test",
+    shortWireName: "test",
+    description: "Test-only always-active tools",
+    preload: true,
+    explicit: true,
+    tools,
+  };
+}
+
 function runInput(fetcher: typeof fetch, overrides: Partial<{
   maxWallClockMs: number;
   toolTimeoutMs: number;
@@ -2033,7 +2141,7 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
     executionPrincipal: { type: "user" as const, userId: "user-1" },
     systemPrompt: "Be useful.",
     messages: [{ role: "user" as const, content: "Do the work" }],
-    tools: [] as HarnessTool[],
+    corePlugins: [] as HarnessPlugin[],
     onEvent: () => {},
   };
 }
