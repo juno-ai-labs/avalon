@@ -2145,10 +2145,6 @@ pre {
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary strong::before {
   color: #797972;
-  content: 'Used ';
-}
-
-.automation-chat-surface .tool-summary strong::before {
   content: none;
 }
 
