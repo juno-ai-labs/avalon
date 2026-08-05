@@ -11,6 +11,7 @@ import {
   type TablerIcon,
 } from '@tabler/icons-react';
 import type { AutomationPluginActivity, AutomationPluginIcon } from '@avalon/contracts';
+import { ThinkingOrb } from 'thinking-orbs';
 import {
   ArrowRight,
   Check,
@@ -326,6 +327,14 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
       aria-live={thought.status === 'started' ? 'off' : 'polite'}
       className={clsx('thought-block', thought.status === 'started' && 'thought-active')}
     >
+      <ThinkingOrb
+        aria-hidden="true"
+        className="thought-orb"
+        paused={thought.status !== 'started'}
+        size={20}
+        state="solving"
+        theme="dark"
+      />
       <span className="thought-label">{label}</span>
     </div>
   );
