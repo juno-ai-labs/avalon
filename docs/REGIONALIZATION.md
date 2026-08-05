@@ -15,6 +15,7 @@ The same Worker source is deployed twice:
 | Worker | `avalon-api-global` | `avalon-api-eu` |
 | API | `api.with-avalon.com` | `eu.api.with-avalon.com` |
 | D1 | global database | EU-jurisdiction database |
+| Agent memory vectors | `avalon-global-memory` Vectorize index | `avalon-eu-memory` Vectorize index |
 | R2 | global bucket | EU-jurisdiction bucket |
 | Durable Objects | global namespace calls | namespace calls pinned with `jurisdiction("eu")` |
 | Secrets | global key set | independent EU key set |

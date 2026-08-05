@@ -61,6 +61,10 @@
       "migrations_dir": "../../packages/db/migrations"
     }
   ],
+  "ai": { "binding": "AI" },
+  "vectorize": [
+    { "binding": "MEMORY_INDEX", "index_name": "avalon-global-memory" }
+  ],
   "routes": [
     { "pattern": "api.with-avalon.com", "custom_domain": true },
     { "pattern": "github.with-avalon.com", "custom_domain": true },

@@ -22,6 +22,40 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("creates scoped memory, hybrid-search projections, and immutable run snapshots", () => {
+    const database = migrateFreshDatabase();
+    const scopeColumns = database.prepare("PRAGMA table_info(memory_scopes)").all();
+    expect(scopeColumns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "memory_scope_id", pk: 1 }),
+      expect.objectContaining({ name: "workspace_id", notnull: 1 }),
+      expect.objectContaining({ name: "kind", notnull: 1 }),
+      expect.objectContaining({ name: "owner_id", notnull: 1 }),
+    ]));
+    const itemColumns = database.prepare("PRAGMA table_info(memory_items)").all();
+    expect(itemColumns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "revision", notnull: 1 }),
+      expect.objectContaining({ name: "provenance_json", notnull: 1 }),
+      expect.objectContaining({ name: "access_count", notnull: 1 }),
+      expect.objectContaining({ name: "invalidated_at" }),
+    ]));
+    expect(itemColumns).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "confidence" }),
+    ]));
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_items_fts'",
+    ).get()).toEqual({ name: "memory_items_fts" });
+    expect(database.prepare("PRAGMA table_info(harness_run_memory_contexts)").all())
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "memory_context_hash", notnull: 1 }),
+        expect.objectContaining({ name: "results_json", notnull: 1 }),
+      ]));
+    expect(database.prepare("PRAGMA table_info(harness_run_scopes)").all())
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "memory_context_hash" }),
+      ]));
+    database.close();
+  });
+
   it("keeps full agent inference logging opt-in and creates its regional payload index", () => {
     const database = migrateFreshDatabase();
     database.exec(`

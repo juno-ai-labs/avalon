@@ -2,6 +2,7 @@ import { app } from "./app";
 import type { Env } from "./env";
 import { consumeActivityQueue } from "./queues/activity-consumer";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
+import { processMemoryIndexOutbox } from "./services/memory-service";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -48,6 +49,10 @@ export default {
   fetch: app.fetch,
   queue: consumeActivityQueue,
   scheduled: (_controller, env, context) => {
-    context.waitUntil(Promise.all([reapExpiredHarnessAttempts(env), reapExpiredDraftAttachments(env)]));
+    context.waitUntil(Promise.all([
+      reapExpiredHarnessAttempts(env),
+      reapExpiredDraftAttachments(env),
+      processMemoryIndexOutbox(env),
+    ]));
   },
 } satisfies ExportedHandler<Env>;

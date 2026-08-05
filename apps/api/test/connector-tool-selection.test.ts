@@ -413,6 +413,7 @@ describe("connector tools selected for harness runs", () => {
     )).toHaveLength(1);
     expect(selected.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
       "avalon:time",
+      "avalon:memory",
       "avalon:workstream",
     ]);
     expect(selected.corePlugins.find((plugin) =>
@@ -470,6 +471,8 @@ describe("connector tools selected for harness runs", () => {
       "avalon.web_fetch",
       "avalon.read_resource",
     ]);
+    expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
+      .toBe(false);
     expect(childTools.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
       "avalon:time",
       "avalon:workstream",

@@ -101,7 +101,7 @@ Deploy the EU Worker first for ordinary releases because the Global Worker has n
 For ordinary releases after both entrypoints exist:
 
 1. Validate both Wrangler configurations with dry-run builds.
-2. Create or confirm each region's named Cloudflare resources.
+2. Create or confirm each region's named Cloudflare resources. Scoped memory requires `avalon-global-memory` and `avalon-eu-memory` Vectorize indexes with 1,024 dimensions and cosine distance, plus the Workers AI binding declared by each API Worker.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global.

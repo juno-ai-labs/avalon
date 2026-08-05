@@ -1392,6 +1392,7 @@ describe("durable harness attempt runtime", () => {
       routingPolicyVersion: "routing-v1",
       promptVersion: "prompt-v1",
       toolSurfaceHash: "tools-v1",
+      memoryContextHash: "memory-context-v1",
       limits: { maxToolCalls: 12, maxIterations: 8 },
     };
     const first = await persistImmutableRunScope(sqlite.binding, input(RUN_ONE), claim.lease, firstScope);
@@ -1421,10 +1422,11 @@ describe("durable harness attempt runtime", () => {
     })).rejects.toThrow("plugin_activation_mismatch");
 
     expect(sqlite.database.prepare(
-      "SELECT eligible_connection_ids_json, eligible_capabilities_json FROM harness_run_scopes WHERE harness_run_id = ?",
+      "SELECT eligible_connection_ids_json, eligible_capabilities_json, memory_context_hash FROM harness_run_scopes WHERE harness_run_id = ?",
     ).get(RUN_ONE)).toEqual({
       eligible_connection_ids_json: '["connection-a","connection-b"]',
       eligible_capabilities_json: '["issues.read","issues.write"]',
+      memory_context_hash: "memory-context-v1",
     });
     expect(sqlite.database.prepare(
       "SELECT COUNT(*) AS count FROM harness_run_plugin_activations WHERE harness_run_id = ? AND plugin_id = ?",
