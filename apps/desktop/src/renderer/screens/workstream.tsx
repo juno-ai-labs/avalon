@@ -1,10 +1,12 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import {
   Activity,
   AlertTriangle,
   ArrowDown,
+  ArrowUp,
   Bot,
   CalendarClock,
   Copy,
@@ -27,7 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { backgroundTasksFromMessages, type MentionIdentity } from '../lib/api';
+import { backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -333,6 +335,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
+  const loadingOlderRef = useRef(false);
+  const activeWorkstreamIdRef = useRef(id);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const attachmentDraft = useFileAttachments(api);
@@ -344,6 +350,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
 
   useEffect(() => () => closeRail(), [closeRail, id]);
+
+  useEffect(() => {
+    activeWorkstreamIdRef.current = id;
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+    setOlderMessagesError(undefined);
+  }, [id]);
 
   useEffect(() => {
     if (!resourceDialogOpen) {
@@ -360,14 +373,44 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
+  const messageCursor = useQuery<string | null>({
+    queryKey: ['messages-cursor', id],
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   const messages = useQuery({
     queryKey: ['messages', id],
-    queryFn: async ({ signal }) => mergeCanonicalTranscript(
-      queryClient.getQueryData<Message[]>(['messages', id]),
-      await api!.getMessages(id, signal),
-    ),
+    queryFn: async ({ signal }) => {
+      const [page, detail] = await Promise.all([
+        api!.getMessagePage(id, undefined, signal),
+        queryClient.fetchQuery({
+          queryKey: ['workstream', id],
+          queryFn: ({ signal: detailSignal }) => api!.getWorkstream(id, detailSignal),
+          staleTime: 5_000,
+        }),
+      ]);
+      const previous = queryClient.getQueryData<Message[]>(['messages', id]);
+      const pageOldestSequence = page.items.reduce(
+        (oldest, message) => Math.min(oldest, message.sequenceNumber),
+        Number.POSITIVE_INFINITY,
+      );
+      const alreadyHasOlderMessages = (previous ?? []).some((message) =>
+        message.realtimeOrder === undefined && message.sequenceNumber < pageOldestSequence);
+      if (!alreadyHasOlderMessages) {
+        queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
+      }
+      return mergeCanonicalTranscript(previous, messagesWithTransientBlocks(page.items, detail));
+    },
     enabled: Boolean(api && id),
     staleTime: 2_000,
+  });
+  const deferredContext = useQuery({
+    queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],
+    queryFn: ({ signal }) => api!.getWorkstreamContext(id, workstream.data?.automationSubscriptionId, signal),
+    enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
+    staleTime: 5_000,
   });
   const members = useQuery({
     queryKey: ['workspace-members'],
@@ -389,6 +432,43 @@ export function WorkstreamScreen(): React.JSX.Element {
     staleTime: 15_000,
   });
   const socketState = useWorkstreamSocket(api, id, workstream.isSuccess && messages.isSuccess);
+  const transcript = messages.data ?? [];
+  const transcriptVirtualizer = useVirtualizer({
+    count: transcript.length,
+    estimateSize: () => 140,
+    getItemKey: (index) => transcript[index]?.id ?? index,
+    getScrollElement: () => transcriptRef.current,
+    overscan: 8,
+  });
+
+  const loadOlderMessages = useCallback(async (): Promise<void> => {
+    const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
+    if (!api || !before || loadingOlderRef.current) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    setOlderMessagesError(undefined);
+    const scrollElement = transcriptRef.current;
+    const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
+    const previousScrollTop = scrollElement?.scrollTop ?? 0;
+    try {
+      const page = await api.getMessagePage(id, before);
+      if (activeWorkstreamIdRef.current !== id) return;
+      if (page.nextCursor === before) throw new Error('Avalon received a repeated transcript cursor.');
+      queryClient.setQueryData<Message[]>(['messages', id], (current) =>
+        page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+      queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
+      window.requestAnimationFrame(() => {
+        const element = transcriptRef.current;
+        if (!element) return;
+        element.scrollTop = previousScrollTop + Math.max(0, element.scrollHeight - previousScrollHeight);
+      });
+    } catch (error) {
+      setOlderMessagesError(error instanceof Error ? error.message : 'Earlier messages could not be loaded.');
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, [api, id, queryClient]);
 
   const addParticipant = useMutation({
     mutationFn: (member: WorkspaceMember) => api!.addParticipant(id, member.id),
@@ -409,7 +489,10 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
-    onSuccess: () => void workstream.refetch(),
+    onSuccess: () => void Promise.all([
+      workstream.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
+    ]),
   });
 
   const retry = useMutation({
@@ -419,6 +502,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     },
   });
@@ -491,6 +575,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     } catch (error) {
       if (previousMessage) {
@@ -568,6 +653,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     } catch (error) {
       queryClient.setQueryData<Message[]>(['messages', id], (current) => (current ?? []).filter((message) => message.id !== clientId));
@@ -586,9 +672,9 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   useEffect(() => {
     if (!atBottom) return;
-    const element = transcriptRef.current;
-    if (element) requestAnimationFrame(() => element.scrollTo({ top: element.scrollHeight }));
-  }, [atBottom, messages.data]);
+    if (transcript.length === 0) return;
+    requestAnimationFrame(() => transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' }));
+  }, [atBottom, transcript, transcriptVirtualizer]);
 
   if (workstream.isLoading || messages.isLoading) return <LoadingState label="Opening work stream…" />;
   if (workstream.error || messages.error || !workstream.data) {
@@ -605,13 +691,20 @@ export function WorkstreamScreen(): React.JSX.Element {
   }
 
   const detail = workstream.data;
-  const transcript = messages.data ?? [];
   const visibleTranscript = transcript;
   const liveBackgroundTasks = backgroundTasksFromMessages(transcript);
-  const backgroundTasks = mergeBackgroundTasks(detail.backgroundTasks, liveBackgroundTasks);
+  const backgroundTasks = mergeBackgroundTasks(
+    deferredContext.data?.backgroundTasks ?? detail.backgroundTasks,
+    liveBackgroundTasks,
+  );
   const displayedDetail: WorkstreamDetail = {
     ...detail,
+    artifacts: deferredContext.data?.artifacts ?? detail.artifacts,
     backgroundTasks,
+    automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
+    ...(deferredContext.data?.automationSubscription
+      ? { automationSubscription: deferredContext.data.automationSubscription }
+      : {}),
   };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
@@ -646,24 +739,58 @@ export function WorkstreamScreen(): React.JSX.Element {
         onScroll={(event) => {
           const element = event.currentTarget;
           setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
+          if (element.scrollTop < 160 && messageCursor.data && !loadingOlderRef.current) {
+            void loadOlderMessages();
+          }
         }}
         ref={transcriptRef}
       >
         <div className="transcript-column">
+          {messageCursor.data && (
+            <div className="transcript-history-control">
+              <Button disabled={loadingOlder} onClick={() => void loadOlderMessages()}>
+                {loadingOlder ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <ArrowUp aria-hidden="true" size={14} />}
+                {loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}
+              </Button>
+            </div>
+          )}
+          {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
           {visibleTranscript.length === 0 && !activeElicitation ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
-            visibleTranscript.map((message) => (
-              <MessageBlock
-                currentUserId={session?.user.id}
-                key={message.id}
-                loadAttachmentContent={loadAttachmentContent}
-                message={message}
-                onAnswerElicitation={answerElicitation}
-                onOpenAttachment={setAttachmentPreview}
-                onResolveSuggestion={resolveSuggestion}
-              />
-            ))
+            <div
+              className="virtual-transcript"
+              style={{ height: `${transcriptVirtualizer.getTotalSize()}px`, position: 'relative' }}
+            >
+              {transcriptVirtualizer.getVirtualItems().map((virtualRow) => {
+                const message = visibleTranscript[virtualRow.index];
+                if (!message) return null;
+                return (
+                  <div
+                    className="virtual-message-row"
+                    data-index={virtualRow.index}
+                    key={message.id}
+                    ref={transcriptVirtualizer.measureElement}
+                    style={{
+                      left: 0,
+                      position: 'absolute',
+                      top: 0,
+                      transform: `translateY(${virtualRow.start}px)`,
+                      width: '100%',
+                    }}
+                  >
+                    <MessageBlock
+                      currentUserId={session?.user.id}
+                      loadAttachmentContent={loadAttachmentContent}
+                      message={message}
+                      onAnswerElicitation={answerElicitation}
+                      onOpenAttachment={setAttachmentPreview}
+                      onResolveSuggestion={resolveSuggestion}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           )}
           {detail.harnessStatus === 'running' && !activeElicitation && !transcript.some((message) => message.streaming) && (
             <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
@@ -683,7 +810,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <div className="composer-dock">
         {!atBottom && (
-          <JumpToLatestButton onJump={() => transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: 'smooth' })} />
+          <JumpToLatestButton onJump={() => transcriptVirtualizer.scrollToIndex(Math.max(0, transcript.length - 1), { align: 'end', behavior: 'smooth' })} />
         )}
         <div className="composer-stack">
           <WorkstreamComposer
@@ -709,13 +836,16 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <InspectorRail
         dropTarget={railDrop}
-        error={watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message ?? reconnect.error?.message}
+        error={deferredContext.error?.message ?? watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message ?? reconnect.error?.message}
         messages={transcript}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutate(resource)}
         onDownloadArtifact={(artifact) => void downloadArtifact(artifact.id)}
-        onJumpToMessage={(messageId) => document.getElementById(`message-${messageId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+        onJumpToMessage={(messageId) => {
+          const index = transcript.findIndex((message) => message.id === messageId);
+          if (index >= 0) transcriptVirtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
+        }}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onReconnectConnection={(connection) => reconnect.mutate(connection)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}

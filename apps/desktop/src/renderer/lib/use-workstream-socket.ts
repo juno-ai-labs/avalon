@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   mapElicitation,
   mapMessage,
+  messagesWithTransientBlocks,
   mapParticipant,
   mapResource,
   mapSuggestion,
@@ -227,6 +228,17 @@ export function applyStreamingSocketEvent(
 export function mergeCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
   const canonicalIds = new Set(canonical.map((message) => message.id));
   const canonicalToolIds = new Set(canonical.flatMap((message) => message.toolEvent ? [message.toolEvent.id] : []));
+  const lowestCanonicalSequence = canonical.reduce(
+    (lowest, message) => Math.min(lowest, message.sequenceNumber),
+    Number.POSITIVE_INFINITY,
+  );
+  const olderPersistedMessages = (previous ?? []).filter((message) =>
+    Number.isFinite(lowestCanonicalSequence)
+    && message.realtimeOrder === undefined
+    && message.deliveryState !== 'sending'
+    && message.sequenceNumber < lowestCanonicalSequence
+    && !canonicalIds.has(message.id),
+  );
   const realtimeTools = (previous ?? []).filter((message) =>
     message.messageType === 'tool_event'
     && message.realtimeOrder !== undefined
@@ -239,7 +251,7 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
     && !canonicalIds.has(message.id)
     && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
   );
-  return orderTranscript([...canonical, ...realtimeTools, ...pendingHumanMessages]);
+  return orderTranscript([...olderPersistedMessages, ...canonical, ...realtimeTools, ...pendingHumanMessages]);
 }
 
 /**
@@ -251,6 +263,10 @@ export function mergeCanonicalTranscript(previous: Message[] | undefined, canoni
  */
 export function replaceWithCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
   const canonicalIds = new Set(canonical.map((message) => message.id));
+  const lowestCanonicalSequence = canonical.reduce(
+    (lowest, message) => Math.min(lowest, message.sequenceNumber),
+    Number.POSITIVE_INFINITY,
+  );
   const highestCanonicalSequence = canonical.reduce(
     (highest, message) => Math.max(highest, message.sequenceNumber),
     0,
@@ -261,13 +277,20 @@ export function replaceWithCanonicalTranscript(previous: Message[] | undefined, 
     && !canonicalIds.has(message.id)
     && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
   );
+  const olderPersistedMessages = (previous ?? []).filter((message) =>
+    Number.isFinite(lowestCanonicalSequence)
+    && message.realtimeOrder === undefined
+    && message.deliveryState !== 'sending'
+    && message.sequenceNumber < lowestCanonicalSequence
+    && !canonicalIds.has(message.id),
+  );
   const pendingHumanMessages = (previous ?? []).filter((message) =>
     message.authorType === 'human'
     && message.deliveryState === 'sending'
     && !canonicalIds.has(message.id)
     && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
   );
-  return orderTranscript([...canonical, ...newerPersistedMessages, ...pendingHumanMessages]);
+  return orderTranscript([...olderPersistedMessages, ...canonical, ...newerPersistedMessages, ...pendingHumanMessages]);
 }
 
 /**
@@ -322,6 +345,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
     const syncCanonicalTranscriptAndList = (): void => {
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ['messages', workstreamId], exact: true }),
+        queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
         queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
       ]);
     };
@@ -330,11 +354,12 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
       const generation = ++canonicalReconcileGeneration;
       const sequenceAtStart = lastSequence.current;
       try {
-        const [canonicalWorkstream, canonicalMessages, canonicalWorkstreams] = await Promise.all([
+        const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreams] = await Promise.all([
           api.getWorkstream(workstreamId),
           api.getMessages(workstreamId),
           api.getWorkstreams(),
         ]);
+        const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
         if (closedByEffect || generation !== canonicalReconcileGeneration) return;
         if (lastSequence.current > sequenceAtStart) {
           queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
@@ -352,6 +377,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
         queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
+        void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
         if (!mayStillEmitRealtime) streamCursors.clear();
       } catch {
         // The socket replay remains usable. A later terminal frame, reconnect,
@@ -571,11 +597,12 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
         canonicalResyncInFlight = true;
         try {
           const targetSequence = canonicalResyncTarget;
-          const [canonicalWorkstream, canonicalMessages, canonicalWorkstreams] = await Promise.all([
+          const [canonicalWorkstream, canonicalMessagePage, canonicalWorkstreams] = await Promise.all([
             api.getWorkstream(workstreamId),
             api.getMessages(workstreamId),
             api.getWorkstreams(),
           ]);
+          const canonicalMessages = messagesWithTransientBlocks(canonicalMessagePage, canonicalWorkstream);
           if (closedByEffect) return;
           queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
@@ -584,6 +611,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
               ? mergeCanonicalTranscript(current, canonicalMessages)
               : replaceWithCanonicalTranscript(current, canonicalMessages));
           queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
+          void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
           streamCursors.clear();
           lastSequence.current = Math.max(lastSequence.current, targetSequence);
           if (canonicalResyncTarget === targetSequence) canonicalResyncTarget = null;
