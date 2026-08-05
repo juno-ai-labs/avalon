@@ -613,7 +613,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             ...args.input.config,
             primaryModel: candidate.providerInvocationModel,
             fallbackModels: [],
-            sameModelRetries: 0,
+            sameModelRetries: args.input.config.sameModelRetries ?? 0,
           });
           const result = await client.stream({
             messages: requestMessages,

@@ -281,6 +281,61 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("retries one transient automation-model failure on the same route", async () => {
+    const incomplete = {
+      name: "Blog monitor",
+      description: "Check a blog for a new post.",
+      overview: "Checks a blog daily after its URL is provided.",
+      instructions: "Check the configured blog and report a new post.",
+      triggers: [{ type: "interval", intervalSeconds: 86_400, summary: "Every 24 hours" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["New post summary"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: "What is the blog URL?",
+      elicitation: {
+        responseType: "free_text",
+        prompt: "What is the blog URL?",
+        placeholder: "https://example.com/blog",
+      },
+      ready: false,
+    };
+    let attempts = 0;
+    const fetcher = vi.fn(async () => {
+      attempts += 1;
+      return attempts === 1
+        ? new Response("temporarily unavailable", { status: 503 })
+        : automationSubmitResponse(incomplete);
+    }) as unknown as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Check this blog every 24 hours for a new post." }],
+      fetch: fetcher,
+    })).resolves.toMatchObject({ ready: false, followUpQuestion: "What is the blog URL?" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a typed retryable failure when the creator finishes without a draft", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "I need more information." }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Check something periodically." }],
+      fetch: fetcher,
+    })).rejects.toMatchObject({
+      name: "AutomationCompilerError",
+      code: "automation_draft_not_submitted",
+      kind: "completion",
+      retryable: true,
+    });
+  });
+
   it("canonicalizes tool inputs for stable hashes", () => {
     expect(__testing.canonicalJson({ b: 2, a: { z: 1, y: 0 } })).toBe(
       '{"a":{"y":0,"z":1},"b":2}'

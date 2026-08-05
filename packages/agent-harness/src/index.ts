@@ -770,6 +770,22 @@ export interface AutomationCreatorPluginCatalogEntry {
   }>;
 }
 
+export type AutomationCompilerFailureCode =
+  | HarnessFailureCode
+  | "automation_draft_not_submitted";
+
+export class AutomationCompilerError extends Error {
+  constructor(
+    readonly code: AutomationCompilerFailureCode,
+    readonly kind: HarnessFailure["kind"] | "completion",
+    readonly retryable: boolean,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AutomationCompilerError";
+  }
+}
+
 export async function compileAutomation(input: {
   apiKey: string;
   model: string;
@@ -910,7 +926,7 @@ export async function compileAutomation(input: {
       primaryModel: input.model,
       fallbackModels: input.fallbackModels ?? [],
       ...(input.fetch ? { fetch: input.fetch } : {}),
-      sameModelRetries: 0,
+      sameModelRetries: 1,
       maxIterations: Math.max(12, Math.min(32, input.maxResearchIterations ?? 20)),
       maxToolCalls: 80,
       maxWallClockMs: 180_000,
@@ -934,7 +950,7 @@ export async function compileAutomation(input: {
       ...rendered.slice(1),
       {
         role: "user",
-        content: "Research the authorized plugin ecosystem as deeply as this task requires. Then call submit_automation_draft with either a specific executable automation or one focused elicitation. Do not finish with plain text.",
+        content: "If an essential task detail is missing, call submit_automation_draft now with one focused elicitation. Otherwise research the authorized plugin ecosystem as deeply as the task requires, then call submit_automation_draft with a specific executable automation. Do not finish with plain text.",
       },
     ],
     tools: creatorTools,
@@ -954,7 +970,20 @@ export async function compileAutomation(input: {
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (submittedDraft) return submittedDraft;
-  throw new Error(outcome.failure?.message ?? "Automation creator ended without submitting a draft");
+  if (outcome.failure) {
+    throw new AutomationCompilerError(
+      outcome.failure.code,
+      outcome.failure.kind,
+      outcome.failure.kind !== "authorization" && outcome.failure.kind !== "ambiguous_external_write",
+      memberSafeHarnessFailureMessage(outcome.failure.code),
+    );
+  }
+  throw new AutomationCompilerError(
+    "automation_draft_not_submitted",
+    "completion",
+    true,
+    "The automation creator ended without submitting a draft",
+  );
 }
 
 function executeAutomationCreatorDiscoveryTool(
