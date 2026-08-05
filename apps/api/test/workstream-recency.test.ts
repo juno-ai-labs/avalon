@@ -6,6 +6,33 @@ import { WorkstreamService } from "../src/services/workstream-service";
 const EMAIL_DOMAIN = "automation.with-avalon.com";
 
 describe("work-stream recency ordering", () => {
+  it("opens a healthy work stream with one combined visibility lookup", async () => {
+    const row = workstreamRow("workstream-1", `calm-bright-ready-otter@${EMAIL_DOMAIN}`, "2026-08-02T03:00:00.000Z");
+    const sqlStatements: string[] = [];
+    const prepare = vi.fn((sql: string) => {
+      sqlStatements.push(sql);
+      const statement = {
+        bind: vi.fn(() => statement),
+        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
+        all: vi.fn(async () => ({ success: true, results: [] })),
+      };
+      return statement;
+    });
+    const service = new WorkstreamService(
+      {
+        APP_ENV: "production",
+        AVALON_REGION: "global",
+        DB: { prepare, batch: vi.fn() },
+      } as unknown as Env,
+      { workspaceId: "workspace-1", userId: "user-1" } as never,
+    );
+
+    await expect(service.get("workstream-1")).resolves.toMatchObject({ id: "workstream-1" });
+
+    expect(sqlStatements.filter((sql) => sql.includes("SELECT w.*, t.name AS origin_label"))).toHaveLength(1);
+    expect(sqlStatements.some((sql) => sql.includes("SELECT email_address, email_route_status, archived_at"))).toBe(false);
+  });
+
   it("selects the latest activity before applying the page limit", async () => {
     const statement = {
       bind: vi.fn().mockReturnThis(),

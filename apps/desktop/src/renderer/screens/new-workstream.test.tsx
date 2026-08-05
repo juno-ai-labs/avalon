@@ -23,6 +23,12 @@ const workspace: Workspace = {
   timezone: 'America/Los_Angeles',
   currentUser,
 };
+const createdWorkstream = {
+  workstream: workstream('new-workstream', 'Prepare the launch brief', 'running'),
+  messageId: 'message-new-workstream',
+  clientMessageId: 'client-new-workstream',
+  createdAt: '2026-07-31T20:00:00.000Z',
+};
 
 function workstream(id: string, title: string, harnessStatus: WorkstreamSummary['harnessStatus']): WorkstreamSummary {
   return {
@@ -35,7 +41,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
   };
 }
 
-function renderScreen(): void {
+function renderScreen(): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -50,6 +56,7 @@ function renderScreen(): void {
       </QueryClientProvider>
     </Tooltip.Provider>,
   );
+  return queryClient;
 }
 
 describe('New work-stream home', () => {
@@ -67,7 +74,7 @@ describe('New work-stream home', () => {
       workstream('completed', 'Release notes', 'completed'),
       workstream('failed', 'Broken connector', 'failed'),
     ]);
-    api.createWorkstream.mockResolvedValue({ id: 'new-workstream' });
+    api.createWorkstream.mockResolvedValue(createdWorkstream);
   });
 
   it('shows only work streams explicitly waiting for input', async () => {
@@ -106,7 +113,7 @@ describe('New work-stream home', () => {
   });
 
   it('clears the submitted message before the create request settles and blocks duplicate submission', async () => {
-    let resolveCreate!: (value: { id: string }) => void;
+    let resolveCreate!: (value: typeof createdWorkstream) => void;
     api.createWorkstream.mockReturnValue(new Promise((resolve) => {
       resolveCreate = resolve;
     }));
@@ -124,8 +131,27 @@ describe('New work-stream home', () => {
       participantIds: [],
     });
 
-    resolveCreate({ id: 'new-workstream' });
+    resolveCreate(createdWorkstream);
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
+  });
+
+  it('seeds the new work-stream detail and opening message before navigation', async () => {
+    const queryClient = renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
+      id: 'new-workstream',
+      participants: [{ id: currentUser.id, role: 'creator' }],
+    }));
+    expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([
+      expect.objectContaining({
+        id: createdWorkstream.messageId,
+        clientMessageId: createdWorkstream.clientMessageId,
+        text: 'Prepare the launch brief',
+      }),
+    ]);
   });
 
   it('restores an immediately cleared message when creation fails without replacing a newer draft', async () => {
