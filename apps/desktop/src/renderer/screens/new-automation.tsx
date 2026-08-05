@@ -448,10 +448,10 @@ export function NewAutomationScreen(): React.JSX.Element {
                     message={turn}
                     onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
                       ? async (answer) => {
-                          await submitAsync(answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer);
                           setTurns((current) => current.map((message) => message.id === turn.id && message.elicitation
                             ? { ...message, elicitation: { ...message.elicitation, status: 'answered', answer } }
                             : message));
+                          await submitAsync(answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer);
                         }
                       : undefined}
                   />
