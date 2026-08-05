@@ -1,3 +1,5 @@
+import type { AutomationPluginActivity } from '@avalon/contracts';
+
 export type Region = 'global' | 'eu';
 export type Scope = 'you' | 'workspace';
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed';
@@ -120,6 +122,7 @@ export interface ToolEventData {
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
   durationMs?: number;
   toolType?: string;
+  plugins?: AutomationPluginActivity[];
   input?: unknown;
   output?: unknown;
 }
@@ -142,6 +145,7 @@ export interface ElicitationData {
   options?: Array<{ label: string; value: string; description?: string }>;
   minimumSelections?: number;
   maximumSelections?: number;
+  allowOther?: boolean;
   targetUserId?: string;
   status: 'open' | 'answered';
   answer?: unknown;

@@ -1,5 +1,17 @@
 import clsx from 'clsx';
 import {
+  IconBrandGithub,
+  IconBrandGoogle,
+  IconBrandGoogleDrive,
+  IconBrandNotion,
+  IconPlug,
+  IconStack2,
+  IconWebhook,
+  IconWorldSearch,
+  type TablerIcon,
+} from '@tabler/icons-react';
+import type { AutomationPluginActivity, AutomationPluginIcon } from '@avalon/contracts';
+import {
   ArrowRight,
   Check,
   ChevronDown,
@@ -259,10 +271,13 @@ export function AssistantMessageContent({
 function ToolBlock({ message }: { message: Message }): React.JSX.Element | null {
   const tool = message.toolEvent;
   if (!tool) return null;
+  const pluginActivity = Boolean(tool.plugins?.length);
   return (
-    <details className={clsx('tool-block', `tool-${tool.status}`)}>
+    <details className={clsx('tool-block', `tool-${tool.status}`, pluginActivity && 'plugin-activity')}>
       <summary>
-        <span className="tool-icon"><TerminalSquare aria-hidden="true" size={14} /></span>
+        {pluginActivity
+          ? <PluginFacePile plugins={tool.plugins ?? []} />
+          : <span className="tool-icon"><TerminalSquare aria-hidden="true" size={14} /></span>}
         <span className="tool-summary">
           <strong>{tool.name}</strong>
           <small>{tool.summary ?? (tool.status === 'started' ? 'Running…' : tool.status)}</small>
@@ -279,9 +294,50 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
       <div className="tool-details">
         {tool.input !== undefined && <div><h4>Input</h4><pre>{safeJson(tool.input)}</pre></div>}
         {tool.output !== undefined && <div><h4>Result</h4><pre>{safeJson(tool.output)}</pre></div>}
+        {tool.input === undefined && tool.output === undefined && tool.summary && (
+          <div><h4>Activity</h4><p>{tool.summary}</p></div>
+        )}
         {tool.status === 'ambiguous' && <p className="tool-warning">Avalon could not confirm whether this external action completed. It will not retry automatically.</p>}
       </div>
     </details>
+  );
+}
+
+const pluginIconByKey: Record<AutomationPluginIcon, TablerIcon> = {
+  'brand-github': IconBrandGithub,
+  'brand-google': IconBrandGoogle,
+  'brand-google-drive': IconBrandGoogleDrive,
+  'brand-notion': IconBrandNotion,
+  linear: IconStack2,
+  plug: IconPlug,
+  webhook: IconWebhook,
+  'world-search': IconWorldSearch,
+};
+
+function PluginFacePile({ plugins }: { plugins: AutomationPluginActivity[] }): React.JSX.Element {
+  const visible = plugins.slice(0, 4);
+  const overflow = plugins.length - visible.length;
+  return (
+    <span
+      aria-label={`Plugins: ${plugins.map((plugin) => plugin.displayName).join(', ')}`}
+      className="plugin-face-pile"
+      role="img"
+    >
+      {visible.map((plugin, index) => {
+        const PluginIcon = pluginIconByKey[plugin.icon];
+        return (
+          <span
+            className={clsx('plugin-face', `plugin-face-${plugin.icon}`)}
+            key={plugin.pluginId}
+            style={{ zIndex: index + 1 }}
+            title={plugin.displayName}
+          >
+            <PluginIcon aria-hidden="true" size={14} stroke={1.8} />
+          </span>
+        );
+      })}
+      {overflow > 0 && <span className="plugin-face plugin-face-overflow" style={{ zIndex: visible.length + 1 }}>+{overflow}</span>}
+    </span>
   );
 }
 
@@ -322,9 +378,10 @@ export function ElicitationPanel({
   const isAnswered = elicitation.status === 'answered';
   const isMulti = elicitation.responseType === 'multi_select';
   const isText = elicitation.responseType === 'text';
+  const allowOther = elicitation.allowOther ?? true;
   const minimumSelections = isText ? 1 : Math.max(1, elicitation.minimumSelections ?? 1);
   const maximumSelections = isMulti ? elicitation.maximumSelections : 1;
-  const selectionCount = selected.length + (customSelected && text.trim() ? 1 : 0);
+  const selectionCount = selected.length + (allowOther && customSelected && text.trim() ? 1 : 0);
   const canSubmit = isText
     ? text.trim().length > 0
     : selectionCount >= minimumSelections && (maximumSelections == null || selectionCount <= maximumSelections);
@@ -443,7 +500,7 @@ export function ElicitationPanel({
         const target = event.target as HTMLElement;
         if (isText || target.matches('input, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
         const index = Number(event.key) - 1;
-        if (!Number.isInteger(index) || index < 0 || index > options.length) return;
+        if (!Number.isInteger(index) || index < 0 || index >= options.length + (allowOther ? 1 : 0)) return;
         event.preventDefault();
         const option = options[index];
         if (option) toggle(option.value);
@@ -489,41 +546,43 @@ export function ElicitationPanel({
               )}
             </label>
           ))}
-          <div
-            className={clsx('elicitation-option', 'elicitation-other-option', customSelected && 'is-selected')}
-            onClick={toggleCustom}
-          >
-            <input
-              aria-label="Other"
-              checked={customSelected}
-              name={`elicitation-${elicitation.id}`}
-              onChange={toggleCustom}
-              type={isMulti ? 'checkbox' : 'radio'}
-            />
-            <span className="elicitation-option-copy">
-              <strong>Other</strong>
+          {allowOther && (
+            <div
+              className={clsx('elicitation-option', 'elicitation-other-option', customSelected && 'is-selected')}
+              onClick={toggleCustom}
+            >
               <input
-                aria-label="Other response"
-                onChange={(event) => {
-                  setText(event.target.value);
-                  if (event.target.value) selectCustom();
-                }}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  selectCustom();
-                }}
-                placeholder="Type your own answer here"
-                ref={customInputRef}
-                type="text"
-                value={text}
+                aria-label="Other"
+                checked={customSelected}
+                name={`elicitation-${elicitation.id}`}
+                onChange={toggleCustom}
+                type={isMulti ? 'checkbox' : 'radio'}
               />
-            </span>
-            {isMulti ? (
-              <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
-            ) : (
-              <kbd aria-hidden="true">{options.length + 1}</kbd>
-            )}
-          </div>
+              <span className="elicitation-option-copy">
+                <strong>Other</strong>
+                <input
+                  aria-label="Other response"
+                  onChange={(event) => {
+                    setText(event.target.value);
+                    if (event.target.value) selectCustom();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    selectCustom();
+                  }}
+                  placeholder="Type your own answer here"
+                  ref={customInputRef}
+                  type="text"
+                  value={text}
+                />
+              </span>
+              {isMulti ? (
+                <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
+              ) : (
+                <kbd aria-hidden="true">{options.length + 1}</kbd>
+              )}
+            </div>
+          )}
         </fieldset>
       )}
       {!isAnswered && (

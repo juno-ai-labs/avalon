@@ -11,7 +11,7 @@ import {
   renderWorkstreamSystemPrompt,
   runHarness,
   type AddressingContextMessage,
-  type AutomationCompilerTextEvent,
+  type AutomationCompilerStreamEvent,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessEvent,
   type HarnessPlugin,
@@ -25,6 +25,7 @@ import {
   ElicitationSchema,
   type AddressingClassification,
   type AutomationDraft,
+  type AutomationPluginIcon,
   type ConnectorPollWorkflowInput,
   type ExecutionPrincipal,
   type Message,
@@ -569,7 +570,7 @@ export async function compileAutomationDraft(
     requestId: string;
     workspaceId: string;
     userId: string;
-    onAssistantText?: (event: AutomationCompilerTextEvent) => void | Promise<void>;
+    onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
     signal?: AbortSignal;
   },
 ): Promise<AutomationDraft> {
@@ -584,7 +585,7 @@ export async function compileAutomationDraft(
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
       maxResearchIterations: 20,
-      ...(input.onAssistantText ? { onAssistantText: input.onAssistantText } : {}),
+      ...(input.onStreamEvent ? { onStreamEvent: input.onStreamEvent } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
       onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
         logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
@@ -653,6 +654,7 @@ async function loadAutomationCreatorPluginCatalog(
     catalog.push({
       pluginId: modelPluginId,
       displayName: presentation.displayName,
+      icon: connectorAutomationPluginIcon(String(row.connector_type), presentation.displayName),
       description: presentation.description,
       scope: row.scope === "workspace" ? "workspace" : "personal",
       searchAliases: presentation.searchAliases,
@@ -2838,6 +2840,18 @@ function connectorPluginPresentation(
     ],
     systemMessage: fallback.systemMessage,
   };
+}
+
+function connectorAutomationPluginIcon(connectorType: string, displayName: string): AutomationPluginIcon {
+  switch (connectorType) {
+    case "github": return "brand-github";
+    case "linear": return "linear";
+    case "notion": return "brand-notion";
+    case "web_monitor": return "world-search";
+    case "generic_webhook": return "webhook";
+    case "google": return displayName.includes("Drive") ? "brand-google-drive" : "brand-google";
+    default: return "plug";
+  }
 }
 
 interface FrozenConnectorPlugin {

@@ -30,7 +30,7 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
     try {
       const draft = await service.compile(input, requestId, {
         signal: c.req.raw.signal,
-        onAssistantText: async (event) => {
+        onStreamEvent: async (event) => {
           if (event.type === "completed") {
             assistantMessage = event.content;
             return;
