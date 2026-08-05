@@ -331,7 +331,49 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("returns a typed retryable failure when the creator finishes without a draft", async () => {
+  it("adds one user reminder when the creator stops before submitting a draft", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const valid = {
+      name: "Periodic check",
+      description: "Check the configured source periodically.",
+      overview: "Checks the configured source on a recurring schedule and reports the result.",
+      instructions: "Check the configured source and report the result.",
+      triggers: [{ type: "interval", intervalSeconds: 86_400, summary: "Every 24 hours" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["Check result"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return requestBodies.length === 1
+        ? streamResponse([{
+            choices: [{ delta: { content: "I have enough information." }, finish_reason: "stop" }],
+          }])
+        : automationSubmitResponse(valid);
+    }) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Check something periodically." }],
+      fetch: fetcher,
+    })).resolves.toMatchObject({ name: "Periodic check", ready: true });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const recoveryMessages = requestBodies[1]!.messages as Array<{ role: string; content: string }>;
+    expect(recoveryMessages.at(-2)).toEqual({ role: "assistant", content: "I have enough information." });
+    expect(recoveryMessages.at(-1)).toMatchObject({ role: "user" });
+    expect(recoveryMessages.at(-1)!.content).toContain("without successfully calling submit_automation_draft");
+    expect(recoveryMessages.at(-1)!.content).toContain("Expected structured output JSON Schema (automation_draft):");
+    expect(recoveryMessages.at(-1)!.content).toContain("You must call submit_automation_draft");
+  });
+
+  it("returns a typed retryable failure after one bounded submission reminder", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "I need more information." }, finish_reason: "stop" }],
     }])) as typeof fetch;
@@ -347,6 +389,7 @@ describe("agent harness", () => {
       kind: "completion",
       retryable: true,
     });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("canonicalizes tool inputs for stable hashes", () => {

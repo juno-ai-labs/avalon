@@ -856,6 +856,7 @@ export async function compileAutomation(input: {
   });
   const catalog = input.pluginCatalog ?? [];
   let submittedDraft: AutomationDraft | null = null;
+  let submissionReminderSent = false;
   const creatorTools: HarnessTool[] = [
     {
       definition: {
@@ -1022,6 +1023,17 @@ export async function compileAutomation(input: {
         latencyMs: attempt.latencyMs,
         ...(attempt.responseBytes === undefined ? {} : { responseBytes: attempt.responseBytes }),
       });
+    },
+    onTurnWouldEnd: () => {
+      if (submittedDraft || submissionReminderSent) return null;
+      submissionReminderSent = true;
+      return [
+        "You ended the previous turn without successfully calling submit_automation_draft, so no automation draft has been submitted.",
+        "Call submit_automation_draft now with the best current draft. If an essential detail is still missing, submit ready:false with exactly one focused elicitation. Otherwise submit ready:true with the complete executable automation.",
+        "The tool arguments must match this rendered JSON Schema exactly:",
+        renderExpectedJsonSchema("automation_draft", automationJsonSchema),
+        "Do not reply with plain assistant text and do not print the JSON as Markdown. You must call submit_automation_draft.",
+      ].join("\n\n");
     },
     ...(input.signal ? { signal: input.signal } : {}),
   });
@@ -1409,6 +1421,15 @@ export interface RunHarnessInput {
     toolCalls: number;
   }) => void | Promise<void>;
   onLiveness?: (stage: "before_model" | "during_stream" | "after_tool" | "iteration_boundary") => void | Promise<void>;
+  /**
+   * Called immediately before Bind would accept a tool-less assistant turn as
+   * the end of the run. Returning a non-empty string appends a model-only user
+   * message to the live transcript and continues the same bounded loop.
+   */
+  onTurnWouldEnd?: (turn: {
+    assistantContent: string;
+    cumulativeToolCalls: number;
+  }) => string | null | Promise<string | null>;
   signal?: AbortSignal;
 }
 
