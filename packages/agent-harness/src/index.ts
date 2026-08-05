@@ -157,6 +157,11 @@ export class OpenRouterClient {
     const models = uniqueModels(input.model
       ? [input.model]
       : [this.config.primaryModel, ...(this.config.fallbackModels ?? [])]);
+    const schemaMessages = withExpectedJsonSchema(
+      input.messages,
+      input.schemaName,
+      input.jsonSchema,
+    );
     let lastError: unknown;
     let repaired = false;
     for (const [fallbackAttempt, model] of models.entries()) {
@@ -178,7 +183,7 @@ export class OpenRouterClient {
             headers: this.headers(),
             body: JSON.stringify({
               model,
-              messages: repairMessages ?? input.messages,
+              messages: repairMessages ?? schemaMessages,
               stream: false,
               response_format: {
                 type: "json_schema",
@@ -225,7 +230,7 @@ export class OpenRouterClient {
               repairAttempt = 1;
               const validationIssues = [{ path: "$", code: "invalid_json" }];
               repairMessages = [
-                ...input.messages,
+                ...schemaMessages,
                 {
                   role: "user",
                   content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
@@ -260,7 +265,7 @@ export class OpenRouterClient {
               }));
               repairAttempt = 1;
               repairMessages = [
-                ...input.messages,
+                ...schemaMessages,
                 {
                   role: "user",
                   content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
@@ -530,6 +535,52 @@ function isAbortError(error: unknown): boolean {
 
 function uniqueModels(models: string[]): string[] {
   return [...new Set(models.map((model) => model.trim()).filter(Boolean))];
+}
+
+function renderExpectedJsonSchema(
+  schemaName: string,
+  jsonSchema: Record<string, unknown>,
+): string {
+  return [
+    `Expected structured output JSON Schema (${schemaName}):`,
+    "```json",
+    JSON.stringify(jsonSchema, null, 2),
+    "```",
+  ].join("\n");
+}
+
+/**
+ * Keep strict provider enforcement and model-visible instructions in sync.
+ * Medium-sized models are materially more reliable when the exact schema is
+ * present in the conversation instead of existing only in response_format.
+ */
+function withExpectedJsonSchema(
+  messages: ModelMessage[],
+  schemaName: string,
+  jsonSchema: Record<string, unknown>,
+): ModelMessage[] {
+  const instruction = [
+    renderExpectedJsonSchema(schemaName, jsonSchema),
+    "Return only one JSON value that matches this schema exactly. Do not include Markdown or explanatory text in the response.",
+  ].join("\n\n");
+  const result = [...messages];
+  const last = result.at(-1);
+  if (last?.role !== "user") {
+    return [...result, { role: "user", content: instruction }];
+  }
+  if (typeof last.content === "string") {
+    result[result.length - 1] = { ...last, content: `${last.content}\n\n${instruction}` };
+    return result;
+  }
+  if (Array.isArray(last.content)) {
+    result[result.length - 1] = {
+      ...last,
+      content: [...last.content, { type: "text", text: instruction }],
+    };
+    return result;
+  }
+  result[result.length - 1] = { ...last, content: instruction };
+  return result;
 }
 
 async function readJsonResponse<T>(response: Response): Promise<T | null> {
@@ -950,7 +1001,12 @@ export async function compileAutomation(input: {
       ...rendered.slice(1),
       {
         role: "user",
-        content: "If an essential task detail is missing, call submit_automation_draft now with one focused elicitation. Otherwise research the authorized plugin ecosystem as deeply as the task requires, then call submit_automation_draft with a specific executable automation. Do not finish with plain text.",
+        content: [
+          "If an essential task detail is missing, call submit_automation_draft now with one focused elicitation. Otherwise research the authorized plugin ecosystem as deeply as the task requires, then call submit_automation_draft with a specific executable automation.",
+          "The arguments to submit_automation_draft are the expected structured output and must match this rendered schema exactly:",
+          renderExpectedJsonSchema("automation_draft", automationJsonSchema),
+          "Call submit_automation_draft with one arguments object matching the schema. Do not finish with plain assistant text and do not print the JSON as Markdown.",
+        ].join("\n\n"),
       },
     ],
     tools: creatorTools,

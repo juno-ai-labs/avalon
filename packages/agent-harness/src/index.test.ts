@@ -84,13 +84,23 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ classification: "uncertain" });
 
     expect(requestBody).not.toBeNull();
-    expect(requestBody!.messages).toEqual(renderAddressingMessages({
+    const rendered = renderAddressingMessages({
       message: "The second section still needs work",
       activeTask: true,
       connectorMentions: [],
       addressesAvalon: false,
       recentMessages,
-    }));
+    });
+    const providerMessages = requestBody!.messages as Array<{ role: string; content: string }>;
+    expect(providerMessages[0]).toEqual(rendered[0]);
+    expect(providerMessages[1]!.content).toContain(String(rendered[1]!.content));
+    expect(providerMessages[1]!.content).toContain("Expected structured output JSON Schema (message_addressing):");
+    expect(providerMessages[1]!.content).toContain('"classification"');
+    expect(providerMessages[1]!.content).toContain("Return only one JSON value that matches this schema exactly.");
+    expect(requestBody!.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: { name: "message_addressing", strict: true },
+    });
   });
 
   it("keeps an existing automation draft in user-role context", async () => {
@@ -151,6 +161,9 @@ describe("agent harness", () => {
     expect(messages[1]!.content).toContain(currentDraft.instructions);
     expect(messages[2]).toEqual({ role: "user", content: "Run it every morning in Pacific time." });
     expect(messages.at(-1)!.content).toContain("call submit_automation_draft");
+    expect(messages.at(-1)!.content).toContain("Expected structured output JSON Schema (automation_draft):");
+    expect(messages.at(-1)!.content).toContain('"recommendedPlugins"');
+    expect(messages.at(-1)!.content).toContain('"required"');
   });
 
   it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
@@ -349,8 +362,10 @@ describe("agent harness", () => {
   });
 
   it("binds host fetch before invoking it from the client", async () => {
-    const receiverAwareFetch = function (this: unknown): Promise<Response> {
+    let requestBody: Record<string, unknown> | null = null;
+    const receiverAwareFetch = function (this: unknown, _request: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       if (this !== globalThis) throw new TypeError("illegal invocation");
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Promise.resolve(Response.json({
         choices: [{ message: { content: '{"ok":true}' } }],
       }));
@@ -372,6 +387,19 @@ describe("agent harness", () => {
       },
       parse: (value) => value as { ok: boolean },
     })).resolves.toEqual({ ok: true });
+
+    const messages = requestBody!.messages as Array<{ role: string; content: string }>;
+    expect(messages.at(-1)!.content).toContain("test");
+    expect(messages.at(-1)!.content).toContain("Expected structured output JSON Schema (host_fetch):");
+    expect(messages.at(-1)!.content).toContain('"ok"');
+    expect(requestBody!.response_format).toMatchObject({
+      type: "json_schema",
+      json_schema: {
+        name: "host_fetch",
+        strict: true,
+        schema: { required: ["ok"], additionalProperties: false },
+      },
+    });
   });
 
   it("retries transient stream failures on the same model before fallback", async () => {
