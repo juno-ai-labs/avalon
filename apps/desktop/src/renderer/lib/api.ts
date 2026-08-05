@@ -36,6 +36,8 @@ import {
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
+import { elicitationMessageId, normalizeElicitation } from './elicitation';
+import { createElicitationMessage } from './transcript';
 import type {
   ActivitySuggestionData,
   ArtifactData,
@@ -259,22 +261,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
 }
 
 export function mapElicitation(elicitation: WireElicitation): ElicitationData {
-  return {
-    id: elicitation.id,
-    prompt: elicitation.prompt,
-    responseType: elicitation.responseType,
-    options: elicitation.options.map((option) => ({
-      label: option.label,
-      value: option.value,
-      ...(option.description ? { description: option.description } : {}),
-    })),
-    minimumSelections: elicitation.minimumSelections,
-    ...(elicitation.maximumSelections !== null ? { maximumSelections: elicitation.maximumSelections } : {}),
-    ...(elicitation.targetUserId ? { targetUserId: elicitation.targetUserId } : {}),
-    status: elicitation.status === 'open' ? 'open' : 'answered',
-    ...(elicitation.answer !== null ? { answer: elicitation.answer } : {}),
-    createdAt: elicitation.createdAt,
-  };
+  return normalizeElicitation(elicitation);
 }
 
 export function mapSuggestion(suggestion: z.infer<typeof WireActivitySuggestionSchema>): ActivitySuggestionData {
@@ -347,7 +334,7 @@ export function mapMessage(message: WireMessage): Message {
     // The open question arrives as a realtime-only block while its durable
     // answer is later stored as a message. Give both representations one UI
     // identity so the answer replaces the open card instead of duplicating it.
-    id: elicitation.success ? `elicitation-${elicitation.data.id}` : message.id,
+    id: elicitation.success ? elicitationMessageId(elicitation.data.id) : message.id,
     ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
     sequenceNumber: message.sequenceNumber,
@@ -422,12 +409,11 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 
 export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
   let sequence = mapped.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
-  const elicitationMessages = (detail.openElicitations ?? []).map<Message>((elicitation) => ({
-    id: `elicitation-${elicitation.id}`,
+  const elicitationMessages = (detail.openElicitations ?? []).map((elicitation) => createElicitationMessage({
+    id: elicitationMessageId(elicitation.id),
     workstreamId: detail.id,
     sequenceNumber: ++sequence,
     authorType: 'agent',
-    messageType: 'elicitation',
     createdAt: elicitation.createdAt ?? detail.lastActivityAt,
     elicitation,
   }));

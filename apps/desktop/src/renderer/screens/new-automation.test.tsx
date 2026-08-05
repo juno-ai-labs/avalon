@@ -194,7 +194,7 @@ describe('New automation composer', () => {
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear']));
   });
 
-  it('reuses workstream elicitation and preserves question-answer-response order', async () => {
+  it('reuses one elicitation identity and preserves answer-response order', async () => {
     api.compileAutomation
       .mockResolvedValueOnce({
         draftId: 'draft-choice',
@@ -232,13 +232,13 @@ describe('New automation composer', () => {
       expect.any(Function),
     ));
     const resolvedQuestion = await screen.findByLabelText('Elicitation response');
-    const answerMessage = screen.getByText('email').closest('article');
+    const answerMessage = resolvedQuestion.closest('article');
     const finalMessage = (await screen.findByText('The email automation is ready.')).closest('article');
     expect(resolvedQuestion).toHaveTextContent('Email');
     expect(answerMessage).toHaveClass('human-message', 'own-human-message');
     expect(finalMessage).toHaveClass('agent-message');
-    expect(resolvedQuestion.compareDocumentPosition(answerMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(answerMessage!.compareDocumentPosition(finalMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.queryByText('email')).not.toBeInTheDocument();
   });
 
   it('resolves a submitted elicitation while the follow-up is still compiling', async () => {
@@ -272,6 +272,43 @@ describe('New automation composer', () => {
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('heading', { name: 'Where should Avalon send it?' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Email');
+    expect(screen.queryByText('email')).not.toBeInTheDocument();
     expect(screen.getByText('Avalon is working')).toBeInTheDocument();
+  });
+
+  it('reapplies the elicitation answer when a failed follow-up is retried', async () => {
+    api.compileAutomation
+      .mockResolvedValueOnce({
+        draftId: 'draft-choice',
+        assistantMessage: 'Choose where Avalon should send the update.',
+        question: {
+          id: 'question-choice',
+          prompt: 'Where should Avalon send it?',
+          responseType: 'single_select',
+          options: [{ label: 'Email', value: 'email' }],
+          allowOther: false,
+        },
+      })
+      .mockRejectedValueOnce(new Error('Could not compile the answer'))
+      .mockResolvedValueOnce({
+        draftId: 'draft-ready',
+        assistantMessage: 'The email automation is ready.',
+      });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Send me a daily update' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.click(await screen.findByRole('radio', { name: 'Email' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
+
+    expect(await screen.findByRole('heading', { name: 'Where should Avalon send it?' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Email');
+    expect(await screen.findByText('The email automation is ready.')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Where should Avalon send it?' })).not.toBeInTheDocument();
+    expect(screen.queryByText('email')).not.toBeInTheDocument();
   });
 });

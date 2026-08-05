@@ -19,7 +19,15 @@ import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
+import {
+  answerElicitationOptimistically,
+  automationQuestionToElicitation,
+  elicitationMessageId,
+  resolveElicitationMessages,
+  type ElicitationAnswer,
+} from '../lib/elicitation';
 import { desktopBridge } from '../lib/platform';
+import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import type {
   AutomationDraftQuestion,
   AutomationDraftResponse,
@@ -37,23 +45,29 @@ const AUTOMATION_USER = {
   timezone: 'UTC',
 };
 
+interface AutomationCompilePayload {
+  message: string;
+  templateId?: string;
+  turnId: string;
+  elicitation?: { id: string; answer: ElicitationAnswer };
+}
+
 function automationTextMessage(
   id: string,
   authorType: 'human' | 'agent',
   text: string,
   streaming = false,
 ): Message {
-  return {
+  return createTextMessage({
     id,
     workstreamId: AUTOMATION_CHAT_ID,
     sequenceNumber: 0,
     authorType,
     ...(authorType === 'human' ? { author: AUTOMATION_USER } : {}),
-    messageType: 'text',
     text,
     createdAt: new Date().toISOString(),
     ...(streaming ? { streaming: true } : {}),
-  };
+  });
 }
 
 function AutomationMessageBlock({
@@ -194,27 +208,18 @@ function automationQuestionMessage(
   assistantMessage: string | undefined,
   question: AutomationDraftQuestion,
 ): Message {
+  const elicitation = automationQuestionToElicitation(question);
   if (question.responseType === 'free_text') {
-    return automationTextMessage(`question-${question.id}`, 'agent', assistantMessage ?? question.prompt);
+    return automationTextMessage(elicitationMessageId(question.id), 'agent', assistantMessage ?? elicitation.prompt);
   }
-  return {
-    id: `question-${question.id}`,
+  return createElicitationMessage({
+    id: elicitationMessageId(question.id),
     workstreamId: AUTOMATION_CHAT_ID,
     sequenceNumber: 0,
     authorType: 'agent',
-    messageType: 'elicitation',
     createdAt: new Date().toISOString(),
-    elicitation: {
-      id: question.id,
-      prompt: question.prompt,
-      responseType: question.responseType,
-      options: question.options,
-      minimumSelections: question.minimumSelections,
-      maximumSelections: question.maximumSelections,
-      allowOther: question.allowOther,
-      status: 'open',
-    },
-  };
+    elicitation,
+  });
 }
 
 function DraftSummary({
@@ -307,7 +312,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   }, [connections.data, draft, initializedRecommendations]);
 
   const compile = useMutation({
-    mutationFn: (payload: { message: string; templateId?: string; turnId: string }) =>
+    mutationFn: (payload: AutomationCompilePayload) =>
       api!.compileAutomation({
         message: payload.message,
         ...(draft?.draftId ? { draftId: draft.draftId } : {}),
@@ -321,12 +326,11 @@ export function NewAutomationScreen(): React.JSX.Element {
           setTurns((current) => {
             const existing = current.findIndex((message) => message.id === event.toolCallId);
             const previous = existing >= 0 ? current[existing] : undefined;
-            const toolMessage: Message = {
+            const toolMessage = createToolEventMessage({
               id: event.toolCallId,
               workstreamId: AUTOMATION_CHAT_ID,
               sequenceNumber: previous?.sequenceNumber ?? current.length,
               authorType: 'agent',
-              messageType: 'tool_event',
               createdAt: previous?.createdAt ?? new Date().toISOString(),
               toolEvent: {
                 id: event.toolCallId,
@@ -336,9 +340,8 @@ export function NewAutomationScreen(): React.JSX.Element {
                 plugins: event.plugins,
                 ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
               },
-            };
-            if (existing < 0) return [...current, toolMessage];
-            return current.map((message, index) => index === existing ? toolMessage : message);
+            });
+            return upsertTranscriptMessage(current, toolMessage);
           });
           return;
         }
@@ -349,9 +352,14 @@ export function NewAutomationScreen(): React.JSX.Element {
       }),
     onMutate: (payload) => {
       setStreamingAssistant({ hasText: false, text: '' });
-      setTurns((current) => current.some((turn) => turn.id === payload.turnId)
-        ? current
-        : [...current, automationTextMessage(payload.turnId, 'human', payload.message)]);
+      setTurns((current) => {
+        const updated = payload.elicitation
+          ? resolveElicitationMessages(current, payload.elicitation.id, payload.elicitation.answer)
+          : current;
+        return updated.some((turn) => turn.id === payload.turnId)
+          ? updated
+          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message)];
+      });
       setInput('');
     },
     onSuccess: (response) => {
@@ -387,10 +395,14 @@ export function NewAutomationScreen(): React.JSX.Element {
     },
   });
 
-  const submitAsync = async (message = input): Promise<void> => {
+  const submitAsync = async (
+    message = input,
+    turnId: string = crypto.randomUUID(),
+    elicitation?: AutomationCompilePayload['elicitation'],
+  ): Promise<void> => {
     const trimmed = message.trim();
     if (!trimmed || compile.isPending) return;
-    await compile.mutateAsync({ message: trimmed, turnId: crypto.randomUUID() });
+    await compile.mutateAsync({ message: trimmed, turnId, ...(elicitation ? { elicitation } : {}) });
   };
 
   const submit = (message = input): void => {
@@ -447,12 +459,17 @@ export function NewAutomationScreen(): React.JSX.Element {
                     key={turn.id}
                     message={turn}
                     onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
-                      ? async (answer) => {
-                          setTurns((current) => current.map((message) => message.id === turn.id && message.elicitation
-                            ? { ...message, elicitation: { ...message.elicitation, status: 'answered', answer } }
-                            : message));
-                          await submitAsync(answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer);
-                        }
+                      ? (answer) => answerElicitationOptimistically({
+                          answer,
+                          elicitationId: turn.elicitation!.id,
+                          previousMessage: turn,
+                          submit: () => submitAsync(
+                            answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer,
+                            turn.id,
+                            { id: turn.elicitation!.id, answer },
+                          ),
+                          updateMessages: (update) => setTurns(update),
+                        })
                       : undefined}
                   />
                 ))}
