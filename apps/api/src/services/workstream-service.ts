@@ -1,18 +1,21 @@
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
-import { HarnessFailureCodeSchema } from "@avalon/contracts";
+import { HarnessFailureCodeSchema, WorkstreamDetailSchema } from "@avalon/contracts";
 import type {
   AnswerElicitationRequestSchema,
+  Connection,
   CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
   Message,
   UpdateWorkstreamRequestSchema,
   Workstream,
+  WorkstreamDetail,
   WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { connectionFromRow } from "../mappers/connection";
 import {
   isCanonicalPersonMention,
   prepareMentionMarkdown,
@@ -190,7 +193,7 @@ export class WorkstreamService {
     return { ...created, harnessRunId };
   }
 
-  async get(id: string) {
+  async get(id: string): Promise<WorkstreamDetail> {
     const workstream = await this.requireWorkstream(id);
     const [participants, resources, connections, openElicitations, suggestions, latestHarness] = await Promise.all([
       this.loadParticipants(id),
@@ -206,7 +209,7 @@ export class WorkstreamService {
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
     ]);
-    return {
+    return WorkstreamDetailSchema.parse({
       ...workstream,
       participants,
       viewers: [],
@@ -228,7 +231,7 @@ export class WorkstreamService {
         completedAt: latestHarness.completed_at == null ? null : String(latestHarness.completed_at),
         createdAt: String(latestHarness.created_at),
       } : null,
-    };
+    });
   }
 
   async context(id: string) {
@@ -995,17 +998,12 @@ export class WorkstreamService {
     }));
   }
 
-  private async loadConnections() {
+  private async loadConnections(): Promise<Connection[]> {
     const result = await this.env.DB.prepare(
       `SELECT c.*, u.name AS owner_name FROM connector_connections c LEFT JOIN users u ON u.id = c.owner_user_id
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?) ORDER BY c.display_name`,
     ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => ({
-      id: String(row.id), workspaceId: String(row.workspace_id), connectorType: String(row.connector_type), scope: String(row.scope),
-      ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id), ownerName: row.owner_name == null ? null : String(row.owner_name),
-      displayName: String(row.display_name), grantedCapabilities: json<string[]>(row.granted_scopes_json, []), status: String(row.status),
-      lastSyncAt: row.last_sync_at == null ? null : String(row.last_sync_at), createdAt: String(row.created_at),
-    }));
+    return (result.results ?? []).map(connectionFromRow);
   }
 
   private async loadArtifacts(id: string) {
