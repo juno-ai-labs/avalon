@@ -7,13 +7,12 @@ import { NewAutomationScreen } from './new-automation';
 
 const api = vi.hoisted(() => ({
   compileAutomation: vi.fn(),
+  createAutomation: vi.fn(),
   getConnections: vi.fn(),
-  startProviderConnection: vi.fn(),
 }));
-const openExternal = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openExternal }) }));
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText: vi.fn() }) }));
 
 function renderScreen(): void {
   const queryClient = new QueryClient({
@@ -41,8 +40,7 @@ describe('New automation composer', () => {
       assistantMessage: 'What should the automation monitor?',
       question: { id: 'question-1', prompt: 'What should the automation monitor?' },
     });
-    api.startProviderConnection.mockResolvedValue('https://linear.app/oauth/authorize?state=opaque');
-    openExternal.mockResolvedValue(undefined);
+    api.createAutomation.mockResolvedValue({ id: 'automation-1' });
   });
 
   it('collapses to its default height after a successful send', async () => {
@@ -73,7 +71,7 @@ describe('New automation composer', () => {
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }));
     expect(await screen.findByText('You')).toBeInTheDocument();
     expect(screen.getByText(example)).toBeInTheDocument();
-    expect(screen.getByText('Compiling the automation…')).toBeInTheDocument();
+    expect(screen.getByText('Researching and refining the automation…')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
 
     resolveCompile({
@@ -85,14 +83,28 @@ describe('New automation composer', () => {
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 
-  it('starts a personal Linear authorization for a personal automation', async () => {
+  it('suggests optional default plugins without requiring a locked connection', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: 'connection-linear',
+      modelPluginId: 'plugin_linear',
+      connectorType: 'linear',
+      displayName: 'Linear',
+      scope: 'workspace',
+      status: 'healthy',
+      capabilities: ['linear.read'],
+    }]);
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-linear-personal',
       assistantMessage: 'Ready to create.',
       summary: {
         name: 'Watch my Linear issues',
         description: 'Checks issues available to my Linear account.',
-        steps: ['Read Linear issues'],
+        overview: 'Reviews assigned issues and prepares a concise update.',
+        recommendedPlugins: [{
+          pluginId: 'plugin_linear',
+          recommendedTools: ['linear.search_issues'],
+          reason: 'Provides the issue data this automation needs.',
+        }],
         scope: 'you',
         triggerSummary: 'Every hour',
         capabilities: ['linear.read'],
@@ -104,13 +116,12 @@ describe('New automation composer', () => {
       target: { value: 'Check my Linear issues every hour' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Connect Linear' }));
+    expect(await screen.findByRole('region', { name: 'Default plugins' })).toBeInTheDocument();
+    expect(screen.getByText('Recommended')).toBeInTheDocument();
+    expect(screen.getByText('Suggested tools: linear.search_issues')).toBeInTheDocument();
+    expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
 
-    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
-      'linear',
-      'you',
-      ['linear.read'],
-    ));
-    expect(openExternal).toHaveBeenCalledWith('https://linear.app/oauth/authorize?state=opaque');
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear']));
   });
 });

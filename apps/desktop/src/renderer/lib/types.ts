@@ -104,6 +104,7 @@ export interface ResourcePage {
 
 export interface WorkstreamConnection {
   id: string;
+  modelPluginId: string;
   connectorType: string;
   displayName: string;
   scope: Scope;
@@ -237,10 +238,12 @@ export interface AutomationRunSummary {
 export interface AutomationTemplateUpdate {
   versionId: string;
   versionNumber: number;
+  overview: string;
   instructions: string;
   triggerSummary: string;
   capabilities: string[];
   expectedOutputs: string[];
+  recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
 }
 
 export interface HarnessRunMetadata {
@@ -284,11 +287,14 @@ export interface WorkstreamDetail extends WorkstreamSummary {
 export interface AutomationDetail extends AutomationSummary {
   description: string;
   versionNumber: number;
+  overview: string;
   instructions: string;
   triggerSummary: string;
   scheduleSummary?: string;
   capabilities: string[];
   expectedOutputs: string[];
+  recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
+  defaultPluginIds: string[];
   executionScope: string;
   owner?: WorkspaceMember;
   runs: AutomationRunSummary[];
@@ -300,12 +306,18 @@ export interface AutomationDraftQuestion {
   id: string;
   prompt: string;
   placeholder?: string;
+  responseType: 'free_text' | 'single_select' | 'multi_select';
+  options: Array<{ label: string; value: string; description?: string }>;
+  minimumSelections?: number;
+  maximumSelections?: number;
+  allowOther: boolean;
 }
 
 export interface AutomationDraftSummary {
   name: string;
   description: string;
-  steps: string[];
+  overview: string;
+  recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
   scope: Scope;
   triggerSummary: string;
   capabilities: string[];

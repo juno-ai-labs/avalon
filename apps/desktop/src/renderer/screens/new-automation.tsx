@@ -15,11 +15,17 @@ import {
 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { MarkdownBody } from '../components/workstream-blocks';
+import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
 import { desktopBridge } from '../lib/platform';
-import type { AutomationDraftResponse, WorkspaceTemplate, WorkstreamConnection } from '../lib/types';
-import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
+import type {
+  AutomationDraftQuestion,
+  AutomationDraftResponse,
+  WorkspaceTemplate,
+  WorkstreamConnection,
+} from '../lib/types';
 
 interface DraftTurn {
   id: string;
@@ -45,7 +51,7 @@ function TemplateBrowser({ onSelect, onBack }: { onSelect: (template: WorkspaceT
     <div className="template-browser">
       <header>
         <Button className="button-quiet" onClick={onBack}><ArrowLeft size={14} /> Back</Button>
-        <div><h2>Workspace templates</h2><p>Install a coworker’s recipe with your own connection permissions.</p></div>
+        <div><h2>Workspace templates</h2><p>Install a coworker’s recipe with optional plugin defaults of your own.</p></div>
       </header>
       {templates.isLoading ? (
         <div className="template-loading"><LoaderCircle className="spin" size={16} /> Loading templates…</div>
@@ -76,104 +82,171 @@ function TemplateBrowser({ onSelect, onBack }: { onSelect: (template: WorkspaceT
   );
 }
 
-type ConnectableProvider = 'google' | 'github' | 'linear' | 'notion';
-
-const capabilityProviders: Array<{ provider: ConnectableProvider; label: string; prefixes: string[] }> = [
-  { provider: 'google', label: 'Google', prefixes: ['gmail.', 'calendar.', 'drive.', 'docs.', 'sheets.'] },
-  { provider: 'github', label: 'GitHub', prefixes: ['github.'] },
-  { provider: 'linear', label: 'Linear', prefixes: ['linear.'] },
-  { provider: 'notion', label: 'Notion', prefixes: ['notion.'] },
-];
-
-function providerForCapability(capability: string): ConnectableProvider | null {
-  return capabilityProviders.find((candidate) => candidate.prefixes.some((prefix) => capability.startsWith(prefix)))?.provider ?? null;
+function eligiblePlugins(connections: WorkstreamConnection[], scope: 'you' | 'workspace'): WorkstreamConnection[] {
+  return connections
+    .filter((connection) => connection.status === 'healthy' && (scope === 'you' || connection.scope === 'workspace'))
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
-function missingByProvider(capabilities: string[], bindings: Record<string, string>): Array<{ provider: ConnectableProvider; label: string; capabilities: string[] }> {
-  return capabilityProviders.map((candidate) => ({
-    provider: candidate.provider,
-    label: candidate.label,
-    capabilities: capabilities.filter((capability) => !bindings[capability] && providerForCapability(capability) === candidate.provider),
-  })).filter((candidate) => candidate.capabilities.length > 0);
+function PluginDefaults({
+  connections,
+  selected,
+  scope,
+  recommendations = [],
+  onChange,
+}: {
+  connections: WorkstreamConnection[];
+  selected: string[];
+  scope: 'you' | 'workspace';
+  recommendations?: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
+  onChange: (pluginIds: string[]) => void;
+}): React.JSX.Element {
+  const candidates = eligiblePlugins(connections, scope);
+  const recommendationById = new Map(recommendations.map((recommendation) => [recommendation.pluginId, recommendation]));
+  const ordered = [...candidates].sort((left, right) => {
+    const leftRecommended = recommendationById.has(left.modelPluginId) ? 0 : 1;
+    const rightRecommended = recommendationById.has(right.modelPluginId) ? 0 : 1;
+    return leftRecommended - rightRecommended || left.displayName.localeCompare(right.displayName);
+  });
+  return (
+    <section className="automation-plugin-defaults" aria-label="Default plugins">
+      <header>
+        <div><strong>Default plugins</strong><small>Optional preloads. The automation can discover and load any authorized plugin while it runs.</small></div>
+        <span>{selected.length} selected</span>
+      </header>
+      {!ordered.length ? (
+        <p className="automation-plugin-empty">No connected plugins are available yet. You can still create this automation.</p>
+      ) : (
+        <ul>
+          {ordered.map((connection) => {
+            const recommendation = recommendationById.get(connection.modelPluginId);
+            const checked = selected.includes(connection.modelPluginId);
+            return (
+              <li key={connection.id}>
+                <label>
+                  <input
+                    checked={checked}
+                    onChange={() => onChange(checked
+                      ? selected.filter((pluginId) => pluginId !== connection.modelPluginId)
+                      : [...selected, connection.modelPluginId])}
+                    type="checkbox"
+                  />
+                  <span className="automation-plugin-check">{checked && <Check size={12} />}</span>
+                  <span className="automation-plugin-copy">
+                    <strong>{connection.displayName}{recommendation && <Badge>Recommended</Badge>}</strong>
+                    <small>{connection.scope === 'workspace' ? 'Workspace' : 'Personal'} · {connection.modelPluginId}</small>
+                    {recommendation && <p>{recommendation.reason}</p>}
+                    {recommendation?.recommendedTools.length ? (
+                      <span className="automation-plugin-tools">Suggested tools: {recommendation.recommendedTools.join(', ')}</span>
+                    ) : null}
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function DraftQuestion({
+  question,
+  submitting,
+  onSubmit,
+}: {
+  question: AutomationDraftQuestion;
+  submitting: boolean;
+  onSubmit: (answer: string) => void;
+}): React.JSX.Element {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [other, setOther] = useState('');
+  useEffect(() => { setSelected([]); setOther(''); }, [question.id]);
+  if (question.responseType === 'free_text') return <></>;
+  const options = question.options ?? [];
+  const minimum = question.minimumSelections ?? 1;
+  const maximum = question.maximumSelections ?? (question.responseType === 'single_select' ? 1 : options.length + 1);
+  const toggle = (value: string): void => {
+    if (question.responseType === 'single_select') {
+      setSelected([value]);
+      return;
+    }
+    setSelected((current) => current.includes(value)
+      ? current.filter((candidate) => candidate !== value)
+      : current.length < maximum ? [...current, value] : current);
+  };
+  const answerValues = [...selected, ...(other.trim() ? [other.trim()] : [])];
+  return (
+    <section className="automation-elicitation" aria-labelledby={`automation-question-${question.id}`}>
+      <header><small>Avalon needs input</small><h3 id={`automation-question-${question.id}`}>{question.prompt}</h3></header>
+      <div className="automation-elicitation-options">
+        {options.map((option) => {
+          const active = selected.includes(option.value);
+          return (
+            <button className={clsx(active && 'selected')} key={option.value} onClick={() => toggle(option.value)} type="button">
+              <span className="automation-option-check">{active && <Check size={12} />}</span>
+              <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+            </button>
+          );
+        })}
+      </div>
+      {question.allowOther && (
+        <input onChange={(event) => setOther(event.target.value)} placeholder="Other…" value={other} />
+      )}
+      <footer>
+        <span>{question.responseType === 'multi_select' ? `Choose ${minimum}${maximum < options.length + 1 ? `–${maximum}` : ' or more'}` : 'Choose one'}</span>
+        <Button
+          className="button-primary"
+          disabled={submitting || answerValues.length < minimum || answerValues.length > maximum}
+          onClick={() => onSubmit(answerValues.length === 1 ? answerValues[0]! : answerValues.join(', '))}
+        >
+          {submitting ? <LoaderCircle className="spin" size={14} /> : <ArrowUp size={14} />} Continue
+        </Button>
+      </footer>
+    </section>
+  );
 }
 
 function DraftSummary({
   draft,
   creating,
-  connecting,
   connections,
-  bindings,
-  onBindingChange,
-  onConnectProvider,
+  defaultPluginIds,
+  onDefaultPluginsChange,
   onCreate,
 }: {
   draft: AutomationDraftResponse;
   creating: boolean;
-  connecting: boolean;
   connections: WorkstreamConnection[];
-  bindings: Record<string, string>;
-  onBindingChange: (capability: string, connectionId: string) => void;
-  onConnectProvider: (provider: ConnectableProvider, capabilities: string[]) => void;
+  defaultPluginIds: string[];
+  onDefaultPluginsChange: (pluginIds: string[]) => void;
   onCreate: () => void;
 }): React.JSX.Element | null {
   if (!draft.summary) return null;
   const summary = draft.summary;
-  const missingCapabilities = summary.capabilities.filter((capability) => !bindings[capability]);
-  const missingProviders = missingByProvider(summary.capabilities, bindings);
+  const recommendations = summary.recommendedPlugins ?? [];
   return (
     <section className="automation-summary-card" aria-labelledby="automation-summary-title">
       <header>
         <span><WandSparkles size={17} /></span>
         <div><small>Ready to create</small><h2 id="automation-summary-title">{summary.name}</h2><p>{summary.description}</p></div>
       </header>
-      <ol className="automation-steps">
-        {summary.steps.map((step, index) => <li key={`${index}-${step}`}><span>{index + 1}</span><p>{step}</p></li>)}
-      </ol>
+      <div className="automation-overview"><MarkdownBody>{summary.overview || summary.description}</MarkdownBody></div>
       <dl className="automation-summary-meta">
         <div><dt><Users size={13} /> Runs as</dt><dd>{summary.scope === 'you' ? 'You' : 'Workspace'}</dd></div>
         <div><dt><CalendarClock size={13} /> Trigger</dt><dd>{summary.triggerSummary}</dd></div>
-        <div><dt><Sparkles size={13} /> Uses</dt><dd>{summary.capabilities.join(', ') || 'Avalon tools'}</dd></div>
+        <div><dt><Sparkles size={13} /> Runtime</dt><dd>Dynamic plugin discovery</dd></div>
       </dl>
-      {summary.capabilities.length > 0 && (
-        <div className="automation-bindings" aria-label="Automation connections">
-          <div><strong>Connections</strong><small>Each capability runs only through the connection you select.</small></div>
-          {summary.capabilities.map((capability) => {
-            const candidates = connections.filter((connection) =>
-              connection.status === 'healthy' && connection.capabilities?.includes(capability) &&
-              (summary.scope === 'you' || connection.scope === 'workspace'),
-            );
-            return (
-              <label key={capability}>
-                <span>{capability}</span>
-                <select
-                  aria-label={`Connection for ${capability}`}
-                  onChange={(event) => onBindingChange(capability, event.target.value)}
-                  value={bindings[capability] ?? ''}
-                >
-                  <option value="">Select a connection</option>
-                  {candidates.map((connection) => (
-                    <option key={connection.id} value={connection.id}>
-                      {connection.displayName} · {connection.scope === 'you' ? 'You' : 'Workspace'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            );
-          })}
-          {missingProviders.map((provider) => (
-            <Button disabled={connecting} key={provider.provider} onClick={() => onConnectProvider(provider.provider, provider.capabilities)}>
-              {connecting ? <LoaderCircle className="spin" size={14} /> : <Zap size={14} />}
-              Connect {provider.label}
-            </Button>
-          ))}
-          {missingCapabilities.some((capability) => providerForCapability(capability) === null) && (
-            <InlineError>Connect the required provider before creating this automation.</InlineError>
-          )}
-        </div>
-      )}
+      <PluginDefaults
+        connections={connections}
+        onChange={onDefaultPluginsChange}
+        recommendations={recommendations}
+        scope={summary.scope}
+        selected={defaultPluginIds}
+      />
       <footer>
-        <span>External actions are recorded in the resulting work stream.</span>
-        <Button className="button-primary" disabled={creating || missingCapabilities.length > 0} onClick={onCreate}>
+        <span>Plugin defaults improve startup speed but never widen runtime authority.</span>
+        <Button className="button-primary" disabled={creating} onClick={onCreate}>
           {creating ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Create automation
         </Button>
       </footer>
@@ -190,7 +263,8 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<DraftTurn[]>([]);
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [bindings, setBindings] = useState<Record<string, string>>({});
+  const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
+  const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
 
   useLayoutEffect(() => {
@@ -207,35 +281,16 @@ export function NewAutomationScreen(): React.JSX.Element {
     staleTime: 10_000,
   });
 
-  const connectProvider = useMutation({
-    mutationFn: async (input: { provider: ConnectableProvider; capabilities: string[] }) => {
-      const requestedScope = draft?.summary?.scope ?? 'you';
-      const scope = input.provider === 'notion' ? 'you' : requestedScope;
-      const url = await api!.startProviderConnection(input.provider, scope, input.capabilities);
-      await desktopBridge().openExternal(url);
-    },
-  });
-
   useEffect(() => {
-    const capabilities = draft?.summary?.capabilities ?? selectedTemplate?.capabilities;
-    const scope = draft?.summary?.scope ?? 'you';
-    if (!capabilities || !connections.data) return;
-    setBindings((current) => {
-      const next: Record<string, string> = {};
-      for (const capability of capabilities) {
-        const candidates = connections.data.filter((connection) =>
-          connection.status === 'healthy' && connection.capabilities?.includes(capability) &&
-          (scope === 'you' || connection.scope === 'workspace'),
-        );
-        if (current[capability] && candidates.some((connection) => connection.id === current[capability])) {
-          next[capability] = current[capability];
-        } else if (candidates.length === 1) {
-          next[capability] = candidates[0]!.id;
-        }
-      }
-      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
-    });
-  }, [connections.data, draft, selectedTemplate]);
+    const summary = draft?.summary;
+    if (!summary || !connections.data) return;
+    const recommendations = summary.recommendedPlugins ?? [];
+    const key = `${draft.draftId}:${recommendations.map((item) => item.pluginId).join(',')}`;
+    if (key === initializedRecommendations) return;
+    const eligible = new Set(eligiblePlugins(connections.data, summary.scope).map((connection) => connection.modelPluginId));
+    setDefaultPluginIds(recommendations.map((item) => item.pluginId).filter((pluginId) => eligible.has(pluginId)));
+    setInitializedRecommendations(key);
+  }, [connections.data, draft, initializedRecommendations]);
 
   const compile = useMutation({
     mutationFn: (payload: { message: string; templateId?: string; turnId: string }) =>
@@ -252,17 +307,14 @@ export function NewAutomationScreen(): React.JSX.Element {
     },
     onSuccess: (response) => {
       setDraft(response);
-      setTurns((current) => [
-        ...current,
-        ...(response.assistantMessage || response.question
-          ? [{ id: crypto.randomUUID(), role: 'assistant' as const, text: response.assistantMessage ?? response.question!.prompt }]
-          : []),
-      ]);
+      if (!response.question && response.assistantMessage) {
+        setTurns((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', text: response.assistantMessage! }]);
+      }
     },
   });
 
   const create = useMutation({
-    mutationFn: () => api!.createAutomation(draft!.draftId, bindings),
+    mutationFn: () => api!.createAutomation(draft!.draftId, defaultPluginIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -270,7 +322,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
 
   const subscribe = useMutation({
-    mutationFn: () => api!.subscribeTemplate(selectedTemplate!.id, bindings),
+    mutationFn: () => api!.subscribeTemplate(selectedTemplate!.id, defaultPluginIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -292,7 +344,7 @@ export function NewAutomationScreen(): React.JSX.Element {
             onBack={() => setTemplatesOpen(false)}
             onSelect={(template) => {
               setTemplatesOpen(false);
-              setBindings({});
+              setDefaultPluginIds([]);
               setSelectedTemplate(template);
             }}
           />
@@ -305,41 +357,13 @@ export function NewAutomationScreen(): React.JSX.Element {
                 <p className="eyebrow">Workspace template · v{selectedTemplate.latestVersion}</p>
                 <h1 id="template-subscribe-title">{selectedTemplate.name}</h1>
                 <p>{selectedTemplate.description}</p>
-                <div className="automation-bindings" aria-label="Template connections">
-                  {selectedTemplate.capabilities.map((capability) => {
-                    const candidates = (connections.data ?? []).filter((connection) =>
-                      connection.status === 'healthy' && connection.capabilities?.includes(capability),
-                    );
-                    return (
-                      <label key={capability}>
-                        <span>{capability}</span>
-                        <select
-                          aria-label={`Connection for ${capability}`}
-                          onChange={(event) => setBindings((current) => {
-                            const next = { ...current };
-                            if (event.target.value) next[capability] = event.target.value;
-                            else delete next[capability];
-                            return next;
-                          })}
-                          value={bindings[capability] ?? ''}
-                        >
-                          <option value="">Select a connection</option>
-                          {candidates.map((connection) => <option key={connection.id} value={connection.id}>{connection.displayName} · {connection.scope === 'you' ? 'You' : 'Workspace'}</option>)}
-                        </select>
-                      </label>
-                    );
-                  })}
-                  {missingByProvider(selectedTemplate.capabilities, bindings).map((provider) => (
-                    <Button disabled={connectProvider.isPending} key={provider.provider} onClick={() => connectProvider.mutate({ provider: provider.provider, capabilities: provider.capabilities })}>
-                      {connectProvider.isPending ? <LoaderCircle className="spin" size={14} /> : <Zap size={14} />} Connect {provider.label}
-                    </Button>
-                  ))}
-                </div>
-                <Button
-                  className="button-primary"
-                  disabled={subscribe.isPending || selectedTemplate.capabilities.some((capability) => !bindings[capability])}
-                  onClick={() => subscribe.mutate()}
-                >
+                <PluginDefaults
+                  connections={connections.data ?? []}
+                  onChange={setDefaultPluginIds}
+                  scope="you"
+                  selected={defaultPluginIds}
+                />
+                <Button className="button-primary" disabled={subscribe.isPending} onClick={() => subscribe.mutate()}>
                   {subscribe.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Use template
                 </Button>
               </section>
@@ -348,7 +372,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                 <AvalonMark />
                 <p className="eyebrow">Create an automation</p>
                 <h1 id="automation-builder-heading">What should happen automatically?</h1>
-                <p>Describe the outcome. Avalon will ask only for the details it needs.</p>
+                <p>Describe the outcome. Avalon can research your plugins and will ask for the details it needs.</p>
                 <div className="automation-examples">
                   {examples.map((example) => <button key={example} onClick={() => submit(example)} type="button"><Clock3 size={13} /><span>{example}</span><ChevronRight size={13} /></button>)}
                 </div>
@@ -359,20 +383,21 @@ export function NewAutomationScreen(): React.JSX.Element {
                 {turns.map((turn) => (
                   <div className={clsx('draft-turn', `draft-${turn.role}`)} key={turn.id}>
                     <span>{turn.role === 'assistant' ? 'Avalon' : 'You'}</span>
-                    <p>{turn.text}</p>
+                    <MarkdownBody>{turn.text}</MarkdownBody>
                   </div>
                 ))}
-                {compile.isPending && <div className="draft-turn draft-assistant"><span>Avalon</span><p className="thinking-line"><LoaderCircle className="spin" size={14} /> Compiling the automation…</p></div>}
+                {compile.isPending && <div className="draft-turn draft-assistant"><span>Avalon</span><p className="thinking-line"><LoaderCircle className="spin" size={14} /> Researching and refining the automation…</p></div>}
+                {draft?.question && (
+                  <DraftQuestion question={draft.question} submitting={compile.isPending} onSubmit={submit} />
+                )}
                 {draft && (
                   <DraftSummary
-                    bindings={bindings}
-                    connecting={connectProvider.isPending}
                     connections={connections.data ?? []}
                     creating={create.isPending}
+                    defaultPluginIds={defaultPluginIds}
                     draft={draft}
-                    onBindingChange={(capability, connectionId) => setBindings((current) => ({ ...current, [capability]: connectionId }))}
-                    onConnectProvider={(provider, capabilities) => connectProvider.mutate({ provider, capabilities })}
                     onCreate={() => create.mutate()}
+                    onDefaultPluginsChange={setDefaultPluginIds}
                   />
                 )}
               </div>
@@ -399,15 +424,13 @@ export function NewAutomationScreen(): React.JSX.Element {
                     {compile.isPending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
                   </button>
                 </div>
-                {(compile.error || create.error || connectProvider.error || connections.error) && (
+                {(compile.error || create.error || connections.error) && (
                   <div className="automation-error-actions">
                     <InlineError>
-                      {compile.error?.message ?? create.error?.message ?? connectProvider.error?.message ?? connections.error?.message}
+                      {compile.error?.message ?? create.error?.message ?? connections.error?.message}
                       {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
                     </InlineError>
-                    {compile.error && compile.variables?.message && (
-                      <Button onClick={() => compile.mutate(compile.variables!)}>Retry</Button>
-                    )}
+                    {compile.error && compile.variables?.message && <Button onClick={() => compile.mutate(compile.variables!)}>Retry</Button>}
                     {compile.error instanceof ApiError && compile.error.requestId && (() => {
                       const requestId = compile.error.requestId;
                       return <Button onClick={() => void desktopBridge().copyText(requestId)}>Copy request ID</Button>;
@@ -417,8 +440,8 @@ export function NewAutomationScreen(): React.JSX.Element {
                 {draft?.summary && <p className="keep-editing-hint">Keep editing by describing what should change.</p>}
               </div>
             )}
-            {selectedTemplate && (subscribe.error || connectProvider.error || connections.error) && (
-              <InlineError>{subscribe.error?.message ?? connectProvider.error?.message ?? connections.error?.message}</InlineError>
+            {selectedTemplate && (subscribe.error || connections.error) && (
+              <InlineError>{subscribe.error?.message ?? connections.error?.message}</InlineError>
             )}
           </>
         )}

@@ -203,6 +203,7 @@ export const ResourceSchema = z.object({
 
 export const ConnectionSchema = z.object({
   id: IdSchema,
+  modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
   connectorType: z.enum(["google", "generic_webhook", "web_monitor", "github", "linear", "notion"]),
   scope: ScopeSchema,
@@ -213,6 +214,28 @@ export const ConnectionSchema = z.object({
   status: z.enum(["healthy", "needs_reconnect", "error", "disabled"]),
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
+});
+
+export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
+
+export const AutomationPluginRecommendationSchema = z.object({
+  pluginId: ModelPluginIdSchema,
+  recommendedTools: z.array(z.string().min(1).max(160)).max(40).default([]),
+  reason: z.string().min(1).max(800),
+});
+
+export const AutomationDraftElicitationSchema = z.object({
+  responseType: z.enum(["free_text", "single_select", "multi_select"]),
+  prompt: z.string().min(1).max(4000),
+  placeholder: z.string().max(500).nullable().default(null),
+  options: z.array(z.object({
+    value: z.string().min(1).max(200),
+    label: z.string().min(1).max(300),
+    description: z.string().max(800).nullable().default(null),
+  })).max(30).default([]),
+  minimumSelections: z.number().int().nonnegative().default(0),
+  maximumSelections: z.number().int().positive().nullable().default(null),
+  allowOther: z.boolean().default(false),
 });
 
 export const ToolInvocationSchema = z.object({
@@ -351,13 +374,16 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
 export const AutomationDraftSchema = z.object({
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
+  overview: z.string().min(1).max(3000),
   instructions: z.string().min(1).max(12000),
   triggers: z.array(TriggerDefinitionSchema).min(1),
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
+  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).max(20).default([]),
   suggestedScope: ScopeSchema,
   followUpQuestion: z.string().nullable(),
+  elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
 });
 
@@ -390,9 +416,11 @@ export const AutomationTemplateUpdateSchema = z.object({
   versionId: IdSchema,
   versionNumber: z.number().int().positive(),
   instructions: z.string(),
+  overview: z.string(),
   triggers: z.array(TriggerDefinitionSchema),
   requiredCapabilities: z.array(z.string()),
-  expectedOutputs: z.array(z.string())
+  expectedOutputs: z.array(z.string()),
+  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
 });
 
 export const AutomationDetailSchema = AutomationSummarySchema.extend({
@@ -400,11 +428,13 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   templateVersionId: IdSchema,
   versionNumber: z.number().int().positive(),
   instructions: z.string(),
+  overview: z.string(),
   triggers: z.array(TriggerDefinitionSchema),
   requiredCapabilities: z.array(z.string()),
   expectedOutputs: z.array(z.string()).default([]),
   executionPrincipal: z.record(z.string(), z.unknown()),
-  connectorBindings: z.record(z.string(), IdSchema),
+  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
+  defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
   nextPlannedWorkstream: WorkstreamSchema.nullable(),
   recentRuns: z.array(AutomationRunSchema)
@@ -485,7 +515,7 @@ export const AnswerElicitationRequestSchema = z.union([
 export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
-  connectorBindings: z.record(z.string(), IdSchema).default({})
+  defaultPluginIds: z.array(ModelPluginIdSchema).max(20).default([])
 });
 export const CompileAutomationRequestSchema = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),

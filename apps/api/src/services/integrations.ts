@@ -9,6 +9,7 @@ import {
   renderWorkstreamSystemPrompt,
   runHarness,
   type AddressingContextMessage,
+  type AutomationCreatorPluginCatalogEntry,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessToolPolicyIdentity,
@@ -564,15 +565,19 @@ export async function compileAutomationDraft(
     defaultTimezones: { personal: string; workspace: string };
     requestId: string;
     workspaceId: string;
+    userId: string;
   },
 ): Promise<AutomationDraft> {
+  const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
   return compileAutomation({
     apiKey: env.OPENROUTER_API_KEY,
-    model: env.OPENROUTER_STRUCTURED_MODEL,
+    model: env.OPENROUTER_AUTOMATION_MODEL,
     fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
     messages: input.messages,
     currentDraft: input.currentDraft ?? null,
     defaultTimezones: input.defaultTimezones,
+    pluginCatalog,
+    maxResearchIterations: 20,
     onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
       logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
         request_id: input.requestId,
@@ -590,6 +595,55 @@ export async function compileAutomationDraft(
       });
     },
   });
+}
+
+async function loadAutomationCreatorPluginCatalog(
+  env: Env,
+  workspaceId: string,
+  userId: string,
+): Promise<AutomationCreatorPluginCatalogEntry[]> {
+  const result = await env.DB.prepare(
+    `SELECT * FROM connector_connections
+     WHERE workspace_id = ? AND status = 'healthy'
+       AND (scope = 'workspace' OR (scope = 'personal' AND owner_user_id = ?))
+     ORDER BY created_at ASC`,
+  ).bind(workspaceId, userId).all<Record<string, unknown>>();
+  const registry = connectorRegistryForEnv(env);
+  const catalog: AutomationCreatorPluginCatalogEntry[] = [];
+  const seen = new Set<string>();
+  for (const row of result.results ?? []) {
+    const modelPluginId = String(row.model_plugin_id ?? "");
+    if (!/^plugin_[a-z][a-z0-9_]{0,62}$/u.test(modelPluginId) || seen.has(modelPluginId)) continue;
+    seen.add(modelPluginId);
+    const adapter = registry.get(String(row.connector_type));
+    const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
+    const granted = new Set(grantedScopes);
+    const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, {
+      displayName: adapter.manifest.displayName,
+      description: adapter.agentPlugin.description,
+      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      systemMessage: adapter.agentPlugin.systemMessage,
+    });
+    const wirePrefix = stableConnectionWireName(modelPluginId);
+    catalog.push({
+      pluginId: modelPluginId,
+      displayName: presentation.displayName,
+      description: presentation.description,
+      scope: row.scope === "workspace" ? "workspace" : "personal",
+      searchAliases: presentation.searchAliases,
+      systemMessage: presentation.systemMessage,
+      tools: adapter.agentPlugin.tools
+        .filter((definition) => granted.has(definition.capability))
+        .map((definition) => ({
+          name: stableWireToolName(wirePrefix, definition.name),
+          description: definition.description,
+          capability: definition.capability,
+          mode: definition.mode,
+          inputSchema: definition.inputSchema,
+        })),
+    });
+  }
+  return catalog.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
 }
 
 export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
@@ -2545,14 +2599,13 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const [bindingRows, attachedRows, connectionRows] = await Promise.all([
+  const [subscriptionDefaults, attachedRows, connectionRows] = await Promise.all([
     input.automationSubscriptionId
       ? env.DB.prepare(
-          `SELECT json_each.key AS capability, json_each.value AS connection_id
-           FROM automation_subscriptions s, json_each(s.connector_bindings_json)
-           WHERE s.id = ? AND s.workspace_id = ?`,
-        ).bind(input.automationSubscriptionId, input.workspaceId).all<{ capability: string; connection_id: string }>()
-      : Promise.resolve({ results: [] as Array<{ capability: string; connection_id: string }> }),
+          `SELECT default_plugins_json FROM automation_subscriptions
+           WHERE id = ? AND workspace_id = ?`,
+        ).bind(input.automationSubscriptionId, input.workspaceId).first<{ default_plugins_json: string }>()
+      : Promise.resolve(null),
     env.DB.prepare(
       `SELECT DISTINCT r.connection_id FROM workstream_resources wr
        JOIN resources r ON r.id = wr.resource_id
@@ -2563,10 +2616,7 @@ async function loadHarnessTools(
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
-  const automationBindings = new Map(
-    (bindingRows.results ?? []).map((row) => [row.capability, row.connection_id]),
-  );
-  const explicitlyBound = new Set(automationBindings.values());
+  const defaultModelPluginIds = new Set(parseJson<string[]>(subscriptionDefaults?.default_plugins_json, []));
   const attached = new Set((attachedRows.results ?? []).map((row) => row.connection_id));
   const registry = connectorRegistryForEnv(env);
   const coreTools = createAvalonTools(env, input);
@@ -2593,10 +2643,8 @@ async function loadHarnessTools(
     if (row.workspace_id !== input.workspaceId) continue;
     const connectionId = String(row.id);
     const scope = row.scope === "workspace" ? "workspace" : "personal";
-    const eligible = input.automationSubscriptionId
-      ? explicitlyBound.has(connectionId) || attached.has(connectionId)
-      : scope === "workspace" ||
-        (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
+    const eligible = scope === "workspace" ||
+      (input.executionPrincipal.type === "user" && scope === "personal" && row.owner_user_id === input.executionPrincipal.userId);
     if (!eligible) continue;
     if (scope === "personal" && (input.executionPrincipal.type !== "user" || row.owner_user_id !== input.executionPrincipal.userId)) continue;
     const adapter = registry.get(String(row.connector_type));
@@ -2635,11 +2683,6 @@ async function loadHarnessTools(
       // triggered automations may inspect bound connector data, but external
       // connector writes require a subsequent human-started run.
       if (input.reason === "inbound_email" && definition.mode === "write") continue;
-      if (
-        input.automationSubscriptionId
-        && !attached.has(connectionId)
-        && automationBindings.get(definition.capability) !== connectionId
-      ) continue;
       if (!grantedScopes.includes(definition.capability)) continue;
       const tool: HarnessTool = {
         definition,
@@ -2680,8 +2723,8 @@ async function loadHarnessTools(
       description: presentation.description,
       systemMessage: presentation.systemMessage,
       tools: pluginTools,
-      preload: explicitlyBound.has(connectionId) || attached.has(connectionId),
-      explicit: explicitlyBound.has(connectionId) || attached.has(connectionId),
+      preload: defaultModelPluginIds.has(modelPluginId) || attached.has(connectionId),
+      explicit: defaultModelPluginIds.has(modelPluginId) || attached.has(connectionId),
     });
   }
   return {

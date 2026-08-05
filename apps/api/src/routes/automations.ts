@@ -5,6 +5,7 @@ import {
   CompileAutomationRequestSchema,
   CreateAutomationRequestSchema,
   IdSchema,
+  ModelPluginIdSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -13,7 +14,7 @@ import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), connectorBindings: z.record(z.string(), IdSchema).optional(), overrides: z.record(z.string(), z.unknown()).optional() });
+const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).max(20).optional(), overrides: z.record(z.string(), z.unknown()).optional() });
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) => c.json(await new AutomationService(c.env, getAuth(c)).list()));
@@ -38,7 +39,7 @@ automationRoutes.post("/:id/next-run/open", zValidator("param", idParam), async 
 
 const templateParam = z.object({ id: IdSchema });
 const versionBody = z.object({ draft: AutomationDraftSchema });
-const subscribeBody = z.object({ connectorBindings: z.record(z.string(), IdSchema).default({}) });
+const subscribeBody = z.object({ defaultPluginIds: z.array(ModelPluginIdSchema).max(20).default([]) });
 const adoptParam = z.object({ id: IdSchema });
 const adoptBody = z.object({ versionId: IdSchema });
 

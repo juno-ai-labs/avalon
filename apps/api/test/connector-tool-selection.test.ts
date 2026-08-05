@@ -135,6 +135,14 @@ class ToolSelectionStatement {
         automation_run_id: null,
       } as T;
     }
+    if (sql.includes("SELECT default_plugins_json FROM automation_subscriptions")) {
+      expect(this.values).toEqual([SUBSCRIPTION_ID, WORKSPACE_ID]);
+      const pluginIds = [...new Set(this.database.automationBindings.map((binding) => {
+        const row = this.database.connections.find((connectionRow) => connectionRow.id === binding.connection_id);
+        return row?.model_plugin_id;
+      }).filter((pluginId): pluginId is string => Boolean(pluginId)))];
+      return { default_plugins_json: JSON.stringify(pluginIds) } as T;
+    }
     if (sql.includes("FROM connector_connections") && sql.includes("WHERE id = ? AND workspace_id = ?")) {
       const [connectionId, workspaceId] = this.values;
       return (this.database.connections.find((row) =>
@@ -644,7 +652,7 @@ describe("connector tools selected for harness runs", () => {
     });
   });
 
-  it("limits automation tools to capabilities explicitly bound to a connection", async () => {
+  it("uses automation plugin defaults as preload hints without narrowing granted tools", async () => {
     const database = new ToolSelectionDatabase(
       [connection(WORKSPACE_CONNECTION_ID, "workspace", null)],
       [
@@ -658,18 +666,13 @@ describe("connector tools selected for harness runs", () => {
       workflowInput(SUBSCRIPTION_ID),
     );
 
-    expect(googleToolNames(selected.tools)).toEqual([
-      "google.drive.search",
-      "google.drive.get_metadata",
-      "google.drive.download",
-      "google.drive.export",
-      "google.docs.create_document",
-      "google.docs.append_text",
-      "google.docs.replace_text",
-    ]);
-    expect(googleToolNames(selected.tools)).not.toContain("google.docs.read_document");
-    expect(googleToolNames(selected.tools)).not.toContain("google.sheets.read_values");
+    expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
+    expect(selected.plugins[0]).toMatchObject({
+      canonicalId: `connection:${WORKSPACE_CONNECTION_ID}`,
+      preload: true,
+      explicit: true,
+    });
   });
 
   it("preloads every granted capability from a workstream-attached connection during an automation", async () => {
@@ -716,6 +719,8 @@ describe("connector tools selected for harness runs", () => {
       "google.drive.download",
       "google.drive.export",
       "google.docs.read_document",
+      "google.sheets.read_spreadsheet",
+      "google.sheets.read_values",
     ]);
     expect(selected.tools
       .filter((tool) => tool.definition.name.startsWith("google."))

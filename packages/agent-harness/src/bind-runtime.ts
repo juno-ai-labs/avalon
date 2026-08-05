@@ -622,6 +622,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               ? { plugins: [{ id: "file-parser", pdf: { engine: "native" } }] }
               : {}),
             includeWebSearch: false,
+            reasoningEffort: args.input.config.reasoningEffort,
             signal: args.signal,
           }, async (delta) => {
             textStream.observe(delta);

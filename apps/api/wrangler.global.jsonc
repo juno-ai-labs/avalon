@@ -7,7 +7,7 @@
   "preview_urls": false,
   "vars": {
     "APP_ENV": "production",
-    "APP_VERSION": "0.13.0",
+    "APP_VERSION": "0.21.0",
     "AVALON_REGION": "global",
     "AVALON_DEV_AUTH": "false",
     "PUBLIC_API_BASE_URL": "https://api.with-avalon.com",
@@ -22,6 +22,7 @@
     "OPENROUTER_FALLBACK_MODELS": "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
     "OPENROUTER_CLASSIFIER_MODEL": "google/gemini-2.5-flash-lite",
     "OPENROUTER_STRUCTURED_MODEL": "google/gemini-2.5-flash-lite",
+    "OPENROUTER_AUTOMATION_MODEL": "x-ai/grok-4.5",
     "RESEND_FROM_EMAIL": "Avalon <invites@with-avalon.com>",
     "WORKSTREAM_EMAIL_DOMAIN": "automation.with-avalon.com",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
