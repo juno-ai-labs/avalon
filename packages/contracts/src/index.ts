@@ -413,6 +413,12 @@ export const AutomationDraftSchema = z.object({
 export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("started") }),
   z.object({
+    type: z.literal("thinking"),
+    inferenceRequestId: z.string().min(1).max(200),
+    status: z.enum(["started", "completed"]),
+    durationMs: z.number().int().nonnegative()
+  }),
+  z.object({
     type: z.literal("delta"),
     delta: z.string(),
     reset: z.boolean().default(false)
