@@ -1628,6 +1628,7 @@ export interface HarnessToolPolicyIdentity {
 /** Bind-owned catalog policies mirrored and verified by the durable host. */
 export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
 export const AVALON_TIME_PLUGIN_ID = "avalon:time";
+export const AVALON_MEMORY_PLUGIN_ID = "avalon:memory";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "avalon:workstream";
 export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "avalon:automation_architect";
 

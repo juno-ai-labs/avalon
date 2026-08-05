@@ -12,6 +12,8 @@ export interface Env {
   DB: D1Database;
   PAYLOADS: R2Bucket;
   IMAGES: ImagesBinding;
+  AI: Ai;
+  MEMORY_INDEX: VectorizeIndex;
   WORKSTREAM_ROOMS: DurableObjectNamespace;
   WORKSPACE_SCHEDULERS: DurableObjectNamespace;
   ACTIVITY_QUEUE: Queue;
