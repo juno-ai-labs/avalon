@@ -303,6 +303,34 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
   );
 }
 
+function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | null {
+  const thought = message.thoughtEvent;
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!thought || thought.status !== 'started' || thought.startedAt === undefined) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, [thought]);
+
+  if (!thought) return null;
+  const activeDuration = thought.status === 'started' && thought.startedAt !== undefined
+    ? Math.max(0, now - thought.startedAt)
+    : 0;
+  const verb = thought.status === 'started' ? 'working' : 'worked';
+  const label = `${verb} for ${formatDuration(thought.durationMs + activeDuration) ?? '0ms'}`;
+  return (
+    <div
+      aria-label={label}
+      aria-live={thought.status === 'started' ? 'off' : 'polite'}
+      className={clsx('thought-block', thought.status === 'started' && 'thought-active')}
+    >
+      <span className="thought-label">{label}</span>
+    </div>
+  );
+}
+
 const pluginIconByKey: Record<AutomationPluginIcon, TablerIcon> = {
   'brand-github': IconBrandGithub,
   'brand-google': IconBrandGoogle,
@@ -659,6 +687,7 @@ export function MessageBlock({
   onOpenAttachment,
   onResolveSuggestion,
 }: MessageBlockProps): React.JSX.Element {
+  if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
   if (message.messageType === 'artifact') return <div className="transcript-event" id={`message-${message.id}`}><ArtifactBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {

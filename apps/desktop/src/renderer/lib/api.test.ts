@@ -172,6 +172,18 @@ describe('Avalon API wire adapter', () => {
     const events = [
       { type: 'started' },
       {
+        type: 'thinking',
+        inferenceRequestId: 'inference-1',
+        status: 'started',
+        durationMs: 0,
+      },
+      {
+        type: 'thinking',
+        inferenceRequestId: 'inference-1',
+        status: 'completed',
+        durationMs: 1_234,
+      },
+      {
         type: 'tool',
         toolCallId: 'tool-1',
         name: 'Reviewing connected tools',

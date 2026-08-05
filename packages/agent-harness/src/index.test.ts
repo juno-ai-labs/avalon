@@ -533,8 +533,23 @@ describe("agent harness", () => {
     })).resolves.toMatchObject({ ready: false });
 
     expect(events).toEqual([
+      {
+        type: "thinking",
+        inferenceRequestId: expect.any(String),
+        status: "started",
+        durationMs: 0,
+      },
+      {
+        type: "thinking",
+        inferenceRequestId: expect.any(String),
+        status: "completed",
+        durationMs: expect.any(Number),
+      },
       { type: "completed" },
     ]);
+    expect(events[0]?.type === "thinking" && events[1]?.type === "thinking"
+      ? events[0].inferenceRequestId
+      : null).toBe(events[1]?.type === "thinking" ? events[1].inferenceRequestId : null);
   });
 
   it("retries one transient automation-model failure on the same route", async () => {

@@ -71,6 +71,10 @@ describe('work-stream presentation rules', () => {
   });
 
   it('formats concise task durations', () => {
+    expect(formatDuration(0)).toBe('0ms');
+    expect(formatDuration(42)).toBe('42ms');
+    expect(formatDuration(999)).toBe('999ms');
+    expect(formatDuration(1_000)).toBe('1s');
     expect(formatDuration(8_000)).toBe('8s');
     expect(formatDuration(125_000)).toBe('2m 05s');
   });
