@@ -167,6 +167,24 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('retains previously loaded history when the newest canonical page refreshes', () => {
+    const message = (id: string, sequenceNumber: number): Message => ({
+      id,
+      workstreamId: 'workstream-one',
+      sequenceNumber,
+      authorType: 'agent',
+      messageType: 'text',
+      text: id,
+      createdAt: `2026-07-31T19:${String(sequenceNumber).padStart(2, '0')}:00.000Z`,
+    });
+    const older = message('older', 1);
+    const staleLatest = message('latest', 201);
+    const refreshedLatest = { ...staleLatest, text: 'refreshed' };
+
+    expect(mergeCanonicalTranscript([older, staleLatest], [refreshedLatest])).toEqual([older, refreshedLatest]);
+    expect(replaceWithCanonicalTranscript([older, staleLatest], [refreshedLatest])).toEqual([older, refreshedLatest]);
+  });
+
   it('drops synthetic realtime tool rows after a terminal canonical refresh', () => {
     const canonicalTool: Message = {
       id: '00000000-0000-7000-8000-000000000081',

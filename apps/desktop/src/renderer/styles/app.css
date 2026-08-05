@@ -1342,6 +1342,9 @@ pre {
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; }
 .transcript-column { margin: 0 auto; max-width: 860px; min-height: 100%; padding: 42px 34px 150px; }
+.transcript-history-control { display: flex; justify-content: center; margin-bottom: 18px; }
+.transcript-history-control + .inline-error { margin-bottom: 18px; }
+.virtual-message-row { display: flow-root; }
 .message-block { margin: 0 0 29px; }
 .message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
 .message-author { font-size: 12px; font-weight: 620; }
