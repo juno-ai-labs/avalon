@@ -198,7 +198,7 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
-function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
+export function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
   return (
     <div className="markdown-body">
       <ReactMarkdown

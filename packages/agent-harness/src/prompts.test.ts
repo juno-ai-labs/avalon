@@ -14,6 +14,7 @@ import {
 const currentDraft: AutomationDraft = {
   name: "Weekly engineering brief",
   description: "Summarize merged work for the engineering team.",
+  overview: "Summarizes the week's merged engineering work every Friday.",
   instructions: "1. Read merged work.\n2. Summarize changes.\n3. Record no changes when empty.",
   triggers: [{
     type: "calendar",
@@ -22,10 +23,12 @@ const currentDraft: AutomationDraft = {
     summary: "Fridays at 09:00 Pacific",
   }],
   requiredCapabilities: ["github.pull_requests.read"],
+  recommendedPlugins: [],
   expectedOutputs: ["Engineering brief"],
   defaultBehavior: { noChanges: "Record a concise no-change result" },
   suggestedScope: "workspace",
   followUpQuestion: null,
+  elicitation: null,
   ready: true,
 };
 
@@ -63,7 +66,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "671d0fe9887ff9e8040bab3271bbe42c58c127e174d6342c746be3ccc90c7c30",
+        hash: "39d6e1609667d5a5c42a22200e366d6348c9f85126e5dacebdfec784f67a391d",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -74,7 +77,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "87cd7974af6f0e994be1f29e96d1974441e1aaa22946115c30328e66913f9925",
+        hash: "dc77d3c946ba2e2e924a89b14e328c540064df162bfcc20e085b9fc3e3af7c21",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -261,8 +264,8 @@ describe("prompt renderers", () => {
     const policy = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
     for (const trigger of [
       "manual",
-      "Calendar",
-      "Intervals",
+      "calendar",
+      "interval",
       "connector_activity",
       "semantic_activity",
       "resource_watch",
@@ -270,9 +273,12 @@ describe("prompt renderers", () => {
     ]) {
       expect(policy).toContain(trigger);
     }
-    expect(policy).toContain("Default suggestedScope to personal");
-    expect(policy).toContain("minimum external connector capabilities");
-    expect(policy).toContain("09:00");
+    expect(policy).toContain("Default scope to personal");
+    expect(policy).toContain("requiredCapabilities: always []");
+    expect(policy).toContain("medium-sized model");
+    expect(policy).toContain("automation_plugins_list");
+    expect(policy).toContain("single_select or multi_select");
+    expect(policy).toContain("3-4 short lines");
   });
 
   it("defines conservative confidence semantics for both activity classifiers", () => {

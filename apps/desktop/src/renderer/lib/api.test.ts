@@ -48,6 +48,7 @@ const detail = {
   resources: [],
   connections: [{
     id: connectionId,
+    modelPluginId: 'plugin_google_drive_docs_sheets',
     workspaceId,
     connectorType: 'google' as const,
     scope: 'personal' as const,
@@ -508,6 +509,7 @@ describe('Avalon API wire adapter', () => {
       templateId,
       templateVersionId: currentVersionId,
       versionNumber: 1,
+      overview: 'A concise weekly status brief.',
       instructions: 'Summarize changes.',
       triggers: [{
         type: 'calendar' as const,
@@ -516,11 +518,14 @@ describe('Avalon API wire adapter', () => {
         summary: 'Every Friday',
       }],
       requiredCapabilities: ['gmail.read'],
+      expectedOutputs: ['A concise weekly brief'],
       executionPrincipal: { type: 'user', userId },
-      connectorBindings: { 'gmail.read': connectionId },
+      recommendedPlugins: [],
+      defaultPluginIds: [],
       templateUpdate: {
         versionId: nextVersionId,
         versionNumber: 2,
+        overview: 'A concise weekly brief of changes and decisions.',
         instructions: 'Summarize changes and decisions.',
         triggers: [{
           type: 'calendar' as const,
@@ -530,6 +535,7 @@ describe('Avalon API wire adapter', () => {
         }],
         requiredCapabilities: ['gmail.read'],
         expectedOutputs: ['A concise weekly brief'],
+        recommendedPlugins: [],
       },
       nextPlannedWorkstream: null,
       recentRuns: [],
@@ -556,10 +562,12 @@ describe('Avalon API wire adapter', () => {
       templateUpdate: {
         versionId: nextVersionId,
         versionNumber: 2,
+        overview: 'A concise weekly brief of changes and decisions.',
         instructions: 'Summarize changes and decisions.',
         triggerSummary: 'Every Monday',
         capabilities: ['gmail.read'],
         expectedOutputs: ['A concise weekly brief'],
+        recommendedPlugins: [],
       },
     });
     await expect(api.adoptAutomationUpdate(automationId, nextVersionId)).resolves.toMatchObject({

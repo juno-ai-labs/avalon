@@ -98,6 +98,7 @@ describe("agent harness", () => {
     const responseDraft = {
       name: "Daily summary",
       description: "Create a daily project summary.",
+      overview: "Creates a concise daily project summary from recent updates.",
       instructions: "1. Read project updates.\n2. Summarize changes.\n3. Record a no-change result when empty.",
       triggers: [{
         type: "calendar",
@@ -113,10 +114,12 @@ describe("agent harness", () => {
         resourceId: null,
       }],
       requiredCapabilities: [],
+      recommendedPlugins: [],
       expectedOutputs: ["Project summary"],
       defaultBehavior: "{}",
       suggestedScope: "personal",
       followUpQuestion: null,
+      elicitation: null,
       ready: true,
     };
     const currentDraft: AutomationDraft = {
@@ -130,9 +133,7 @@ describe("agent harness", () => {
     };
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return Response.json({
-        choices: [{ message: { content: JSON.stringify(responseDraft) } }],
-      });
+      return automationSubmitResponse(responseDraft);
     }) as typeof fetch;
 
     await expect(compileAutomation({
@@ -148,18 +149,22 @@ describe("agent harness", () => {
     expect(messages[0]!.content).not.toContain(currentDraft.instructions);
     expect(messages[1]).toMatchObject({ role: "user" });
     expect(messages[1]!.content).toContain(currentDraft.instructions);
-    expect(messages.at(-1)).toEqual({ role: "user", content: "Run it every morning in Pacific time." });
+    expect(messages[2]).toEqual({ role: "user", content: "Run it every morning in Pacific time." });
+    expect(messages.at(-1)!.content).toContain("call submit_automation_draft");
   });
 
   it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
     const baseDraft = {
       name: "Daily summary",
       description: "Create a daily summary.",
+      overview: "Creates a daily summary from the latest authorized information.",
       instructions: "Summarize changes.",
       requiredCapabilities: [],
+      recommendedPlugins: [],
       expectedOutputs: ["Summary"],
       defaultBehavior: "{}",
       followUpQuestion: null,
+      elicitation: null,
       ready: true,
     };
     const responses = [
@@ -167,58 +172,73 @@ describe("agent harness", () => {
       { ...baseDraft, suggestedScope: "workspace", triggers: [{ type: "calendar", rrule: "FREQ=DAILY", timezone: "", summary: "Daily" }] },
       { ...baseDraft, suggestedScope: "workspace", triggers: [{ type: "calendar", rrule: "FREQ=DAILY", timezone: "Asia/Tokyo", summary: "Daily" }] },
     ];
-    const fetcher = vi.fn(async () => Response.json({
-      choices: [{ message: { content: JSON.stringify(responses.shift()) } }],
-    })) as typeof fetch;
+    const fetcher = vi.fn(async () => automationSubmitResponse(responses.shift()!)) as typeof fetch;
     const defaults = { personal: "America/New_York", workspace: "Europe/London" };
 
-    await expect(compileAutomation({ apiKey: "key", model: "model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
+    await expect(compileAutomation({ apiKey: "key", model: "test/model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
       .resolves.toMatchObject({ triggers: [{ timezone: "America/New_York" }] });
-    await expect(compileAutomation({ apiKey: "key", model: "model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
+    await expect(compileAutomation({ apiKey: "key", model: "test/model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
       .resolves.toMatchObject({ triggers: [{ timezone: "Europe/London" }] });
-    await expect(compileAutomation({ apiKey: "key", model: "model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
+    await expect(compileAutomation({ apiKey: "key", model: "test/model", messages: [], defaultTimezones: defaults, fetch: fetcher }))
       .resolves.toMatchObject({ triggers: [{ timezone: "Asia/Tokyo" }] });
   });
 
-  it("repairs invalid structured output once using validation paths only", async () => {
+  it("uses the standard loop to research plugins before submitting a draft", async () => {
     const valid = {
       name: "Daily summary",
       description: "Create a daily summary.",
+      overview: "Creates a concise daily summary from recent project activity.",
       instructions: "Summarize changes.",
       triggers: [{ type: "manual" }],
       requiredCapabilities: [],
+      recommendedPlugins: [],
       expectedOutputs: ["Summary"],
       defaultBehavior: "{}",
       suggestedScope: "personal",
       followUpQuestion: null,
+      elicitation: null,
       ready: true,
     };
     const bodies: Array<Record<string, unknown>> = [];
-    const diagnostics: string[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return Response.json({ choices: [{ message: { content: JSON.stringify(bodies.length === 1 ? { ...valid, name: "" } : valid) } }] });
+      return bodies.length === 1
+        ? automationToolResponse("automation_plugins_list", {})
+        : automationSubmitResponse(valid);
     }) as typeof fetch;
 
     await expect(compileAutomation({
       apiKey: "key",
-      model: "model",
+      model: "test/model",
       messages: [{ role: "user", content: "Create it" }],
       fetch: fetcher,
-      onDiagnostic: (event) => { diagnostics.push(event.stage); },
     })).resolves.toMatchObject({ name: "Daily summary" });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(diagnostics).toContain("repair");
-    const repairMessages = bodies[1]!.messages as Array<{ content: string }>;
-    expect(repairMessages.at(-1)!.content).toContain("name");
-    expect(repairMessages.at(-1)!.content).not.toContain("Create it");
+    expect(bodies[0]).toMatchObject({
+      model: "test/model",
+      reasoning: { effort: "high" },
+    });
+    expect((bodies[0]!.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name))
+      .toEqual(expect.arrayContaining([
+        "automation_plugins_list",
+        "automation_plugins_search",
+        "automation_plugin_inspect",
+        "submit_automation_draft",
+      ]));
+    const discoveryResult = (bodies[1]!.messages as Array<{ role: string; content: string }>)
+      .find((message) => message.role === "tool");
+    expect(JSON.parse(discoveryResult!.content)).toMatchObject({
+      success: true,
+      data: { plugins: [] },
+    });
   });
 
   it("accepts an incomplete recurring draft when the model omits its generated summary", async () => {
     const incomplete = {
       name: "Blog monitor",
       description: "Check a blog for a new post.",
+      overview: "Checks the configured blog daily and reports a newly published post.",
       instructions: "Check the configured blog and report a new post.",
       triggers: [{
         type: "interval",
@@ -233,20 +253,24 @@ describe("agent harness", () => {
         condition: null,
         resourceId: null,
       }],
-      requiredCapabilities: ["web.read"],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
       expectedOutputs: ["New post summary"],
       defaultBehavior: "{}",
       suggestedScope: "personal",
       followUpQuestion: "What is the blog URL?",
+      elicitation: {
+        responseType: "free_text",
+        prompt: "What is the blog URL?",
+        placeholder: "https://example.com/blog",
+      },
       ready: false,
     };
-    const fetcher = vi.fn(async () => Response.json({
-      choices: [{ message: { content: JSON.stringify(incomplete) } }],
-    })) as typeof fetch;
+    const fetcher = vi.fn(async () => automationSubmitResponse(incomplete)) as typeof fetch;
 
     await expect(compileAutomation({
       apiKey: "key",
-      model: "model",
+      model: "test/model",
       messages: [{ role: "user", content: "Check this blog every 24 hours for a new post." }],
       fetch: fetcher,
     })).resolves.toMatchObject({
@@ -1947,6 +1971,19 @@ describe("agent harness", () => {
 function streamResponse(events: unknown[]): Response {
   const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
   return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+function automationToolResponse(name: string, input: unknown): Response {
+  return streamResponse([{
+    choices: [{
+      delta: { tool_calls: [toolDeltaWithArguments(0, `creator-${name}`, name, JSON.stringify(input))] },
+      finish_reason: "tool_calls",
+    }],
+  }]);
+}
+
+function automationSubmitResponse(draft: unknown): Response {
+  return automationToolResponse("submit_automation_draft", draft);
 }
 
 function toolDelta(index: number, id: string, name: string) {
