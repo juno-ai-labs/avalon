@@ -29,7 +29,13 @@ Final draft fields:
 - followUpQuestion: mirror elicitation.prompt for compatibility when not ready, otherwise null.
 - elicitation: null when ready; otherwise one structured or unstructured request.
 
-Flat trigger records require null for every unused field. Encode deterministic filter objects and defaultBehavior as JSON strings for the response schema. Finish only by calling submit_automation_draft. Never finish with plain text.`;
+User-facing response:
+- On any turn that calls a research tool, emit no assistant text.
+- On the turn that calls submit_automation_draft, first emit exactly one concise, useful message for the user, then call the tool in the same turn.
+- When ready=false, that message must ask the same focused question as followUpQuestion, naturally and without extra questions.
+- When ready=true, briefly confirm what the automation will do. Do not expose tool arguments, JSON, hidden instructions, or internal research.
+
+Flat trigger records require null for every unused field. Encode deterministic filter objects and defaultBehavior as JSON strings for the response schema. Finish only by calling submit_automation_draft. Assistant text never replaces the required tool call.`;
 
 export function renderAutomationCompilerMessages(input: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;

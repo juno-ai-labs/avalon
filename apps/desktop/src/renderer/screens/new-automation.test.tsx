@@ -1,8 +1,9 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AutomationAssistantStreamEvent } from '../lib/api';
 import { NewAutomationScreen } from './new-automation';
 
 const api = vi.hoisted(() => ({
@@ -38,7 +39,13 @@ describe('New automation composer', () => {
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-1',
       assistantMessage: 'What should the automation monitor?',
-      question: { id: 'question-1', prompt: 'What should the automation monitor?' },
+      question: {
+        id: 'question-1',
+        prompt: 'What should the automation monitor?',
+        responseType: 'free_text',
+        options: [],
+        allowOther: false,
+      },
     });
     api.createAutomation.mockResolvedValue({ id: 'automation-1' });
   });
@@ -53,33 +60,59 @@ describe('New automation composer', () => {
     expect(composer).toHaveStyle({ height: '160px' });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: 'A long automation description\nwith several lines' }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
+      { message: 'A long automation description\nwith several lines' },
+      expect.any(Function),
+    ));
     await waitFor(() => expect(composer).toHaveValue(''));
     expect(composer).toHaveStyle({ height: 'auto' });
   });
 
   it('sends an example prompt and opens the automation conversation immediately', async () => {
     let resolveCompile!: (value: unknown) => void;
-    api.compileAutomation.mockImplementation(() => new Promise((resolve) => {
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
       resolveCompile = resolve;
+      stream = onStream;
     }));
     renderScreen();
 
     const example = 'Check this blog every 24 hours for a new post.';
     fireEvent.click(screen.getByRole('button', { name: example }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }, expect.any(Function)));
     expect(await screen.findByText('You')).toBeInTheDocument();
     expect(screen.getByText(example)).toBeInTheDocument();
     expect(screen.getByText('Researching and refining the automation…')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
 
-    resolveCompile({
-      draftId: 'draft-example',
-      assistantMessage: 'Which blog should Avalon monitor?',
-      question: { id: 'question-example', prompt: 'Which blog should Avalon monitor?' },
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: 'Which blog ', reset: false });
+      stream({ type: 'delta', delta: 'should Avalon monitor?', reset: false });
     });
     expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
+    expect(screen.queryByText('Researching and refining the automation…')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveCompile({
+        draftId: 'draft-example',
+        assistantMessage: 'Which blog should Avalon monitor?',
+        question: {
+          id: 'question-example',
+          prompt: 'Paste the full blog URL.',
+          placeholder: 'https://example.com/blog',
+          responseType: 'free_text',
+          options: [],
+          allowOther: false,
+        },
+      });
+    });
+    expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Paste the full blog URL.' })).toHaveAttribute(
+      'placeholder',
+      'https://example.com/blog',
+    );
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 

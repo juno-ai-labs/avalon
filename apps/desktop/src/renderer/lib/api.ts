@@ -2,6 +2,7 @@ import {
   ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
+  AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
   ConnectionSchema as WireConnectionSchema,
   CursorPageSchema,
@@ -20,6 +21,7 @@ import {
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
   WorkstreamSchema as WireWorkstreamSchema,
   type AutomationDraft as WireAutomationDraft,
+  type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
   type Connection as WireConnection,
@@ -92,6 +94,55 @@ interface RequestOptions<T> {
 interface DraftState {
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   draft: WireAutomationDraft | null;
+}
+
+export type AutomationAssistantStreamEvent = Extract<
+  WireAutomationDraftStreamEvent,
+  { type: 'started' | 'delta' }
+>;
+
+async function readSseData(
+  response: Response,
+  onData: (data: string) => void | Promise<void>,
+): Promise<void> {
+  if (!response.body) throw new ApiError('The service returned no response body.', 502, 'unexpected_empty_response');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const consume = async (flush = false): Promise<void> => {
+    buffer = buffer.replaceAll('\r\n', '\n');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const data = frame
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).replace(/^ /u, ''))
+        .join('\n');
+      if (data) await onData(data);
+      boundary = buffer.indexOf('\n\n');
+    }
+    if (flush && buffer.trim()) {
+      const data = buffer
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).replace(/^ /u, ''))
+        .join('\n');
+      if (data) await onData(data);
+      buffer = '';
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    await consume();
+  }
+  buffer += decoder.decode();
+  await consume(true);
 }
 
 export interface MentionIdentity {
@@ -496,7 +547,7 @@ export class AvalonApi {
 
   private async execute(path: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
-    headers.set('Accept', 'application/json');
+    if (!headers.has('Accept')) headers.set('Accept', 'application/json');
     if (this.session?.accessToken) headers.set('Authorization', `Bearer ${this.session.accessToken}`);
     try {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
@@ -1024,24 +1075,66 @@ export class AvalonApi {
     return this.request(`/workstreams/${encodeURIComponent(id)}/socket`, { schema: socketTicketSchema });
   }
 
-  async compileAutomation(input: { message: string; draftId?: string; templateId?: string }): Promise<AutomationDraftResponse> {
+  async compileAutomation(
+    input: { message: string; draftId?: string; templateId?: string },
+    onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
+  ): Promise<AutomationDraftResponse> {
     const draftId = input.draftId ?? crypto.randomUUID();
     const previous = this.drafts.get(draftId) ?? { messages: [], draft: null };
     const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
-    const raw = await this.request('/automations/draft', {
+    const response = await this.execute('/automations/draft/stream', {
       method: 'POST',
-      body: { messages, currentDraft: previous.draft },
-      schema: WireAutomationDraftSchema,
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ messages, currentDraft: previous.draft }),
     });
-    const assistantMessage = raw.followUpQuestion ?? (raw.ready ? 'The automation is ready to create.' : undefined);
+    if (!response.ok) return this.throwResponseError(response);
+    const streamState: {
+      completed?: Extract<WireAutomationDraftStreamEvent, { type: 'completed' }>;
+    } = {};
+    await readSseData(response, (data) => {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(data);
+      } catch (error) {
+        throw new ApiError('Avalon received an invalid automation stream.', 502, 'invalid_response', error);
+      }
+      const parsed = WireAutomationDraftStreamEventSchema.safeParse(payload);
+      if (!parsed.success) {
+        throw new ApiError('Avalon received an unexpected response from the service.', 502, 'invalid_response', {
+          issues: parsed.error.issues,
+          path: '/automations/draft/stream',
+        });
+      }
+      const event = parsed.data;
+      if (event.type === 'error') {
+        throw new ApiError(
+          event.error.message,
+          event.error.status,
+          event.error.code,
+          event.error.details,
+          event.error.requestId ?? undefined,
+        );
+      }
+      if (event.type === 'completed') streamState.completed = event;
+      else onAssistantStream?.(event);
+    });
+    const completed = streamState.completed;
+    if (!completed) {
+      throw new ApiError('The automation stream ended before the draft was complete.', 502, 'unexpected_empty_response');
+    }
+    const raw = WireAutomationDraftSchema.parse(completed.draft);
+    const assistantMessage = completed.assistantMessage;
     this.drafts.set(draftId, {
-      messages: assistantMessage ? [...messages, { role: 'assistant', content: assistantMessage }] : messages,
+      messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
     const elicitation = raw.elicitation;
     return {
       draftId,
-      ...(assistantMessage ? { assistantMessage } : {}),
+      assistantMessage,
       ...(raw.followUpQuestion
         ? {
             question: {

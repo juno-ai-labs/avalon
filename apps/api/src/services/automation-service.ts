@@ -9,6 +9,7 @@ import type {
 } from "@avalon/contracts";
 import { z } from "zod";
 import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness";
+import type { AutomationCompilerTextEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -89,6 +90,10 @@ export class AutomationService {
   async compile(
     input: { messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null },
     requestId: string,
+    options: {
+      onAssistantText?: (event: AutomationCompilerTextEvent) => void | Promise<void>;
+      signal?: AbortSignal;
+    } = {},
   ) {
     const defaults = await this.env.DB.prepare(
       `SELECT u.timezone AS user_timezone, w.timezone AS workspace_timezone
@@ -105,6 +110,8 @@ export class AutomationService {
         requestId,
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
+        ...(options.onAssistantText ? { onAssistantText: options.onAssistantText } : {}),
+        ...(options.signal ? { signal: options.signal } : {}),
         defaultTimezones: {
           personal: defaults.user_timezone,
           workspace: defaults.workspace_timezone,

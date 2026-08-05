@@ -11,6 +11,7 @@ import {
   OpenRouterClient,
   renderAddressingMessages,
   runHarness,
+  type AutomationCompilerTextEvent,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessTool,
@@ -292,6 +293,61 @@ describe("agent harness", () => {
       triggers: [{ type: "interval", intervalSeconds: 86_400, summary: "Recurring interval" }],
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("streams only the user-facing assistant text from the submitted draft turn", async () => {
+    const incomplete = {
+      name: "Blog monitor",
+      description: "Check a blog for a new post.",
+      overview: "Checks the configured blog daily and reports a newly published post.",
+      instructions: "Check the configured blog and report a new post.",
+      triggers: [{ type: "interval", intervalSeconds: 86_400, summary: "Every 24 hours" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["New post summary"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: "What is the blog URL?",
+      elicitation: {
+        responseType: "free_text",
+        prompt: "What is the blog URL?",
+        placeholder: "https://example.com/blog",
+      },
+      ready: false,
+    };
+    const events: AutomationCompilerTextEvent[] = [];
+    const fetcher = vi.fn(async () => streamResponse([
+      { choices: [{ delta: { content: "Which blog " }, finish_reason: null }] },
+      { choices: [{ delta: { content: "should I monitor?" }, finish_reason: null }] },
+      {
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(
+              0,
+              "creator-submit",
+              "submit_automation_draft",
+              JSON.stringify(incomplete),
+            )],
+          },
+          finish_reason: "tool_calls",
+        }],
+      },
+    ])) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Check this blog every 24 hours." }],
+      fetch: fetcher,
+      onAssistantText: (event) => { events.push(event); },
+    })).resolves.toMatchObject({ ready: false });
+
+    expect(events).toEqual([
+      { type: "started" },
+      { type: "delta", delta: "Which blog ", reset: false },
+      { type: "delta", delta: "should I monitor?", reset: false },
+      { type: "completed", content: "Which blog should I monitor?" },
+    ]);
   });
 
   it("retries one transient automation-model failure on the same route", async () => {

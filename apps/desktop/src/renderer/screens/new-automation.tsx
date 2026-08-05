@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MarkdownBody } from '../components/workstream-blocks';
+import { AssistantMessageContent, MarkdownBody } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
@@ -151,10 +151,12 @@ function PluginDefaults({
 }
 
 function DraftQuestion({
+  assistantMessage,
   question,
   submitting,
   onSubmit,
 }: {
+  assistantMessage?: string;
   question: AutomationDraftQuestion;
   submitting: boolean;
   onSubmit: (answer: string) => void;
@@ -162,7 +164,14 @@ function DraftQuestion({
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState('');
   useEffect(() => { setSelected([]); setOther(''); }, [question.id]);
-  if (question.responseType === 'free_text') return <></>;
+  if (question.responseType === 'free_text') {
+    return (
+      <div className="agent-message draft-turn draft-assistant">
+        <span>Avalon</span>
+        <AssistantMessageContent text={assistantMessage ?? question.prompt} />
+      </div>
+    );
+  }
   const options = question.options ?? [];
   const minimum = question.minimumSelections ?? 1;
   const maximum = question.maximumSelections ?? (question.responseType === 'single_select' ? 1 : options.length + 1);
@@ -262,6 +271,10 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [input, setInput] = useState('');
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<DraftTurn[]>([]);
+  const [streamingAssistant, setStreamingAssistant] = useState<{ started: boolean; text: string }>({
+    started: false,
+    text: '',
+  });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
@@ -298,18 +311,32 @@ export function NewAutomationScreen(): React.JSX.Element {
         message: payload.message,
         ...(draft?.draftId ? { draftId: draft.draftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
+      }, (event) => {
+        if (event.type === 'started') {
+          setStreamingAssistant({ started: true, text: '' });
+          return;
+        }
+        setStreamingAssistant((current) => ({
+          started: true,
+          text: event.reset ? event.delta : current.text + event.delta,
+        }));
       }),
     onMutate: (payload) => {
+      setStreamingAssistant({ started: false, text: '' });
       setTurns((current) => current.some((turn) => turn.id === payload.turnId)
         ? current
         : [...current, { id: payload.turnId, role: 'user', text: payload.message }]);
       setInput('');
     },
     onSuccess: (response) => {
+      setStreamingAssistant({ started: false, text: '' });
       setDraft(response);
       if (!response.question && response.assistantMessage) {
         setTurns((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', text: response.assistantMessage! }]);
       }
+    },
+    onError: () => {
+      setStreamingAssistant({ started: false, text: '' });
     },
   });
 
@@ -381,14 +408,28 @@ export function NewAutomationScreen(): React.JSX.Element {
             ) : (
               <div className="automation-conversation" aria-live="polite">
                 {turns.map((turn) => (
-                  <div className={clsx('draft-turn', `draft-${turn.role}`)} key={turn.id}>
+                  <div className={clsx('draft-turn', `draft-${turn.role}`, turn.role === 'assistant' && 'agent-message')} key={turn.id}>
                     <span>{turn.role === 'assistant' ? 'Avalon' : 'You'}</span>
-                    <MarkdownBody>{turn.text}</MarkdownBody>
+                    {turn.role === 'assistant'
+                      ? <AssistantMessageContent text={turn.text} />
+                      : <MarkdownBody>{turn.text}</MarkdownBody>}
                   </div>
                 ))}
-                {compile.isPending && <div className="draft-turn draft-assistant"><span>Avalon</span><p className="thinking-line"><LoaderCircle className="spin" size={14} /> Researching and refining the automation…</p></div>}
+                {compile.isPending && (
+                  <div aria-busy="true" className="agent-message draft-turn draft-assistant">
+                    <span>Avalon</span>
+                    {streamingAssistant.started
+                      ? <AssistantMessageContent showCopy={false} streaming text={streamingAssistant.text} />
+                      : <p className="thinking-line"><LoaderCircle className="spin" size={14} /> Researching and refining the automation…</p>}
+                  </div>
+                )}
                 {draft?.question && (
-                  <DraftQuestion question={draft.question} submitting={compile.isPending} onSubmit={submit} />
+                  <DraftQuestion
+                    assistantMessage={draft.assistantMessage}
+                    question={draft.question}
+                    submitting={compile.isPending}
+                    onSubmit={submit}
+                  />
                 )}
                 {draft && (
                   <DraftSummary
