@@ -125,9 +125,82 @@ function json(value: unknown, init: ResponseInit = {}): Response {
   });
 }
 
+function sse(events: unknown[], splitAt?: number): Response {
+  const encoded = new TextEncoder();
+  const body = events.map((event) => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (splitAt === undefined) {
+        controller.enqueue(encoded.encode(body));
+      } else {
+        controller.enqueue(encoded.encode(body.slice(0, splitAt)));
+        controller.enqueue(encoded.encode(body.slice(splitAt)));
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Avalon API wire adapter', () => {
+  it('streams automation assistant tokens and returns the final typed draft', async () => {
+    const draft = {
+      name: 'Blog monitor',
+      description: 'Check a blog for new posts.',
+      overview: 'Checks the configured blog every day.',
+      instructions: 'Check the configured blog and report new posts.',
+      triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+      requiredCapabilities: [],
+      expectedOutputs: ['New post summary'],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      suggestedScope: 'personal' as const,
+      followUpQuestion: 'Which blog should I monitor?',
+      elicitation: {
+        responseType: 'free_text' as const,
+        prompt: 'Paste the full blog URL.',
+        placeholder: 'https://example.com/blog',
+        options: [],
+        minimumSelections: 1,
+        maximumSelections: null,
+        allowOther: false,
+      },
+      ready: false,
+    };
+    const events = [
+      { type: 'started' },
+      { type: 'delta', delta: 'Which blog ', reset: false },
+      { type: 'delta', delta: 'should I monitor?', reset: false },
+      { type: 'completed', draft, assistantMessage: 'Which blog should I monitor?' },
+    ];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return sse(events, 47);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const streamed: unknown[] = [];
+
+    await expect(api.compileAutomation(
+      { message: 'Check this blog every 24 hours.' },
+      (event) => streamed.push(event),
+    )).resolves.toMatchObject({
+      assistantMessage: 'Which blog should I monitor?',
+      question: {
+        prompt: 'Paste the full blog URL.',
+        placeholder: 'https://example.com/blog',
+      },
+    });
+
+    expect(streamed).toEqual(events.slice(0, 3));
+    const request = fetchMock.mock.calls[0]!;
+    expect(String(request[0])).toBe('https://api.avalon.test/automations/draft/stream');
+    expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');
+  });
+
   it('maps representative work-stream and message wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,

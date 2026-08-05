@@ -232,6 +232,30 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
   );
 }
 
+export function AssistantMessageContent({
+  mentions = [],
+  showCopy = true,
+  streaming = false,
+  text,
+}: {
+  mentions?: MessageMention[];
+  showCopy?: boolean;
+  streaming?: boolean;
+  text: string;
+}): React.JSX.Element {
+  return (
+    <>
+      {text ? <MarkdownBody mentions={mentions}>{text}</MarkdownBody> : null}
+      {showCopy && !streaming && text && (
+        <footer className="agent-message-actions">
+          <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(text)} type="button"><Clipboard size={12} /> Copy</button>
+        </footer>
+      )}
+      {streaming && <span className="streaming-caret" aria-hidden="true" />}
+    </>
+  );
+}
+
 function ToolBlock({ message }: { message: Message }): React.JSX.Element | null {
   const tool = message.toolEvent;
   if (!tool) return null;
@@ -655,15 +679,13 @@ export function MessageBlock({
                   onOpen={onOpenAttachment}
                 />
               ) : null}
-              {message.text ? <MarkdownBody mentions={message.mentions}>{message.text}</MarkdownBody> : null}
+              <AssistantMessageContent
+                mentions={message.mentions}
+                streaming={message.streaming}
+                text={message.text ?? ''}
+              />
             </>
           )}
-      {!human && !message.streaming && (
-        <footer className="agent-message-actions">
-          <button aria-label="Copy response" onClick={() => void desktopBridge().copyText(message.text ?? '')} type="button"><Clipboard size={12} /> Copy</button>
-        </footer>
-      )}
-      {message.streaming && <span className="streaming-caret" aria-hidden="true" />}
     </article>
   );
 }
