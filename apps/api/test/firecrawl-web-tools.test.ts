@@ -29,7 +29,6 @@ function envWithFirecrawl(
     FIRECRAWL_API_KEY: apiKey,
     WEB_SEARCH_MAX_RESULTS: "8",
     WEB_FETCH_MAX_BYTES: "2000000",
-    HARNESS_MAX_CONTEXT_BYTES: "200000",
     ...overrides,
   } as Env;
 }
@@ -252,7 +251,7 @@ describe("Avalon Firecrawl harness tools", () => {
     const tool = __integrationTesting
       .createAvalonTools(envWithFirecrawl("fc-test-key", {
         WEB_FETCH_MAX_BYTES: "100",
-        HARNESS_MAX_CONTEXT_BYTES: "12",
+        HARNESS_MAX_TOOL_RESULT_BYTES: "12",
       }), workflowInput)
       .find((candidate) => candidate.definition.name === "avalon.web_fetch");
     expect(tool).toBeDefined();

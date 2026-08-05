@@ -429,18 +429,7 @@ describe("connector tools selected for harness runs", () => {
     } as Env);
 
     expect(defaultLimits).toMatchObject({
-      maxRunTokens: 12_000,
-      maxToolResultBytes: 24_000,
-    });
-
-    const smallerTokenBudget = __integrationTesting.childRunLimits({
-      ...env(new ToolSelectionDatabase([])),
-      HARNESS_CHILD_MAX_RUN_TOKENS: "2000",
-      HARNESS_MAX_TOOL_RESULT_BYTES: String(128 * 1_024),
-    } as Env);
-    expect(smallerTokenBudget).toMatchObject({
-      maxRunTokens: 2_000,
-      maxToolResultBytes: 4_000,
+      maxToolResultBytes: 24 * 1_024,
     });
   });
 
@@ -811,7 +800,6 @@ describe("connector tools selected for harness runs", () => {
         maxIterations: 3,
         maxToolCalls: 2,
         maxWallClockMs: 1_000,
-        maxContextBytes: 200_000,
         toolTimeoutMs: 100,
         maxWebResults: 4,
       },

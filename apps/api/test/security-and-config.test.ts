@@ -77,14 +77,6 @@ describe("API security utilities", () => {
     });
     expect(JSON.stringify(providerFailure)).not.toContain("sk-secret");
 
-    expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
-      code: "run_token_limit_exceeded",
-      message: "raw internal accounting state",
-    }))).toEqual({
-      code: "run_token_limit_exceeded",
-      message: "This run reached its token limit",
-    });
-
     for (const unsafeValue of [
       JSON.stringify({ code: "attacker-controlled-code", message: "database credentials" }),
       "not-json",
@@ -549,29 +541,6 @@ describe("environment guardrails", () => {
       status: 404,
       code: "not_found",
     });
-  });
-
-  it("bounds aggregate model context by dropping only complete oldest messages", () => {
-    const bounded = __integrationTesting.boundModelContext(
-      "stable-system-policy",
-      [
-        { role: "user", content: "old-".repeat(100) },
-        { role: "assistant", content: "new-".repeat(40) },
-      ],
-      256,
-    );
-    expect(bounded.byteLength).toBeLessThanOrEqual(256);
-    expect(bounded.messages.at(-1)?.content).toContain("new-");
-    expect(bounded.messages).toHaveLength(1);
-    expect(bounded.messages[0]?.content).not.toContain("old-");
-  });
-
-  it("fails with a typed context error instead of byte-slicing stable policy", () => {
-    expect(() => __integrationTesting.boundModelContext(
-      `system-${"🛡️".repeat(100)}`,
-      [],
-      256,
-    )).toThrowError(expect.objectContaining({ code: "context_limit_exceeded" }));
   });
 
   it.each([

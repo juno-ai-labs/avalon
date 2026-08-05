@@ -22,6 +22,45 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("keeps full agent inference logging opt-in and creates its regional payload index", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-inference', 'google-inference', 'inference@example.com',
+              'Inference Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-inference', 'Inference', 'inference', 'global',
+              'user-inference', '2026-01-01', '2026-01-01');
+    `);
+
+    expect(database.prepare(
+      "SELECT log_agent_inference FROM workspaces WHERE id = 'workspace-inference'",
+    ).get()).toEqual({ log_agent_inference: 0 });
+    expect(database.prepare("PRAGMA table_info(agent_inference_payload_logs)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "object_key" }),
+        expect.objectContaining({ name: "input_tokens" }),
+        expect.objectContaining({ name: "output_tokens" }),
+        expect.objectContaining({ name: "context_tokens" }),
+      ]),
+    );
+    database.close();
+  });
+
+  it("stores one durable provider-measured compaction checkpoint per work stream", () => {
+    const database = migrateFreshDatabase();
+    const columns = database.prepare("PRAGMA table_info(workstream_context_compactions)").all();
+    expect(columns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "compacted_through_sequence", notnull: 1 }),
+      expect.objectContaining({ name: "messages_json", notnull: 1 }),
+      expect.objectContaining({ name: "context_tokens_before_compaction", notnull: 1 }),
+      expect.objectContaining({ name: "context_window_tokens", notnull: 1 }),
+    ]));
+    database.close();
+  });
+
   it("applies the development seed after every migration", () => {
     const database = migrateFreshDatabase();
     database.exec(readFileSync(new URL("../seed.sql", import.meta.url), "utf8"));

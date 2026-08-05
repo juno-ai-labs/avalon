@@ -12,6 +12,8 @@ import {
   MentionSchema,
   RefreshRequestSchema,
   ServerSocketEventSchema,
+  UpdateWorkspaceRequestSchema,
+  WorkspaceSchema,
   WorkstreamArtifactSchema,
   WorkstreamWorkflowInputSchema
 } from "./index";
@@ -19,6 +21,21 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("defaults inference logging off and accepts only explicit workspace preference updates", () => {
+    expect(WorkspaceSchema.parse({
+      id,
+      name: "Avalon",
+      slug: "avalon",
+      region: "global",
+      role: "owner",
+      timezone: "America/Los_Angeles",
+      createdAt: "2026-08-05T00:00:00.000Z",
+    }).logAgentInference).toBe(false);
+    expect(UpdateWorkspaceRequestSchema.parse({ logAgentInference: true }))
+      .toEqual({ logAgentInference: true });
+    expect(UpdateWorkspaceRequestSchema.safeParse({}).success).toBe(false);
+  });
+
   it("accepts selected, custom, and skipped elicitation responses", () => {
     expect(AnswerElicitationRequestSchema.parse({ answer: "first" })).toEqual({ answer: "first" });
     expect(AnswerElicitationRequestSchema.parse({
@@ -37,7 +54,6 @@ describe("boundary contracts", () => {
       "run_wall_time_limit_exceeded",
       "run_iteration_limit_exceeded",
       "run_tool_call_limit_exceeded",
-      "run_token_limit_exceeded",
       "run_cost_limit_exceeded",
       "context_limit_exceeded",
     ]));
