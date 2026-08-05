@@ -14,6 +14,15 @@ import {
   normalizeHarnessStatus,
   type AvalonApi,
 } from './api';
+import { elicitationMessageId } from './elicitation';
+import {
+  createElicitationMessage,
+  createTextMessage,
+  createToolEventMessage,
+  isSameLogicalMessage,
+  removeTranscriptMessage,
+  upsertTranscriptMessage,
+} from './transcript';
 import type { Message, WorkstreamDetail } from './types';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
@@ -74,21 +83,8 @@ export function orderTranscript(messages: Message[]): Message[] {
   return [...messages].sort(compareMessages);
 }
 
-function isSameLogicalMessage(left: Message, right: Message): boolean {
-  if (left.id === right.id) return true;
-  if (left.clientMessageId && (
-    left.clientMessageId === right.id
-    || left.clientMessageId === right.clientMessageId
-  )) return true;
-  return Boolean(right.clientMessageId && right.clientMessageId === left.id);
-}
-
 export function insertMessage(messages: Message[] | undefined, message: Message): Message[] {
-  const existing = messages ?? [];
-  return orderTranscript([
-    ...existing.filter((candidate) => !isSameLogicalMessage(candidate, message)),
-    message,
-  ]);
+  return orderTranscript(upsertTranscriptMessage(messages, message));
 }
 
 type StreamingSocketEvent = Extract<
@@ -172,12 +168,11 @@ export function applyStreamingSocketEvent(
         : message);
     }
     const anchorSequenceNumber = nextTranscriptSequence(messages);
-    return insertMessage(messages, {
+    return insertMessage(messages, createTextMessage({
       id: messageId,
       workstreamId,
       sequenceNumber: anchorSequenceNumber,
       authorType: 'agent',
-      messageType: 'text',
       text: '',
       createdAt: event.occurredAt,
       streaming: true,
@@ -186,17 +181,16 @@ export function applyStreamingSocketEvent(
         eventSequence: event.sequence,
         placement: 'at_anchor',
       },
-    });
+    }));
   }
 
   if (!existing) {
     const anchorSequenceNumber = nextTranscriptSequence(messages);
-    return insertMessage(messages, {
+    return insertMessage(messages, createTextMessage({
       id: messageId,
       workstreamId,
       sequenceNumber: anchorSequenceNumber,
       authorType: 'agent',
-      messageType: 'text',
       text: event.delta,
       createdAt: event.occurredAt,
       streaming: true,
@@ -205,7 +199,7 @@ export function applyStreamingSocketEvent(
         eventSequence: event.sequence,
         placement: 'at_anchor',
       },
-    });
+    }));
   }
   return (messages ?? []).map((message) => message.id === messageId
     ? {
@@ -310,10 +304,6 @@ function mergeCanonicalTranscriptAfterConcurrentEvent(
 
 function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
   return status === 'running' || status === 'scheduled';
-}
-
-function removeMessage(messages: Message[] | undefined, id: string): Message[] {
-  return (messages ?? []).filter((message) => message.id !== id);
 }
 
 export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string, enabled: boolean): SocketState {
@@ -453,12 +443,11 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           const anchorSequenceNumber = existing?.realtimeOrder?.anchorSequenceNumber
             ?? activeStreamAnchor(current)
             ?? nextTranscriptSequence(current);
-          return insertMessage(current, {
+          return insertMessage(current, createToolEventMessage({
             id: messageId,
             workstreamId,
             sequenceNumber: anchorSequenceNumber,
             authorType: 'agent',
-            messageType: 'tool_event',
             createdAt: existing?.createdAt ?? event.occurredAt,
             realtimeOrder: {
               anchorSequenceNumber,
@@ -468,21 +457,20 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
               placement: 'before_anchor',
             },
             toolEvent: mapToolInvocation(event.invocation),
-          });
+          }));
         });
       } else if (event.type === 'elicitation_created' || event.type === 'elicitation_answered') {
-        const messageId = `elicitation-${event.elicitation.id}`;
+        const messageId = elicitationMessageId(event.elicitation.id);
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-          if (event.elicitation.status === 'cancelled') return removeMessage(current, messageId);
-          return insertMessage(current, {
+          if (event.elicitation.status === 'cancelled') return removeTranscriptMessage(current, messageId);
+          return insertMessage(current, createElicitationMessage({
             id: messageId,
             workstreamId,
             sequenceNumber: event.sequence,
             authorType: 'agent',
-            messageType: 'elicitation',
             createdAt: event.elicitation.createdAt,
             elicitation: mapElicitation(event.elicitation),
-          });
+          }));
         });
       } else if (event.type === 'participant_added') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
