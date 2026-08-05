@@ -10,6 +10,7 @@ import {
   renderUntrustedInboundEmailMessage,
   renderWorkstreamSystemPrompt,
 } from "./prompts";
+import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 
 const currentDraft: AutomationDraft = {
   name: "Weekly engineering brief",
@@ -66,7 +67,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "18e8937f9a3c520e418b1d5a4dded07a2cec9f3a33cf22d69cbc6b6ec40f3bc6",
+        hash: "f71df976564a515457dd4e6de3bf43944b2286f6f4b65daae41d7cd0e10f9fc3",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -77,7 +78,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "6faf730077af233b57eb0ccc65a1f2cee0a90812d8afa70e9d00280f052bfdd1",
+        hash: "06fd6951cce2011792b0e2ce1f471169689a64319c119eee47b4bd6fdf318f66",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -258,6 +259,31 @@ describe("prompt renderers", () => {
 
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
     expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(8_000);
+  });
+
+  it("renders a stable active and loadable plugin catalog using model-facing IDs", () => {
+    expect(renderPromptPluginCatalog({
+      activePluginIds: new Set(["plugin_github"]),
+      plugins: [
+        {
+          pluginId: "plugin_linear",
+          displayName: "Linear",
+          description: "Work with authorized issues.",
+          searchAliases: ["issues", "projects"],
+        },
+        {
+          pluginId: "plugin_github",
+          displayName: "GitHub",
+          description: "Work with authorized repositories.",
+          searchAliases: ["repositories", "pull requests"],
+        },
+      ],
+    })).toBe(
+      "Currently active:\n" +
+      "- plugin_github (GitHub; aliases: repositories, pull requests): Work with authorized repositories.\n\n" +
+      "Available to load:\n" +
+      "- plugin_linear (Linear; aliases: issues, projects): Work with authorized issues.",
+    );
   });
 
   it("documents every automation trigger and autonomy default in the compiler policy", () => {

@@ -12,7 +12,6 @@ import {
   createToolRegistry,
   defineTool,
   initialActivePlugins,
-  partitionPluginCatalog,
   pluginFromTools,
   rehydrateActivation,
   toolResultMessage,
@@ -55,6 +54,7 @@ import {
   type ModelMessage,
   type RunHarnessInput,
 } from "./index";
+import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 
 const CORE_PLUGIN_ID = "avalon:core";
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
@@ -1296,34 +1296,37 @@ function renderStableSystemPrompt(
     .sort()
     .flatMap((id) => {
       const plugin = registry.get(id);
-      return plugin?.systemMessage ? [`<plugin id="${plugin.modelId}">\n${plugin.systemMessage}\n</plugin>`] : [];
+      if (!plugin?.systemMessage) return [];
+      const heading = plugin.displayName
+        ? `${plugin.modelId} — ${plugin.displayName}`
+        : plugin.modelId;
+      return [`## ${heading}\n${plugin.systemMessage}`];
     });
-  const catalog = partitionPluginCatalog(active, registry.summaries());
-  const catalogLines = catalog.loadable
-    .sort((left, right) => left.name.localeCompare(right.name))
-    .map((plugin) => {
-      const registered = registry.get(plugin.name);
-      const displayName = registered?.displayName;
-      const aliases = registered?.searchAliases ?? [];
-      const discovery = [
-        ...(displayName ? [`name=${JSON.stringify(displayName)}`] : []),
-        ...(aliases.length > 0 ? [`aliases=${JSON.stringify(aliases)}`] : []),
-      ].join("; ");
-      return `- id=${JSON.stringify(registered?.modelId ?? plugin.name)}${discovery ? `; ${discovery}` : ""}; description=${plugin.description}`;
-    });
-  const maxChars = Math.max(256, catalogTokens * 4);
-  let used = 0;
-  const bounded: string[] = [];
-  for (const line of catalogLines) {
-    if (used + line.length + 1 > maxChars) break;
-    bounded.push(line);
-    used += line.length + 1;
-  }
-  const boundedCatalog = bounded.length > 0
-    ? `<available_connector_plugins>\n${bounded.join("\n")}\nUse avalon_load_plugin with the exact plugin id before using one.\n</available_connector_plugins>`
+  const activeModelIds = new Set([...active].flatMap((id) => {
+    const plugin = registry.get(id);
+    return plugin ? [plugin.modelId] : [];
+  }));
+  const pluginCatalog = renderPromptPluginCatalog({
+    activePluginIds: activeModelIds,
+    plugins: registry.summaries().map((summary) => {
+      const plugin = registry.get(summary.name);
+      return {
+        pluginId: plugin?.modelId ?? summary.name,
+        ...(plugin?.displayName ? { displayName: plugin.displayName } : {}),
+        ...(plugin?.searchAliases.length ? { searchAliases: plugin.searchAliases } : {}),
+        description: summary.description,
+      };
+    }),
+    maxCatalogTokens: catalogTokens,
+  });
+  const pluginSection = pluginCatalog
+    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available connector plugin, call avalon_load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority.\n\n${pluginCatalog}`
+    : "";
+  const activeInstructions = activeSections.length
+    ? `# Active Plugin Instructions\n${activeSections.join("\n\n")}`
     : "";
   return {
-    content: [base, ...activeSections, boundedCatalog].filter(Boolean).join("\n\n"),
+    content: [base, pluginSection, activeInstructions].filter(Boolean).join("\n\n"),
   };
 }
 
