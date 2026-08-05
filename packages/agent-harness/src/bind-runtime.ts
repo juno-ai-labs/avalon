@@ -127,6 +127,7 @@ class OpenRouterCompletionDefectError extends Error {
 }
 
 export async function runHarnessWithBind(input: RunHarnessInput): Promise<HarnessOutcome> {
+  const onTurnWouldEnd = input.onTurnWouldEnd;
   const deadline = createRunDeadline({
     timeoutMs: input.config.maxWallClockMs,
     label: "Avalon Bind run",
@@ -475,6 +476,15 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       onAssistantMessage: (message) => {
         content += message;
       },
+      ...(onTurnWouldEnd
+        ? {
+            onTurnWouldEnd: (assistantMessage: OpenAI.ChatCompletionMessage, cumulativeToolCalls: number) =>
+              onTurnWouldEnd({
+                assistantContent: typeof assistantMessage.content === "string" ? assistantMessage.content : "",
+                cumulativeToolCalls,
+              }),
+          }
+        : {}),
       onProgressUpdate: (outputTokens, toolCalls) => {
         void input.onProgress?.({ outputTokens, toolCalls });
       },
