@@ -306,16 +306,30 @@ describe("connector tools selected for harness runs", () => {
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
 
     const listPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:core",
+      pluginId: "avalon:discovery",
       canonicalToolName: "list_connector_plugins",
       capability: "avalon.plugins.list",
       mode: "read",
       idempotency: "safe",
     }, selected);
     const loadPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:core",
+      pluginId: "avalon:discovery",
       canonicalToolName: "load_plugin",
       capability: "avalon.plugins.load",
+      mode: "read",
+      idempotency: "safe",
+    }, selected);
+    const timePolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: "avalon:time",
+      canonicalToolName: "avalon.current_time",
+      capability: "time.read",
+      mode: "read",
+      idempotency: "safe",
+    }, selected);
+    const workstreamPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: "avalon:workstream",
+      canonicalToolName: "avalon.read_workstream",
+      capability: "workstream.read",
       mode: "read",
       idempotency: "safe",
     }, selected);
@@ -330,6 +344,8 @@ describe("connector tools selected for harness runs", () => {
 
     expect(listPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(loadPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
+    expect(timePolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
+    expect(workstreamPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(monitorPolicy).toMatchObject({
       pluginId: monitorPluginId,
       connectionId: WEB_MONITOR_CONNECTION_ID,
@@ -395,6 +411,13 @@ describe("connector tools selected for harness runs", () => {
     expect(selected.coreTools.filter(({ definition }) =>
       definition.name === "avalon.run_subagent"
     )).toHaveLength(1);
+    expect(selected.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
+      "avalon:time",
+      "avalon:workstream",
+    ]);
+    expect(selected.corePlugins.find((plugin) =>
+      plugin.canonicalId === "avalon:workstream"
+    )?.tools.filter(({ definition }) => definition.name === "avalon.run_subagent")).toHaveLength(1);
     expect(selected.tools.filter(({ definition }) =>
       definition.name === "avalon.run_subagent"
     )).toHaveLength(1);
@@ -447,6 +470,10 @@ describe("connector tools selected for harness runs", () => {
       "avalon.web_fetch",
       "avalon.read_resource",
     ]);
+    expect(childTools.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
+      "avalon:time",
+      "avalon:workstream",
+    ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.run_subagent");
     expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
     expect(childTools.frozenConnections.has(`connection:${WORKSPACE_CONNECTION_ID}`)).toBe(true);
@@ -480,15 +507,12 @@ describe("connector tools selected for harness runs", () => {
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.web_fetch");
   });
 
-  it("bounds child tool results to leave room for search, fetch, and synthesis", () => {
-    const defaultLimits = __integrationTesting.childRunLimits({
-      ...env(new ToolSelectionDatabase([])),
-      HARNESS_MAX_TOOL_RESULT_BYTES: String(128 * 1_024),
-    } as Env);
+  it("does not add plugin, schema, or result ceilings to child runs", () => {
+    const defaultLimits = __integrationTesting.childRunLimits(env(new ToolSelectionDatabase([])));
 
-    expect(defaultLimits).toMatchObject({
-      maxToolResultBytes: 24 * 1_024,
-    });
+    expect(defaultLimits).not.toHaveProperty("maxActivePlugins");
+    expect(defaultLimits).not.toHaveProperty("maxToolSchemaBytes");
+    expect(defaultLimits).not.toHaveProperty("maxToolResultBytes");
   });
 
   it("rejects a child request for a credential plugin not already active in the parent", async () => {
@@ -867,7 +891,7 @@ describe("connector tools selected for harness runs", () => {
       executionPrincipal: { type: "user", userId: USER_ID },
       systemPrompt: "Use only currently authorized connector tools.",
       messages: [{ role: "user", content: "Search my Drive." }],
-      tools: [],
+      corePlugins: [],
       plugins: selected.plugins,
       activationHints: [plugin.canonicalId],
       // Connector execution performs the authoritative database check. This

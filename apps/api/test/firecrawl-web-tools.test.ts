@@ -250,8 +250,7 @@ describe("Avalon Firecrawl harness tools", () => {
     vi.stubGlobal("fetch", fetcher);
     const tool = __integrationTesting
       .createAvalonTools(envWithFirecrawl("fc-test-key", {
-        WEB_FETCH_MAX_BYTES: "100",
-        HARNESS_MAX_TOOL_RESULT_BYTES: "12",
+        WEB_FETCH_MAX_BYTES: "12",
       }), workflowInput)
       .find((candidate) => candidate.definition.name === "avalon.web_fetch");
     expect(tool).toBeDefined();

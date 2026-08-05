@@ -3,7 +3,9 @@ import {
   ActivityQueueMessageSchema,
   AnswerElicitationRequestSchema,
   AutomationDraftSchema,
+  AutomationDraftStreamEventSchema,
   ClientSocketEventSchema,
+  CreateAutomationRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
@@ -99,6 +101,51 @@ describe("boundary contracts", () => {
       ready: true
     });
     expect(result.success).toBe(false);
+  });
+
+  it("does not cap automation plugin recommendations, defaults, or activity", () => {
+    const recommendations = Array.from({ length: 25 }, (_, index) => ({
+      pluginId: `plugin_service${index}`,
+      recommendedTools: [`service${index}_read`],
+      reason: `Use service ${index}`,
+    }));
+    const draft = AutomationDraftSchema.parse({
+      name: "Broad automation",
+      description: "Use every authorized service required by the workflow.",
+      overview: "Runs the complete workflow across all required services.",
+      instructions: "Use each recommended plugin to complete the workflow.",
+      triggers: [{ type: "manual" }],
+      requiredCapabilities: [],
+      expectedOutputs: ["Completed workflow"],
+      defaultBehavior: {},
+      recommendedPlugins: recommendations,
+      suggestedScope: "workspace",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    });
+
+    expect(draft.recommendedPlugins).toHaveLength(25);
+    expect(CreateAutomationRequestSchema.parse({
+      draft,
+      scope: "workspace",
+      defaultPluginIds: recommendations.map((plugin) => plugin.pluginId),
+    }).defaultPluginIds).toHaveLength(25);
+    const activity = AutomationDraftStreamEventSchema.parse({
+      type: "tool",
+      toolCallId: "tool-1",
+      name: "automation_plugins_list",
+      summary: "Loaded plugins",
+      status: "completed",
+      plugins: recommendations.map((plugin, index) => ({
+        pluginId: plugin.pluginId,
+        displayName: `Service ${index}`,
+        icon: "plug",
+      })),
+    });
+    expect(activity.type).toBe("tool");
+    if (activity.type !== "tool") throw new Error("Expected tool activity");
+    expect(activity.plugins).toHaveLength(25);
   });
 
   it("validates ordered socket mutations", () => {

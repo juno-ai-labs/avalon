@@ -44,14 +44,16 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
-Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and must be loaded with Avalon's core plugin tool. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and must be loaded with the always-active `avalon_discovery` plugin. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+
+Every run owns a fresh Bind registry. Always-active functionality is split into stable plugin identities rather than one variable catch-all bundle: `avalon_discovery` owns catalog and activation tools, `avalon_time` owns exact current-time lookup, `avalon_workstream` owns work-stream/resource/artifact tools, and `avalon_automation_architect` owns automation research and draft submission. A runtime registers only the applicable stable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Avalon revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and health. Revocation drops a plugin. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
 
 ## Loop
 
 1. Claim the lease, validate the principal, freeze the run scope, and load authorized context.
-2. Build Avalon's core plugin plus the frozen connection catalog; restore only reauthorized hints.
+2. Register the applicable stable core plugins plus the frozen connection catalog; restore only reauthorized hints.
 3. Reauthorize active plugins, render the stable prompt/tool surface, and ask OpenRouter through Bind's deterministic route plan.
 4. Stream text through the epoch-aware protocol; reasoning fields are ignored.
 5. Validate tools and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
@@ -63,11 +65,11 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ## Limits
 
-Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, plugin-catalog tokens, active plugins, active tool-schema bytes, and each model-visible tool result. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Web results, fetched bytes, replay payloads, and attachments are independently bounded. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the live tail with an LLM continuation summary. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages.
+Environment configuration bounds model iterations, tool calls, wall-clock and per-tool time, cost, and plugin-catalog tokens. Request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Avalon does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the live tail with an LLM continuation summary. Work-stream checkpoints are stored regionally with the durable sequence boundary so later runs replay the compacted context plus newer messages.
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, and WebP are normalized through Cloudflare Images; TIFF and HEIF/HEIC also have bounded local conversion fallbacks. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript.
 
-Oversized tool results are reduced only as valid JSON inside an explicit truncation envelope; an unsafe reduction fails with `context_limit_exceeded`. An oversized active surface uses `tool_surface_too_large`; wall-time, iteration, tool-call, and cost ceilings use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded`. Limits never silently reinterpret a write as successful.
+Wall-time, iteration, tool-call, and cost ceilings use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded`. Limits never silently reinterpret a write as successful.
 
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run.
 
@@ -77,7 +79,7 @@ The `request_elicitation` tool creates a typed text/radio/single/multi-select bl
 
 ## Durable receipts and terminal state
 
-Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful bounded output is written to regional R2 and then committed to D1 before Bind can observe it.
+Each tool call receives a stable Avalon receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. Before execution, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to D1 before Bind can observe it.
 
 Completed receipts replay without another provider call. Incomplete safe reads may resume. A reused or mismatched plan, incomplete prior write, or timed-out `record_before_execute` write becomes `ambiguous_external_write` and is never blindly repeated. Lifecycle events are append-only, and terminalization is idempotent and lease-fenced.
 

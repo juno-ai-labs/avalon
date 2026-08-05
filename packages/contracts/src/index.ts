@@ -403,7 +403,7 @@ export const AutomationDraftSchema = z.object({
   requiredCapabilities: z.array(z.string()).default([]),
   expectedOutputs: z.array(z.string()).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
-  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).max(20).default([]),
+  recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   suggestedScope: ScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
@@ -423,7 +423,7 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     name: z.string().min(1).max(200),
     summary: z.string().min(1).max(1000),
     status: z.enum(["started", "completed", "failed"]),
-    plugins: z.array(AutomationPluginActivitySchema).max(20).default([]),
+    plugins: z.array(AutomationPluginActivitySchema).default([]),
     durationMs: z.number().int().nonnegative().optional()
   }),
   z.object({
@@ -577,7 +577,7 @@ export const AnswerElicitationRequestSchema = z.union([
 export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
-  defaultPluginIds: z.array(ModelPluginIdSchema).max(20).default([])
+  defaultPluginIds: z.array(ModelPluginIdSchema).default([])
 });
 export const CompileAutomationRequestSchema = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
