@@ -4,7 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatRelative } from '../lib/format';
-import type { Workspace, WorkspaceMember, WorkstreamSummary } from '../lib/types';
+import type { Message, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Avatar, AvatarStack, AvalonMark, Button, InlineError, Modal, StatusDot } from '../components/primitives';
 
 function WaitingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
@@ -107,9 +107,42 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     onSettled: () => {
       submittingRef.current = false;
     },
-    onSuccess: (workstream) => {
+    onSuccess: (created, input) => {
+      const selectedParticipants = (members.data ?? [])
+        .filter((member) => input.participantIds.includes(member.id))
+        .map((member) => ({ ...member, role: 'explicit' }));
+      const detail: WorkstreamDetail = {
+        ...created.workstream,
+        createdAt: created.createdAt,
+        createdBy: { ...workspace.currentUser, role: 'creator' },
+        participants: [{ ...workspace.currentUser, role: 'creator' }, ...selectedParticipants],
+        viewers: [],
+        resources: [],
+        connections: [],
+        artifacts: [],
+        backgroundTasks: [],
+        automationRuns: [],
+        openElicitations: [],
+        suggestions: [],
+      };
+      const openingMessage: Message = {
+        id: created.messageId,
+        clientMessageId: created.clientMessageId,
+        workstreamId: created.workstream.id,
+        sequenceNumber: 1,
+        authorType: 'human',
+        author: workspace.currentUser,
+        messageType: 'text',
+        text: input.openingMessage,
+        createdAt: created.createdAt,
+      };
+      queryClient.setQueryData(['workstream', created.workstream.id], detail);
+      queryClient.setQueryData(['messages', created.workstream.id], [openingMessage]);
+      queryClient.setQueryData(['messages-cursor', created.workstream.id], null);
+      void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
-      void navigate(`/workstreams/${workstream.id}`);
+      void navigate(`/workstreams/${created.workstream.id}`);
     },
   });
 
