@@ -31,5 +31,11 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-explicit-any": "off"
     }
+  },
+  {
+    files: ["apps/api/src/mappers/**/*.ts"],
+    rules: {
+      "@typescript-eslint/explicit-function-return-type": "error"
+    }
   }
 );

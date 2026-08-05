@@ -165,6 +165,7 @@ describe("API security utilities", () => {
       scope: "personal" as const,
       owner_user_id: "user-1",
       provider_account_id: "google-account-1",
+      model_plugin_id: "plugin_google",
     };
     const reconciled = __connectionServiceTesting.reconcileGoogleAccount(
       existing,

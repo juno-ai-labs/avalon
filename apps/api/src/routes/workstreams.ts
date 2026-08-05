@@ -7,6 +7,7 @@ import {
   CreateWorkstreamRequestSchema,
   IdSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamDetailSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -35,9 +36,10 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id)),
 );
-workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).get(c.req.valid("param").id)),
-);
+workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
+  const detail = await new WorkstreamService(c.env, getAuth(c)).get(c.req.valid("param").id);
+  return c.json(WorkstreamDetailSchema.parse(detail));
+});
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))),
 );

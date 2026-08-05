@@ -167,6 +167,46 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("requires every connection row to retain a valid model-facing plugin id", () => {
+    const database = migrateDatabaseThrough("0032_automation_plugin_defaults.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-plugin-invariant', 'google-plugin-invariant', 'plugin-invariant@example.com',
+              'Plugin Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-plugin-invariant', 'Plugin Workspace', 'plugin-invariant', 'global',
+              'user-plugin-invariant', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, display_name, status, created_at, updated_at)
+      VALUES ('legacy-disabled', 'workspace-plugin-invariant', 'google', 'workspace',
+              'Removed Google', 'disabled', '2026-01-01', '2026-01-01');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0033_connection_model_plugin_id_invariant.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT model_plugin_id FROM connector_connections WHERE id = 'legacy-disabled'",
+    ).get()).toEqual({ model_plugin_id: "plugin_google" });
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, display_name, model_plugin_id, status, created_at, updated_at)
+      VALUES ('missing-plugin-id', 'workspace-plugin-invariant', 'google', 'workspace',
+              'Missing', NULL, 'disabled', '2026-01-02', '2026-01-02');
+    `)).toThrow(/model_plugin_id must match the API contract/u);
+    expect(() => database.exec(
+      "UPDATE connector_connections SET model_plugin_id = 'Plugin_Google' WHERE id = 'legacy-disabled'",
+    )).toThrow(/model_plugin_id must match the API contract/u);
+    expect(() => database.exec(
+      "UPDATE connector_connections SET model_plugin_id = NULL WHERE id = 'legacy-disabled'",
+    )).toThrow(/model_plugin_id must match the API contract/u);
+    database.close();
+  });
+
   it("corrects the pre-release plural work-stream email domain without changing its reserved name", () => {
     const database = migrateDatabaseThrough("0020_workstream_email_route_lifecycle.sql");
     database.exec(`
@@ -216,8 +256,8 @@ describe("database migrations", () => {
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
       VALUES ('workspace-1', 'Workspace', 'workspace', 'global', 'user-1', '2026-01-01', '2026-01-01');
       INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, display_name, created_at, updated_at)
-      VALUES ('connection-1', 'workspace-1', 'github', 'workspace', 'GitHub', '2026-01-01', '2026-01-01');
+        (id, workspace_id, connector_type, scope, display_name, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-1', 'workspace-1', 'github', 'workspace', 'GitHub', 'plugin_github', '2026-01-01', '2026-01-01');
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, last_activity_at, created_at, updated_at)
@@ -262,10 +302,10 @@ describe("database migrations", () => {
         (id, name, slug, region, created_by_user_id, created_at, updated_at)
       VALUES ('workspace-watch', 'Watch Workspace', 'watch-workspace', 'global', 'user-watch', '2026-01-01', '2026-01-01');
       INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, display_name, created_at, updated_at)
+        (id, workspace_id, connector_type, scope, display_name, model_plugin_id, created_at, updated_at)
       VALUES
-        ('connection-github', 'workspace-watch', 'github', 'workspace', 'GitHub', '2026-01-01', '2026-01-01'),
-        ('connection-google', 'workspace-watch', 'google', 'workspace', 'Google', '2026-01-01', '2026-01-01');
+        ('connection-github', 'workspace-watch', 'github', 'workspace', 'GitHub', 'plugin_github', '2026-01-01', '2026-01-01'),
+        ('connection-google', 'workspace-watch', 'google', 'workspace', 'Google', 'plugin_google', '2026-01-01', '2026-01-01');
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
          harness_status, last_activity_at, created_at, updated_at)

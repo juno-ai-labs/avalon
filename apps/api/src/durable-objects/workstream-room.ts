@@ -10,6 +10,7 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { connectionFromRow } from "../mappers/connection";
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
@@ -619,19 +620,7 @@ export class WorkstreamRoom {
         createdAt: resource.created_at,
         updatedAt: resource.updated_at
       })),
-      connections: connectionRows.results.map((connection) => ({
-        id: connection.id,
-        workspaceId: connection.workspace_id,
-        connectorType: connection.connector_type,
-        scope: connection.scope,
-        ownerUserId: connection.owner_user_id,
-        ownerName: connection.owner_name ?? null,
-        displayName: connection.display_name,
-        grantedCapabilities: parseJsonArray(connection.granted_scopes_json),
-        status: connection.status,
-        lastSyncAt: connection.last_sync_at,
-        createdAt: connection.created_at
-      })),
+      connections: connectionRows.results.map(connectionFromRow),
       openElicitations: elicitationRows.results.map((elicitation) => ({
         id: elicitation.id,
         workstreamId: elicitation.workstream_id,

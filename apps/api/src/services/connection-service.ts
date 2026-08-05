@@ -12,6 +12,7 @@ import {
   type GitHubWebhookResourceHint,
 } from "@avalon/connectors";
 import type {
+  Connection,
   CreateWebhookConnectionRequestSchema,
   CreateWebMonitorRequestSchema,
   Scope,
@@ -21,6 +22,7 @@ import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig } from "../lib/connector-registry";
 import { decryptString, encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -49,7 +51,7 @@ interface StoredConnection extends Record<string, unknown> {
   connector_type: string;
   scope: Scope;
   owner_user_id: string | null;
-  model_plugin_id?: string | null;
+  model_plugin_id: string;
 }
 
 type OAuthConnectorProvider = "linear" | "notion";
@@ -73,7 +75,7 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
 export class ConnectionService {
   constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
 
-  async list() {
+  async list(): Promise<Connection[]> {
     const auth = this.requireAuth();
     const result = await this.env.DB.prepare(
       `SELECT c.*, u.name AS owner_name FROM connector_connections c
@@ -81,7 +83,7 @@ export class ConnectionService {
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
        ORDER BY c.display_name COLLATE NOCASE`,
     ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
-    return (result.results ?? []).map(toConnection);
+    return (result.results ?? []).map(connectionFromRow);
   }
 
   async beginGoogle(input: {
@@ -1108,7 +1110,7 @@ export class ConnectionService {
        WHERE workspace_id = ? AND status <> 'disabled' AND (? IS NULL OR id <> ?)`,
     ).bind(workspaceId, existingConnectionId, existingConnectionId).all<{
       id: string;
-      model_plugin_id: string | null;
+      model_plugin_id: string;
     }>();
     const used = new Set(
       (active.results ?? [])
@@ -1118,7 +1120,7 @@ export class ConnectionService {
     if (existingConnectionId) {
       const current = await this.env.DB.prepare(
         `SELECT model_plugin_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
-      ).bind(existingConnectionId, workspaceId).first<{ model_plugin_id: string | null }>();
+      ).bind(existingConnectionId, workspaceId).first<{ model_plugin_id: string }>();
       const currentId = current?.model_plugin_id;
       if (currentId && isModelPluginIdForBase(currentId, base) && !used.has(currentId)) return currentId;
     }
@@ -1204,15 +1206,6 @@ export class ConnectionService {
     });
     if (!response.ok) throw new Error(`Scheduler refresh failed (${response.status})`);
   }
-}
-
-function toConnection(row: Record<string, unknown>) {
-  return {
-    id: String(row.id), modelPluginId: String(row.model_plugin_id), workspaceId: String(row.workspace_id), connectorType: String(row.connector_type), scope: String(row.scope),
-    ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id), ownerName: row.owner_name == null ? null : String(row.owner_name),
-    displayName: String(row.display_name), grantedCapabilities: parseJson<string[]>(row.granted_scopes_json, []), status: String(row.status),
-    lastSyncAt: row.last_sync_at == null ? null : String(row.last_sync_at), createdAt: String(row.created_at),
-  };
 }
 
 function parseJson<T>(value: unknown, fallback: T): T {

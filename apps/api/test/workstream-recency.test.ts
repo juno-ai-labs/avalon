@@ -1,13 +1,20 @@
+import { WorkstreamDetailSchema } from "@avalon/contracts";
+import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import type { Env } from "../src/env";
+import type { Env, HonoAppEnv } from "../src/env";
+import { workstreamRoutes } from "../src/routes/workstreams";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "../src/services/workstream-email-routing-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 
 const EMAIL_DOMAIN = "automation.with-avalon.com";
+const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const USER_ID = "00000000-0000-4000-8000-000000000002";
+const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000003";
+const CONNECTION_ID = "00000000-0000-4000-8000-000000000004";
 
 describe("work-stream recency ordering", () => {
   it("opens a healthy work stream with one combined visibility lookup", async () => {
-    const row = workstreamRow("workstream-1", `calm-bright-ready-otter@${EMAIL_DOMAIN}`, "2026-08-02T03:00:00.000Z");
+    const row = contractWorkstreamRow();
     const sqlStatements: string[] = [];
     const prepare = vi.fn((sql: string) => {
       sqlStatements.push(sql);
@@ -24,14 +31,130 @@ describe("work-stream recency ordering", () => {
         AVALON_REGION: "global",
         DB: { prepare, batch: vi.fn() },
       } as unknown as Env,
-      { workspaceId: "workspace-1", userId: "user-1" } as never,
+      { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
     );
 
-    await expect(service.get("workstream-1")).resolves.toMatchObject({ id: "workstream-1" });
+    await expect(service.get(WORKSTREAM_ID)).resolves.toMatchObject({ id: WORKSTREAM_ID });
 
     expect(sqlStatements.filter((sql) => sql.includes("SELECT w.*, t.name AS origin_label"))).toHaveLength(1);
     expect(sqlStatements.some((sql) => sql.includes("SELECT email_address, email_route_status, archived_at"))).toBe(false);
   });
+
+  it("includes the model-facing plugin id in embedded work-stream connections", async () => {
+    const row = contractWorkstreamRow();
+    const connection = contractConnectionRow();
+    const prepare = vi.fn((sql: string) => {
+      const statement = {
+        bind: vi.fn(() => statement),
+        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
+        all: vi.fn(async () => ({
+          success: true,
+          results: sql.includes("FROM connector_connections c") ? [connection] : [],
+        })),
+      };
+      return statement;
+    });
+    const service = new WorkstreamService(
+      {
+        APP_ENV: "production",
+        AVALON_REGION: "global",
+        DB: { prepare, batch: vi.fn() },
+      } as unknown as Env,
+      { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
+    );
+
+    const detail = await service.get(WORKSTREAM_ID);
+
+    expect(detail.connections).toEqual([
+      expect.objectContaining({ id: CONNECTION_ID, modelPluginId: "plugin_google" }),
+    ]);
+  });
+
+  it("serves a GET work-stream response that satisfies the released wire contract", async () => {
+    const row = contractWorkstreamRow();
+    const connection = contractConnectionRow();
+    const prepare = vi.fn((sql: string) => {
+      const statement = {
+        bind: vi.fn(() => statement),
+        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
+        all: vi.fn(async () => ({
+          success: true,
+          results: sql.includes("FROM connector_connections c") ? [connection] : [],
+        })),
+      };
+      return statement;
+    });
+    const environment = {
+      APP_ENV: "production",
+      AVALON_REGION: "global",
+      DB: { prepare, batch: vi.fn() },
+    } as unknown as Env;
+    const app = new Hono<HonoAppEnv>();
+    app.use("*", async (context, next) => {
+      context.set("auth", {
+        sessionId: "test-session",
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        region: "global",
+        role: "owner",
+      });
+      await next();
+    });
+    app.route("/workstreams", workstreamRoutes);
+
+    const response = await app.request(`/workstreams/${WORKSTREAM_ID}`, undefined, environment);
+
+    expect(response.status).toBe(200);
+    expect(WorkstreamDetailSchema.parse(await response.json()).connections).toEqual([
+      expect.objectContaining({ id: CONNECTION_ID, modelPluginId: "plugin_google" }),
+    ]);
+  });
+
+  it("rejects a connection row that violates the wire contract", async () => {
+    const row = contractWorkstreamRow();
+    const connection = {
+      ...contractConnectionRow(),
+      model_plugin_id: null,
+    };
+    const prepare = vi.fn((sql: string) => {
+      const statement = {
+        bind: vi.fn(() => statement),
+        first: vi.fn(async () => sql.includes("SELECT w.*, t.name AS origin_label") ? row : null),
+        all: vi.fn(async () => ({
+          success: true,
+          results: sql.includes("FROM connector_connections c") ? [connection] : [],
+        })),
+      };
+      return statement;
+    });
+    const service = new WorkstreamService(
+      {
+        APP_ENV: "production",
+        AVALON_REGION: "global",
+        DB: { prepare, batch: vi.fn() },
+      } as unknown as Env,
+      { workspaceId: WORKSPACE_ID, userId: USER_ID } as never,
+    );
+
+    await expect(service.get(WORKSTREAM_ID)).rejects.toThrow();
+  });
+
+  function contractConnectionRow() {
+    return {
+      id: CONNECTION_ID,
+      model_plugin_id: "plugin_google",
+      workspace_id: WORKSPACE_ID,
+      connector_type: "google",
+      scope: "workspace",
+      owner_user_id: null,
+      owner_name: null,
+      display_name: "Google Workspace",
+      granted_scopes_json: "[]",
+      status: "healthy",
+      last_sync_at: null,
+      created_at: "2026-08-01T00:00:00.000Z",
+    };
+  }
 
   it("selects the latest activity before applying the page limit", async () => {
     const statement = {
@@ -183,6 +306,14 @@ function workstreamRow(id: string, emailAddress: string | null, lastActivityAt: 
     created_at: "2026-08-01T00:00:00.000Z",
     updated_at: "2026-08-01T00:00:00.000Z",
     archived_at: null,
+  };
+}
+
+function contractWorkstreamRow() {
+  return {
+    ...workstreamRow(WORKSTREAM_ID, `calm-bright-ready-otter@${EMAIL_DOMAIN}`, "2026-08-02T03:00:00.000Z"),
+    workspace_id: WORKSPACE_ID,
+    created_by_user_id: USER_ID,
   };
 }
 
