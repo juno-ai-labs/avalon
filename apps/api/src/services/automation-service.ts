@@ -8,7 +8,7 @@ import type {
   WorkstreamWorkflowInput,
 } from "@avalon/contracts";
 import { z } from "zod";
-import { OpenRouterError } from "@avalon/agent-harness";
+import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -117,6 +117,22 @@ export class AutomationService {
           : [{ path: "$", code: "invalid_json" }];
         throw new ApiError(502, "model_output_invalid", "Avalon could not validate the automation draft", {
           validationIssues,
+        });
+      }
+      if (error instanceof AutomationCompilerError) {
+        const timedOut = error.code === "run_wall_time_limit_exceeded";
+        throw new ApiError(
+          timedOut ? 503 : 502,
+          timedOut ? "automation_compile_timeout" : "automation_compile_failed",
+          timedOut
+            ? "Avalon took too long to refine the automation. Try again"
+            : "Avalon could not refine the automation draft. Try again",
+          { failureCode: error.code, retryable: error.retryable },
+        );
+      }
+      if (error instanceof OpenRouterError) {
+        throw new ApiError(502, "automation_provider_failed", "The automation model could not complete the draft. Try again", {
+          retryable: error.status !== 401 && error.status !== 402 && error.status !== 403,
         });
       }
       throw error;
