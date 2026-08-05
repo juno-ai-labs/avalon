@@ -729,6 +729,8 @@ export async function compileAutomationDraft(
     return await compileAutomation({
       apiKey: env.OPENROUTER_API_KEY,
       model: env.OPENROUTER_AUTOMATION_MODEL,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
       fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
       messages: input.messages,
       currentDraft: input.currentDraft ?? null,
@@ -805,6 +807,21 @@ async function loadAutomationCreatorPluginCatalog(
     const adapter = registry.get(String(row.connector_type));
     const grantedScopes = parseJson<string[]>(row.granted_scopes_json, []);
     const granted = new Set(grantedScopes);
+    const connectionId = String(row.id);
+    const connectorType = String(row.connector_type);
+    const scope = row.scope === "workspace" ? "workspace" as const : "personal" as const;
+    const ownerUserId = row.owner_user_id == null ? null : String(row.owner_user_id);
+    const frozen: FrozenConnectorPlugin = {
+      pluginId: `connection:${connectionId}`,
+      modelPluginId,
+      connectionId,
+      workspaceId,
+      connectorType,
+      scope,
+      ownerUserId,
+      grantedScopes: [...grantedScopes],
+      shortWireName: stableConnectionWireName(modelPluginId),
+    };
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
@@ -817,21 +834,141 @@ async function loadAutomationCreatorPluginCatalog(
       displayName: presentation.displayName,
       icon: connectorAutomationPluginIcon(String(row.connector_type), presentation.displayName),
       description: presentation.description,
-      scope: row.scope === "workspace" ? "workspace" : "personal",
+      scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
       tools: adapter.agentPlugin.tools
         .filter((definition) => granted.has(definition.capability))
         .map((definition) => ({
           name: stableWireToolName(wirePrefix, definition.name),
+          canonicalName: definition.name,
           description: definition.description,
           capability: definition.capability,
           mode: definition.mode,
+          idempotency: definition.idempotency,
           inputSchema: definition.inputSchema,
+          execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
+            env,
+            { workspaceId, userId },
+            frozen,
+            definition.name,
+            definition.capability,
+            toolInput,
+            context.signal,
+            context.providerIdempotencyKey,
+          ),
         })),
     });
   }
   return catalog.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+}
+
+async function executeAutomationCreatorConnectorTool(
+  env: Env,
+  input: { workspaceId: string; userId: string },
+  frozen: FrozenConnectorPlugin,
+  toolName: string,
+  capability: string,
+  toolInput: unknown,
+  signal: AbortSignal,
+  providerIdempotencyKey?: string,
+) {
+  const { connection, adapter } = await loadAutomationCreatorConnectionContext(
+    env,
+    input,
+    frozen,
+    capability,
+    signal,
+  );
+  return withConnectorCredentialLifecycle(env, connection, async () => {
+    if (
+      adapter.refreshCredentials &&
+      typeof connection.credentials.expiresAt === "string" &&
+      Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
+    ) {
+      connection.credentials = await adapter.refreshCredentials(connection, signal);
+    }
+    await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
+    const health = await raceWithSignal(adapter.healthCheck(connection), signal);
+    if (!health.ok) throw new ConnectorError("unauthorized", "Connector authorization is not healthy");
+    const effectivePrincipal = connection.scope === "workspace"
+      ? { type: "workspace" as const, workspaceId: input.workspaceId }
+      : { type: "user" as const, userId: input.userId };
+    return adapter.executeTool(
+      toolName,
+      toolInput,
+      createConnectorToolContext(connection, effectivePrincipal, signal, providerIdempotencyKey),
+    );
+  });
+}
+
+async function loadAutomationCreatorConnectionContext(
+  env: Env,
+  input: { workspaceId: string; userId: string },
+  frozen: FrozenConnectorPlugin,
+  capability: string,
+  signal: AbortSignal,
+): Promise<{ connection: ConnectorConnectionContext; adapter: ResolvedConnectorAdapter }> {
+  const row = await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
+  let credentials: Record<string, unknown> = {};
+  if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
+    credentials = JSON.parse(await decryptString(
+      row.encrypted_credentials,
+      row.credential_iv,
+      env.CONNECTOR_CREDENTIALS_KEY,
+      frozen.connectionId,
+    )) as Record<string, unknown>;
+  }
+  if (signal.aborted) throw signal.reason;
+  return {
+    connection: {
+      id: frozen.connectionId,
+      workspaceId: input.workspaceId,
+      scope: frozen.scope,
+      ownerUserId: frozen.ownerUserId,
+      grantedScopes: parseJson(row.granted_scopes_json, []),
+      credentials,
+      cursor: parseJson(row.cursor_json, {}),
+      config: parseJson(row.config_json, {}),
+    },
+    adapter: connectorRegistryForEnv(env).get(frozen.connectorType),
+  };
+}
+
+async function assertAutomationCreatorConnectionAuthorized(
+  env: Env,
+  input: { workspaceId: string; userId: string },
+  frozen: FrozenConnectorPlugin,
+  capability: string,
+): Promise<Record<string, unknown>> {
+  if (frozen.workspaceId !== input.workspaceId || frozen.pluginId !== `connection:${frozen.connectionId}`) {
+    throw new ConnectorError("unauthorized", "Connector is outside this automation-creator scope");
+  }
+  await assertExecutionPrincipalAuthorized(env.DB, input.workspaceId, {
+    type: "user",
+    userId: input.userId,
+  });
+  const row = await env.DB.prepare(
+    `SELECT id, workspace_id, connector_type, scope, owner_user_id, model_plugin_id,
+            granted_scopes_json, encrypted_credentials, credential_iv, cursor_json, config_json, status
+       FROM connector_connections
+      WHERE id = ? AND workspace_id = ?`,
+  ).bind(frozen.connectionId, input.workspaceId).first<Record<string, unknown>>();
+  if (
+    !row || row.status !== "healthy" || row.connector_type !== frozen.connectorType ||
+    row.scope !== frozen.scope || String(row.model_plugin_id ?? "") !== frozen.modelPluginId ||
+    (row.owner_user_id == null ? null : String(row.owner_user_id)) !== frozen.ownerUserId
+  ) {
+    throw new ConnectorError("unauthorized", "Connector is no longer healthy or authorized for automation creation");
+  }
+  if (frozen.scope === "personal" && frozen.ownerUserId !== input.userId) {
+    throw new ConnectorError("unauthorized", "Personal connector ownership changed");
+  }
+  const currentScopes = parseJson<string[]>(row.granted_scopes_json, []);
+  if (!frozen.grantedScopes.includes(capability) || !currentScopes.includes(capability)) {
+    throw new ConnectorError("unauthorized", "Connector capability was revoked");
+  }
+  return row;
 }
 
 export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
@@ -4356,6 +4493,7 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
+  loadAutomationCreatorPluginCatalog,
   assertRunAuthorityStillValid,
   assertSafePublicUrl,
   createAvalonTools,
