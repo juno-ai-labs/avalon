@@ -17,7 +17,7 @@ import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).max(20).optional(), overrides: z.record(z.string(), z.unknown()).optional() });
+const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).optional(), overrides: z.record(z.string(), z.unknown()).optional() });
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) => c.json(await new AutomationService(c.env, getAuth(c)).list()));
@@ -26,15 +26,11 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
   const requestId = c.get("requestId");
   const service = new AutomationService(c.env, getAuth(c));
   return streamSSE(c, async (stream) => {
-    let assistantMessage = "";
     try {
       const draft = await service.compile(input, requestId, {
         signal: c.req.raw.signal,
         onStreamEvent: async (event) => {
-          if (event.type === "completed") {
-            assistantMessage = event.content;
-            return;
-          }
+          if (event.type === "completed") return;
           await stream.writeSSE({
             event: event.type,
             data: JSON.stringify(AutomationDraftStreamEventSchema.parse(event)),
@@ -44,9 +40,9 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
       const completed = AutomationDraftStreamEventSchema.parse({
         type: "completed",
         draft,
-        assistantMessage: assistantMessage
-          || draft.followUpQuestion
-          || (draft.ready ? "The automation is ready to create." : "I need one more detail before I can create this automation."),
+        assistantMessage: draft.elicitation?.prompt
+          ?? draft.followUpQuestion
+          ?? (draft.ready ? "The automation is ready to create." : "I need one more detail before I can create this automation."),
       });
       await stream.writeSSE({ event: completed.type, data: JSON.stringify(completed) });
     } catch (error) {
@@ -88,7 +84,7 @@ automationRoutes.post("/:id/next-run/open", zValidator("param", idParam), async 
 
 const templateParam = z.object({ id: IdSchema });
 const versionBody = z.object({ draft: AutomationDraftSchema });
-const subscribeBody = z.object({ defaultPluginIds: z.array(ModelPluginIdSchema).max(20).default([]) });
+const subscribeBody = z.object({ defaultPluginIds: z.array(ModelPluginIdSchema).default([]) });
 const adoptParam = z.object({ id: IdSchema });
 const adoptBody = z.object({ versionId: IdSchema });
 

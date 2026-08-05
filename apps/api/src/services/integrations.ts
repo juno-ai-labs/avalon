@@ -1,5 +1,9 @@
 import {
-  BIND_RUNTIME_CORE_TOOL_DEFINITIONS,
+  AVALON_CURRENT_TIME_TOOL_DEFINITION,
+  AVALON_DISCOVERY_PLUGIN_ID,
+  AVALON_TIME_PLUGIN_ID,
+  AVALON_WORKSTREAM_PLUGIN_ID,
+  AVALON_DISCOVERY_TOOL_DEFINITIONS,
   AutomationCompilerError,
   OpenRouterError,
   classifyAddressing,
@@ -82,12 +86,10 @@ import {
   type InlineChildResult,
 } from "../runtime/harness-run-runtime";
 
-const TOOL_REPLAY_MAX_BYTES = 256_000;
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v3";
 const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
-const INLINE_CHILD_MAX_TOOL_RESULT_BYTES = 24 * 1_024;
 const INLINE_CHILD_SYSTEM_PROMPT = [
   "You are a focused read-only Avalon sub-agent.",
   "Complete exactly the delegated objective and return a concise result with evidence.",
@@ -137,7 +139,7 @@ const PersistedCompactionMessagesSchema = z.array(z.discriminatedUnion("role", [
 
 const InlineChildToolInputSchema = z.object({
   objective: z.string().trim().min(1).max(12_000),
-  pluginIds: z.array(z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u)).max(4).optional(),
+  pluginIds: z.array(z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u)).optional(),
 });
 
 type LoadedHarnessTools = Awaited<ReturnType<typeof loadHarnessTools>>;
@@ -1199,15 +1201,14 @@ export async function runWorkstreamHarness(
     maxWallClockMs: numericEnv(env, "HARNESS_MAX_WALL_CLOCK_MS", 240_000),
     maxCostCents: numericEnv(env, "HARNESS_MAX_COST_CENTS", 500),
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
-    maxActivePlugins: numericEnv(env, "HARNESS_MAX_ACTIVE_PLUGINS", 12),
-    maxToolSchemaBytes: numericEnv(env, "HARNESS_MAX_TOOL_SCHEMA_BYTES", 128 * 1_024),
-    maxToolResultBytes: numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
   };
   await persistImmutableRunScope(env.DB, input, liveness.lease, {
     executionPrincipal: input.executionPrincipal,
     eligibleConnectionIds: [...harnessTools.frozenConnections.values()].map((plugin) => plugin.connectionId),
     eligibleCapabilities: [
-      ...harnessTools.coreTools.map((tool) => tool.definition.capability),
+      ...AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition) => definition.capability),
+      ...harnessTools.corePlugins.flatMap((plugin) =>
+        plugin.tools.map((tool) => tool.definition.capability)),
       ...harnessTools.plugins.flatMap((plugin) =>
         plugin.tools.map((tool) => tool.definition.capability)),
     ],
@@ -1337,9 +1338,6 @@ export async function runWorkstreamHarness(
       maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
       maxCostCents: runLimits.maxCostCents,
       maxCatalogTokens: runLimits.maxCatalogTokens,
-      maxActivePlugins: runLimits.maxActivePlugins,
-      maxToolSchemaBytes: runLimits.maxToolSchemaBytes,
-      maxToolResultBytes: runLimits.maxToolResultBytes,
       requestEstablishmentTimeoutMs: numericEnv(env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
       ttftTimeoutMs: numericEnv(env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
       streamIdleTimeoutMs: numericEnv(env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
@@ -1363,7 +1361,7 @@ export async function runWorkstreamHarness(
         );
       },
     },
-    tools: harnessTools.coreTools,
+    corePlugins: harnessTools.corePlugins,
     plugins: harnessTools.plugins,
     activationHints,
     includeWebSearch: false,
@@ -1405,7 +1403,9 @@ export async function runWorkstreamHarness(
       await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
       const frozen = harnessTools.frozenConnections.get(pluginId);
       if (!frozen) {
-        if (pluginId !== "avalon:core") throw new ConnectorError("unauthorized", "Plugin is outside this run scope");
+        if (!isCoreHarnessPlugin(pluginId, harnessTools)) {
+          throw new ConnectorError("unauthorized", "Plugin is outside this run scope");
+        }
         return;
       }
       const policy = toolPolicyForCall(pluginId, toolName, harnessTools);
@@ -1872,24 +1872,17 @@ function childRunLimits(env: Env) {
     maxWallClockMs: Math.min(180_000, numericEnv(env, "HARNESS_CHILD_MAX_WALL_CLOCK_MS", 90_000)),
     maxCostCents: Math.min(250, numericEnv(env, "HARNESS_CHILD_MAX_COST_CENTS", 100)),
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
-    maxActivePlugins: Math.min(4, numericEnv(env, "HARNESS_CHILD_MAX_PLUGINS", 4)),
-    maxToolSchemaBytes: Math.min(
-      64 * 1_024,
-      numericEnv(env, "HARNESS_CHILD_MAX_TOOL_SCHEMA_BYTES", 64 * 1_024),
-    ),
-    // A child research run commonly needs search -> fetch -> synthesis. Keep
-    // each result compact so repeated context still leaves room for the
-    // objective, schemas, search results, and final synthesis.
-    maxToolResultBytes: Math.max(1_024, Math.min(
-      INLINE_CHILD_MAX_TOOL_RESULT_BYTES,
-      numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
-    )),
   };
 }
 
 function installInlineChildAgentTool(options: InlineChildToolOptions): HarnessTool {
   const tool = createInlineChildAgentTool(options);
   options.harnessTools.coreTools.push(tool);
+  const workstreamPlugin = options.harnessTools.corePlugins.find(
+    (plugin) => plugin.canonicalId === AVALON_WORKSTREAM_PLUGIN_ID,
+  );
+  if (!workstreamPlugin) throw new Error("Avalon workstream core plugin is missing");
+  workstreamPlugin.tools.push(tool);
   options.harnessTools.tools.push(tool);
   options.harnessTools.modeByTool.set(tool.definition.name, tool.definition.mode);
   options.harnessTools.idempotencyByTool.set(tool.definition.name, tool.definition.idempotency);
@@ -1919,6 +1912,7 @@ async function createInlineChildHarnessSurface(options: {
         return result;
       },
     }));
+  const childCorePlugins = createWorkstreamCorePlugins(childCoreTools);
   const childPlugins: HarnessPlugin[] = [];
   const childFrozenConnections = new Map<string, FrozenConnectorPlugin>();
   const childPluginSurfaceHashes = new Map<string, string>();
@@ -1975,6 +1969,7 @@ async function createInlineChildHarnessSurface(options: {
 
   return {
     coreTools: childCoreTools,
+    corePlugins: childCorePlugins,
     tools: [...childCoreTools, ...childPlugins.flatMap((plugin) => plugin.tools)],
     plugins: childPlugins,
     frozenConnections: childFrozenConnections,
@@ -2007,7 +2002,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           objective: { type: "string", minLength: 1, maxLength: 12_000 },
           pluginIds: {
             type: "array",
-            maxItems: 4,
             items: { type: "string", pattern: "^plugin_[a-z][a-z0-9_]{0,62}$" },
             description: "Already-active credential plugin IDs required for this investigation.",
           },
@@ -2033,14 +2027,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         return canonicalId;
       });
       const selectedPluginIds = [...new Set(
-        requestedCanonicalIds ?? [...options.activeCredentialPluginIds].sort().slice(0, limits.maxActivePlugins),
+        requestedCanonicalIds ?? [...options.activeCredentialPluginIds],
       )].sort();
-      if (selectedPluginIds.length > limits.maxActivePlugins) {
-        return {
-          output: { error: "tool_surface_too_large" },
-          summary: "The requested sub-agent connector surface is too large",
-        };
-      }
       for (const pluginId of selectedPluginIds) {
         if (!options.activeCredentialPluginIds.has(pluginId)) {
           throw new ConnectorError(
@@ -2138,7 +2126,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         assertChildOwned,
       });
       const {
-        coreTools: childCoreTools,
         plugins: childPlugins,
         frozenConnections: childFrozenConnections,
         pluginSurfaceHashes: childPluginSurfaceHashes,
@@ -2161,7 +2148,9 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             executionPrincipal: childInput.executionPrincipal,
             eligibleConnectionIds: [...childFrozenConnections.values()].map((plugin) => plugin.connectionId),
             eligibleCapabilities: [
-              ...childCoreTools.map((tool) => tool.definition.capability),
+              ...AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition) => definition.capability),
+              ...childHarnessTools.corePlugins.flatMap((plugin) =>
+                plugin.tools.map((tool) => tool.definition.capability)),
               ...childPlugins.flatMap((plugin) => plugin.tools.map((tool) => tool.definition.capability)),
             ],
             eligibleConnectionCapabilities: Object.fromEntries(
@@ -2225,9 +2214,6 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             maxWebResults: numericEnv(options.env, "WEB_SEARCH_MAX_RESULTS", 8),
             maxCostCents: limits.maxCostCents,
             maxCatalogTokens: limits.maxCatalogTokens,
-            maxActivePlugins: limits.maxActivePlugins,
-            maxToolSchemaBytes: limits.maxToolSchemaBytes,
-            maxToolResultBytes: limits.maxToolResultBytes,
             requestEstablishmentTimeoutMs: numericEnv(options.env, "HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS", 20_000),
             ttftTimeoutMs: numericEnv(options.env, "HARNESS_TTFT_TIMEOUT_MS", 45_000),
             streamIdleTimeoutMs: numericEnv(options.env, "HARNESS_STREAM_IDLE_TIMEOUT_MS", 30_000),
@@ -2240,7 +2226,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
           messages: [{ role: "user", content: args.objective }],
           compaction: {},
-          tools: childCoreTools,
+          corePlugins: childHarnessTools.corePlugins,
           plugins: childPlugins,
           activationHints,
           includeWebSearch: false,
@@ -2278,7 +2264,9 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             }
             const frozen = childFrozenConnections.get(pluginId);
             if (frozen) await assertFrozenConnectionAuthorized(options.env, childInput, frozen, policy.capability);
-            else if (pluginId !== "avalon:core") throw new ConnectorError("unauthorized", "Plugin is outside the child scope");
+            else if (!isCoreHarnessPlugin(pluginId, childHarnessTools)) {
+              throw new ConnectorError("unauthorized", "Plugin is outside the child scope");
+            }
           },
           findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
             await assertChildOwned();
@@ -2497,7 +2485,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         if (outcome.status === "completed" && childText.trim()) {
           childOutcome = {
             status: "completed",
-            result: { content: truncateUtf8(childText, 48 * 1_024) },
+            result: { content: childText },
             ...(outcome.model ? { model: outcome.model } : {}),
             usage: { ...outcome.usage, run_stats: outcome.stats },
           };
@@ -2769,15 +2757,7 @@ function serializeToolReplayOutput(output: unknown): string {
       output: { truncated: true, preview: "Tool output was not JSON-serializable" },
     });
   }
-  if (utf8Length(serialized) <= TOOL_REPLAY_MAX_BYTES) return serialized;
-  const previewBudget = TOOL_REPLAY_MAX_BYTES - 200;
-  return JSON.stringify({
-    replayVersion: 1,
-    output: {
-      truncated: true,
-      preview: truncateUtf8(serialized, previewBudget),
-    },
-  });
+  return serialized;
 }
 
 async function persistSuccessfulToolResult(
@@ -2841,7 +2821,7 @@ async function persistSuccessfulToolResult(
 async function loadToolReplayOutput(env: Env, outputRef: string): Promise<unknown | null> {
   try {
     const object = await env.PAYLOADS.get(outputRef);
-    if (!object || object.size > TOOL_REPLAY_MAX_BYTES) return null;
+    if (!object) return null;
     const envelope = JSON.parse(await object.text()) as { replayVersion?: unknown; output?: unknown };
     if (envelope.replayVersion !== 1 || !("output" in envelope)) return null;
     return envelope.output;
@@ -2861,6 +2841,7 @@ async function loadHarnessTools(
   runAuthoritySnapshot?: RunAuthoritySnapshot,
 ): Promise<{
   coreTools: HarnessTool[];
+  corePlugins: HarnessPlugin[];
   tools: HarnessTool[];
   plugins: HarnessPlugin[];
   frozenConnections: Map<string, FrozenConnectorPlugin>;
@@ -2890,8 +2871,9 @@ async function loadHarnessTools(
   const attached = new Set((attachedRows.results ?? []).map((row) => row.connection_id));
   const registry = connectorRegistryForEnv(env);
   const coreTools = createAvalonTools(env, input);
+  const corePlugins = createWorkstreamCorePlugins(coreTools);
   // `tools` retains the historical flattened view for API diagnostics and
-  // tests. The Bind runtime receives only `coreTools`; credential tools are
+  // tests. Bind receives the stable `corePlugins`; credential tools are
   // exposed exclusively through the credential-scoped plugins below.
   const tools: HarnessTool[] = [...coreTools];
   const plugins: HarnessPlugin[] = [];
@@ -2999,6 +2981,7 @@ async function loadHarnessTools(
   }
   return {
     coreTools,
+    corePlugins,
     tools,
     plugins: plugins.sort((left, right) => left.canonicalId.localeCompare(right.canonicalId)),
     frozenConnections,
@@ -3489,14 +3472,24 @@ function toolPolicyForCall(
   toolName: string,
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
 ): HarnessTool["definition"] | null {
-  if (pluginId === "avalon:core") {
-    return harnessTools.coreTools.find((tool) => tool.definition.name === toolName)?.definition
-      ?? BIND_RUNTIME_CORE_TOOL_DEFINITIONS.find((definition) => definition.name === toolName)
-      ?? null;
+  if (pluginId === AVALON_DISCOVERY_PLUGIN_ID) {
+    return AVALON_DISCOVERY_TOOL_DEFINITIONS.find((definition) => definition.name === toolName) ?? null;
+  }
+  const corePlugin = harnessTools.corePlugins.find((plugin) => plugin.canonicalId === pluginId);
+  if (corePlugin) {
+    return corePlugin.tools.find((tool) => tool.definition.name === toolName)?.definition ?? null;
   }
   return harnessTools.plugins
     .find((plugin) => plugin.canonicalId === pluginId)
     ?.tools.find((tool) => tool.definition.name === toolName)?.definition ?? null;
+}
+
+function isCoreHarnessPlugin(
+  pluginId: string,
+  harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+): boolean {
+  return pluginId === AVALON_DISCOVERY_PLUGIN_ID
+    || harnessTools.corePlugins.some((plugin) => plugin.canonicalId === pluginId);
 }
 
 type ToolPolicyIdentity = { pluginId: string } & HarnessToolPolicyIdentity;
@@ -3530,7 +3523,7 @@ function resolveHarnessToolReceiptPolicy(
   ) {
     throw new ConnectorError("unauthorized", "Tool policy identity is outside this run scope");
   }
-  if (identity.pluginId === "avalon:core") {
+  if (isCoreHarnessPlugin(identity.pluginId, harnessTools)) {
     return { pluginId: identity.pluginId, definition, connectionId: null, toolSurfaceHash: null };
   }
   const frozen = harnessTools.frozenConnections.get(identity.pluginId);
@@ -3564,7 +3557,16 @@ async function stableRunToolSurfaceHash(
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
 ): Promise<string> {
   return sha256(JSON.stringify({
-    core: harnessTools.coreTools.map((tool) => tool.definition),
+    core: [
+      {
+        pluginId: AVALON_DISCOVERY_PLUGIN_ID,
+        tools: AVALON_DISCOVERY_TOOL_DEFINITIONS,
+      },
+      ...harnessTools.corePlugins.map((plugin) => ({
+        pluginId: plugin.canonicalId,
+        tools: plugin.tools.map((tool) => tool.definition),
+      })),
+    ],
     plugins: [...harnessTools.pluginSurfaceHashes.entries()].sort(([left], [right]) => left.localeCompare(right)),
   }));
 }
@@ -3653,6 +3655,36 @@ function easyEnglishCurrentTime(
   ].join("\n");
 }
 
+function createWorkstreamCorePlugins(tools: HarnessTool[]): HarnessPlugin[] {
+  const timeTools = tools.filter((tool) => tool.definition.name === "avalon.current_time");
+  const workstreamTools = tools.filter((tool) => tool.definition.name !== "avalon.current_time");
+  return [
+    ...(timeTools.length
+      ? [{
+          canonicalId: AVALON_TIME_PLUGIN_ID,
+          modelId: "avalon_time",
+          shortWireName: "avalon",
+          description: "Read the exact current time and applicable timezones.",
+          systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps.",
+          tools: timeTools,
+          preload: true,
+          explicit: true,
+        } satisfies HarnessPlugin]
+      : []),
+    ...(workstreamTools.length
+      ? [{
+          canonicalId: AVALON_WORKSTREAM_PLUGIN_ID,
+          modelId: "avalon_workstream",
+          shortWireName: "avalon",
+          description: "Read and update the current work stream, its resources, artifacts, and public-web context.",
+          tools: workstreamTools,
+          preload: true,
+          explicit: true,
+        } satisfies HarnessPlugin]
+      : []),
+  ];
+}
+
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   const requestElicitationSchema = z.object({
     prompt: z.string().min(1).max(4_000),
@@ -3667,25 +3699,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
   });
   const tools: HarnessTool[] = [
     {
-      definition: {
-        name: "avalon.current_time",
-        description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
-        capability: "time.read",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            timezone: {
-              type: "string",
-              minLength: 1,
-              maxLength: 100,
-              description: "Optional IANA timezone, for example America/New_York.",
-            },
-          },
-        },
-      },
+      definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
       execute: async (raw) => {
         const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
         const configuredWorkspaceTimezone = (await env.DB.prepare(
@@ -3762,10 +3776,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         }
         const object = await env.PAYLOADS.get(row.content_ref);
         if (!object) throw new Error("Attached resource content is unavailable");
-        const text = truncateUtf8(
-          await object.text(),
-          numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
-        );
+        const text = await object.text();
         return { output: { title: row.title, text }, summary: `Read ${text.length} characters from ${row.title}` };
       },
     },
@@ -4001,10 +4012,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
             url: args.url,
             maxAgeMs: args.must_be_fresh ? 0 : FIRECRAWL_CACHE_MAX_AGE_MS,
           }, { signal: context.signal });
-          const maxBytes = Math.min(
-            numericEnv(env, "WEB_FETCH_MAX_BYTES", 2_000_000),
-            numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
-          );
+          const maxBytes = numericEnv(env, "WEB_FETCH_MAX_BYTES", 2_000_000);
           const markdown = truncateUtf8(response.markdown, maxBytes);
           const resultUrl = response.url ?? args.url;
           return {

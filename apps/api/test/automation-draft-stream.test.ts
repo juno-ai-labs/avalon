@@ -49,11 +49,9 @@ function testApp(): Hono<HonoAppEnv> {
 afterEach(() => vi.restoreAllMocks());
 
 describe("automation draft stream", () => {
-  it("forwards activity and text events before the final typed draft", async () => {
+  it("forwards activity and derives the final message from the submitted draft", async () => {
     vi.spyOn(AutomationService.prototype, "compile").mockImplementation(async (_input, _requestId, options) => {
       await options?.onStreamEvent?.({ type: "started" });
-      await options?.onStreamEvent?.({ type: "delta", delta: "Which blog ", reset: false });
-      await options?.onStreamEvent?.({ type: "delta", delta: "should I monitor?", reset: false });
       await options?.onStreamEvent?.({
         type: "tool",
         toolCallId: "tool-1",
@@ -63,7 +61,7 @@ describe("automation draft stream", () => {
         plugins: [{ pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" }],
         durationMs: 42,
       });
-      await options?.onStreamEvent?.({ type: "completed", content: "Which blog should I monitor?" });
+      await options?.onStreamEvent?.({ type: "completed" });
       return draft;
     });
 
@@ -81,8 +79,6 @@ describe("automation draft stream", () => {
       .map((line) => AutomationDraftStreamEventSchema.parse(JSON.parse(line.slice(6))));
     expect(events).toEqual([
       { type: "started" },
-      { type: "delta", delta: "Which blog ", reset: false },
-      { type: "delta", delta: "should I monitor?", reset: false },
       {
         type: "tool",
         toolCallId: "tool-1",
@@ -92,7 +88,7 @@ describe("automation draft stream", () => {
         plugins: [{ pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" }],
         durationMs: 42,
       },
-      { type: "completed", draft, assistantMessage: "Which blog should I monitor?" },
+      { type: "completed", draft, assistantMessage: "Paste the full blog URL." },
     ]);
   });
 });

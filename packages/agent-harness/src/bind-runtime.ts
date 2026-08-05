@@ -39,7 +39,8 @@ import type OpenAI from "openai";
 import { z } from "zod";
 import type { HarnessFailureCode } from "@avalon/contracts";
 import {
-  BIND_RUNTIME_CORE_TOOL_DEFINITIONS,
+  AVALON_DISCOVERY_PLUGIN_ID,
+  AVALON_DISCOVERY_TOOL_DEFINITIONS,
   OpenRouterClient,
   OpenRouterError,
   canonicalToolInputHash,
@@ -56,12 +57,8 @@ import {
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 
-const CORE_PLUGIN_ID = "avalon:core";
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const DEFAULT_CATALOG_TOKENS = 2_500;
-const DEFAULT_MAX_ACTIVE_PLUGINS = 12;
-const DEFAULT_MAX_TOOL_SCHEMA_BYTES = 128 * 1024;
-const DEFAULT_MAX_TOOL_RESULT_BYTES = 128 * 1024;
 const COMPACTION_FRACTION = 0.8;
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
@@ -94,6 +91,7 @@ type BindPlugin = ToolPlugin<HarnessToolContext> & {
   displayName?: string;
   searchAliases: readonly string[];
   explicit: boolean;
+  isCore: boolean;
   toolByWireName: Map<string, HarnessTool>;
   modeByWireName: Map<string, "read" | "write">;
 };
@@ -116,7 +114,7 @@ type RenderedSystemPrompt = {
 };
 
 class HarnessLimitError extends Error {
-  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write">, message: string) {
+  constructor(readonly code: Exclude<HarnessFailureCode, "harness_execution_failed" | "ambiguous_external_write" | "tool_surface_too_large">, message: string) {
     super(message);
     this.name = "HarnessLimitError";
   }
@@ -374,6 +372,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           signal,
           turnId: `${input.harnessRunId}:turn:${stableTurnIndex}`,
           emit,
+          acceptEmptyCompletion: Boolean(onTurnWouldEnd),
           ...(onOutputProgress ? { onOutputProgress } : {}),
         });
         routedAttempts += routed.attemptCount;
@@ -579,8 +578,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             }),
           };
         }
-        const bounded = boundToolResult(toolResult.output, input.config.maxToolResultBytes ?? DEFAULT_MAX_TOOL_RESULT_BYTES);
-        const persistedResult = { ...toolResult, output: bounded };
+        const persistedResult = toolResult;
         if (toolResult.providerOperationId) {
           await requiredPort("Tool provider checkpoint persistence failed", () => input.checkpointToolInvocation?.({
             toolCallId: receiptId,
@@ -677,7 +675,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       kind: deadline.timedOut
         ? "deadline"
         : error instanceof HarnessLimitError
-          ? error.code === "context_limit_exceeded" || error.code === "tool_surface_too_large"
+          ? error.code === "context_limit_exceeded"
             ? "context"
             : "limit"
           : error instanceof AmbiguousExternalWriteError
@@ -708,6 +706,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     fallbackModels?: string[];
     reasoningEffort?: "low" | "medium" | "high";
     suppressStreamOutput?: boolean;
+    /** Let a terminal-turn hook handle an empty assistant stop instead of retrying it as a provider defect. */
+    acceptEmptyCompletion?: boolean;
   }): Promise<RoutedTurn> {
     let emittedStart = false;
     let currentModel = args.primaryModel ?? args.input.config.primaryModel;
@@ -814,7 +814,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             content: result.content || null,
             tool_calls: result.toolCalls,
           }, result.finishReason === "length");
-          if (defect) throw new OpenRouterCompletionDefectError(defect.kind);
+          if (defect && !(args.acceptEmptyCompletion && defect.kind === "empty_completion")) {
+            throw new OpenRouterCompletionDefectError(defect.kind);
+          }
           await requiredPort("Inference attempt ledger persistence failed", () => args.input.onInferenceAttempt?.({
             inferenceRequestId,
             success: true,
@@ -980,17 +982,96 @@ async function createPluginRuntime(
   runsSerially: (wireName: string) => boolean;
   resolveTool: (wireName: string) => { pluginId: string; tool: HarnessTool } | null;
 }> {
-  const plugins = [corePlugin(input), ...(input.plugins ?? []).map(toBindPlugin)];
-  const registry = createToolRegistry<BindPlugin>({ corePlugins: [CORE_PLUGIN_ID] });
-  for (const plugin of plugins) registry.register(plugin);
-  const eligibleIds = new Set(plugins.map((plugin) => plugin.canonicalId));
+  let registry: ToolRegistry<BindPlugin> | null = null;
+  const eligibleIds = new Set<string>();
   const canonicalByModelId = new Map<string, string>();
+  const requireRegistry = (): ToolRegistry<BindPlugin> => {
+    if (!registry) throw new Error("Plugin registry is not initialized");
+    return registry;
+  };
+  const discovery = buildPlugin({
+    canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
+    modelId: "avalon_discovery",
+    shortWireName: "avalon",
+    description: "Discover and activate connector plugins authorized for this run.",
+    systemMessage: "Connector plugins are groups of tools backed by credentials already authorized for this run. When a request needs an external service, load the relevant available connector plugin before answering. Before claiming that a service or its data is unavailable, inspect the compact catalog and, when needed, use list_connector_plugins or search_connector_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
+    preload: true,
+    explicit: true,
+    tools: AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
+      definition,
+      execute: async (raw) => {
+        const activeRegistry = requireRegistry();
+        if (definition.name === "list_connector_plugins") {
+          return {
+            output: { plugins: connectorCatalog(activeRegistry) },
+            summary: "Listed authorized connector plugins",
+          };
+        }
+        if (definition.name === "search_connector_plugins") {
+          const query = typeof raw === "object" && raw !== null && "query" in raw
+            ? String(raw.query).trim().toLowerCase()
+            : "";
+          const matches = connectorCatalog(activeRegistry).filter((plugin) =>
+            `${plugin.id} ${plugin.displayName ?? ""} ${plugin.searchAliases.join(" ")} ${plugin.description}`
+              .toLowerCase()
+              .includes(query));
+          return {
+            output: { plugins: matches },
+            summary: `Found ${matches.length} authorized connector plugins`,
+          };
+        }
+        const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw
+          ? String(raw.pluginId)
+          : "";
+        const id = canonicalByModelId.get(modelId) ?? "";
+        if (!eligibleIds.has(id) || activeRegistry.isCoreName(id)) {
+          return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
+        }
+        if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
+          return { output: { error: "plugin_not_authorized" }, summary: "Plugin is no longer authorized" };
+        }
+        await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
+        const plugin = activeRegistry.get(id)!;
+        const tools = plugin.tools.map((tool) => ({
+          name: stableWireToolName(plugin.shortWireName, tool.name),
+          description: tool.description,
+        }));
+        return {
+          output: { loaded: plugin.modelId, tools },
+          summary: `Loaded ${plugin.displayName ?? plugin.modelId}; ${tools.length} tools are now available`,
+          loadedPluginName: id,
+        } as HarnessToolResult;
+      },
+    })),
+  }, true);
+  const corePlugins = [
+    discovery,
+    ...(input.corePlugins ?? []).map((plugin) => buildPlugin(plugin, true)),
+  ];
+  const plugins = [...corePlugins, ...(input.plugins ?? []).map(toBindPlugin)];
+  registry = createToolRegistry<BindPlugin>({
+    corePlugins: corePlugins.map((plugin) => plugin.canonicalId),
+  });
+  const coreWireNames = new Set<string>();
+  for (const plugin of corePlugins) {
+    for (const wireName of plugin.toolByWireName.keys()) {
+      if (coreWireNames.has(wireName)) {
+        throw new Error(`Duplicate always-active tool wire name: ${wireName}`);
+      }
+      coreWireNames.add(wireName);
+    }
+  }
   for (const plugin of plugins) {
+    if (eligibleIds.has(plugin.canonicalId)) {
+      throw new Error(`Duplicate plugin id: ${plugin.canonicalId}`);
+    }
+    eligibleIds.add(plugin.canonicalId);
     const existing = canonicalByModelId.get(plugin.modelId);
     if (existing && existing !== plugin.canonicalId) {
       throw new Error(`Duplicate model-facing plugin id: ${plugin.modelId}`);
     }
     canonicalByModelId.set(plugin.modelId, plugin.canonicalId);
+    registry.register(plugin);
   }
   const active = new Set(initialActivePlugins(registry.corePlugins()));
   // `preload` is a host-side selection hint, not proof that activation crossed
@@ -1009,40 +1090,24 @@ async function createPluginRuntime(
   for (const id of restored.active) active.add(id);
   for (const dropped of restored.dropped) await input.onActivationDropped?.(dropped);
 
-  const assertActiveSurface = (candidate: ReadonlySet<string>) => {
-    const activeCredentialCount = [...candidate].filter((id) => id !== CORE_PLUGIN_ID).length;
-    const maxPlugins = input.config.maxActivePlugins ?? DEFAULT_MAX_ACTIVE_PLUGINS;
-    if (activeCredentialCount > maxPlugins) {
-      throw new HarnessLimitError("tool_surface_too_large", `Active credential plugin count exceeds ${maxPlugins}`);
-    }
-    const schemaBytes = toolSchemaBytes(candidate, registry);
-    const maxSchemaBytes = input.config.maxToolSchemaBytes ?? DEFAULT_MAX_TOOL_SCHEMA_BYTES;
-    if (schemaBytes > maxSchemaBytes) {
-      throw new HarnessLimitError("tool_surface_too_large", `Active tool schema surface exceeds ${maxSchemaBytes} bytes`);
-    }
-  };
-  assertActiveSurface(active);
-
   const activate = (ids: string[]) => {
     const next = new Set(active);
     for (const id of ids) {
       if (!eligibleIds.has(id) || !registry.get(id)) continue;
       next.add(id);
     }
-    assertActiveSurface(next);
     active.clear();
     for (const id of next) active.add(id);
   };
 
   const reauthorizeActive = async () => {
     for (const id of [...active]) {
-      if (id === CORE_PLUGIN_ID) continue;
+      if (registry.isCoreName(id)) continue;
       if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
         active.delete(id);
         await input.onActivationDropped?.({ name: id, reason: "unreachable" });
       }
     }
-    assertActiveSurface(active);
   };
 
   const resolveTool = (wireName: string) => {
@@ -1080,61 +1145,10 @@ async function createPluginRuntime(
     return matches.length === 1 ? matches[0]! : null;
   };
 
-  const catalogTool = plugins[0]!.toolByWireName.get("avalon_load_plugin");
-  if (catalogTool) {
-    catalogTool.execute = async (raw) => {
-      const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw ? String(raw.pluginId) : "";
-      const id = canonicalByModelId.get(modelId) ?? "";
-      if (!eligibleIds.has(id) || id === CORE_PLUGIN_ID) {
-        return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
-      }
-      if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
-        return { output: { error: "plugin_not_authorized" }, summary: "Plugin is no longer authorized" };
-      }
-      const next = new Set(active).add(id);
-      assertActiveSurface(next);
-      await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
-      const plugin = registry.get(id)!;
-      const tools = plugin.tools.map((tool) => ({
-        name: stableWireToolName(plugin.shortWireName, tool.name),
-        description: tool.description,
-      }));
-      return {
-        output: { loaded: plugin.modelId, tools },
-        summary: `Loaded ${plugin.displayName ?? plugin.modelId}; ${tools.length} tools are now available`,
-        loadedPluginName: id,
-      } as HarnessToolResult;
-    };
-  }
-  const listTool = plugins[0]!.toolByWireName.get("list_connector_plugins");
-  if (listTool) {
-    listTool.execute = async () => ({
-      output: { plugins: connectorCatalog(registry) },
-      summary: "Listed authorized connector plugins",
-    });
-  }
-  const searchTool = plugins[0]!.toolByWireName.get("search_connector_plugins");
-  if (searchTool) {
-    searchTool.execute = async (raw) => {
-      const query = typeof raw === "object" && raw !== null && "query" in raw
-        ? String(raw.query).trim().toLowerCase()
-        : "";
-      const matches = connectorCatalog(registry).filter((plugin) =>
-        `${plugin.id} ${plugin.displayName ?? ""} ${plugin.searchAliases.join(" ")} ${plugin.description}`
-          .toLowerCase()
-          .includes(query));
-      return {
-        output: { plugins: matches },
-        summary: `Found ${matches.length} authorized connector plugins`,
-      };
-    };
-  }
-
   return {
     active,
     renderSystemPrompt: () => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS),
     buildWireTools: () => {
-      assertActiveSurface(active);
       const definitions: OpenAI.ChatCompletionTool[] = [];
       for (const id of [...active].sort()) {
         const plugin = registry.get(id);
@@ -1155,38 +1169,16 @@ async function createPluginRuntime(
   };
 }
 
-function corePlugin(input: RunHarnessInput): BindPlugin {
-  const tools = [...input.tools];
-  for (const definition of BIND_RUNTIME_CORE_TOOL_DEFINITIONS) {
-    tools.push({
-      definition,
-      execute: async () => definition.name === "load_plugin"
-        ? { output: { error: "activation_not_initialized" }, summary: "Activation unavailable" }
-        : { output: { plugins: [] }, summary: "Plugin catalog unavailable" },
-    });
-  }
-  return buildPlugin({
-    canonicalId: CORE_PLUGIN_ID,
-    modelId: "avalon_core",
-    shortWireName: "avalon",
-    description: "Core Avalon work-stream tools and connector plugin activation.",
-    systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps. Connector plugins are groups of tools backed by credentials already authorized for this run. When a request needs an external service, load the relevant available connector plugin before answering. Before claiming that a service or its data is unavailable, inspect the compact catalog and, when needed, use list_connector_plugins or search_connector_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
-    tools,
-    preload: true,
-    explicit: true,
-  });
-}
-
 function toBindPlugin(plugin: HarnessPlugin): BindPlugin {
-  return buildPlugin(plugin);
+  return buildPlugin(plugin, false);
 }
 
-function buildPlugin(plugin: HarnessPlugin): BindPlugin {
+function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
   const toolByWireName = new Map<string, HarnessTool>();
   const modeByWireName = new Map<string, "read" | "write">();
   const defined: Array<DefinedTool<HarnessToolContext>> = [];
   for (const harnessTool of plugin.tools) {
-    const wireName = plugin.canonicalId === CORE_PLUGIN_ID
+    const wireName = isCore
       ? harnessTool.definition.name === "load_plugin"
         ? "avalon_load_plugin"
         : harnessTool.definition.name
@@ -1224,6 +1216,7 @@ function buildPlugin(plugin: HarnessPlugin): BindPlugin {
     ...(plugin.displayName ? { displayName: plugin.displayName } : {}),
     searchAliases: [...(plugin.searchAliases ?? [])],
     explicit: plugin.explicit ?? false,
+    isCore,
     toolByWireName,
     modeByWireName,
   };
@@ -1272,7 +1265,7 @@ function connectorCatalog(registry: ToolRegistry<BindPlugin>): Array<{
   description: string;
 }> {
   return registry.summaries()
-    .filter((plugin) => plugin.name !== CORE_PLUGIN_ID)
+    .filter((plugin) => !registry.isCoreName(plugin.name))
     .sort((left, right) => left.name.localeCompare(right.name))
     .slice(0, 500)
     .map((plugin) => {
@@ -1328,22 +1321,6 @@ function renderStableSystemPrompt(
   return {
     content: [base, pluginSection, activeInstructions].filter(Boolean).join("\n\n"),
   };
-}
-
-function toolSchemaBytes(active: ReadonlySet<string>, registry: ToolRegistry<BindPlugin>): number {
-  let bytes = 0;
-  for (const id of active) {
-    const plugin = registry.get(id);
-    if (!plugin) continue;
-    for (const tool of plugin.tools) {
-      bytes += new TextEncoder().encode(JSON.stringify({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.rawJsonSchema ?? {},
-      })).byteLength;
-    }
-  }
-  return bytes;
 }
 
 function routePlan(primary: string, fallbacks: string[], workspaceId: string): RoutePlan {
@@ -1512,80 +1489,6 @@ function harnessResultOutcome(toolCallId: string, result: HarnessToolResult) {
       ? { loadedPluginName: (result as HarnessToolResult & { loadedPluginName: string }).loadedPluginName }
       : {}),
   };
-}
-
-function boundToolResult(value: unknown, maxBytes: number): unknown {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value ?? null);
-  } catch {
-    throw new HarnessLimitError("context_limit_exceeded", "Tool result could not be represented safely as JSON");
-  }
-  const bytes = new TextEncoder().encode(serialized).byteLength;
-  if (bytes <= maxBytes) return value;
-  const envelopeBudget = maxBytes - 128;
-  if (envelopeBudget < 32) {
-    throw new HarnessLimitError("context_limit_exceeded", "Tool result budget is too small for a safe reduction envelope");
-  }
-  const reduced = structurallyReduceJson(value, envelopeBudget);
-  if (reduced === undefined) {
-    throw new HarnessLimitError("context_limit_exceeded", "Tool result could not be reduced without slicing JSON structure");
-  }
-  const envelope = { truncated: true, originalBytes: bytes, data: reduced };
-  if (jsonBytes(envelope) > maxBytes) {
-    throw new HarnessLimitError("context_limit_exceeded", "Safely reduced tool result still exceeds its context budget");
-  }
-  return envelope;
-}
-
-function structurallyReduceJson(value: unknown, maxBytes: number): unknown | undefined {
-  if (jsonBytes(value ?? null) <= maxBytes) return value ?? null;
-  if (typeof value === "string") {
-    const codePoints = Array.from(value);
-    let low = 0;
-    let high = codePoints.length;
-    while (low < high) {
-      const middle = Math.ceil((low + high) / 2);
-      const candidate = `${codePoints.slice(0, middle).join("")}…`;
-      if (jsonBytes(candidate) <= maxBytes) low = middle;
-      else high = middle - 1;
-    }
-    return low > 0 ? `${codePoints.slice(0, low).join("")}…` : undefined;
-  }
-  if (Array.isArray(value)) {
-    const output: unknown[] = [];
-    for (const item of value) {
-      const remaining = Math.max(16, maxBytes - jsonBytes(output) - 2);
-      const reduced = structurallyReduceJson(item, remaining);
-      if (reduced === undefined) break;
-      const candidate = [...output, reduced];
-      if (jsonBytes(candidate) > maxBytes) break;
-      output.push(reduced);
-    }
-    return output.length > 0 ? output : undefined;
-  }
-  if (value && typeof value === "object") {
-    const output: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      const keyCost = jsonBytes(key) + 4;
-      const remaining = Math.max(16, maxBytes - jsonBytes(output) - keyCost);
-      const reduced = structurallyReduceJson(item, remaining);
-      if (reduced === undefined) continue;
-      const candidate = { ...output, [key]: reduced };
-      if (jsonBytes(candidate) > maxBytes) continue;
-      output[key] = reduced;
-    }
-    return Object.keys(output).length > 0 ? output : undefined;
-  }
-  return undefined;
-}
-
-function jsonBytes(value: unknown): number {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value ?? null)).byteLength;
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
 }
 
 function combinedTimeoutSignal(parent: AbortSignal, timeoutMs: number): AbortSignal {

@@ -628,7 +628,15 @@ describe("durable harness attempt runtime", () => {
       executionPrincipal: { type: "user", userId: "user-runtime" },
       systemPrompt: "Exercise the durable inference ledger.",
       messages: [{ role: "user", content: "Use the read tool, then finish." }],
-      tools: [ledgerRead],
+      corePlugins: [{
+        canonicalId: "avalon:test_ledger",
+        modelId: "avalon_test_ledger",
+        shortWireName: "ledger",
+        description: "Test ledger tools",
+        preload: true,
+        explicit: true,
+        tools: [ledgerRead],
+      }],
       onEvent: () => undefined,
       onInferenceAttempt: async (attempt) => {
         callbackIndex += 1;
@@ -1579,7 +1587,7 @@ describe("inline child-run durability", () => {
     );
     const outcome = {
       status: "completed" as const,
-      result: { answer: "Two findings", citations: ["resource:one", "resource:two"] },
+      result: { answer: `Two findings ${"x".repeat(70_000)}`, citations: ["resource:one", "resource:two"] },
       model: "google/gemini-2.5-flash-lite",
       usage: { inputTokens: 31, outputTokens: 12 },
     };

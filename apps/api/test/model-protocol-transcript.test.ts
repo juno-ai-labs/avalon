@@ -397,7 +397,7 @@ describe("durable UI-to-model transcript projection", () => {
       executionPrincipal: { type: "user", userId: USER_ID },
       systemPrompt: "Continue from durable, matched protocol history.",
       messages: projection.messages,
-      tools: [],
+      corePlugins: [],
       onEvent: () => {},
     });
 
