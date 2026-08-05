@@ -873,10 +873,14 @@ export interface AutomationCreatorPluginCatalogEntry {
   systemMessage: string;
   tools: Array<{
     name: string;
+    /** Canonical adapter identity; `name` remains the exact model-facing wire name. */
+    canonicalName?: string;
     description: string;
     capability: string;
     mode: "read" | "write";
+    idempotency?: "safe" | "provider_key" | "record_before_execute";
     inputSchema: Record<string, unknown>;
+    execute?: HarnessTool["execute"];
   }>;
 }
 
@@ -926,6 +930,18 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Reviewing what this plugin can do…",
     completed: "Plugin details are ready",
   },
+  list_connector_plugins: {
+    started: "Checking available plugin capabilities…",
+    completed: "Plugin capabilities are ready",
+  },
+  search_connector_plugins: {
+    started: "Finding the plugins relevant to this automation…",
+    completed: "Relevant plugins are ready",
+  },
+  avalon_load_plugin: {
+    started: "Loading the selected plugin…",
+    completed: "Plugin guidance and tools are ready",
+  },
 };
 
 function automationPluginActivities(
@@ -947,7 +963,9 @@ function automationDiscoveryPluginsFromInput(
   input: unknown,
   catalog: AutomationCreatorPluginCatalogEntry[],
 ): AutomationPluginActivity[] {
-  if (toolName !== "automation_plugin_inspect") return automationPluginActivities(catalog);
+  if (toolName !== "automation_plugin_inspect" && toolName !== "avalon_load_plugin") {
+    return automationPluginActivities(catalog);
+  }
   const pluginId = String(asRecord(input).pluginId ?? "");
   return automationPluginActivities(catalog, new Set([pluginId]));
 }
@@ -959,6 +977,10 @@ function automationDiscoveryPluginsFromResult(
   fallback: AutomationPluginActivity[],
 ): AutomationPluginActivity[] {
   const record = asRecord(output);
+  if (toolName === "avalon_load_plugin") {
+    const pluginId = String(record.loaded ?? "");
+    return pluginId ? automationPluginActivities(catalog, new Set([pluginId])) : fallback;
+  }
   const hasPluginResult = toolName === "automation_plugin_inspect"
     ? Boolean(record.plugin && typeof record.plugin === "object")
     : Array.isArray(record.plugins);
@@ -990,6 +1012,9 @@ function automationDiscoveryActivityName(
     if (status === "completed") return plugins.length ? `Found ${names}` : "Searched connected plugins";
     return `Searching ${names}`;
   }
+  if (toolName === "avalon_load_plugin") {
+    return status === "completed" ? `Loaded ${names}` : `Loading ${names}`;
+  }
   if (toolName === "automation_plugin_inspect") return `Reading ${names}`;
   return status === "completed" ? `Reviewed ${names}` : `Reviewing ${names}`;
 }
@@ -997,6 +1022,8 @@ function automationDiscoveryActivityName(
 export async function compileAutomation(input: {
   apiKey: string;
   model: string;
+  workspaceId?: string;
+  userId?: string;
   fallbackModels?: string[];
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   currentDraft?: AutomationDraft | null;
@@ -1017,6 +1044,30 @@ export async function compileAutomation(input: {
     currentDraft: input.currentDraft ?? null,
   });
   const catalog = input.pluginCatalog ?? [];
+  const executablePlugins: HarnessPlugin[] = catalog.map((plugin) => ({
+    canonicalId: `automation:${plugin.pluginId}`,
+    modelId: plugin.pluginId,
+    shortWireName: plugin.pluginId.replace(/^plugin_/u, "").slice(0, 48),
+    displayName: plugin.displayName,
+    searchAliases: plugin.searchAliases,
+    description: plugin.description,
+    systemMessage: plugin.systemMessage,
+    tools: plugin.tools.flatMap((tool) => tool.execute
+      ? [{
+          definition: {
+            name: tool.canonicalName ?? tool.name,
+            description: tool.description,
+            capability: tool.capability,
+            mode: tool.mode,
+            idempotency: tool.idempotency ?? "safe",
+            inputSchema: tool.inputSchema,
+          },
+          execute: tool.execute,
+        }]
+      : []),
+    preload: false,
+    explicit: false,
+  }));
   let submittedDraft: AutomationDraft | null = null;
   let submissionReminderSent = false;
   let assistantContent = "";
@@ -1150,16 +1201,19 @@ export async function compileAutomation(input: {
       toolTimeoutMs: 10_000,
       maxWebResults: 0,
       maxCostCents: 1_000,
-      maxCatalogTokens: 500,
-      maxActivePlugins: 1,
+      maxCatalogTokens: 2_500,
+      maxActivePlugins: 12,
       maxToolSchemaBytes: 256 * 1024,
       maxToolResultBytes: 256 * 1024,
       reasoningEffort: "high",
     },
-    workspaceId: "00000000-0000-7000-8000-000000000001",
+    workspaceId: input.workspaceId ?? "00000000-0000-7000-8000-000000000001",
     workstreamId: "00000000-0000-7000-8000-000000000002",
     harnessRunId: crypto.randomUUID(),
-    executionPrincipal: { type: "user", userId: "00000000-0000-7000-8000-000000000003" },
+    executionPrincipal: {
+      type: "user",
+      userId: input.userId ?? "00000000-0000-7000-8000-000000000003",
+    },
     systemPrompt: String(rendered[0]?.content ?? ""),
     messages: [
       ...rendered.slice(1),
@@ -1173,6 +1227,7 @@ export async function compileAutomation(input: {
         ].join("\n\n"),
       },
     ],
+    plugins: executablePlugins,
     compaction: {
       ...(input.contextWindowTokensByModel
         ? { contextWindowTokensByModel: input.contextWindowTokensByModel }
@@ -1192,9 +1247,18 @@ export async function compileAutomation(input: {
         assistantContent = event.reset ? event.delta : assistantContent + event.delta;
         await input.onStreamEvent?.({ type: "delta", delta: event.delta, reset: event.reset });
       } else if (event.type === "tool_started") {
-        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName];
+        const runtimePlugin = event.pluginId.startsWith("automation:")
+          ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
+          : [];
+        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
+          ?? (runtimePlugin.length ? {
+              started: "Using an authorized connector…",
+              completed: "Connector operation completed",
+            } : undefined);
         if (!presentation) return;
-        const plugins = automationDiscoveryPluginsFromInput(event.toolName, event.input, catalog);
+        const plugins = runtimePlugin.length
+          ? runtimePlugin
+          : automationDiscoveryPluginsFromInput(event.toolName, event.input, catalog);
         toolStartedAt.set(event.toolCallId, Date.now());
         toolPlugins.set(event.toolCallId, plugins);
         await input.onStreamEvent?.({
@@ -1206,15 +1270,24 @@ export async function compileAutomation(input: {
           plugins,
         });
       } else if (event.type === "tool_completed") {
-        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName];
+        const runtimePlugin = event.pluginId.startsWith("automation:")
+          ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
+          : [];
+        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
+          ?? (runtimePlugin.length ? {
+              started: "Using an authorized connector…",
+              completed: event.result.summary,
+            } : undefined);
         if (!presentation) return;
         const startedAt = toolStartedAt.get(event.toolCallId);
-        const plugins = automationDiscoveryPluginsFromResult(
-          event.toolName,
-          event.result.output,
-          catalog,
-          toolPlugins.get(event.toolCallId) ?? [],
-        );
+        const plugins = runtimePlugin.length
+          ? runtimePlugin
+          : automationDiscoveryPluginsFromResult(
+              event.toolName,
+              event.result.output,
+              catalog,
+              toolPlugins.get(event.toolCallId) ?? [],
+            );
         toolStartedAt.delete(event.toolCallId);
         toolPlugins.delete(event.toolCallId);
         await input.onStreamEvent?.({
@@ -1227,10 +1300,17 @@ export async function compileAutomation(input: {
           ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
         });
       } else if (event.type === "tool_failed") {
-        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName];
+        const runtimePlugin = event.pluginId.startsWith("automation:")
+          ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
+          : [];
+        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
+          ?? (runtimePlugin.length ? {
+              started: "Using an authorized connector…",
+              completed: "Connector operation failed",
+            } : undefined);
         if (!presentation) return;
         const startedAt = toolStartedAt.get(event.toolCallId);
-        const plugins = toolPlugins.get(event.toolCallId) ?? [];
+        const plugins = runtimePlugin.length ? runtimePlugin : toolPlugins.get(event.toolCallId) ?? [];
         toolStartedAt.delete(event.toolCallId);
         toolPlugins.delete(event.toolCallId);
         await input.onStreamEvent?.({
@@ -1323,12 +1403,44 @@ function executeAutomationCreatorDiscoveryTool(
       aliases: plugin.searchAliases,
       tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability })),
     }).toLocaleLowerCase().includes(query));
-    return { query, plugins: matches.slice(0, 40) };
+    return {
+      query,
+      plugins: matches.slice(0, 40).map((plugin) => ({
+        pluginId: plugin.pluginId,
+        displayName: plugin.displayName,
+        description: plugin.description,
+        scope: plugin.scope,
+        aliases: plugin.searchAliases,
+        tools: plugin.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          capability: tool.capability,
+          mode: tool.mode,
+        })),
+      })),
+    };
   }
   if (toolName === "automation_plugin_inspect") {
     const pluginId = String(args.pluginId ?? "");
     const plugin = catalog.find((entry) => entry.pluginId === pluginId);
-    return plugin ? { plugin } : { error: "plugin_not_found", pluginId };
+    return plugin ? {
+      plugin: {
+        pluginId: plugin.pluginId,
+        displayName: plugin.displayName,
+        description: plugin.description,
+        scope: plugin.scope,
+        aliases: plugin.searchAliases,
+        systemMessage: plugin.systemMessage,
+        tools: plugin.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          capability: tool.capability,
+          mode: tool.mode,
+          idempotency: tool.idempotency ?? "safe",
+          inputSchema: tool.inputSchema,
+        })),
+      },
+    } : { error: "plugin_not_found", pluginId };
   }
   return { error: "unknown_discovery_tool" };
 }

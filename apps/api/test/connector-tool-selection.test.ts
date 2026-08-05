@@ -1,5 +1,5 @@
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { runHarness, type HarnessEvent } from "@avalon/agent-harness";
+import { runHarness, type HarnessEvent, type HarnessToolContext } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -113,8 +113,16 @@ class ToolSelectionStatement {
       expect(this.values).toEqual([WORKSTREAM_ID, WORKSPACE_ID]);
       results = this.database.attachedConnectionIds.map((connection_id) => ({ connection_id }));
     } else if (sql.includes("FROM connector_connections")) {
-      expect(this.values).toEqual([WORKSPACE_ID]);
-      results = this.database.connections;
+      if (sql.includes("(scope = 'workspace' OR (scope = 'personal'")) {
+        expect(this.values).toEqual([WORKSPACE_ID, USER_ID]);
+        results = this.database.connections.filter((row) =>
+          row.workspace_id === WORKSPACE_ID && row.status === "healthy" &&
+          (row.scope === "workspace" || row.owner_user_id === USER_ID)
+        );
+      } else {
+        expect(this.values).toEqual([WORKSPACE_ID]);
+        results = this.database.connections;
+      }
     } else {
       throw new Error(`Unexpected tool-selection query: ${sql}`);
     }
@@ -232,6 +240,56 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
+  it("gives the automation architect executable connector tools with live authorization checks", async () => {
+    const database = new ToolSelectionDatabase([
+      connection(
+        WEB_MONITOR_CONNECTION_ID,
+        "workspace",
+        null,
+        ["web.read"],
+        "2026-08-01T00:00:01.000Z",
+        WORKSPACE_ID,
+        "web_monitor",
+      ),
+    ]);
+    const fetcher = vi.fn(async () => new Response("<main>Avalon status is healthy.</main>", {
+      headers: { "content-type": "text/html" },
+    }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(
+      env(database),
+      WORKSPACE_ID,
+      USER_ID,
+    );
+    const plugin = catalog.find((entry) => entry.pluginId === "plugin_web_monitor");
+    const tool = plugin?.tools.find((entry) => entry.name === "web_monitor_fetch");
+    expect(tool).toMatchObject({
+      canonicalName: "web_monitor.fetch",
+      capability: "web.read",
+      mode: "read",
+      idempotency: "safe",
+    });
+
+    const context: HarnessToolContext = {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      harnessRunId: HARNESS_RUN_ID,
+      toolCallId: "automation-creator-tool-1",
+      executionPrincipal: { type: "user", userId: USER_ID },
+      signal: new AbortController().signal,
+    };
+    await expect(tool!.execute!({}, context)).resolves.toMatchObject({
+      summary: "Fetched example.com",
+      output: { readableText: "Avalon status is healthy." },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    database.memberStatus = "removed";
+    await expect(tool!.execute!({}, context)).rejects.toThrow(/active workspace member/i);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves durable receipt policy from canonical identity, never a provider wire alias", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
