@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ElicitationData, Message } from '../lib/types';
 import { ElicitationPanel, MessageBlock } from './workstream-blocks';
 
@@ -8,6 +8,8 @@ const copyText = vi.hoisted(() => vi.fn());
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText }),
 }));
+
+afterEach(() => vi.useRealTimers());
 
 const baseMessage: Message = {
   id: 'message-human',
@@ -24,6 +26,40 @@ const actions = {
   onAnswerElicitation: vi.fn(async () => undefined),
   onResolveSuggestion: vi.fn(async () => undefined),
 };
+
+describe('MessageBlock model timing', () => {
+  it('live-counts an active provider stream and settles its wording when complete', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-05T12:00:00.000Z'));
+    const activeMessage: Message = {
+      ...baseMessage,
+      id: 'thought-one',
+      authorType: 'agent',
+      author: undefined,
+      messageType: 'thought',
+      thoughtEvent: { status: 'started', durationMs: 82_000, startedAt: Date.now() },
+    };
+    const { container, rerender } = render(<MessageBlock {...actions} message={activeMessage} />);
+
+    expect(screen.getByText('working for 1m 22s')).toBeInTheDocument();
+    expect(container.querySelector('.thought-block')).toHaveClass('thought-active');
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
+
+    rerender(
+      <MessageBlock
+        {...actions}
+        message={{
+          ...activeMessage,
+          thoughtEvent: { status: 'completed', durationMs: 83_000 },
+        }}
+      />,
+    );
+    expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
+    expect(container.querySelector('.thought-block')).not.toHaveClass('thought-active');
+  });
+});
 
 const singleSelectElicitation: ElicitationData = {
   id: 'elicitation-single',
