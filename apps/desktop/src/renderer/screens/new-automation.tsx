@@ -56,6 +56,23 @@ function automationTextMessage(
   };
 }
 
+function settleThought(turns: Message[], thoughtId: string): Message[] {
+  const settledAt = Date.now();
+  return turns.map((message) => {
+    if (message.id !== thoughtId || !message.thoughtEvent) return message;
+    const activeDuration = message.thoughtEvent.startedAt === undefined
+      ? 0
+      : Math.max(0, settledAt - message.thoughtEvent.startedAt);
+    return {
+      ...message,
+      thoughtEvent: {
+        status: 'completed',
+        durationMs: message.thoughtEvent.durationMs + activeDuration,
+      },
+    };
+  });
+}
+
 function AutomationMessageBlock({
   message,
   onAnswerElicitation,
@@ -317,6 +334,34 @@ export function NewAutomationScreen(): React.JSX.Element {
           setStreamingAssistant({ hasText: false, text: '' });
           return;
         }
+        if (event.type === 'thinking') {
+          const thoughtId = `${payload.turnId}-thought`;
+          setTurns((current) => {
+            const existing = current.findIndex((message) => message.id === thoughtId);
+            const previous = existing >= 0 ? current[existing] : undefined;
+            const thoughtMessage: Message = {
+              id: thoughtId,
+              workstreamId: AUTOMATION_CHAT_ID,
+              sequenceNumber: previous?.sequenceNumber ?? current.length,
+              authorType: 'agent',
+              messageType: 'thought',
+              createdAt: previous?.createdAt ?? new Date().toISOString(),
+              thoughtEvent: {
+                // Provider completions pause the model clock, but the row
+                // remains active until this entire automation turn settles.
+                status: 'started',
+                durationMs: event.durationMs,
+                ...(event.status === 'started' ? { startedAt: Date.now() } : {}),
+              },
+            };
+            if (existing < 0) return [...current, thoughtMessage];
+            if (event.status === 'started') {
+              return [...current.filter((_, index) => index !== existing), thoughtMessage];
+            }
+            return current.map((message, index) => index === existing ? thoughtMessage : message);
+          });
+          return;
+        }
         if (event.type === 'tool') {
           setTurns((current) => {
             const existing = current.findIndex((message) => message.id === event.toolCallId);
@@ -354,7 +399,7 @@ export function NewAutomationScreen(): React.JSX.Element {
         : [...current, automationTextMessage(payload.turnId, 'human', payload.message)]);
       setInput('');
     },
-    onSuccess: (response) => {
+    onSuccess: (response, payload) => {
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
       const responseMessage = response.question
@@ -362,12 +407,15 @@ export function NewAutomationScreen(): React.JSX.Element {
         : response.assistantMessage
           ? automationTextMessage(crypto.randomUUID(), 'agent', response.assistantMessage)
           : null;
-      if (responseMessage) setTurns((current) => current.some((message) => message.id === responseMessage.id)
-        ? current
-        : [...current, responseMessage]);
+      setTurns((current) => {
+        const settled = settleThought(current, `${payload.turnId}-thought`);
+        if (!responseMessage || settled.some((message) => message.id === responseMessage.id)) return settled;
+        return [...settled, responseMessage];
+      });
     },
-    onError: () => {
+    onError: (_error, payload) => {
       setStreamingAssistant({ hasText: false, text: '' });
+      setTurns((current) => settleThought(current, `${payload.turnId}-thought`));
     },
   });
 
@@ -459,7 +507,9 @@ export function NewAutomationScreen(): React.JSX.Element {
                 {compile.isPending && (
                   streamingAssistant.hasText
                     ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingAssistant.text, true)} />
-                    : <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
+                    : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
+                      ? null
+                      : <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
                 )}
                 {draft && (
                   <DraftSummary

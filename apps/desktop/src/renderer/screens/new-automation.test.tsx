@@ -88,6 +88,23 @@ describe('New automation composer', () => {
 
     act(() => {
       stream({
+        type: 'thinking',
+        inferenceRequestId: 'inference-1',
+        status: 'started',
+        durationMs: 0,
+      });
+    });
+    expect(screen.getByText(/working for \d+ms/u)).toBeInTheDocument();
+    expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
+
+    act(() => {
+      stream({
+        type: 'thinking',
+        inferenceRequestId: 'inference-1',
+        status: 'completed',
+        durationMs: 42,
+      });
+      stream({
         type: 'tool',
         toolCallId: 'tool-1',
         name: 'Searching Google Drive + Docs + Sheets and Linear',
@@ -104,7 +121,8 @@ describe('New automation composer', () => {
     expect(screen.getByRole('img', { name: 'Plugins: Google Drive + Docs + Sheets, Linear' })).toBeInTheDocument();
     expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(screen.getByTitle('Linear')).toBeInTheDocument();
-    expect(screen.getByText('Avalon is working')).toBeInTheDocument();
+    expect(screen.getByText('working for 42ms')).toBeInTheDocument();
+    expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
 
     act(() => {
       stream({
@@ -119,13 +137,26 @@ describe('New automation composer', () => {
         ],
         durationMs: 42,
       });
+      stream({
+        type: 'thinking',
+        inferenceRequestId: 'inference-2',
+        status: 'started',
+        durationMs: 42,
+      });
+      stream({
+        type: 'thinking',
+        inferenceRequestId: 'inference-2',
+        status: 'completed',
+        durationMs: 83_000,
+      });
       stream({ type: 'started' });
       stream({ type: 'delta', delta: 'Which blog ', reset: false });
       stream({ type: 'delta', delta: 'should Avalon monitor?', reset: false });
     });
     expect(await screen.findByText('Found Google Drive + Docs + Sheets and Linear')).toBeInTheDocument();
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
-    expect(screen.getByText('0s')).toBeInTheDocument();
+    expect(screen.getByText('42ms')).toBeInTheDocument();
+    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
     expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
     expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
 
@@ -143,6 +174,7 @@ describe('New automation composer', () => {
         },
       });
     });
+    expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     const assistantMessage = (await screen.findByText('Which blog should Avalon monitor?')).closest('article');
     expect(assistantMessage).toHaveClass('message-block', 'agent-message');
     expect(screen.getByRole('textbox', { name: 'Paste the full blog URL.' })).toHaveAttribute(

@@ -128,6 +128,14 @@ export interface ToolEventData {
   output?: unknown;
 }
 
+export interface ThoughtEventData {
+  status: 'started' | 'completed';
+  /** Completed model-inference time accumulated across this turn. */
+  durationMs: number;
+  /** Client receipt time for the currently streaming inference attempt. */
+  startedAt?: number;
+}
+
 export interface ArtifactData {
   id: string;
   title: string;
@@ -187,6 +195,7 @@ export interface Message {
   author?: WorkspaceMember;
   messageType:
     | 'text'
+    | 'thought'
     | 'tool_event'
     | 'artifact'
     | 'elicitation'
@@ -210,6 +219,7 @@ export interface Message {
     placement: 'before_anchor' | 'at_anchor';
   };
   toolEvent?: ToolEventData;
+  thoughtEvent?: ThoughtEventData;
   artifact?: ArtifactData;
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;

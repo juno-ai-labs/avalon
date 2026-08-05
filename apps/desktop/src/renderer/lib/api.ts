@@ -98,7 +98,7 @@ interface DraftState {
 
 export type AutomationAssistantStreamEvent = Extract<
   WireAutomationDraftStreamEvent,
-  { type: 'started' | 'delta' | 'tool' }
+  { type: 'started' | 'thinking' | 'delta' | 'tool' }
 >;
 
 async function readSseData(

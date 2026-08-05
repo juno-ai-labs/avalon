@@ -897,6 +897,13 @@ export class AutomationCompilerError extends Error {
 export type AutomationCompilerStreamEvent =
   | { type: "started" }
   | {
+      type: "thinking";
+      inferenceRequestId: string;
+      status: "started" | "completed";
+      /** Cumulative model-inference time for this compiler turn. */
+      durationMs: number;
+    }
+  | {
       type: "tool";
       toolCallId: string;
       name: string;
@@ -1062,6 +1069,7 @@ export async function compileAutomation(input: {
   }));
   let submittedDraft: AutomationDraft | null = null;
   let submissionReminderSent = false;
+  let modelTimeMs = 0;
   const toolStartedAt = new Map<string, number>();
   const toolPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
@@ -1328,8 +1336,24 @@ export async function compileAutomation(input: {
         });
       }
     },
+    onInferenceRequest: async (request) => {
+      await input.onInferenceRequest?.(request);
+      await input.onStreamEvent?.({
+        type: "thinking",
+        inferenceRequestId: request.inferenceRequestId,
+        status: "started",
+        durationMs: modelTimeMs,
+      });
+    },
     onInferenceAttempt: async (attempt) => {
       await input.onInferenceAttempt?.(attempt);
+      modelTimeMs += attempt.latencyMs;
+      await input.onStreamEvent?.({
+        type: "thinking",
+        inferenceRequestId: attempt.inferenceRequestId,
+        status: "completed",
+        durationMs: modelTimeMs,
+      });
       await input.onDiagnostic?.({
         stage: "model_response",
         schemaName: "automation_draft",
@@ -1347,7 +1371,6 @@ export async function compileAutomation(input: {
         ...(attempt.failureKind === undefined ? {} : { failureKind: attempt.failureKind }),
       });
     },
-    ...(input.onInferenceRequest ? { onInferenceRequest: input.onInferenceRequest } : {}),
     onTurnWouldEnd: ({ assistantContent }) => {
       if (submittedDraft || submissionReminderSent || assistantContent !== "") return null;
       submissionReminderSent = true;
