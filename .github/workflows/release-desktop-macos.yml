@@ -166,7 +166,7 @@ jobs:
         run: AVALON_RELEASE_PUBLISH_CONFIRM="${RELEASE_TAG#v}" pnpm --filter @avalon/desktop release:publish:r2
 
       - name: Deploy the landing site with the verified release
-        run: pnpm --filter @avalon/site deploy
+        run: pnpm --filter @avalon/site run deploy
 
       - name: Remove the temporary signing keychain
         if: always()
