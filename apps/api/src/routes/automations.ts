@@ -1,7 +1,9 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { zValidator } from "../middleware/validation";
 import {
   AutomationDraftSchema,
+  AutomationDraftStreamEventSchema,
   CompileAutomationRequestSchema,
   CreateAutomationRequestSchema,
   IdSchema,
@@ -9,6 +11,7 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
 import { AutomationService } from "../services/automation-service";
 
@@ -18,6 +21,52 @@ const updateBody = z.object({ name: z.string().min(1).max(140).optional(), descr
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) => c.json(await new AutomationService(c.env, getAuth(c)).list()));
+automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationRequestSchema), async (c) => {
+  const input = c.req.valid("json");
+  const requestId = c.get("requestId");
+  const service = new AutomationService(c.env, getAuth(c));
+  return streamSSE(c, async (stream) => {
+    let assistantMessage = "";
+    try {
+      const draft = await service.compile(input, requestId, {
+        signal: c.req.raw.signal,
+        onAssistantText: async (event) => {
+          if (event.type === "completed") {
+            assistantMessage = event.content;
+            return;
+          }
+          await stream.writeSSE({
+            event: event.type,
+            data: JSON.stringify(AutomationDraftStreamEventSchema.parse(event)),
+          });
+        },
+      });
+      const completed = AutomationDraftStreamEventSchema.parse({
+        type: "completed",
+        draft,
+        assistantMessage: assistantMessage
+          || draft.followUpQuestion
+          || (draft.ready ? "The automation is ready to create." : "I need one more detail before I can create this automation."),
+      });
+      await stream.writeSSE({ event: completed.type, data: JSON.stringify(completed) });
+    } catch (error) {
+      const apiError = error instanceof ApiError
+        ? error
+        : new ApiError(500, "internal_error", "An unexpected error occurred");
+      const failed = AutomationDraftStreamEventSchema.parse({
+        type: "error",
+        error: {
+          status: apiError.status,
+          code: apiError.code,
+          message: apiError.message,
+          requestId,
+          ...(apiError.details ? { details: apiError.details } : {}),
+        },
+      });
+      await stream.writeSSE({ event: failed.type, data: JSON.stringify(failed) });
+    }
+  });
+});
 automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => c.json(
   await new AutomationService(c.env, getAuth(c)).compile(c.req.valid("json"), c.get("requestId")),
 ));

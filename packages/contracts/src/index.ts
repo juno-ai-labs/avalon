@@ -392,6 +392,30 @@ export const AutomationDraftSchema = z.object({
   ready: z.boolean()
 });
 
+export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("started") }),
+  z.object({
+    type: z.literal("delta"),
+    delta: z.string(),
+    reset: z.boolean().default(false)
+  }),
+  z.object({
+    type: z.literal("completed"),
+    draft: AutomationDraftSchema,
+    assistantMessage: z.string().min(1)
+  }),
+  z.object({
+    type: z.literal("error"),
+    error: z.object({
+      status: z.number().int().min(0).max(599),
+      code: z.string().min(1),
+      message: z.string().min(1),
+      requestId: z.string().min(1).nullable().default(null),
+      details: z.record(z.string(), z.unknown()).optional()
+    })
+  })
+]);
+
 export const AutomationSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
@@ -874,6 +898,7 @@ export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
+export type AutomationDraftStreamEvent = z.infer<typeof AutomationDraftStreamEventSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;

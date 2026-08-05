@@ -837,6 +837,11 @@ export class AutomationCompilerError extends Error {
   }
 }
 
+export type AutomationCompilerTextEvent =
+  | { type: "started" }
+  | { type: "delta"; delta: string; reset: boolean }
+  | { type: "completed"; content: string };
+
 export async function compileAutomation(input: {
   apiKey: string;
   model: string;
@@ -847,6 +852,7 @@ export async function compileAutomation(input: {
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   maxResearchIterations?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
+  onAssistantText?: (event: AutomationCompilerTextEvent) => void | Promise<void>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
 }): Promise<AutomationDraft> {
@@ -857,6 +863,7 @@ export async function compileAutomation(input: {
   const catalog = input.pluginCatalog ?? [];
   let submittedDraft: AutomationDraft | null = null;
   let submissionReminderSent = false;
+  let assistantContent = "";
   const creatorTools: HarnessTool[] = [
     {
       definition: {
@@ -1006,12 +1013,20 @@ export async function compileAutomation(input: {
           "If an essential task detail is missing, call submit_automation_draft now with one focused elicitation. Otherwise research the authorized plugin ecosystem as deeply as the task requires, then call submit_automation_draft with a specific executable automation.",
           "The arguments to submit_automation_draft are the expected structured output and must match this rendered schema exactly:",
           renderExpectedJsonSchema("automation_draft", automationJsonSchema),
-          "Call submit_automation_draft with one arguments object matching the schema. Do not finish with plain assistant text and do not print the JSON as Markdown.",
+          "On the final turn, first emit one concise user-facing message, then call submit_automation_draft with one arguments object matching the schema. Do not print the JSON as Markdown. The assistant message never replaces the tool call.",
         ].join("\n\n"),
       },
     ],
     tools: creatorTools,
-    onEvent: () => undefined,
+    onEvent: async (event) => {
+      if (event.type === "stream_started") {
+        assistantContent = "";
+        await input.onAssistantText?.({ type: "started" });
+      } else if (event.type === "stream_delta") {
+        assistantContent = event.reset ? event.delta : assistantContent + event.delta;
+        await input.onAssistantText?.({ type: "delta", delta: event.delta, reset: event.reset });
+      }
+    },
     onInferenceAttempt: async (attempt) => {
       await input.onDiagnostic?.({
         stage: "model_response",
@@ -1032,12 +1047,15 @@ export async function compileAutomation(input: {
         "Call submit_automation_draft now with the best current draft. If an essential detail is still missing, submit ready:false with exactly one focused elicitation. Otherwise submit ready:true with the complete executable automation.",
         "The tool arguments must match this rendered JSON Schema exactly:",
         renderExpectedJsonSchema("automation_draft", automationJsonSchema),
-        "Do not reply with plain assistant text and do not print the JSON as Markdown. You must call submit_automation_draft.",
+        "First emit one concise user-facing message, then call submit_automation_draft in the same turn. Do not print the JSON as Markdown. You must call submit_automation_draft.",
       ].join("\n\n");
     },
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  if (submittedDraft) return submittedDraft;
+  if (submittedDraft) {
+    await input.onAssistantText?.({ type: "completed", content: assistantContent.trim() });
+    return submittedDraft;
+  }
   if (outcome.failure) {
     throw new AutomationCompilerError(
       outcome.failure.code,

@@ -11,6 +11,7 @@ import {
   renderWorkstreamSystemPrompt,
   runHarness,
   type AddressingContextMessage,
+  type AutomationCompilerTextEvent,
   type AutomationCreatorPluginCatalogEntry,
   type HarnessEvent,
   type HarnessPlugin,
@@ -568,6 +569,8 @@ export async function compileAutomationDraft(
     requestId: string;
     workspaceId: string;
     userId: string;
+    onAssistantText?: (event: AutomationCompilerTextEvent) => void | Promise<void>;
+    signal?: AbortSignal;
   },
 ): Promise<AutomationDraft> {
   const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
@@ -581,6 +584,8 @@ export async function compileAutomationDraft(
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
       maxResearchIterations: 20,
+      ...(input.onAssistantText ? { onAssistantText: input.onAssistantText } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
       onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
         logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
           request_id: input.requestId,
