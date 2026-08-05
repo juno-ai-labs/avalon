@@ -2148,6 +2148,10 @@ pre {
   content: 'Used ';
 }
 
+.automation-chat-surface .tool-summary strong::before {
+  content: none;
+}
+
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity .tool-summary strong {
   color: #aaa9a2;
   font-size: 13px;
