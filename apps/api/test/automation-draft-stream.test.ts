@@ -53,6 +53,18 @@ describe("automation draft stream", () => {
     vi.spyOn(AutomationService.prototype, "compile").mockImplementation(async (_input, _requestId, options) => {
       await options?.onStreamEvent?.({ type: "started" });
       await options?.onStreamEvent?.({
+        type: "thinking",
+        inferenceRequestId: "inference-1",
+        status: "started",
+        durationMs: 0,
+      });
+      await options?.onStreamEvent?.({
+        type: "thinking",
+        inferenceRequestId: "inference-1",
+        status: "completed",
+        durationMs: 1_234,
+      });
+      await options?.onStreamEvent?.({
         type: "tool",
         toolCallId: "tool-1",
         name: "Reviewing connected tools",
@@ -79,6 +91,18 @@ describe("automation draft stream", () => {
       .map((line) => AutomationDraftStreamEventSchema.parse(JSON.parse(line.slice(6))));
     expect(events).toEqual([
       { type: "started" },
+      {
+        type: "thinking",
+        inferenceRequestId: "inference-1",
+        status: "started",
+        durationMs: 0,
+      },
+      {
+        type: "thinking",
+        inferenceRequestId: "inference-1",
+        status: "completed",
+        durationMs: 1_234,
+      },
       {
         type: "tool",
         toolCallId: "tool-1",

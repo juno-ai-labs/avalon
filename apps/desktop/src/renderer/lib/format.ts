@@ -28,7 +28,9 @@ export function formatDateTime(value: string): string {
 
 export function formatDuration(milliseconds?: number): string | undefined {
   if (milliseconds === undefined) return undefined;
-  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  const normalizedMilliseconds = Math.max(0, milliseconds);
+  if (normalizedMilliseconds < 1_000) return `${Math.round(normalizedMilliseconds)}ms`;
+  const seconds = Math.round(normalizedMilliseconds / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
