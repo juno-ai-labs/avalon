@@ -30,12 +30,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
+import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
+import { createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
-import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, orderTranscript, useWorkstreamSocket } from '../lib/use-workstream-socket';
+import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import type { BackgroundTask, ElicitationData, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -565,25 +567,22 @@ export function WorkstreamScreen(): React.JSX.Element {
   ): Promise<void> => {
     const previousMessage = queryClient.getQueryData<Message[]>(['messages', id])?.find((message) =>
       message.messageType === 'elicitation' && message.elicitation?.id === elicitationId);
-    queryClient.setQueryData<Message[]>(['messages', id], (current) => current?.map((message) =>
-      message.messageType === 'elicitation' && message.elicitation?.id === elicitationId
-        ? { ...message, elicitation: { ...message.elicitation, status: 'answered', answer } }
-        : message));
-    try {
-      await api!.answerElicitation(id, elicitationId, answer, customResponse);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
-        queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
-      ]);
-    } catch (error) {
-      if (previousMessage) {
-        queryClient.setQueryData<Message[]>(['messages', id], (current) => current?.map((message) =>
-          message.id === previousMessage.id ? previousMessage : message));
-      }
-      throw error;
-    }
+    await answerElicitationOptimistically({
+      answer,
+      elicitationId,
+      previousMessage,
+      submit: async () => {
+        await api!.answerElicitation(id, elicitationId, answer, customResponse);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
+          queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
+          queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+          queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
+        ]);
+      },
+      updateMessages: (update) => queryClient.setQueryData<Message[]>(['messages', id], (current) =>
+        current ? update(current) : current),
+    });
   };
 
   const sendMessage = async (
@@ -612,14 +611,14 @@ export function WorkstreamScreen(): React.JSX.Element {
     const clientId = crypto.randomUUID();
     queryClient.setQueryData<Message[]>(['messages', id], (current) => {
       const anchorSequenceNumber = nextTranscriptSequence(current);
-      const optimistic: Message = {
+      const createdAt = new Date().toISOString();
+      const optimistic = createTextMessage({
         id: clientId,
         clientMessageId: clientId,
         workstreamId: id,
         sequenceNumber: anchorSequenceNumber,
         authorType: 'human',
         author: workspaceMemberFromSession(session),
-        messageType: 'text',
         text,
         attachments: readyAttachments.flatMap((attachment) => attachment.resource ? [{
           id: attachment.resource.id,
@@ -627,17 +626,17 @@ export function WorkstreamScreen(): React.JSX.Element {
           mimeType: attachment.file.type || 'application/octet-stream',
           sizeBytes: attachment.file.size,
           contentAvailable: true,
-          createdAt: new Date().toISOString(),
+          createdAt,
         }] : []),
-        createdAt: new Date().toISOString(),
+        createdAt,
         deliveryState: 'sending',
         realtimeOrder: {
           anchorSequenceNumber,
           eventSequence: Number.MAX_SAFE_INTEGER,
           placement: 'at_anchor',
         },
-      };
-      return orderTranscript([...(current ?? []), optimistic]);
+      });
+      return insertMessage(current, optimistic);
     });
     try {
       const created = await api.createMessage(id, {
