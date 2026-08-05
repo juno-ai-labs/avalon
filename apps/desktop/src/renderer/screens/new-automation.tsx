@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AssistantMessageContent, MarkdownBody } from '../components/workstream-blocks';
+import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
@@ -23,14 +23,54 @@ import { desktopBridge } from '../lib/platform';
 import type {
   AutomationDraftQuestion,
   AutomationDraftResponse,
+  Message,
   WorkspaceTemplate,
   WorkstreamConnection,
 } from '../lib/types';
 
-interface DraftTurn {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
+const AUTOMATION_CHAT_ID = 'automation-creator';
+const AUTOMATION_USER_ID = 'automation-current-user';
+const AUTOMATION_USER = {
+  id: AUTOMATION_USER_ID,
+  name: 'You',
+  email: '',
+  timezone: 'UTC',
+};
+
+function automationTextMessage(
+  id: string,
+  authorType: 'human' | 'agent',
+  text: string,
+  streaming = false,
+): Message {
+  return {
+    id,
+    workstreamId: AUTOMATION_CHAT_ID,
+    sequenceNumber: 0,
+    authorType,
+    ...(authorType === 'human' ? { author: AUTOMATION_USER } : {}),
+    messageType: 'text',
+    text,
+    createdAt: new Date().toISOString(),
+    ...(streaming ? { streaming: true } : {}),
+  };
+}
+
+function AutomationMessageBlock({
+  message,
+  onAnswerElicitation,
+}: {
+  message: Message;
+  onAnswerElicitation?: (answer: string | string[] | null) => Promise<void>;
+}): React.JSX.Element {
+  return (
+    <MessageBlock
+      currentUserId={AUTOMATION_USER_ID}
+      message={message}
+      onAnswerElicitation={(_elicitationId, answer) => onAnswerElicitation?.(answer) ?? Promise.resolve()}
+      onResolveSuggestion={() => Promise.resolve()}
+    />
+  );
 }
 
 const examples = [
@@ -150,70 +190,31 @@ function PluginDefaults({
   );
 }
 
-function DraftQuestion({
-  assistantMessage,
-  question,
-  submitting,
-  onSubmit,
-}: {
-  assistantMessage?: string;
-  question: AutomationDraftQuestion;
-  submitting: boolean;
-  onSubmit: (answer: string) => void;
-}): React.JSX.Element {
-  const [selected, setSelected] = useState<string[]>([]);
-  const [other, setOther] = useState('');
-  useEffect(() => { setSelected([]); setOther(''); }, [question.id]);
+function automationQuestionMessage(
+  assistantMessage: string | undefined,
+  question: AutomationDraftQuestion,
+): Message {
   if (question.responseType === 'free_text') {
-    return (
-      <div className="agent-message draft-turn draft-assistant">
-        <span>Avalon</span>
-        <AssistantMessageContent text={assistantMessage ?? question.prompt} />
-      </div>
-    );
+    return automationTextMessage(`question-${question.id}`, 'agent', assistantMessage ?? question.prompt);
   }
-  const options = question.options ?? [];
-  const minimum = question.minimumSelections ?? 1;
-  const maximum = question.maximumSelections ?? (question.responseType === 'single_select' ? 1 : options.length + 1);
-  const toggle = (value: string): void => {
-    if (question.responseType === 'single_select') {
-      setSelected([value]);
-      return;
-    }
-    setSelected((current) => current.includes(value)
-      ? current.filter((candidate) => candidate !== value)
-      : current.length < maximum ? [...current, value] : current);
+  return {
+    id: `question-${question.id}`,
+    workstreamId: AUTOMATION_CHAT_ID,
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'elicitation',
+    createdAt: new Date().toISOString(),
+    elicitation: {
+      id: question.id,
+      prompt: question.prompt,
+      responseType: question.responseType,
+      options: question.options,
+      minimumSelections: question.minimumSelections,
+      maximumSelections: question.maximumSelections,
+      allowOther: question.allowOther,
+      status: 'open',
+    },
   };
-  const answerValues = [...selected, ...(other.trim() ? [other.trim()] : [])];
-  return (
-    <section className="automation-elicitation" aria-labelledby={`automation-question-${question.id}`}>
-      <header><small>Avalon needs input</small><h3 id={`automation-question-${question.id}`}>{question.prompt}</h3></header>
-      <div className="automation-elicitation-options">
-        {options.map((option) => {
-          const active = selected.includes(option.value);
-          return (
-            <button className={clsx(active && 'selected')} key={option.value} onClick={() => toggle(option.value)} type="button">
-              <span className="automation-option-check">{active && <Check size={12} />}</span>
-              <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
-            </button>
-          );
-        })}
-      </div>
-      {question.allowOther && (
-        <input onChange={(event) => setOther(event.target.value)} placeholder="Other…" value={other} />
-      )}
-      <footer>
-        <span>{question.responseType === 'multi_select' ? `Choose ${minimum}${maximum < options.length + 1 ? `–${maximum}` : ' or more'}` : 'Choose one'}</span>
-        <Button
-          className="button-primary"
-          disabled={submitting || answerValues.length < minimum || answerValues.length > maximum}
-          onClick={() => onSubmit(answerValues.length === 1 ? answerValues[0]! : answerValues.join(', '))}
-        >
-          {submitting ? <LoaderCircle className="spin" size={14} /> : <ArrowUp size={14} />} Continue
-        </Button>
-      </footer>
-    </section>
-  );
 }
 
 function DraftSummary({
@@ -270,9 +271,9 @@ export function NewAutomationScreen(): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [input, setInput] = useState('');
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
-  const [turns, setTurns] = useState<DraftTurn[]>([]);
-  const [streamingAssistant, setStreamingAssistant] = useState<{ started: boolean; text: string }>({
-    started: false,
+  const [turns, setTurns] = useState<Message[]>([]);
+  const [streamingAssistant, setStreamingAssistant] = useState<{ hasText: boolean; text: string }>({
+    hasText: false,
     text: '',
   });
   const [templatesOpen, setTemplatesOpen] = useState(false);
@@ -313,30 +314,60 @@ export function NewAutomationScreen(): React.JSX.Element {
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
       }, (event) => {
         if (event.type === 'started') {
-          setStreamingAssistant({ started: true, text: '' });
+          setStreamingAssistant({ hasText: false, text: '' });
+          return;
+        }
+        if (event.type === 'tool') {
+          setTurns((current) => {
+            const existing = current.findIndex((message) => message.id === event.toolCallId);
+            const previous = existing >= 0 ? current[existing] : undefined;
+            const toolMessage: Message = {
+              id: event.toolCallId,
+              workstreamId: AUTOMATION_CHAT_ID,
+              sequenceNumber: previous?.sequenceNumber ?? current.length,
+              authorType: 'agent',
+              messageType: 'tool_event',
+              createdAt: previous?.createdAt ?? new Date().toISOString(),
+              toolEvent: {
+                id: event.toolCallId,
+                name: event.name,
+                summary: event.summary,
+                status: event.status,
+                plugins: event.plugins,
+                ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+              },
+            };
+            if (existing < 0) return [...current, toolMessage];
+            return current.map((message, index) => index === existing ? toolMessage : message);
+          });
           return;
         }
         setStreamingAssistant((current) => ({
-          started: true,
+          hasText: true,
           text: event.reset ? event.delta : current.text + event.delta,
         }));
       }),
     onMutate: (payload) => {
-      setStreamingAssistant({ started: false, text: '' });
+      setStreamingAssistant({ hasText: false, text: '' });
       setTurns((current) => current.some((turn) => turn.id === payload.turnId)
         ? current
-        : [...current, { id: payload.turnId, role: 'user', text: payload.message }]);
+        : [...current, automationTextMessage(payload.turnId, 'human', payload.message)]);
       setInput('');
     },
     onSuccess: (response) => {
-      setStreamingAssistant({ started: false, text: '' });
+      setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
-      if (!response.question && response.assistantMessage) {
-        setTurns((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', text: response.assistantMessage! }]);
-      }
+      const responseMessage = response.question
+        ? automationQuestionMessage(response.assistantMessage, response.question)
+        : response.assistantMessage
+          ? automationTextMessage(crypto.randomUUID(), 'agent', response.assistantMessage)
+          : null;
+      if (responseMessage) setTurns((current) => current.some((message) => message.id === responseMessage.id)
+        ? current
+        : [...current, responseMessage]);
     },
     onError: () => {
-      setStreamingAssistant({ started: false, text: '' });
+      setStreamingAssistant({ hasText: false, text: '' });
     },
   });
 
@@ -356,10 +387,14 @@ export function NewAutomationScreen(): React.JSX.Element {
     },
   });
 
-  const submit = (message = input): void => {
+  const submitAsync = async (message = input): Promise<void> => {
     const trimmed = message.trim();
     if (!trimmed || compile.isPending) return;
-    compile.mutate({ message: trimmed, turnId: crypto.randomUUID() });
+    await compile.mutateAsync({ message: trimmed, turnId: crypto.randomUUID() });
+  };
+
+  const submit = (message = input): void => {
+    void submitAsync(message).catch(() => undefined);
   };
 
   return (
@@ -406,30 +441,25 @@ export function NewAutomationScreen(): React.JSX.Element {
                 <button className="template-path" onClick={() => setTemplatesOpen(true)} type="button">Use a workspace template <ChevronRight size={13} /></button>
               </section>
             ) : (
-              <div className="automation-conversation" aria-live="polite">
+              <div className="automation-chat-surface automation-conversation" aria-live="polite">
                 {turns.map((turn) => (
-                  <div className={clsx('draft-turn', `draft-${turn.role}`, turn.role === 'assistant' && 'agent-message')} key={turn.id}>
-                    <span>{turn.role === 'assistant' ? 'Avalon' : 'You'}</span>
-                    {turn.role === 'assistant'
-                      ? <AssistantMessageContent text={turn.text} />
-                      : <MarkdownBody>{turn.text}</MarkdownBody>}
-                  </div>
+                  <AutomationMessageBlock
+                    key={turn.id}
+                    message={turn}
+                    onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
+                      ? async (answer) => {
+                          await submitAsync(answer == null ? 'Skip' : Array.isArray(answer) ? answer.join(', ') : answer);
+                          setTurns((current) => current.map((message) => message.id === turn.id && message.elicitation
+                            ? { ...message, elicitation: { ...message.elicitation, status: 'answered', answer } }
+                            : message));
+                        }
+                      : undefined}
+                  />
                 ))}
                 {compile.isPending && (
-                  <div aria-busy="true" className="agent-message draft-turn draft-assistant">
-                    <span>Avalon</span>
-                    {streamingAssistant.started
-                      ? <AssistantMessageContent showCopy={false} streaming text={streamingAssistant.text} />
-                      : <p className="thinking-line"><LoaderCircle className="spin" size={14} /> Researching and refining the automation…</p>}
-                  </div>
-                )}
-                {draft?.question && (
-                  <DraftQuestion
-                    assistantMessage={draft.assistantMessage}
-                    question={draft.question}
-                    submitting={compile.isPending}
-                    onSubmit={submit}
-                  />
+                  streamingAssistant.hasText
+                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingAssistant.text, true)} />
+                    : <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
                 )}
                 {draft && (
                   <DraftSummary

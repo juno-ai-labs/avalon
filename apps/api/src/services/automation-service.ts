@@ -9,7 +9,7 @@ import type {
 } from "@avalon/contracts";
 import { z } from "zod";
 import { AutomationCompilerError, OpenRouterError } from "@avalon/agent-harness";
-import type { AutomationCompilerTextEvent } from "@avalon/agent-harness";
+import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -91,7 +91,7 @@ export class AutomationService {
     input: { messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null },
     requestId: string,
     options: {
-      onAssistantText?: (event: AutomationCompilerTextEvent) => void | Promise<void>;
+      onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
       signal?: AbortSignal;
     } = {},
   ) {
@@ -110,7 +110,7 @@ export class AutomationService {
         requestId,
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
-        ...(options.onAssistantText ? { onAssistantText: options.onAssistantText } : {}),
+        ...(options.onStreamEvent ? { onStreamEvent: options.onStreamEvent } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
         defaultTimezones: {
           personal: defaults.user_timezone,

@@ -1,5 +1,7 @@
 import type {
   AddressingClassification,
+  AutomationPluginActivity,
+  AutomationPluginIcon,
   AutomationDraft,
   ExecutionPrincipal,
   HarnessFailureCode,
@@ -808,6 +810,7 @@ const automationJsonSchema = {
 export interface AutomationCreatorPluginCatalogEntry {
   pluginId: string;
   displayName: string;
+  icon: AutomationPluginIcon;
   description: string;
   scope: "personal" | "workspace";
   searchAliases: string[];
@@ -837,10 +840,103 @@ export class AutomationCompilerError extends Error {
   }
 }
 
-export type AutomationCompilerTextEvent =
+export type AutomationCompilerStreamEvent =
   | { type: "started" }
   | { type: "delta"; delta: string; reset: boolean }
+  | {
+      type: "tool";
+      toolCallId: string;
+      name: string;
+      summary: string;
+      status: "started" | "completed" | "failed";
+      plugins: AutomationPluginActivity[];
+      durationMs?: number;
+    }
   | { type: "completed"; content: string };
+
+const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
+  started: string;
+  completed: string;
+}> = {
+  automation_plugins_list: {
+    started: "Checking available plugin capabilities…",
+    completed: "Plugin capabilities are ready",
+  },
+  automation_plugins_search: {
+    started: "Finding the plugins relevant to this automation…",
+    completed: "Relevant plugins are ready",
+  },
+  automation_plugin_inspect: {
+    started: "Reviewing what this plugin can do…",
+    completed: "Plugin details are ready",
+  },
+};
+
+function automationPluginActivities(
+  catalog: AutomationCreatorPluginCatalogEntry[],
+  pluginIds?: ReadonlySet<string>,
+): AutomationPluginActivity[] {
+  return catalog
+    .filter((plugin) => !pluginIds || pluginIds.has(plugin.pluginId))
+    .slice(0, 20)
+    .map((plugin) => ({
+      pluginId: plugin.pluginId,
+      displayName: plugin.displayName,
+      icon: plugin.icon,
+    }));
+}
+
+function automationDiscoveryPluginsFromInput(
+  toolName: string,
+  input: unknown,
+  catalog: AutomationCreatorPluginCatalogEntry[],
+): AutomationPluginActivity[] {
+  if (toolName !== "automation_plugin_inspect") return automationPluginActivities(catalog);
+  const pluginId = String(asRecord(input).pluginId ?? "");
+  return automationPluginActivities(catalog, new Set([pluginId]));
+}
+
+function automationDiscoveryPluginsFromResult(
+  toolName: string,
+  output: unknown,
+  catalog: AutomationCreatorPluginCatalogEntry[],
+  fallback: AutomationPluginActivity[],
+): AutomationPluginActivity[] {
+  const record = asRecord(output);
+  const hasPluginResult = toolName === "automation_plugin_inspect"
+    ? Boolean(record.plugin && typeof record.plugin === "object")
+    : Array.isArray(record.plugins);
+  if (!hasPluginResult) return fallback;
+  const pluginRecords = toolName === "automation_plugin_inspect"
+    ? [asRecord(record.plugin)]
+    : (record.plugins as unknown[]).map(asRecord);
+  const pluginIds = new Set(pluginRecords
+    .map((plugin) => String(plugin.pluginId ?? ""))
+    .filter(Boolean));
+  return automationPluginActivities(catalog, pluginIds);
+}
+
+function automationPluginNames(plugins: AutomationPluginActivity[]): string {
+  if (!plugins.length) return "connected plugins";
+  const names = plugins.map((plugin) => plugin.displayName);
+  if (names.length === 1) return names[0]!;
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names[0]}, ${names[1]}, and ${names.length - 2} more`;
+}
+
+function automationDiscoveryActivityName(
+  toolName: string,
+  status: "started" | "completed" | "failed",
+  plugins: AutomationPluginActivity[],
+): string {
+  const names = automationPluginNames(plugins);
+  if (toolName === "automation_plugins_search") {
+    if (status === "completed") return plugins.length ? `Found ${names}` : "Searched connected plugins";
+    return `Searching ${names}`;
+  }
+  if (toolName === "automation_plugin_inspect") return `Reading ${names}`;
+  return status === "completed" ? `Reviewed ${names}` : `Reviewing ${names}`;
+}
 
 export async function compileAutomation(input: {
   apiKey: string;
@@ -852,7 +948,7 @@ export async function compileAutomation(input: {
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   maxResearchIterations?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
-  onAssistantText?: (event: AutomationCompilerTextEvent) => void | Promise<void>;
+  onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
 }): Promise<AutomationDraft> {
@@ -864,6 +960,8 @@ export async function compileAutomation(input: {
   let submittedDraft: AutomationDraft | null = null;
   let submissionReminderSent = false;
   let assistantContent = "";
+  const toolStartedAt = new Map<string, number>();
+  const toolPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
     {
       definition: {
@@ -1021,10 +1119,61 @@ export async function compileAutomation(input: {
     onEvent: async (event) => {
       if (event.type === "stream_started") {
         assistantContent = "";
-        await input.onAssistantText?.({ type: "started" });
+        await input.onStreamEvent?.({ type: "started" });
       } else if (event.type === "stream_delta") {
         assistantContent = event.reset ? event.delta : assistantContent + event.delta;
-        await input.onAssistantText?.({ type: "delta", delta: event.delta, reset: event.reset });
+        await input.onStreamEvent?.({ type: "delta", delta: event.delta, reset: event.reset });
+      } else if (event.type === "tool_started") {
+        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName];
+        if (!presentation) return;
+        const plugins = automationDiscoveryPluginsFromInput(event.toolName, event.input, catalog);
+        toolStartedAt.set(event.toolCallId, Date.now());
+        toolPlugins.set(event.toolCallId, plugins);
+        await input.onStreamEvent?.({
+          type: "tool",
+          toolCallId: event.toolCallId,
+          name: automationDiscoveryActivityName(event.toolName, "started", plugins),
+          summary: presentation.started,
+          status: "started",
+          plugins,
+        });
+      } else if (event.type === "tool_completed") {
+        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName];
+        if (!presentation) return;
+        const startedAt = toolStartedAt.get(event.toolCallId);
+        const plugins = automationDiscoveryPluginsFromResult(
+          event.toolName,
+          event.result.output,
+          catalog,
+          toolPlugins.get(event.toolCallId) ?? [],
+        );
+        toolStartedAt.delete(event.toolCallId);
+        toolPlugins.delete(event.toolCallId);
+        await input.onStreamEvent?.({
+          type: "tool",
+          toolCallId: event.toolCallId,
+          name: automationDiscoveryActivityName(event.toolName, "completed", plugins),
+          summary: presentation.completed,
+          status: "completed",
+          plugins,
+          ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
+        });
+      } else if (event.type === "tool_failed") {
+        const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName];
+        if (!presentation) return;
+        const startedAt = toolStartedAt.get(event.toolCallId);
+        const plugins = toolPlugins.get(event.toolCallId) ?? [];
+        toolStartedAt.delete(event.toolCallId);
+        toolPlugins.delete(event.toolCallId);
+        await input.onStreamEvent?.({
+          type: "tool",
+          toolCallId: event.toolCallId,
+          name: automationDiscoveryActivityName(event.toolName, "failed", plugins),
+          summary: "This research step failed; Avalon will adjust the plan.",
+          status: "failed",
+          plugins,
+          ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
+        });
       }
     },
     onInferenceAttempt: async (attempt) => {
@@ -1053,7 +1202,7 @@ export async function compileAutomation(input: {
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (submittedDraft) {
-    await input.onAssistantText?.({ type: "completed", content: assistantContent.trim() });
+    await input.onStreamEvent?.({ type: "completed", content: assistantContent.trim() });
     return submittedDraft;
   }
   if (outcome.failure) {
