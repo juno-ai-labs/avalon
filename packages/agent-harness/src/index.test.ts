@@ -11,7 +11,7 @@ import {
   OpenRouterClient,
   renderAddressingMessages,
   runHarness,
-  type AutomationCompilerTextEvent,
+  type AutomationCompilerStreamEvent,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessTool,
@@ -214,6 +214,7 @@ describe("agent harness", () => {
       ready: true,
     };
     const bodies: Array<Record<string, unknown>> = [];
+    const compilerEvents: AutomationCompilerStreamEvent[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return bodies.length === 1
@@ -226,6 +227,29 @@ describe("agent harness", () => {
       model: "test/model",
       messages: [{ role: "user", content: "Create it" }],
       fetch: fetcher,
+      pluginCatalog: [
+        {
+          pluginId: "plugin_github",
+          displayName: "GitHub",
+          icon: "brand-github",
+          description: "Authorized GitHub repositories",
+          scope: "workspace",
+          searchAliases: ["repositories"],
+          systemMessage: "Use GitHub only through its authorized tools.",
+          tools: [],
+        },
+        {
+          pluginId: "plugin_linear",
+          displayName: "Linear",
+          icon: "linear",
+          description: "Authorized Linear issues",
+          scope: "workspace",
+          searchAliases: ["issues"],
+          systemMessage: "Use Linear only through its authorized tools.",
+          tools: [],
+        },
+      ],
+      onStreamEvent: (event) => { compilerEvents.push(event); },
     })).resolves.toMatchObject({ name: "Daily summary" });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -244,8 +268,25 @@ describe("agent harness", () => {
       .find((message) => message.role === "tool");
     expect(JSON.parse(discoveryResult!.content)).toMatchObject({
       success: true,
-      data: { plugins: [] },
+      data: { plugins: [{ pluginId: "plugin_github" }, { pluginId: "plugin_linear" }] },
     });
+    expect(compilerEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "tool",
+        name: "Reviewing GitHub and Linear",
+        status: "started",
+        plugins: [
+          { pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" },
+          { pluginId: "plugin_linear", displayName: "Linear", icon: "linear" },
+        ],
+      }),
+      expect.objectContaining({
+        type: "tool",
+        name: "Reviewed GitHub and Linear",
+        summary: "Plugin capabilities are ready",
+        status: "completed",
+      }),
+    ]));
   });
 
   it("accepts an incomplete recurring draft when the model omits its generated summary", async () => {
@@ -315,7 +356,7 @@ describe("agent harness", () => {
       },
       ready: false,
     };
-    const events: AutomationCompilerTextEvent[] = [];
+    const events: AutomationCompilerStreamEvent[] = [];
     const fetcher = vi.fn(async () => streamResponse([
       { choices: [{ delta: { content: "Which blog " }, finish_reason: null }] },
       { choices: [{ delta: { content: "should I monitor?" }, finish_reason: null }] },
@@ -339,7 +380,7 @@ describe("agent harness", () => {
       model: "test/model",
       messages: [{ role: "user", content: "Check this blog every 24 hours." }],
       fetch: fetcher,
-      onAssistantText: (event) => { events.push(event); },
+      onStreamEvent: (event) => { events.push(event); },
     })).resolves.toMatchObject({ ready: false });
 
     expect(events).toEqual([

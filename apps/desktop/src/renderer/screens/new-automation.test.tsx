@@ -68,7 +68,7 @@ describe('New automation composer', () => {
     expect(composer).toHaveStyle({ height: 'auto' });
   });
 
-  it('sends an example prompt and opens the automation conversation immediately', async () => {
+  it('uses workstream chat messages while streaming research and the assistant response', async () => {
     let resolveCompile!: (value: unknown) => void;
     let stream!: (event: AutomationAssistantStreamEvent) => void;
     api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
@@ -81,18 +81,53 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: example }));
 
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }, expect.any(Function)));
-    expect(await screen.findByText('You')).toBeInTheDocument();
-    expect(screen.getByText(example)).toBeInTheDocument();
-    expect(screen.getByText('Researching and refining the automation…')).toBeInTheDocument();
+    const humanMessage = (await screen.findByText(example)).closest('article');
+    expect(humanMessage).toHaveClass('message-block', 'human-message', 'own-human-message');
+    expect(screen.getByText('Avalon is working')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
 
     act(() => {
+      stream({
+        type: 'tool',
+        toolCallId: 'tool-1',
+        name: 'Searching Google Drive + Docs + Sheets and Linear',
+        summary: 'Finding the plugins relevant to this automation…',
+        status: 'started',
+        plugins: [
+          { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
+          { pluginId: 'plugin_linear', displayName: 'Linear', icon: 'linear' },
+        ],
+      });
+    });
+    const activeResearch = (await screen.findByText('Searching Google Drive + Docs + Sheets and Linear')).closest('details');
+    expect(activeResearch).toHaveClass('plugin-activity', 'tool-started');
+    expect(screen.getByRole('img', { name: 'Plugins: Google Drive + Docs + Sheets, Linear' })).toBeInTheDocument();
+    expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
+    expect(screen.getByTitle('Linear')).toBeInTheDocument();
+    expect(screen.getByText('Avalon is working')).toBeInTheDocument();
+
+    act(() => {
+      stream({
+        type: 'tool',
+        toolCallId: 'tool-1',
+        name: 'Found Google Drive + Docs + Sheets and Linear',
+        summary: 'Relevant plugins are ready',
+        status: 'completed',
+        plugins: [
+          { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
+          { pluginId: 'plugin_linear', displayName: 'Linear', icon: 'linear' },
+        ],
+        durationMs: 42,
+      });
       stream({ type: 'started' });
       stream({ type: 'delta', delta: 'Which blog ', reset: false });
       stream({ type: 'delta', delta: 'should Avalon monitor?', reset: false });
     });
+    expect(await screen.findByText('Found Google Drive + Docs + Sheets and Linear')).toBeInTheDocument();
+    expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
+    expect(screen.getByText('0s')).toBeInTheDocument();
     expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
-    expect(screen.queryByText('Researching and refining the automation…')).not.toBeInTheDocument();
+    expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
 
     await act(async () => {
       resolveCompile({
@@ -108,7 +143,8 @@ describe('New automation composer', () => {
         },
       });
     });
-    expect(await screen.findByText('Which blog should Avalon monitor?')).toBeInTheDocument();
+    const assistantMessage = (await screen.findByText('Which blog should Avalon monitor?')).closest('article');
+    expect(assistantMessage).toHaveClass('message-block', 'agent-message');
     expect(screen.getByRole('textbox', { name: 'Paste the full blog URL.' })).toHaveAttribute(
       'placeholder',
       'https://example.com/blog',
@@ -156,5 +192,52 @@ describe('New automation composer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear']));
+  });
+
+  it('reuses workstream elicitation and preserves question-answer-response order', async () => {
+    api.compileAutomation
+      .mockResolvedValueOnce({
+        draftId: 'draft-choice',
+        assistantMessage: 'Choose where Avalon should send the update.',
+        question: {
+          id: 'question-choice',
+          prompt: 'Where should Avalon send it?',
+          responseType: 'single_select',
+          options: [
+            { label: 'Email', value: 'email' },
+            { label: 'Slack', value: 'slack' },
+          ],
+          allowOther: false,
+        },
+      })
+      .mockResolvedValueOnce({
+        draftId: 'draft-ready',
+        assistantMessage: 'The email automation is ready.',
+      });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Send me a daily update' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('heading', { name: 'Where should Avalon send it?' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Other' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Email' }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
+
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenNthCalledWith(
+      2,
+      { message: 'email', draftId: 'draft-choice' },
+      expect.any(Function),
+    ));
+    const resolvedQuestion = await screen.findByLabelText('Elicitation response');
+    const answerMessage = screen.getByText('email').closest('article');
+    const finalMessage = (await screen.findByText('The email automation is ready.')).closest('article');
+    expect(resolvedQuestion).toHaveTextContent('Email');
+    expect(answerMessage).toHaveClass('human-message', 'own-human-message');
+    expect(finalMessage).toHaveClass('agent-message');
+    expect(resolvedQuestion.compareDocumentPosition(answerMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(answerMessage!.compareDocumentPosition(finalMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });

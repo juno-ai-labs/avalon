@@ -22,6 +22,15 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("applies the development seed after every migration", () => {
+    const database = migrateFreshDatabase();
+    database.exec(readFileSync(new URL("../seed.sql", import.meta.url), "utf8"));
+    expect(database.prepare(
+      "SELECT model_plugin_id FROM connector_connections WHERE id = '00000000-0000-7000-8000-000000000040'",
+    ).get()).toEqual({ model_plugin_id: "plugin_web_monitor" });
+    database.close();
+  });
+
   it("cuts over active prototype runs and installs immutable Bind durability rails", () => {
     const database = migrateDatabaseThrough("0025_user_workspace_timezones.sql");
     database.exec(`

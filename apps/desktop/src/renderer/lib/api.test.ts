@@ -171,6 +171,23 @@ describe('Avalon API wire adapter', () => {
     };
     const events = [
       { type: 'started' },
+      {
+        type: 'tool',
+        toolCallId: 'tool-1',
+        name: 'Reviewing connected tools',
+        summary: 'Checking the authorized plugin catalog…',
+        status: 'started',
+        plugins: [{ pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' }],
+      },
+      {
+        type: 'tool',
+        toolCallId: 'tool-1',
+        name: 'Reviewing connected tools',
+        summary: 'Reviewed the authorized plugin catalog',
+        status: 'completed',
+        plugins: [{ pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' }],
+        durationMs: 42,
+      },
       { type: 'delta', delta: 'Which blog ', reset: false },
       { type: 'delta', delta: 'should I monitor?', reset: false },
       { type: 'completed', draft, assistantMessage: 'Which blog should I monitor?' },
@@ -195,7 +212,7 @@ describe('Avalon API wire adapter', () => {
       },
     });
 
-    expect(streamed).toEqual(events.slice(0, 3));
+    expect(streamed).toEqual(events.slice(0, -1));
     const request = fetchMock.mock.calls[0]!;
     expect(String(request[0])).toBe('https://api.avalon.test/automations/draft/stream');
     expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');

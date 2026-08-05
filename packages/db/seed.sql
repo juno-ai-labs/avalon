@@ -54,13 +54,14 @@ VALUES
 
 INSERT OR IGNORE INTO connector_connections
   (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-   granted_scopes_json, status, cursor_json, config_json, last_sync_at, next_poll_at, created_at, updated_at)
+   granted_scopes_json, model_plugin_id, status, cursor_json, config_json, last_sync_at, next_poll_at, created_at, updated_at)
 VALUES
   ('00000000-0000-7000-8000-000000000040', '00000000-0000-7000-8000-000000000002', 'web_monitor', 'personal', '00000000-0000-7000-8000-000000000001', 'Invoice status monitor',
-   '["web.read"]', 'healthy', '{}', '{"url":"https://example.com/","intervalSeconds":900}', '2026-07-31T19:39:00.000Z', NULL, '2026-07-31T19:15:00.000Z', '2026-07-31T19:39:00.000Z')
+   '["web.read"]', 'plugin_web_monitor', 'healthy', '{}', '{"url":"https://example.com/","intervalSeconds":900}', '2026-07-31T19:39:00.000Z', NULL, '2026-07-31T19:15:00.000Z', '2026-07-31T19:39:00.000Z')
 ON CONFLICT(id) DO UPDATE SET
   config_json = excluded.config_json,
   granted_scopes_json = excluded.granted_scopes_json,
+  model_plugin_id = excluded.model_plugin_id,
   status = excluded.status,
   updated_at = excluded.updated_at;
 

@@ -217,6 +217,24 @@ export const ConnectionSchema = z.object({
 });
 
 export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
+export const AutomationPluginIconSchema = z.enum([
+  "brand-github",
+  "brand-google",
+  "brand-google-drive",
+  "brand-notion",
+  "linear",
+  "plug",
+  "webhook",
+  "world-search",
+]);
+export type AutomationPluginIcon = z.infer<typeof AutomationPluginIconSchema>;
+
+export const AutomationPluginActivitySchema = z.object({
+  pluginId: ModelPluginIdSchema,
+  displayName: z.string().min(1).max(200),
+  icon: AutomationPluginIconSchema,
+});
+export type AutomationPluginActivity = z.infer<typeof AutomationPluginActivitySchema>;
 
 export const AutomationPluginRecommendationSchema = z.object({
   pluginId: ModelPluginIdSchema,
@@ -398,6 +416,15 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     type: z.literal("delta"),
     delta: z.string(),
     reset: z.boolean().default(false)
+  }),
+  z.object({
+    type: z.literal("tool"),
+    toolCallId: z.string().min(1).max(200),
+    name: z.string().min(1).max(200),
+    summary: z.string().min(1).max(1000),
+    status: z.enum(["started", "completed", "failed"]),
+    plugins: z.array(AutomationPluginActivitySchema).max(20).default([]),
+    durationMs: z.number().int().nonnegative().optional()
   }),
   z.object({
     type: z.literal("completed"),
