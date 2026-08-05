@@ -55,6 +55,56 @@ export interface ModelMessage {
   tool_calls?: ModelToolCall[];
 }
 
+export interface OpenRouterInferencePayload {
+  model: string;
+  messages: ModelMessage[];
+  stream: true;
+  stream_options: { include_usage: true };
+  tools?: Array<Record<string, unknown>>;
+  tool_choice?: "auto";
+  plugins?: Array<Record<string, unknown>>;
+  reasoning?: { effort: "low" | "medium" | "high" };
+}
+
+export interface InferenceRequestEvent {
+  inferenceRequestId: string;
+  turnId: string;
+  model: string;
+  providerInvocationModel: string;
+  provider: string;
+  cursor: {
+    structuredOutputAttempt: number;
+    stageIndex: number;
+    candidateIndex: number;
+    endpointAttempt: number;
+  };
+  payload: OpenRouterInferencePayload;
+}
+
+export interface InferenceAttemptEvent {
+  inferenceRequestId: string;
+  success: boolean;
+  turnId: string;
+  model: string;
+  provider: string;
+  cursor: {
+    structuredOutputAttempt: number;
+    stageIndex: number;
+    candidateIndex: number;
+    endpointAttempt: number;
+  };
+  latencyMs: number;
+  disposition?: "success" | "retry" | "defect" | "fallback" | "failed" | "cancelled";
+  ttftMs?: number | null;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number | null;
+  costCents?: number;
+  responseBytes?: number;
+  failureKind?: string;
+}
+
 /**
  * OpenRouter multimodal content. `file` and `input_audio` are upstream
  * extensions that are not yet represented by every OpenAI SDK release.
@@ -76,6 +126,12 @@ export type StructuredModelDiagnostic = {
   repairAttempt: number;
   latencyMs?: number;
   responseBytes?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number | null;
+  success?: boolean;
+  failureKind?: string;
   validationIssues?: Array<{ path: string; code: string }>;
 };
 
@@ -948,9 +1004,13 @@ export async function compileAutomation(input: {
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   maxResearchIterations?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
+  onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
+  onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
   onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  /** Deterministic catalog snapshot for tests or hosts with a cached catalog. */
+  contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
 }): Promise<AutomationDraft> {
   const rendered = renderAutomationCompilerMessages({
     messages: input.messages,
@@ -1087,10 +1147,8 @@ export async function compileAutomation(input: {
       maxIterations: Math.max(12, Math.min(32, input.maxResearchIterations ?? 20)),
       maxToolCalls: 80,
       maxWallClockMs: 180_000,
-      maxContextBytes: 512 * 1024,
       toolTimeoutMs: 10_000,
       maxWebResults: 0,
-      maxRunTokens: 240_000,
       maxCostCents: 1_000,
       maxCatalogTokens: 500,
       maxActivePlugins: 1,
@@ -1115,6 +1173,16 @@ export async function compileAutomation(input: {
         ].join("\n\n"),
       },
     ],
+    compaction: {
+      ...(input.contextWindowTokensByModel
+        ? { contextWindowTokensByModel: input.contextWindowTokensByModel }
+        : input.fetch
+          ? { contextWindowTokensByModel: Object.fromEntries([
+              input.model,
+              ...(input.fallbackModels ?? []),
+            ].map((modelId) => [modelId, 200_000])) }
+          : {}),
+    },
     tools: creatorTools,
     onEvent: async (event) => {
       if (event.type === "stream_started") {
@@ -1177,6 +1245,7 @@ export async function compileAutomation(input: {
       }
     },
     onInferenceAttempt: async (attempt) => {
+      await input.onInferenceAttempt?.(attempt);
       await input.onDiagnostic?.({
         stage: "model_response",
         schemaName: "automation_draft",
@@ -1185,9 +1254,16 @@ export async function compileAutomation(input: {
         fallbackAttempt: attempt.cursor.candidateIndex,
         repairAttempt: attempt.cursor.structuredOutputAttempt,
         latencyMs: attempt.latencyMs,
+        success: attempt.success,
+        ...(attempt.inputTokens === undefined ? {} : { inputTokens: attempt.inputTokens }),
+        ...(attempt.outputTokens === undefined ? {} : { outputTokens: attempt.outputTokens }),
+        ...(attempt.reasoningTokens === undefined ? {} : { reasoningTokens: attempt.reasoningTokens }),
+        ...(attempt.cachedInputTokens === undefined ? {} : { cachedInputTokens: attempt.cachedInputTokens }),
         ...(attempt.responseBytes === undefined ? {} : { responseBytes: attempt.responseBytes }),
+        ...(attempt.failureKind === undefined ? {} : { failureKind: attempt.failureKind }),
       });
     },
+    ...(input.onInferenceRequest ? { onInferenceRequest: input.onInferenceRequest } : {}),
     onTurnWouldEnd: () => {
       if (submittedDraft || submissionReminderSent) return null;
       submissionReminderSent = true;
@@ -1485,19 +1561,33 @@ export type HarnessEvent =
   | { type: "stream_completed"; content: string; usage: Record<string, number> | null }
   | { type: "needs_input"; toolCallId: string };
 
+export interface HarnessCompactionCheckpoint {
+  trigger: "manual" | "auto";
+  summary: string;
+  messages: ModelMessage[];
+  model: string;
+  contextTokensBeforeCompaction: number;
+  contextWindowTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  costCents: number;
+}
+
+export interface HarnessCompactionConfig {
+  /** Optional catalog snapshot, primarily for deterministic hosts/tests. */
+  contextWindowTokensByModel?: Readonly<Record<string, number | null | undefined>>;
+  /** Persist the compacted continuation context after Bind swaps it in. */
+  persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
+}
+
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
     maxIterations: number;
     maxToolCalls: number;
     maxWallClockMs: number;
-    /** Maximum UTF-8 bytes in the complete logical context for each selected route model. */
-    maxContextBytes: number;
     toolTimeoutMs: number;
     maxWebResults: number;
-    maxRunTokens?: number;
     maxCostCents?: number;
-    /** Optional exact overrides for provider/model context windows in tokens. */
-    modelContextWindowTokens?: Readonly<Record<string, number>>;
     maxCatalogTokens?: number;
     maxActivePlugins?: number;
     maxToolSchemaBytes?: number;
@@ -1513,6 +1603,12 @@ export interface RunHarnessInput {
   executionPrincipal: ExecutionPrincipal;
   systemPrompt: string;
   messages: ModelMessage[];
+  /**
+   * Enables provider-measured transcript compaction. The harness compares the
+   * latest OpenRouter prompt + completion usage with 80% of the selected
+   * model's advertised context window; it never estimates the prompt locally.
+   */
+  compaction?: HarnessCompactionConfig;
   tools: HarnessTool[];
   plugins?: HarnessPlugin[];
   /** Connector activations already durably persisted by the host. */
@@ -1556,34 +1652,17 @@ export interface RunHarnessInput {
     providerOperationId?: string;
   }) => void | Promise<void>;
   onAmbiguousExternalWrite?: (event: { toolCallId: string; pluginId: string; toolName: string }) => void | Promise<void>;
-  onInferenceAttempt?: (attempt: {
-    success: boolean;
-    turnId: string;
-    model: string;
-    provider: string;
-    cursor: {
-      structuredOutputAttempt: number;
-      stageIndex: number;
-      candidateIndex: number;
-      endpointAttempt: number;
-    };
-    latencyMs: number;
-    disposition?: "success" | "retry" | "defect" | "fallback" | "failed" | "cancelled";
-    ttftMs?: number | null;
-    inputTokens?: number;
-    outputTokens?: number;
-    reasoningTokens?: number;
-    cachedInputTokens?: number | null;
-    costCents?: number;
-    responseBytes?: number;
-    failureKind?: string;
-  }) => void | Promise<void>;
+  /** Receives the complete provider request body immediately before dispatch. */
+  onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
+  onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
   onTranscriptIssues?: (issues: Array<{ kind: string; index?: number; healed?: boolean }>) => void | Promise<void>;
   onToolCallRejected?: (event: { toolCallId: string; code: string }) => void | Promise<void>;
   onProgress?: (progress: { outputTokens: number; toolCalls: number }) => void | Promise<void>;
   flushProgress?: (progress: {
     inputTokens: number;
     outputTokens: number;
+    /** Latest completed OpenRouter prompt + completion count; not cumulative spend. */
+    contextTokens: number;
     costCents: number;
     toolCalls: number;
   }) => void | Promise<void>;
@@ -1637,7 +1716,6 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   run_wall_time_limit_exceeded: "This run reached its time limit",
   run_iteration_limit_exceeded: "This run reached its model-turn limit",
   run_tool_call_limit_exceeded: "This run reached its tool-call limit",
-  run_token_limit_exceeded: "This run reached its token limit",
   run_cost_limit_exceeded: "This run reached its cost limit",
   harness_execution_failed: "The Avalon harness could not complete this run",
   context_limit_exceeded: "This run could not fit safely in the selected model context",
@@ -1648,13 +1726,6 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
 export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): string {
   return MEMBER_SAFE_HARNESS_FAILURE_MESSAGES[code];
 }
-
-export {
-  DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS,
-  modelContextBudget,
-  resolveModelContextWindowTokens,
-  type ModelContextBudget,
-} from "./context-budget";
 
 export async function runHarness(input: RunHarnessInput): Promise<HarnessOutcome> {
   const { runHarnessWithBind } = await import("./bind-runtime");

@@ -134,6 +134,43 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("workspace preferences", () => {
+  const workspaceRow = {
+    id: invitationRow.workspace_id,
+    name: invitationRow.workspace_name,
+    slug: "avalon-studio",
+    region: "global",
+    timezone: "America/Los_Angeles",
+    log_agent_inference: 1,
+    role: "owner",
+    created_at: "2026-08-01T00:00:00.000Z",
+  };
+
+  it("returns and updates the opt-in inference logging preference", async () => {
+    const database = new StubDatabase(({ sql }) =>
+      sql.includes("FROM workspaces w JOIN workspace_members") ? workspaceRow : undefined
+    );
+    const service = new WorkspaceService(environment(database), ownerAuth);
+
+    await expect(service.getWorkspace()).resolves.toMatchObject({ logAgentInference: true });
+    await expect(service.updateWorkspace({ logAgentInference: false }))
+      .resolves.toMatchObject({ logAgentInference: true });
+
+    const update = database.runs.find((statement) => statement.sql.startsWith("UPDATE workspaces"));
+    expect(update?.values[0]).toBeNull();
+    expect(update?.values[1]).toBe(0);
+  });
+
+  it("keeps workspace preferences admin-only", async () => {
+    const database = new StubDatabase(() => undefined);
+    const service = new WorkspaceService(environment(database), { ...ownerAuth, role: "member" });
+
+    await expect(service.updateWorkspace({ logAgentInference: true }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(database.runs).toHaveLength(0);
+  });
+});
+
 describe("workspace invitation lifecycle", () => {
   it("does not consume an invitation when the signed-in email is wrong", async () => {
     vi.useFakeTimers();

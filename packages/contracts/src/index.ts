@@ -16,7 +16,6 @@ export const HarnessFailureCodeSchema = z.enum([
   "run_wall_time_limit_exceeded",
   "run_iteration_limit_exceeded",
   "run_tool_call_limit_exceeded",
-  "run_token_limit_exceeded",
   "run_cost_limit_exceeded",
   "harness_execution_failed",
   "context_limit_exceeded",
@@ -50,6 +49,7 @@ export const WorkspaceSchema = z.object({
   region: RegionSchema,
   role: MemberRoleSchema,
   timezone: IanaTimezoneSchema,
+  logAgentInference: z.boolean().default(false),
   createdAt: TimestampSchema
 });
 
@@ -527,7 +527,13 @@ export const DesktopExchangeRequestSchema = z.object({
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
-export const UpdateWorkspaceTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
+export const UpdateWorkspaceRequestSchema = z.object({
+  timezone: IanaTimezoneSchema.optional(),
+  logAgentInference: z.boolean().optional(),
+}).refine(
+  (value) => value.timezone !== undefined || value.logAgentInference !== undefined,
+  "At least one workspace preference is required",
+);
 
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),

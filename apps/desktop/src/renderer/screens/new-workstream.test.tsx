@@ -21,6 +21,7 @@ const workspace: Workspace = {
   name: 'Avalon Studio',
   region: 'global',
   timezone: 'America/Los_Angeles',
+  logAgentInference: false,
   currentUser,
 };
 const createdWorkstream = {

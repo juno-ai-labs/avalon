@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   testConnection: vi.fn(),
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
+  updateWorkspaceLogAgentInference: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
@@ -57,6 +58,7 @@ const workspace: Workspace = {
   name: 'Avalon Studio',
   region: 'eu',
   timezone: 'Europe/London',
+  logAgentInference: false,
   currentUser: owner,
 };
 const invitation: WorkspaceInvitation = {
@@ -100,8 +102,24 @@ describe('Workspace settings', () => {
     api.startProviderConnection.mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
     api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
+    api.updateWorkspaceLogAgentInference.mockImplementation(async (enabled: boolean) => ({
+      ...workspace,
+      logAgentInference: enabled,
+    }));
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
+  });
+
+  it('lets workspace admins enable full agent inference logging', async () => {
+    renderSettings();
+    openSettingsSection('Workspace');
+
+    const toggle = screen.getByRole('switch', { name: 'Log agent inference' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(api.updateWorkspaceLogAgentInference).toHaveBeenCalledWith(true));
+    expect(toggle).toBeChecked();
   });
 
   it('opens the exact section requested by a native settings-window URL', async () => {

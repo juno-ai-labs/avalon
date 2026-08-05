@@ -230,7 +230,7 @@ describe("durable UI-to-model transcript projection", () => {
     );
 
     expect(bind).toHaveBeenCalledWith(trigger.id, WORKSPACE_ID, WORKSTREAM_ID);
-    expect(listMessages).toHaveBeenCalledWith(WORKSPACE_ID, WORKSTREAM_ID, 80, 3);
+    expect(listMessages).toHaveBeenCalledWith(WORKSPACE_ID, WORKSTREAM_ID, 250, 3);
     expect(stored.map((entry) => entry.id)).toEqual([prior.id, trigger.id]);
     expect(stored.map((entry) => entry.textContent)).not.toContain(queued.textContent);
   });
@@ -252,36 +252,31 @@ describe("durable UI-to-model transcript projection", () => {
     expect(listMessages).not.toHaveBeenCalled();
   });
 
-  it("never splits a matched tool-call/result unit while bounding context", () => {
-    const assistant = {
-      role: "assistant" as const,
-      content: null,
-      tool_calls: [{
-        id: "run:turn:1:tool:0",
-        type: "function" as const,
-        function: { name: "search", arguments: '{"query":"large"}' },
-      }],
-    };
-    const tool = {
-      role: "tool" as const,
-      tool_call_id: "run:turn:1:tool:0",
-      content: JSON.stringify({ success: true, data: { body: "x".repeat(2_000) } }),
-    };
-    const newest = { role: "user" as const, content: "Continue" };
-    const systemPrompt = "Stable policy";
-    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
-    const maxBytes = new TextEncoder().encode(systemPrompt).byteLength
-      + bytes([newest])
-      + bytes([assistant, tool])
-      - 1;
+  it("paginates the complete durable transcript instead of silently keeping a fixed tail", async () => {
+    const allMessages = Array.from({ length: 300 }, (_, index) => message(
+      `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      index + 1,
+      { author: "human", textContent: `Message ${index + 1}` },
+    ));
+    const listMessages = vi.fn(async (
+      _workspaceId: string,
+      _workstreamId: string,
+      limit: number,
+      beforeSequence?: number,
+    ) => allMessages
+      .filter((entry) => entry.sequenceNumber < (beforeSequence ?? Infinity))
+      .slice(-limit));
 
-    const bounded = __integrationTesting.boundModelContext(
-      systemPrompt,
-      [assistant, tool, newest],
-      maxBytes,
+    const stored = await __integrationTesting.loadTriggerFencedTranscriptMessages(
+      { DB: {} as D1Database },
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      listMessages,
     );
 
-    expect(bounded.messages).toEqual([newest]);
+    expect(stored).toHaveLength(300);
+    expect(stored[0]?.sequenceNumber).toBe(1);
+    expect(stored.at(-1)?.sequenceNumber).toBe(300);
+    expect(listMessages).toHaveBeenCalledTimes(2);
   });
 
   it("reconstructs matched parallel tool protocol for a second run and omits dangling UI rows", async () => {
@@ -393,7 +388,6 @@ describe("durable UI-to-model transcript projection", () => {
         maxIterations: 2,
         maxToolCalls: 4,
         maxWallClockMs: 1_000,
-        maxContextBytes: 200_000,
         toolTimeoutMs: 100,
         maxWebResults: 4,
       },

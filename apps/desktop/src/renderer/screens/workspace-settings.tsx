@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Building2,
+  Bug,
   CalendarDays,
   Check,
   Clock3,
@@ -190,6 +191,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [copied, setCopied] = useState(false);
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
+  const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -249,6 +251,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const updateWorkspaceTimezone = useMutation({
     mutationFn: (timezone: string) => api!.updateWorkspaceTimezone(timezone),
     onSuccess: (updated) => setWorkspaceTimezone(updated.timezone),
+  });
+  const updateLogAgentInference = useMutation({
+    mutationFn: (enabled: boolean) => api!.updateWorkspaceLogAgentInference(enabled),
+    onSuccess: (updated) => setLogAgentInference(updated.logAgentInference),
+    onError: (_error, attemptedValue) => setLogAgentInference(!attemptedValue),
   });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
@@ -439,8 +446,31 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       variant="secondary"
                     />
                   </label>
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><Bug aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>Log agent inference</strong>
+                      <small>Store full agent messages, metadata, and tool definitions in the workspace region for debugging.</small>
+                    </span>
+                    <span className="settings-toggle">
+                      <input
+                        aria-label="Log agent inference"
+                        checked={logAgentInference}
+                        disabled={!isAdmin || updateLogAgentInference.isPending}
+                        onChange={(event) => {
+                          const enabled = event.currentTarget.checked;
+                          setLogAgentInference(enabled);
+                          updateLogAgentInference.mutate(enabled);
+                        }}
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span aria-hidden="true" />
+                    </span>
+                  </label>
                 </div>
                 {updateWorkspaceTimezone.error && <InlineError>{updateWorkspaceTimezone.error.message}</InlineError>}
+                {updateLogAgentInference.error && <InlineError>{updateLogAgentInference.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-count">
                   <div><h2>Members</h2><p>People with access to {workspace.name}.</p></div>
                   <span>{members.data?.length ?? 0}</span>

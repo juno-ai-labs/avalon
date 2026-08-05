@@ -56,6 +56,7 @@ function workspace(region: Region, id: string): Workspace {
     region,
     role: "member",
     timezone: region === "eu" ? "Europe/London" : "America/Los_Angeles",
+    logAgentInference: false,
     createdAt: at,
   };
 }

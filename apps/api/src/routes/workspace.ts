@@ -5,7 +5,7 @@ import {
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   UpdateUserTimezoneRequestSchema,
-  UpdateWorkspaceTimezoneRequestSchema,
+  UpdateWorkspaceRequestSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -17,8 +17,8 @@ const invitationParam = z.object({ id: IdSchema });
 export const workspaceRoutes = new Hono<HonoAppEnv>();
 
 workspaceRoutes.get("/", async (c) => c.json(await new WorkspaceService(c.env, getAuth(c)).getWorkspace()));
-workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceTimezoneRequestSchema), async (c) =>
-  c.json(await new WorkspaceService(c.env, getAuth(c)).updateWorkspaceTimezone(c.req.valid("json").timezone)),
+workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
+  c.json(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json"))),
 );
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
   c.json(await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone)),

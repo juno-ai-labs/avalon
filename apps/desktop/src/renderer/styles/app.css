@@ -978,6 +978,32 @@ pre {
 .settings-row-value { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; text-align: right; }
 .settings-row-value strong { font-size: 11.5px; }
 
+.settings-toggle { cursor: pointer; display: inline-flex; position: relative; }
+.settings-toggle input { height: 1px; opacity: 0; position: absolute; width: 1px; }
+.settings-toggle > span {
+  background: #4a4b44;
+  border-radius: 999px;
+  height: 20px;
+  position: relative;
+  transition: background 140ms;
+  width: 34px;
+}
+.settings-toggle > span::after {
+  background: #b0afa8;
+  border-radius: 50%;
+  content: '';
+  height: 14px;
+  left: 3px;
+  position: absolute;
+  top: 3px;
+  transition: background 140ms, transform 140ms;
+  width: 14px;
+}
+.settings-toggle:has(input:checked) > span { background: #315b44; }
+.settings-toggle:has(input:checked) > span::after { background: #88d29f; transform: translateX(14px); }
+.settings-toggle:has(input:focus-visible) > span { box-shadow: 0 0 0 2px #6a7f95; }
+.settings-toggle:has(input:disabled) { cursor: not-allowed; opacity: .52; }
+
 .dropdown-select-trigger {
   align-items: center;
   background: transparent;

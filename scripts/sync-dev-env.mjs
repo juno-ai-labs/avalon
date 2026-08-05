@@ -58,7 +58,6 @@ const workerKeys = [
   "HARNESS_MAX_TOOL_CALLS",
   "HARNESS_MAX_WALL_CLOCK_MS",
   "TOOL_DEFAULT_TIMEOUT_MS",
-  "HARNESS_MAX_CONTEXT_BYTES",
   "WEB_SEARCH_MAX_RESULTS",
   "WEB_FETCH_MAX_BYTES",
   "MAX_ATTACHMENT_BYTES",
@@ -114,7 +113,7 @@ const safeDefaults = {
   ALLOWED_ORIGINS: "app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-  OPENROUTER_FALLBACK_MODELS: "anthropic/claude-sonnet-4.5,google/gemini-2.5-pro",
+  OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
   OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
   RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
@@ -125,7 +124,6 @@ const safeDefaults = {
   HARNESS_MAX_TOOL_CALLS: "24",
   HARNESS_MAX_WALL_CLOCK_MS: "240000",
   TOOL_DEFAULT_TIMEOUT_MS: "30000",
-  HARNESS_MAX_CONTEXT_BYTES: "200000",
   WEB_SEARCH_MAX_RESULTS: "8",
   WEB_FETCH_MAX_BYTES: "2000000",
   MAX_ATTACHMENT_BYTES: "25000000",
@@ -201,7 +199,8 @@ for (const region of ["global", "eu"]) {
     ...existing,
     ...local,
     AVALON_REGION: region,
-    PUBLIC_API_BASE_URL: region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788"
+    PUBLIC_API_BASE_URL: region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788",
+    OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
   };
   for (const key of regionalizableKeys) {
     const regionalKey = `${key}_${region.toUpperCase()}`;

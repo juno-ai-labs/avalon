@@ -564,7 +564,7 @@ describe("durable harness attempt runtime", () => {
     if (claim.state !== "claimed") throw new Error("expected claimed attempt");
 
     const primaryModel = "google/gemini-2.5-flash-lite";
-    const fallbackModel = "anthropic/claude-3.5-haiku";
+    const fallbackModel = "google/gemini-3.6-flash";
     const responses = [
       inferenceStreamResponse([{
         choices: [{ delta: {}, finish_reason: "stop" }],
@@ -618,7 +618,6 @@ describe("durable harness attempt runtime", () => {
         maxIterations: 4,
         maxToolCalls: 4,
         maxWallClockMs: 2_000,
-        maxContextBytes: 200_000,
         toolTimeoutMs: 100,
         maxWebResults: 4,
         completionDefectRetries: 1,

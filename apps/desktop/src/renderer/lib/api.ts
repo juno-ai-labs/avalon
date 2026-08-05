@@ -616,7 +616,14 @@ export class AvalonApi {
       currentUser = matched ? { ...matched, role: raw.role } : undefined;
     }
     if (!currentUser) throw new ApiError('The signed-in user is missing from this workspace.', 401, 'session_profile_missing');
-    return { id: raw.id, name: raw.name, region: raw.region, timezone: raw.timezone, currentUser };
+    return {
+      id: raw.id,
+      name: raw.name,
+      region: raw.region,
+      timezone: raw.timezone,
+      logAgentInference: raw.logAgentInference,
+      currentUser,
+    };
   }
 
   async updateMyTimezone(timezone: string): Promise<WorkspaceMember> {
@@ -633,6 +640,15 @@ export class AvalonApi {
 
   async updateWorkspaceTimezone(timezone: string): Promise<Workspace> {
     await this.request('/workspace', { method: 'PATCH', body: { timezone }, schema: WireWorkspaceSchema });
+    return this.getWorkspace();
+  }
+
+  async updateWorkspaceLogAgentInference(logAgentInference: boolean): Promise<Workspace> {
+    await this.request('/workspace', {
+      method: 'PATCH',
+      body: { logAgentInference },
+      schema: WireWorkspaceSchema,
+    });
     return this.getWorkspace();
   }
 

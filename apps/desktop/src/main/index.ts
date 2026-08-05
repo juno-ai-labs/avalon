@@ -8,7 +8,6 @@ import {
   type Session as WireSession,
 } from '@avalon/contracts';
 import { existsSync } from 'node:fs';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -35,6 +34,12 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
+import {
+  migrateLegacyStoredSessionFile,
+  readStoredSessionFile,
+  removeStoredSessionFiles,
+  writeStoredSessionFile,
+} from './session-file';
 import { normalizeLegacyStoredSession } from './stored-session';
 import {
   initializeAutoUpdate,
@@ -82,8 +87,8 @@ protocol.registerSchemesAsPrivileged([{
 // whenever their ad-hoc code requirement changes.
 app.setName(app.isPackaged ? 'Avalon' : 'Avalon Development');
 
-function sessionFilePath(): string {
-  return join(app.getPath('userData'), 'desktop-session.bin');
+function userDataDirectory(): string {
+  return app.getPath('userData');
 }
 
 function publicSession(value: WireSession): DesktopSession {
@@ -134,7 +139,7 @@ async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
 async function persistSessionUnlocked(value: WireSession): Promise<void> {
   if (safeStorage.isEncryptionAvailable()) {
     const encrypted = safeStorage.encryptString(JSON.stringify(value));
-    await writeFile(sessionFilePath(), encrypted, { mode: 0o600 });
+    await writeStoredSessionFile(userDataDirectory(), encrypted);
   }
   inMemorySession = value;
   broadcastSessionChanged(value);
@@ -148,13 +153,13 @@ async function loadStoredSession(): Promise<WireSession | null> {
   if (inMemorySession) return inMemorySession;
   if (!safeStorage.isEncryptionAvailable()) return null;
   try {
-    const encrypted = await readFile(sessionFilePath());
+    const encrypted = await readStoredSessionFile(userDataDirectory());
     const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
     const normalized = normalizeLegacyStoredSession(parsed);
     const validated = SessionSchema.safeParse(normalized);
     if (!validated.success) return null;
     if (normalized !== parsed) {
-      await writeFile(sessionFilePath(), safeStorage.encryptString(JSON.stringify(validated.data)), { mode: 0o600 });
+      await writeStoredSessionFile(userDataDirectory(), safeStorage.encryptString(JSON.stringify(validated.data)));
     }
     inMemorySession = validated.data;
     return validated.data;
@@ -167,7 +172,7 @@ async function clearStoredSessionUnlocked(): Promise<void> {
   inMemorySession = null;
   let failure: unknown;
   try {
-    await unlink(sessionFilePath());
+    await removeStoredSessionFiles(userDataDirectory());
   } catch (error) {
     const code = error instanceof Error && 'code' in error ? error.code : undefined;
     if (code !== 'ENOENT') {
@@ -177,7 +182,7 @@ async function clearStoredSessionUnlocked(): Promise<void> {
       // A restart will remain signed out instead of reviving stale tokens.
       if (safeStorage.isEncryptionAvailable()) {
         try {
-          await writeFile(sessionFilePath(), safeStorage.encryptString('{}'), { mode: 0o600 });
+          await writeStoredSessionFile(userDataDirectory(), safeStorage.encryptString('{}'));
           failure = undefined;
         } catch {
           // Preserve the original deletion error for the caller.
@@ -1062,6 +1067,12 @@ if (!singleInstanceLock) {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('app.avalon.desktop');
     app.setAsDefaultProtocolClient(customProtocol);
+    try {
+      await migrateLegacyStoredSessionFile(userDataDirectory());
+    } catch (error) {
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      if (code !== 'ENOENT') console.warn('[avalon] could not migrate the legacy desktop session file', error);
+    }
     await installRendererProtocol();
     installContentSecurityPolicy();
     registerIpc();
