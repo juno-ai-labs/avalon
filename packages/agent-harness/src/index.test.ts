@@ -7,7 +7,6 @@ import {
   classifyAddressingHeuristically,
   compileAutomation,
   memberSafeHarnessFailureMessage,
-  modelContextBudget,
   OpenRouterClient,
   renderAddressingMessages,
   runHarness,
@@ -15,6 +14,8 @@ import {
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessTool,
+  type InferenceAttemptEvent,
+  type InferenceRequestEvent,
 } from "./index";
 
 describe("agent harness", () => {
@@ -620,24 +621,11 @@ describe("agent harness", () => {
     expect(stopped.failure).toBeUndefined();
   });
 
-  it("returns distinct member-safe codes for each hard run ceiling", async () => {
+  it("returns distinct member-safe codes for each active hard run ceiling", async () => {
     const terminalWithUsage = (usage: Record<string, number>) => streamResponse([{
       choices: [{ delta: { content: "complete" }, finish_reason: "stop" }],
       usage,
     }]);
-
-    const tokenFetch = vi.fn(async () => terminalWithUsage({
-      prompt_tokens: 4,
-      completion_tokens: 3,
-    })) as typeof fetch;
-    const tokenInput = runInput(tokenFetch);
-    await expect(runHarness({
-      ...tokenInput,
-      config: { ...tokenInput.config, maxRunTokens: 6 },
-    })).resolves.toMatchObject({
-      status: "failed",
-      failure: { kind: "limit", code: "run_token_limit_exceeded" },
-    });
 
     const costFetch = vi.fn(async () => terminalWithUsage({
       prompt_tokens: 1,
@@ -695,57 +683,138 @@ describe("agent harness", () => {
       failure: { kind: "limit", code: "run_iteration_limit_exceeded" },
     });
 
-    expect(memberSafeHarnessFailureMessage("run_token_limit_exceeded"))
-      .toBe("This run reached its token limit");
     expect(memberSafeHarnessFailureMessage("context_limit_exceeded"))
       .toBe("This run could not fit safely in the selected model context");
   });
 
-  it("derives conservative input budgets from the selected route context window", () => {
-    expect(modelContextBudget({
-      model: "x-ai/grok-4.3",
-      configuredMaxBytes: 2_000_000,
-      maxRunTokens: 48_000,
-    })).toMatchObject({
-      contextWindowTokens: 1_000_000,
-      reservedRunTokens: 48_000,
-      effectiveMaxBytes: 952_000,
+  it("compacts after 80% using OpenRouter usage and carries the summary into the next turn", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-read", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "The record was read; return the result." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 8 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 24, completion_tokens: 2 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const persist = vi.fn();
+    const events: HarnessEvent[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      tools: [harnessTool("read_once", "read", [])],
+      compaction: {
+        contextWindowTokensByModel: { "test/model": 100 },
+        persist,
+      },
+      onEvent: (event) => { events.push(event); },
     });
-    expect(modelContextBudget({
-      model: "google/gemini-2.5-flash-lite",
-      configuredMaxBytes: 2_000_000,
-      maxRunTokens: 48_000,
-    })).toMatchObject({
-      contextWindowTokens: 1_048_576,
-      reservedRunTokens: 48_000,
-      effectiveMaxBytes: 1_000_576,
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      content: "done",
+      usage: {
+        prompt_tokens: 187,
+        completion_tokens: 11,
+        context_tokens: 26,
+      },
     });
-    expect(modelContextBudget({
-      model: "anthropic/claude-sonnet-4.5",
-      configuredMaxBytes: 2_000_000,
-      maxRunTokens: 48_000,
-    })).toMatchObject({
-      contextWindowTokens: 200_000,
-      effectiveMaxBytes: 152_000,
-    });
-    expect(modelContextBudget({
-      model: "test/private-route",
-      configuredMaxBytes: 500_000,
-      maxRunTokens: 100,
-      modelContextWindowTokens: { "test/private-route": 1_000 },
-    })).toMatchObject({
-      contextWindowTokens: 1_000,
-      effectiveMaxBytes: 900,
-    });
-    expect(modelContextBudget({
-      model: "unmapped/provider-model",
-      configuredMaxBytes: 123_456,
-      maxRunTokens: 48_000,
-    })).toMatchObject({
-      contextWindowTokens: null,
-      effectiveMaxBytes: 123_456,
-    });
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith(expect.objectContaining({
+      trigger: "auto",
+      contextTokensBeforeCompaction: 82,
+      contextWindowTokens: 100,
+      summary: "The record was read; return the result.",
+      messages: [
+        expect.objectContaining({ role: "user", content: "Do the work" }),
+        expect.objectContaining({ role: "assistant", content: expect.stringContaining("Compacted context summary") }),
+        expect.objectContaining({ role: "user", content: expect.stringContaining("Compaction checkpoint") }),
+      ],
+    }));
+    expect(requestBodies[2]?.messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+      "user",
+    ]);
+    expect(events.filter((event) => event.type === "stream_delta").map((event) =>
+      event.type === "stream_delta" ? event.delta : ""
+    ).join("")).toBe("done");
   });
+
+  it("does not compact at exactly 80%", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      model: "test/model",
+      choices: [{ delta: { content: "complete" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 79, completion_tokens: 1 },
+    }])) as typeof fetch;
+    const persist = vi.fn();
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      compaction: {
+        contextWindowTokensByModel: { "test/model": 100 },
+        persist,
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", usage: { context_tokens: 80 } });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("persists a compaction checkpoint when the threshold-crossing turn is the final reply", async () => {
+    const responses = [
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "final answer" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 81, completion_tokens: 1 },
+      }]),
+      streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "Final answer was delivered." }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 82, completion_tokens: 4 },
+      }]),
+    ];
+    const fetcher = vi.fn(async (request: RequestInfo | URL) => {
+      if (String(request) === "https://openrouter.ai/api/v1/models") {
+        return Response.json({
+          data: [{ id: "test/model", context_length: 100 }],
+        });
+      }
+      return responses.shift()!;
+    }) as typeof fetch;
+    const persist = vi.fn();
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      compaction: { persist },
+    });
+
+    expect(outcome).toMatchObject({
+      status: "completed",
+      content: "final answer",
+      usage: { context_tokens: 0, prompt_tokens: 163, completion_tokens: 5 },
+      stats: { turns: 1, inputTokens: 163, outputTokens: 5 },
+    });
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
 
   it("uses stable invocation IDs while preserving provider tool-result order and run stats", async () => {
     const requestBodies: Array<{ messages: Array<{ role: string; tool_call_id?: string }> }> = [];
@@ -774,6 +843,8 @@ describe("agent harness", () => {
       return responses.shift()!;
     }) as typeof fetch;
     const events: HarnessEvent[] = [];
+    const inferenceRequests: InferenceRequestEvent[] = [];
+    const inferenceAttempts: InferenceAttemptEvent[] = [];
     const executionOrder: string[] = [];
     const tools = [
       harnessTool("write_one", "write", executionOrder),
@@ -786,6 +857,8 @@ describe("agent harness", () => {
       ...runInput(fetcher),
       tools,
       onEvent: (event) => { events.push(event); },
+      onInferenceRequest: (request) => { inferenceRequests.push(request); },
+      onInferenceAttempt: (attempt) => { inferenceAttempts.push(attempt); },
     });
 
     expect(outcome).toMatchObject({
@@ -793,6 +866,7 @@ describe("agent harness", () => {
       iterations: 2,
       toolCalls: 4,
       stats: { turns: 2, toolCalls: 4, inputTokens: 15, outputTokens: 5 },
+      usage: { context_tokens: 8 },
     });
     expect(outcome.stats.toolTimeBreakdownMs).toEqual(expect.objectContaining({
       write_one: expect.any(Number),
@@ -819,6 +893,28 @@ describe("agent harness", () => {
     ]));
     expect(requestBodies[1]!.messages.filter((message) => message.role === "tool").map((message) => message.tool_call_id))
       .toEqual(["provider-write-1", "provider-read-1", "provider-read-2", "provider-write-2"]);
+    expect(inferenceRequests).toHaveLength(2);
+    expect(inferenceRequests[0]).toMatchObject({
+      model: "test/model",
+      payload: {
+        model: "test/model",
+        stream: true,
+        stream_options: { include_usage: true },
+        tool_choice: "auto",
+        tools: expect.arrayContaining([
+          expect.objectContaining({ function: expect.objectContaining({ name: "write_one" }) }),
+        ]),
+      },
+    });
+    expect(inferenceRequests[1]?.payload.messages).toEqual(requestBodies[1]?.messages);
+    expect(inferenceAttempts.map((attempt) => ({
+      id: attempt.inferenceRequestId,
+      inputTokens: attempt.inputTokens,
+      outputTokens: attempt.outputTokens,
+    }))).toEqual([
+      { id: inferenceRequests[0]?.inferenceRequestId, inputTokens: 10, outputTokens: 2 },
+      { id: inferenceRequests[1]?.inferenceRequestId, inputTokens: 5, outputTokens: 3 },
+    ]);
   });
 
   it("bounds a signal-ignoring tool and emits one terminal event for its start", async () => {
@@ -1543,369 +1639,6 @@ describe("agent harness", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("accounts for policy, active plugins, catalog, conversation, and schemas in the final model context", async () => {
-    const requestBodies: Array<{
-      messages: unknown[];
-      tools?: unknown[];
-    }> = [];
-    const probeFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
-      return streamResponse([{ choices: [{ delta: { content: "within budget" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    const activePlugin = {
-      ...credentialPlugin(
-        "connection:active-context",
-        "active_context",
-        'Trusted active policy with "quoted" instructions and 🛡️.',
-      ),
-      preload: true,
-    };
-    const catalogPlugin = credentialPlugin(
-      "connection:catalog-context",
-      "catalog_context",
-      "Catalog-only policy that must not be injected while inactive.",
-    );
-    const schemaTool = harnessTool("schema_read", "read", []);
-    schemaTool.definition.inputSchema = {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        query: { type: "string", description: "A complete structured query" },
-      },
-      required: ["query"],
-    };
-    const common = {
-      systemPrompt: 'Fixed policy with "JSON escapes" and 🧭.',
-      messages: [{ role: "user" as const, content: 'Keep this whole conversation message: "hello".' }],
-      tools: [schemaTool],
-      plugins: [activePlugin, catalogPlugin],
-      activationHints: [activePlugin.canonicalId],
-      reauthorizePlugin: () => true,
-    };
-
-    const probe = await runHarness({
-      ...runInput(probeFetch),
-      ...common,
-    });
-    expect(probe.status).toBe("completed");
-    const request = requestBodies[0]!;
-    const aggregateBytes = new TextEncoder().encode(JSON.stringify({
-      messages: request.messages,
-      ...(request.tools?.length ? { tools: request.tools } : {}),
-    })).byteLength;
-
-    const exactFetch = vi.fn(async () =>
-      streamResponse([{ choices: [{ delta: { content: "exactly within budget" }, finish_reason: "stop" }] }])) as typeof fetch;
-    const exact = await runHarness({
-      ...runInput(exactFetch, { maxContextBytes: aggregateBytes }),
-      ...common,
-    });
-    expect(exact.status).toBe("completed");
-    expect(exactFetch).toHaveBeenCalledTimes(1);
-
-    const blockedFetch = vi.fn(async () => {
-      throw new Error("provider request must not be sent");
-    }) as typeof fetch;
-    const blocked = await runHarness({
-      ...runInput(blockedFetch, { maxContextBytes: aggregateBytes - 1 }),
-      ...common,
-    });
-
-    expect(blocked).toMatchObject({
-      status: "failed",
-      failure: {
-        kind: "context",
-        code: "context_limit_exceeded",
-      },
-    });
-    expect(blocked.error).toContain(`Selected model test/model context requires ${aggregateBytes} bytes`);
-    expect(blocked.error).toMatch(/fixed policy \d+, active plugin snippets \d+, bounded catalog \d+/u);
-    expect(blocked.error).toMatch(/conversation\/tool results \d+, tool schemas \d+/u);
-    expect(blockedFetch).not.toHaveBeenCalled();
-  });
-
-  it("prunes only old conversation units after accounting for plugin catalog and tool schemas", async () => {
-    type RequestBody = {
-      messages: Array<{ role: string; content?: string | null }>;
-      tools?: unknown[];
-    };
-    const oldContent = `old-context-${"x".repeat(8_000)}`;
-    const newestContent = "newest request must remain";
-    const activePlugin = {
-      ...credentialPlugin(
-        "connection:budgeted-active",
-        "budgeted_active",
-        "Trusted plugin instructions that are part of the fixed context surface.",
-      ),
-      preload: true,
-    };
-    const catalogPlugin = credentialPlugin(
-      "connection:budgeted-catalog",
-      "budgeted_catalog",
-      "Loadable catalog entry that consumes bounded system context.",
-    );
-    const schemaTool = harnessTool("structured_schema_read", "read", []);
-    schemaTool.definition.inputSchema = {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        query: { type: "string", description: "A structured query with exact matching semantics" },
-        filters: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            properties: { field: { type: "string" }, value: { type: "string" } },
-            required: ["field", "value"],
-          },
-        },
-      },
-      required: ["query"],
-    };
-    const common = {
-      systemPrompt: "Stable fixed policy",
-      messages: [
-        { role: "user" as const, content: oldContent },
-        { role: "user" as const, content: newestContent },
-      ],
-      tools: [schemaTool],
-      plugins: [activePlugin, catalogPlugin],
-      activationHints: [activePlugin.canonicalId],
-      reauthorizePlugin: () => true,
-    };
-    const probeBodies: RequestBody[] = [];
-    const probeFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      probeBodies.push(JSON.parse(String(init?.body)) as RequestBody);
-      return streamResponse([{ choices: [{ delta: { content: "probe" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    expect((await runHarness({ ...runInput(probeFetch), ...common })).status).toBe("completed");
-    const probe = probeBodies[0]!;
-    const prunedMessages = probe.messages.filter((message) =>
-      message.role === "system" || message.content === newestContent);
-    const exactPrunedBytes = new TextEncoder().encode(JSON.stringify({
-      messages: prunedMessages,
-      tools: probe.tools,
-    })).byteLength;
-
-    const boundedBodies: RequestBody[] = [];
-    const boundedFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      boundedBodies.push(JSON.parse(String(init?.body)) as RequestBody);
-      return streamResponse([{ choices: [{ delta: { content: "bounded" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    const bounded = await runHarness({
-      ...runInput(boundedFetch, { maxContextBytes: exactPrunedBytes }),
-      ...common,
-    });
-
-    expect(bounded).toMatchObject({ status: "completed", content: "bounded" });
-    expect(boundedBodies[0]!.messages).toEqual(prunedMessages);
-    expect(boundedBodies[0]!.messages.some((message) => message.content === oldContent)).toBe(false);
-    expect(boundedBodies[0]!.messages[0]!.content).toContain("Trusted plugin instructions");
-    expect(boundedBodies[0]!.messages[0]!.content).toContain("plugin_budgeted_catalog");
-    expect(boundedBodies[0]!.tools).toEqual(probe.tools);
-  });
-
-  it("keeps the newest real user request through later tool turns", async () => {
-    type RequestBody = {
-      messages: Array<{ role: string; content?: string | null }>;
-      tools?: unknown[];
-    };
-    const oldContent = `old-context-${"x".repeat(8_000)}`;
-    const triggerContent = "Write the launch summary requested in this message";
-    const toolCallId = "current-turn:turn:1:tool:0";
-    const common = {
-      messages: [
-        { role: "user" as const, content: oldContent },
-        { role: "user" as const, content: triggerContent },
-        {
-          role: "assistant" as const,
-          content: null,
-          tool_calls: [{
-            id: toolCallId,
-            type: "function" as const,
-            function: { name: "list_connector_plugins", arguments: "{}" },
-          }],
-        },
-        { role: "tool" as const, content: '{"plugins":[]}', tool_call_id: toolCallId },
-      ],
-    };
-    const probeBodies: RequestBody[] = [];
-    const probeFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      probeBodies.push(JSON.parse(String(init?.body)) as RequestBody);
-      return streamResponse([{ choices: [{ delta: { content: "probe" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    expect((await runHarness({ ...runInput(probeFetch), ...common })).status).toBe("completed");
-    const probe = probeBodies[0]!;
-    const protectedMessages = probe.messages.filter((message) =>
-      message.role === "system" || message.content === triggerContent || message.role === "assistant" || message.role === "tool");
-    const protectedBytes = new TextEncoder().encode(JSON.stringify({
-      messages: protectedMessages,
-      tools: probe.tools,
-    })).byteLength;
-
-    const boundedBodies: RequestBody[] = [];
-    const boundedFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      boundedBodies.push(JSON.parse(String(init?.body)) as RequestBody);
-      return streamResponse([{ choices: [{ delta: { content: "bounded" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    const bounded = await runHarness({
-      ...runInput(boundedFetch, { maxContextBytes: protectedBytes }),
-      ...common,
-    });
-    expect(bounded).toMatchObject({ status: "completed", content: "bounded" });
-    expect(boundedBodies[0]!.messages).toEqual(protectedMessages);
-    expect(boundedBodies[0]!.messages.some((message) => message.content === oldContent)).toBe(false);
-
-    const suffixOnlyMessages = probe.messages.filter((message) =>
-      message.role === "system" || message.role === "assistant" || message.role === "tool");
-    const suffixOnlyBytes = new TextEncoder().encode(JSON.stringify({
-      messages: suffixOnlyMessages,
-      tools: probe.tools,
-    })).byteLength;
-    const rejectedFetch = vi.fn(async () => {
-      throw new Error("provider request must not be sent without the trigger");
-    }) as typeof fetch;
-    const rejected = await runHarness({
-      ...runInput(rejectedFetch, { maxContextBytes: suffixOnlyBytes }),
-      ...common,
-    });
-    expect(rejected).toMatchObject({
-      status: "failed",
-      failure: { kind: "context", code: "context_limit_exceeded" },
-    });
-    expect(rejectedFetch).not.toHaveBeenCalled();
-  });
-
-  it("never splits a matched tool-call and result while pruning the final Bind request", async () => {
-    type RequestBody = {
-      messages: Array<{
-        role: string;
-        content?: string | null;
-        tool_calls?: unknown[];
-        tool_call_id?: string;
-      }>;
-      tools?: unknown[];
-    };
-    const toolCallId = "prior-run:turn:1:tool:0";
-    const newestContent = "Continue without the oversized prior tool unit";
-    const common = {
-      messages: [
-        {
-          role: "assistant" as const,
-          content: null,
-          tool_calls: [{
-            id: toolCallId,
-            type: "function" as const,
-            function: { name: "prior_search", arguments: '{"query":"historical"}' },
-          }],
-        },
-        {
-          role: "tool" as const,
-          tool_call_id: toolCallId,
-          content: JSON.stringify({ success: true, data: "old-tool-result-".repeat(1_000) }),
-        },
-        { role: "user" as const, content: newestContent },
-      ],
-    };
-    const probeBodies: RequestBody[] = [];
-    const probeFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      probeBodies.push(JSON.parse(String(init?.body)) as RequestBody);
-      return streamResponse([{ choices: [{ delta: { content: "probe" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    expect((await runHarness({ ...runInput(probeFetch), ...common })).status).toBe("completed");
-    const probe = probeBodies[0]!;
-    const prunedMessages = probe.messages.filter((message) =>
-      message.role === "system" || message.content === newestContent);
-    const exactPrunedBytes = new TextEncoder().encode(JSON.stringify({
-      messages: prunedMessages,
-      tools: probe.tools,
-    })).byteLength;
-
-    const boundedBodies: RequestBody[] = [];
-    const boundedFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      boundedBodies.push(JSON.parse(String(init?.body)) as RequestBody);
-      return streamResponse([{ choices: [{ delta: { content: "continued" }, finish_reason: "stop" }] }]);
-    }) as typeof fetch;
-    const bounded = await runHarness({
-      ...runInput(boundedFetch, { maxContextBytes: exactPrunedBytes }),
-      ...common,
-    });
-
-    expect(bounded.status).toBe("completed");
-    expect(boundedBodies[0]!.messages).toEqual(prunedMessages);
-    expect(boundedBodies[0]!.messages.some((message) => message.tool_call_id === toolCallId)).toBe(false);
-    expect(boundedBodies[0]!.messages.some((message) => message.tool_calls?.length)).toBe(false);
-  });
-
-  it("rechecks aggregate context before a later Bind request without slicing a complete tool result", async () => {
-    const largeOutput = {
-      records: [{ id: "record-1", payload: "result-data-".repeat(2_000) }],
-      finalMarker: "preserve-this-structured-tail",
-    };
-    const largeTool: HarnessTool = {
-      definition: {
-        name: "large_read",
-        description: "Return one complete large structured result",
-        capability: "large.read",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: { type: "object", additionalProperties: false },
-      },
-      execute: async () => ({ output: largeOutput, summary: "Returned a large result" }),
-    };
-    const responses = () => [
-      streamResponse([{
-        choices: [{
-          delta: { tool_calls: [toolDelta(0, "provider-large-read", "large_read")] },
-          finish_reason: "tool_calls",
-        }],
-      }]),
-      streamResponse([{ choices: [{ delta: { content: "used result" }, finish_reason: "stop" }] }]),
-    ];
-    const probeBodies: Array<{ messages: unknown[]; tools?: unknown[] }> = [];
-    const probeResponses = responses();
-    const probeFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
-      probeBodies.push(JSON.parse(String(init?.body)) as typeof probeBodies[number]);
-      return probeResponses.shift()!;
-    }) as typeof fetch;
-    const probeBase = runInput(probeFetch);
-    const probe = await runHarness({
-      ...probeBase,
-      config: { ...probeBase.config, maxToolResultBytes: 64_000 },
-      tools: [largeTool],
-    });
-    expect(probe.status).toBe("completed");
-    expect(probeBodies).toHaveLength(2);
-    const contextBytes = (body: typeof probeBodies[number]) => new TextEncoder().encode(JSON.stringify({
-      messages: body.messages,
-      ...(body.tools?.length ? { tools: body.tools } : {}),
-    })).byteLength;
-    const firstTurnBytes = contextBytes(probeBodies[0]!);
-    expect(contextBytes(probeBodies[1]!)).toBeGreaterThan(firstTurnBytes);
-
-    const limitedResponses = responses();
-    const limitedFetch = vi.fn(async () => limitedResponses.shift()!) as typeof fetch;
-    const events: HarnessEvent[] = [];
-    const limitedBase = runInput(limitedFetch, { maxContextBytes: firstTurnBytes });
-    const limited = await runHarness({
-      ...limitedBase,
-      config: { ...limitedBase.config, maxToolResultBytes: 64_000 },
-      tools: [largeTool],
-      onEvent: (event) => { events.push(event); },
-    });
-
-    expect(limited).toMatchObject({
-      status: "failed",
-      toolCalls: 1,
-      failure: { kind: "context", code: "context_limit_exceeded" },
-    });
-    expect(limitedFetch).toHaveBeenCalledTimes(1);
-    const completion = events.find((event) => event.type === "tool_completed");
-    expect(completion).toMatchObject({
-      type: "tool_completed",
-      result: { output: largeOutput },
-    });
-  });
 
   it("keeps a bounded child research result viable for a synthesis turn", async () => {
     const fetchedPage = {
@@ -1949,7 +1682,6 @@ describe("agent harness", () => {
       ...base,
       config: {
         ...base.config,
-        maxRunTokens: 12_000,
         maxToolResultBytes: 24_000,
       },
       tools: [fetchTool],
@@ -1968,55 +1700,6 @@ describe("agent harness", () => {
     const toolMessage = requestBodies[1]!.messages.find((message) => message.role === "tool");
     expect(toolMessage?.content).toContain('"truncated":true');
     expect(new TextEncoder().encode(toolMessage?.content ?? "").byteLength).toBeLessThanOrEqual(24_256);
-  });
-
-  it("still fails deterministically when bounded child research exceeds its hard token ceiling", async () => {
-    const fetchTool: HarnessTool = {
-      definition: {
-        name: "research_fetch",
-        description: "Fetch one official research source",
-        capability: "web.fetch",
-        mode: "read",
-        idempotency: "safe",
-        inputSchema: { type: "object", additionalProperties: false },
-      },
-      execute: async () => ({
-        output: { markdown: "Official source evidence. ".repeat(8_000) },
-        summary: "Fetched an official source",
-      }),
-    };
-    const responses = [
-      streamResponse([{
-        choices: [{
-          delta: { tool_calls: [toolDelta(0, "provider-limit-fetch", "research_fetch")] },
-          finish_reason: "tool_calls",
-        }],
-        usage: { prompt_tokens: 600, completion_tokens: 50 },
-      }]),
-      streamResponse([{
-        choices: [{ delta: { content: "over budget" }, finish_reason: "stop" }],
-        usage: { prompt_tokens: 11_500, completion_tokens: 100 },
-      }]),
-    ];
-    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
-    const base = runInput(fetcher);
-
-    const result = await runHarness({
-      ...base,
-      config: {
-        ...base.config,
-        maxRunTokens: 12_000,
-        maxToolResultBytes: 24_000,
-      },
-      tools: [fetchTool],
-    });
-
-    expect(result).toMatchObject({
-      status: "failed",
-      toolCalls: 1,
-      failure: { kind: "limit", code: "run_token_limit_exceeded" },
-    });
-    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("retries truncated tool completions on the same endpoint and resets streamed text", async () => {
@@ -2246,7 +1929,6 @@ function credentialPlugin(canonicalId: string, shortWireName: string, systemMess
 
 function runInput(fetcher: typeof fetch, overrides: Partial<{
   maxWallClockMs: number;
-  maxContextBytes: number;
   toolTimeoutMs: number;
 }> = {}) {
   return {
@@ -2257,7 +1939,6 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
       maxIterations: 4,
       maxToolCalls: 10,
       maxWallClockMs: overrides.maxWallClockMs ?? 1_000,
-      maxContextBytes: overrides.maxContextBytes ?? 200_000,
       toolTimeoutMs: overrides.toolTimeoutMs ?? 100,
       maxWebResults: 4,
     },

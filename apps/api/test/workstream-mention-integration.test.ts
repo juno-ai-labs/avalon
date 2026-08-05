@@ -282,7 +282,7 @@ function environment(database: DatabaseSync): Env {
     AVALON_REGION: "global",
     OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
-    OPENROUTER_FALLBACK_MODELS: "",
+    OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   } as unknown as Env;
 }
 

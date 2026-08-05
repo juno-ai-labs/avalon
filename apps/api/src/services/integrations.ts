@@ -13,6 +13,7 @@ import {
   type AddressingContextMessage,
   type AutomationCompilerStreamEvent,
   type AutomationCreatorPluginCatalogEntry,
+  type HarnessCompactionCheckpoint,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessToolPolicyIdentity,
@@ -54,6 +55,7 @@ import {
   FirecrawlError,
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
+import { createAgentInferenceLogger } from "./agent-inference-logging";
 import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
@@ -99,6 +101,39 @@ type WorkstreamHarnessResult = {
   messageId?: string;
   error?: { code: string; message: string };
 };
+
+type WorkstreamContextCompaction = {
+  compactedThroughSequence: number;
+  messages: ModelMessage[];
+};
+
+const PersistedCompactionMessagesSchema = z.array(z.discriminatedUnion("role", [
+  z.object({
+    role: z.literal("user"),
+    content: z.union([
+      z.string(),
+      z.array(z.discriminatedUnion("type", [
+        z.object({ type: z.literal("text"), text: z.string() }),
+        z.object({
+          type: z.literal("image_url"),
+          image_url: z.object({
+            url: z.string(),
+            detail: z.enum(["low", "high", "auto"]).optional(),
+          }),
+        }),
+        z.object({
+          type: z.literal("file"),
+          file: z.object({ filename: z.string(), file_data: z.string() }),
+        }),
+        z.object({
+          type: z.literal("input_audio"),
+          input_audio: z.object({ data: z.string(), format: z.string() }),
+        }),
+      ])),
+    ]),
+  }).passthrough(),
+  z.object({ role: z.literal("assistant"), content: z.string().nullable() }).passthrough(),
+]));
 
 const InlineChildToolInputSchema = z.object({
   objective: z.string().trim().min(1).max(12_000),
@@ -274,23 +309,98 @@ type TranscriptMessageLister = (
   beforeSequence?: number,
 ) => Promise<Message[]>;
 
+async function loadWorkstreamContextCompaction(
+  database: D1Database,
+  workspaceId: string,
+  workstreamId: string,
+): Promise<WorkstreamContextCompaction | null> {
+  const row = await database.prepare(
+    `SELECT compacted_through_sequence, messages_json
+       FROM workstream_context_compactions
+      WHERE workspace_id = ? AND workstream_id = ?`,
+  ).bind(workspaceId, workstreamId).first<{
+    compacted_through_sequence: number;
+    messages_json: string;
+  }>();
+  if (!row || !Number.isSafeInteger(row.compacted_through_sequence) || row.compacted_through_sequence < 0) {
+    return null;
+  }
+  const parsed = PersistedCompactionMessagesSchema.safeParse(parseJson<unknown>(row.messages_json, null));
+  if (!parsed.success) return null;
+  return {
+    compactedThroughSequence: row.compacted_through_sequence,
+    messages: parsed.data as ModelMessage[],
+  };
+}
+
+async function persistWorkstreamContextCompaction(
+  database: D1Database,
+  input: WorkstreamWorkflowInput,
+  compactedThroughSequence: number,
+  checkpoint: HarnessCompactionCheckpoint,
+): Promise<void> {
+  const at = nowIso();
+  await database.prepare(
+    `INSERT INTO workstream_context_compactions
+       (workstream_id, workspace_id, harness_run_id, compacted_through_sequence,
+        messages_json, summary, model, context_tokens_before_compaction,
+        context_window_tokens, input_tokens, output_tokens, cost_microusd,
+        created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(workstream_id) DO UPDATE SET
+       workspace_id = excluded.workspace_id,
+       harness_run_id = excluded.harness_run_id,
+       compacted_through_sequence = excluded.compacted_through_sequence,
+       messages_json = excluded.messages_json,
+       summary = excluded.summary,
+       model = excluded.model,
+       context_tokens_before_compaction = excluded.context_tokens_before_compaction,
+       context_window_tokens = excluded.context_window_tokens,
+       input_tokens = excluded.input_tokens,
+       output_tokens = excluded.output_tokens,
+       cost_microusd = excluded.cost_microusd,
+       updated_at = excluded.updated_at
+     WHERE excluded.workspace_id = workstream_context_compactions.workspace_id
+       AND (
+         excluded.compacted_through_sequence > workstream_context_compactions.compacted_through_sequence
+         OR excluded.harness_run_id = workstream_context_compactions.harness_run_id
+       )`,
+  ).bind(
+    input.workstreamId,
+    input.workspaceId,
+    input.harnessRunId,
+    compactedThroughSequence,
+    JSON.stringify(checkpoint.messages),
+    checkpoint.summary,
+    checkpoint.model,
+    checkpoint.contextTokensBeforeCompaction,
+    checkpoint.contextWindowTokens,
+    checkpoint.inputTokens,
+    checkpoint.outputTokens,
+    Math.max(0, Math.round(checkpoint.costCents * 10_000)),
+    at,
+    at,
+  ).run();
+}
+
 /**
  * Load the immutable transcript visible to this attempt.
  *
  * Work-stream messages can continue arriving while an earlier attempt waits
- * for its lease. Fetching the latest messages and filtering afterward is not
- * safe: a busy work stream can evict the actual trigger from the bounded
- * history window. Resolve the trigger's durable sequence first, then let the
- * repository apply that boundary in SQL. The `+ 1` converts its exclusive
- * `beforeSequence` cursor into an inclusive trigger boundary.
+ * for its lease. Resolve the trigger's durable sequence first, then page
+ * backward from that immutable SQL boundary until the prior compaction
+ * checkpoint (or the start of the work stream). The `+ 1` converts the
+ * repository's exclusive cursor into an inclusive trigger boundary.
  */
 async function loadTriggerFencedTranscriptMessages(
   env: Pick<Env, "DB">,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "triggerMessageId">,
   listMessages: TranscriptMessageLister,
-  limit = 80,
+  afterSequence = -1,
+  pageSize = 250,
 ): Promise<Message[]> {
   let beforeSequence: number | undefined;
+  let triggerSequence: number | undefined;
   if (input.triggerMessageId) {
     const trigger = await env.DB.prepare(
       `SELECT sequence_number
@@ -298,7 +408,7 @@ async function loadTriggerFencedTranscriptMessages(
         WHERE id = ?1 AND workspace_id = ?2 AND workstream_id = ?3`,
     ).bind(input.triggerMessageId, input.workspaceId, input.workstreamId)
       .first<{ sequence_number: number }>();
-    const triggerSequence = trigger?.sequence_number;
+    triggerSequence = trigger?.sequence_number;
     if (!Number.isSafeInteger(triggerSequence) || (triggerSequence ?? -1) < 0) {
       throw Object.assign(new Error("The run trigger message is not available in this work stream"), {
         code: "trigger_message_not_found",
@@ -307,13 +417,31 @@ async function loadTriggerFencedTranscriptMessages(
     beforeSequence = triggerSequence! + 1;
   }
 
-  const messages = await listMessages(
-    input.workspaceId,
-    input.workstreamId,
-    limit,
-    beforeSequence,
-  );
-  if (input.triggerMessageId && !messages.some((message) => message.id === input.triggerMessageId)) {
+  const messages: Message[] = [];
+  let cursor = beforeSequence;
+  while (true) {
+    const page = await listMessages(
+      input.workspaceId,
+      input.workstreamId,
+      pageSize,
+      cursor,
+    );
+    const newerThanCheckpoint = page.filter((message) => message.sequenceNumber > afterSequence);
+    messages.unshift(...newerThanCheckpoint);
+    const oldestSequence = page[0]?.sequenceNumber;
+    if (
+      page.length < pageSize
+      || oldestSequence == null
+      || oldestSequence <= afterSequence
+      || (cursor != null && oldestSequence >= cursor)
+    ) break;
+    cursor = oldestSequence;
+  }
+  if (
+    input.triggerMessageId
+    && (triggerSequence ?? Number.MAX_SAFE_INTEGER) > afterSequence
+    && !messages.some((message) => message.id === input.triggerMessageId)
+  ) {
     throw Object.assign(new Error("The run trigger message is outside the available transcript window"), {
       code: "trigger_message_not_found",
     });
@@ -345,19 +473,23 @@ async function projectModelProtocolTranscript(
   const issues: ModelTranscriptProjectionIssue[] = [];
 
   if (toolMessageIds.length > 0) {
-    const placeholders = toolMessageIds.map(() => "?").join(", ");
-    const rows = await env.DB.prepare(
-      `SELECT m.id AS message_id, ti.harness_run_id, ti.tool_call_id, ti.tool_name,
-              ti.input_json, ti.output_ref, ti.output_summary, ti.status, ti.error_json
-         FROM messages m
-         JOIN tool_invocations ti ON ti.id = m.id
-        WHERE m.workspace_id = ? AND m.workstream_id = ?
-          AND m.message_type = 'tool'
-          AND m.id IN (${placeholders})`,
-    ).bind(input.workspaceId, input.workstreamId, ...toolMessageIds)
-      .all<ModelProtocolToolRow>();
+    const toolRows: ModelProtocolToolRow[] = [];
+    for (const idBatch of arrayBatches(toolMessageIds, 80)) {
+      const placeholders = idBatch.map(() => "?").join(", ");
+      const rows = await env.DB.prepare(
+        `SELECT m.id AS message_id, ti.harness_run_id, ti.tool_call_id, ti.tool_name,
+                ti.input_json, ti.output_ref, ti.output_summary, ti.status, ti.error_json
+           FROM messages m
+           JOIN tool_invocations ti ON ti.id = m.id
+          WHERE m.workspace_id = ? AND m.workstream_id = ?
+            AND m.message_type = 'tool'
+            AND m.id IN (${placeholders})`,
+      ).bind(input.workspaceId, input.workstreamId, ...idBatch)
+        .all<ModelProtocolToolRow>();
+      toolRows.push(...(rows.results ?? []));
+    }
 
-    for (const row of rows.results ?? []) {
+    for (const row of toolRows) {
       if (row.status === "pending" || row.status === "started") {
         intentionallyOmittedToolMessageIds.add(row.message_id);
         issues.push({ kind: "dangling_tool_invocation", healed: true });
@@ -516,12 +648,7 @@ async function loadModelAttachmentSources(
 ): Promise<Map<string, ModelAttachmentSource>> {
   const ids = [...new Set(messages.flatMap((message) => message.attachments.map((attachment) => attachment.id)))];
   if (ids.length === 0) return new Map();
-  const placeholders = ids.map(() => "?").join(", ");
-  const rows = await env.DB.prepare(
-    `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type, model_metadata_json
-       FROM resources
-      WHERE workspace_id = ? AND id IN (${placeholders})`,
-  ).bind(workspaceId, ...ids).all<{
+  type AttachmentRow = {
     id: string;
     title: string;
     mime_type: string | null;
@@ -529,8 +656,18 @@ async function loadModelAttachmentSources(
     model_content_ref: string | null;
     model_mime_type: string | null;
     model_metadata_json: string | null;
-  }>();
-  return new Map((rows.results ?? []).map((row) => [row.id, {
+  };
+  const attachmentRows: AttachmentRow[] = [];
+  for (const idBatch of arrayBatches(ids, 90)) {
+    const placeholders = idBatch.map(() => "?").join(", ");
+    const rows = await env.DB.prepare(
+      `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type, model_metadata_json
+         FROM resources
+        WHERE workspace_id = ? AND id IN (${placeholders})`,
+    ).bind(workspaceId, ...idBatch).all<AttachmentRow>();
+    attachmentRows.push(...(rows.results ?? []));
+  }
+  return new Map(attachmentRows.map((row) => [row.id, {
     id: row.id,
     fileName: row.title,
     mimeType: row.mime_type ?? "application/octet-stream",
@@ -539,6 +676,14 @@ async function loadModelAttachmentSources(
     modelMimeType: row.model_mime_type,
     modelMetadataJson: row.model_metadata_json,
   }]));
+}
+
+function arrayBatches<T>(values: T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    batches.push(values.slice(index, index + size));
+  }
+  return batches;
 }
 
 export async function classifyWorkstreamMessage(
@@ -575,6 +720,11 @@ export async function compileAutomationDraft(
   },
 ): Promise<AutomationDraft> {
   const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
+  const inferenceLogger = createAgentInferenceLogger(env, {
+    workspaceId: input.workspaceId,
+    requestId: input.requestId,
+    source: "automation_compiler",
+  });
   try {
     return await compileAutomation({
       apiKey: env.OPENROUTER_API_KEY,
@@ -587,6 +737,8 @@ export async function compileAutomationDraft(
       maxResearchIterations: 20,
       ...(input.onStreamEvent ? { onStreamEvent: input.onStreamEvent } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
+      onInferenceRequest: inferenceLogger.onRequest,
+      onInferenceAttempt: inferenceLogger.onAttempt,
       onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
         logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
           request_id: input.requestId,
@@ -600,6 +752,15 @@ export async function compileAutomationDraft(
           repair_attempt: diagnostic.repairAttempt,
           latency_ms: diagnostic.latencyMs,
           response_bytes: diagnostic.responseBytes,
+          input_tokens: diagnostic.inputTokens,
+          output_tokens: diagnostic.outputTokens,
+          context_tokens: diagnostic.inputTokens === undefined || diagnostic.outputTokens === undefined
+            ? undefined
+            : diagnostic.inputTokens + diagnostic.outputTokens,
+          reasoning_tokens: diagnostic.reasoningTokens,
+          cached_input_tokens: diagnostic.cachedInputTokens,
+          success: diagnostic.success,
+          failure_kind: diagnostic.failureKind,
           validation_issues: diagnostic.validationIssues,
         });
       },
@@ -840,13 +1001,26 @@ export async function runWorkstreamHarness(
     minimumIntervalMs: 5_000,
   });
   await liveness.pulse("run_start", true);
+  const priorCompaction = await loadWorkstreamContextCompaction(
+    env.DB,
+    input.workspaceId,
+    input.workstreamId,
+  );
   const storedMessages = await loadTriggerFencedTranscriptMessages(
     env,
     input,
     database.workstreams.listMessages,
+    priorCompaction?.compactedThroughSequence ?? -1,
   );
   const transcriptProjection = await projectModelProtocolTranscript(env, input, storedMessages);
-  const rawModelMessages = transcriptProjection.messages;
+  const rawModelMessages = [
+    ...(priorCompaction?.messages ?? []),
+    ...transcriptProjection.messages,
+  ];
+  const compactedThroughSequence = storedMessages.reduce(
+    (highest, message) => Math.max(highest, message.sequenceNumber),
+    priorCompaction?.compactedThroughSequence ?? 0,
+  );
   if (transcriptProjection.issues.length > 0) {
     logStructuredEvent(env, "warn", "harness_model_transcript_projected", {
       request_id: input.harnessRunId,
@@ -859,15 +1033,9 @@ export async function runWorkstreamHarness(
     title: workstream.title,
     objective: workstream.objective,
   });
-  const maxContextBytes = Math.min(
-    numericEnv(env, "HARNESS_MAX_CONTEXT_BYTES", 200_000),
-    2_000_000,
-  );
-  const maxRunTokens = numericEnv(env, "HARNESS_MAX_RUN_TOKENS", 48_000);
-  // Bind performs the final context selection after plugin activation and
-  // authorization are settled. Pruning here would ignore active plugin
-  // instructions, the catalog, and tool schemas, then fail later even when an
-  // older complete transcript unit could have been dropped safely.
+  // Preserve the complete protocol transcript. OpenRouter's returned usage is
+  // the authoritative context measurement; Avalon does not estimate bytes or
+  // silently drop older conversation units before inference.
   const modelMessages = [...rawModelMessages, ...promptContext.additionalMessages];
   let streamedText = "";
   let modelName: string | null = null;
@@ -892,8 +1060,6 @@ export async function runWorkstreamHarness(
     maxIterations: numericEnv(env, "HARNESS_MAX_MODEL_ITERATIONS", 8),
     maxToolCalls: numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24),
     maxWallClockMs: numericEnv(env, "HARNESS_MAX_WALL_CLOCK_MS", 240_000),
-    maxContextBytes,
-    maxRunTokens,
     maxCostCents: numericEnv(env, "HARNESS_MAX_COST_CENTS", 500),
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
     maxActivePlugins: numericEnv(env, "HARNESS_MAX_ACTIVE_PLUGINS", 12),
@@ -1012,6 +1178,12 @@ export async function runWorkstreamHarness(
   // failed attempt falsely owned in a reused Worker isolate.
   await liveness.pulse("inference_start", true);
   const livenessMonitor = liveness.startMonitor(5_000);
+  const inferenceLogger = createAgentInferenceLogger(env, {
+    workspaceId: input.workspaceId,
+    requestId: input.harnessRunId,
+    source: "workstream",
+    workstreamId: input.workstreamId,
+  });
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   try {
     outcome = await runHarness({
@@ -1024,10 +1196,8 @@ export async function runWorkstreamHarness(
       maxIterations: runLimits.maxIterations,
       maxToolCalls: runLimits.maxToolCalls,
       maxWallClockMs: runLimits.maxWallClockMs,
-      maxContextBytes: runLimits.maxContextBytes,
       toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
       maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
-      maxRunTokens: runLimits.maxRunTokens,
       maxCostCents: runLimits.maxCostCents,
       maxCatalogTokens: runLimits.maxCatalogTokens,
       maxActivePlugins: runLimits.maxActivePlugins,
@@ -1044,6 +1214,18 @@ export async function runWorkstreamHarness(
     executionPrincipal: input.executionPrincipal,
     systemPrompt: promptContext.systemPrompt,
     messages: modelMessages,
+    compaction: {
+      persist: async (checkpoint) => {
+        await liveness.pulse("compaction_persist", true);
+        await assertRunAuthorityStillValid(env.DB, input, runAuthoritySnapshot);
+        await persistWorkstreamContextCompaction(
+          env.DB,
+          input,
+          compactedThroughSequence,
+          checkpoint,
+        );
+      },
+    },
     tools: harnessTools.coreTools,
     plugins: harnessTools.plugins,
     activationHints,
@@ -1094,6 +1276,7 @@ export async function runWorkstreamHarness(
       await assertFrozenConnectionAuthorized(env, input, frozen, policy.capability);
     },
     onInferenceAttempt: async (attempt) => {
+      await inferenceLogger.onAttempt(attempt);
       const completedAtMs = Date.now();
       const completedAt = new Date(completedAtMs).toISOString();
       const failure = attempt.failureKind?.toLowerCase();
@@ -1138,6 +1321,7 @@ export async function runWorkstreamHarness(
         completedAt,
       });
     },
+    onInferenceRequest: inferenceLogger.onRequest,
     onTranscriptIssues: (issues) => {
       if (issues.length === 0) return;
       logStructuredEvent(env, "warn", "harness_transcript_healed", {
@@ -1545,19 +1729,10 @@ function delayWithSignal(milliseconds: number, signal: AbortSignal): Promise<voi
 }
 
 function childRunLimits(env: Env) {
-  const maxRunTokens = Math.min(
-    24_000,
-    numericEnv(env, "HARNESS_CHILD_MAX_RUN_TOKENS", 12_000),
-  );
   return {
     maxIterations: Math.min(8, numericEnv(env, "HARNESS_CHILD_MAX_MODEL_ITERATIONS", 4)),
     maxToolCalls: Math.min(16, numericEnv(env, "HARNESS_CHILD_MAX_TOOL_CALLS", 8)),
     maxWallClockMs: Math.min(180_000, numericEnv(env, "HARNESS_CHILD_MAX_WALL_CLOCK_MS", 90_000)),
-    maxContextBytes: Math.min(
-      numericEnv(env, "HARNESS_MAX_CONTEXT_BYTES", 200_000),
-      2_000_000,
-    ),
-    maxRunTokens,
     maxCostCents: Math.min(250, numericEnv(env, "HARNESS_CHILD_MAX_COST_CENTS", 100)),
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
     maxActivePlugins: Math.min(4, numericEnv(env, "HARNESS_CHILD_MAX_PLUGINS", 4)),
@@ -1565,16 +1740,11 @@ function childRunLimits(env: Env) {
       64 * 1_024,
       numericEnv(env, "HARNESS_CHILD_MAX_TOOL_SCHEMA_BYTES", 64 * 1_024),
     ),
-    // A child research run commonly needs search -> fetch -> synthesis. The
-    // same fetched page is part of every later model request, so allowing the
-    // root run's 128 KiB result envelope can consume the child's 12k-token
-    // *cumulative* ceiling before it gets a synthesis turn. Keep the run token
-    // ceiling unchanged and structurally reduce each child result instead.
-    // Two bytes per run token leaves room for the objective, schemas, search
-    // results, and repeated framing while retaining useful source evidence.
+    // A child research run commonly needs search -> fetch -> synthesis. Keep
+    // each result compact so repeated context still leaves room for the
+    // objective, schemas, search results, and final synthesis.
     maxToolResultBytes: Math.max(1_024, Math.min(
       INLINE_CHILD_MAX_TOOL_RESULT_BYTES,
-      maxRunTokens * 2,
       numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
     )),
   };
@@ -1897,6 +2067,13 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         }
 
         let childText = "";
+        const childInferenceLogger = createAgentInferenceLogger(options.env, {
+          workspaceId: childInput.workspaceId,
+          requestId: childInput.harnessRunId,
+          parentRequestId: parentInput.harnessRunId,
+          source: "inline_child",
+          workstreamId: childInput.workstreamId,
+        });
         const outcome = await runHarness({
           config: {
             apiKey: options.env.OPENROUTER_API_KEY,
@@ -1907,10 +2084,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             maxIterations: limits.maxIterations,
             maxToolCalls: limits.maxToolCalls,
             maxWallClockMs: limits.maxWallClockMs,
-            maxContextBytes: limits.maxContextBytes,
             toolTimeoutMs: numericEnv(options.env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
             maxWebResults: numericEnv(options.env, "WEB_SEARCH_MAX_RESULTS", 8),
-            maxRunTokens: limits.maxRunTokens,
             maxCostCents: limits.maxCostCents,
             maxCatalogTokens: limits.maxCatalogTokens,
             maxActivePlugins: limits.maxActivePlugins,
@@ -1927,6 +2102,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           executionPrincipal: childInput.executionPrincipal,
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
           messages: [{ role: "user", content: args.objective }],
+          compaction: {},
           tools: childCoreTools,
           plugins: childPlugins,
           activationHints,
@@ -1998,13 +2174,17 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               summary: row.output_summary ?? "Completed",
             };
           },
-          onInferenceAttempt: (attempt) => recordOpenRouterInferenceAttempt(
-            options.env,
-            childInput,
-            childLiveness.lease,
-            INLINE_CHILD_ROUTING_POLICY_VERSION,
-            attempt,
-          ),
+          onInferenceRequest: childInferenceLogger.onRequest,
+          onInferenceAttempt: async (attempt) => {
+            await childInferenceLogger.onAttempt(attempt);
+            await recordOpenRouterInferenceAttempt(
+              options.env,
+              childInput,
+              childLiveness.lease,
+              INLINE_CHILD_ROUTING_POLICY_VERSION,
+              attempt,
+            );
+          },
           onProgress: () => {
             void childLiveness.pulse("stream_progress").catch((error) => childLiveness.controller.abort(error));
           },
@@ -2417,80 +2597,6 @@ function projectElicitationResponseMessage(structuredContent: unknown): ModelMes
     options_json: JSON.stringify(elicitation.options),
     answer_json: elicitation.answer == null ? null : JSON.stringify(elicitation.answer),
   });
-}
-
-function boundModelContext(
-  systemPrompt: string,
-  messages: ModelMessage[],
-  configuredMaxBytes: number,
-): { systemPrompt: string; messages: ModelMessage[]; byteLength: number } {
-  const maxBytes = Math.max(1, Math.min(configuredMaxBytes, 2_000_000));
-  const systemBytes = utf8Length(systemPrompt);
-  if (systemBytes > maxBytes) {
-    throw new ContextLimitExceededError("The stable system policy exceeds the selected model context budget");
-  }
-  let usedBytes = systemBytes;
-  const units = modelProtocolUnits(messages);
-  const selectedUnits: ModelMessage[][] = [];
-  for (let index = units.length - 1; index >= 0; index -= 1) {
-    const unit = units[index]!;
-    // Count complete protocol rows, including arguments and IDs. An assistant
-    // tool-call row and all of its results form one indivisible context unit.
-    const unitBytes = utf8Length(JSON.stringify(unit, modelBinaryAccountingReplacer));
-    if (usedBytes + unitBytes > maxBytes) {
-      if (selectedUnits.length === 0) {
-        throw new ContextLimitExceededError("The newest complete transcript unit exceeds the selected model context budget");
-      }
-      break;
-    }
-    selectedUnits.push(unit);
-    usedBytes += unitBytes;
-  }
-  const selected = selectedUnits.reverse().flat();
-  return { systemPrompt, messages: selected, byteLength: usedBytes };
-}
-
-function modelBinaryAccountingReplacer(key: string, value: unknown): unknown {
-  if ((key === "url" || key === "file_data") && typeof value === "string" && value.startsWith("data:")) {
-    return `[binary data URI omitted from text-context accounting; ${value.length} characters]`;
-  }
-  if (key === "data" && typeof value === "string" && value.length > 1_024) {
-    return `[binary audio omitted from text-context accounting; ${value.length} characters]`;
-  }
-  return value;
-}
-
-function modelProtocolUnits(messages: ModelMessage[]): ModelMessage[][] {
-  const units: ModelMessage[][] = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index]!;
-    if (message.role !== "assistant" || !message.tool_calls?.length) {
-      units.push([message]);
-      continue;
-    }
-    const expectedResults = new Set(message.tool_calls.map((call) => call.id));
-    const unit = [message];
-    let cursor = index + 1;
-    while (cursor < messages.length) {
-      const candidate = messages[cursor]!;
-      if (candidate.role !== "tool" || !candidate.tool_call_id || !expectedResults.has(candidate.tool_call_id)) break;
-      unit.push(candidate);
-      expectedResults.delete(candidate.tool_call_id);
-      cursor += 1;
-    }
-    units.push(unit);
-    index = cursor - 1;
-  }
-  return units;
-}
-
-class ContextLimitExceededError extends Error {
-  readonly code = "context_limit_exceeded";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "ContextLimitExceededError";
-  }
 }
 
 function utf8Length(value: string): number {
@@ -3521,7 +3627,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
         if (!object) throw new Error("Attached resource content is unavailable");
         const text = truncateUtf8(
           await object.text(),
-          numericEnv(env, "HARNESS_MAX_CONTEXT_BYTES", 200_000),
+          numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
         );
         return { output: { title: row.title, text }, summary: `Read ${text.length} characters from ${row.title}` };
       },
@@ -3760,7 +3866,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
           }, { signal: context.signal });
           const maxBytes = Math.min(
             numericEnv(env, "WEB_FETCH_MAX_BYTES", 2_000_000),
-            numericEnv(env, "HARNESS_MAX_CONTEXT_BYTES", 200_000),
+            numericEnv(env, "HARNESS_MAX_TOOL_RESULT_BYTES", 128 * 1_024),
           );
           const markdown = truncateUtf8(response.markdown, maxBytes);
           const resultUrl = response.url ?? args.url;
@@ -4250,7 +4356,6 @@ async function recordToolAudit(
 }
 
 export const __integrationTesting = {
-  boundModelContext,
   assertRunAuthorityStillValid,
   assertSafePublicUrl,
   createAvalonTools,
