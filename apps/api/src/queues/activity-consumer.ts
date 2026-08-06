@@ -3,10 +3,12 @@ import {
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
 } from "@avalon/agent-harness";
+import { connectorRetryAfterMs } from "@avalon/connectors";
 import {
   ActivityQueueMessageSchema,
   ActivityRoutingResultSchema,
   ExecutionPrincipalSchema,
+  SlackIngressQueueMessageSchema,
   TriggerDefinitionSchema,
   WorkstreamWorkflowInputSchema,
   type ActivityQueueMessage,
@@ -20,6 +22,7 @@ import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+import { SlackAgentService } from "../services/slack-agent-service";
 
 interface ActivityRow {
   id: string;
@@ -152,6 +155,28 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
 export const activityQueueConsumer = consumeActivityQueue;
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
+  if (slackIngress.success) {
+    if (slackIngress.data.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    try {
+      await new SlackAgentService(env).processQueuedIngress(slackIngress.data.jobId);
+      message.ack();
+    } catch (error) {
+      console.warn("Slack ingress queue processing failed", {
+        job_id: slackIngress.data.jobId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+      const attempts = Math.max(1, message.attempts);
+      const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+      const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
+      message.retry({ delaySeconds: Math.min(43_200, Math.max(exponentialDelay, providerDelay)) });
+    }
+    return;
+  }
+
   const parsed = ActivityQueueMessageSchema.safeParse(message.body);
   if (!parsed.success) {
     message.ack();

@@ -49,6 +49,11 @@ const workerKeys = [
   "LINEAR_OAUTH_CLIENT_SECRET",
   "LINEAR_WEBHOOK_SECRET",
   "LINEAR_NATIVE_AGENT_ENABLED",
+  "SLACK_APP_ID",
+  "SLACK_CLIENT_ID",
+  "SLACK_CLIENT_SECRET",
+  "SLACK_SIGNING_SECRET",
+  "SLACK_INGRESS_BASE_URL",
   "NOTION_OAUTH_CLIENT_ID",
   "NOTION_OAUTH_CLIENT_SECRET",
   "NOTION_INTEGRATION_ID",
@@ -186,7 +191,11 @@ const sharedPublicAppKeys = [
   "GITHUB_WEBHOOK_SECRET",
   "LINEAR_OAUTH_CLIENT_ID",
   "LINEAR_OAUTH_CLIENT_SECRET",
-  "LINEAR_WEBHOOK_SECRET"
+  "LINEAR_WEBHOOK_SECRET",
+  "SLACK_APP_ID",
+  "SLACK_CLIENT_ID",
+  "SLACK_CLIENT_SECRET",
+  "SLACK_SIGNING_SECRET"
 ];
 const sharedPublicAppValues = Object.fromEntries(sharedPublicAppKeys.map((key) => [
   key,
@@ -205,7 +214,8 @@ for (const region of ["global", "eu"]) {
     ...existing,
     ...local,
     AVALON_REGION: region,
-    PUBLIC_API_BASE_URL: region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788",
+    PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${region.toUpperCase()}`]
+      || (region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788"),
     OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
   };
   for (const key of regionalizableKeys) {

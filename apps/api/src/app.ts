@@ -14,6 +14,7 @@ import { resendInboundRoutes } from "./routes/resend";
 import { socketRoutes } from "./routes/socket";
 import { workspaceRoutes } from "./routes/workspace";
 import { workstreamRoutes } from "./routes/workstreams";
+import { slackIngressRoutes } from "./routes/slack";
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -22,12 +23,26 @@ import {
   isAllowedLinearIngressRoute,
   isSharedLinearIngress,
 } from "./services/linear-routing-service";
+import {
+  isAllowedSlackIngressRoute,
+  isSharedSlackIngress,
+} from "./services/slack-routing-service";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
   app.use("*", requestContext);
   for (const middleware of securityMiddleware()) app.use("*", middleware);
   app.use("*", async (c, next) => {
+    const requestUrl = new URL(c.req.url);
+    if (requestUrl.pathname.startsWith("/slack/") && !isSharedSlackIngress(c.env, requestUrl)) {
+      return c.json({
+        error: {
+          code: "not_found",
+          message: "The requested API route does not exist",
+          requestId: c.get("requestId") ?? null,
+        },
+      }, 404);
+    }
     if (
       isSharedGitHubIngress(c.env, c.req.url)
       && !isAllowedGitHubIngressRoute(c.req.method, new URL(c.req.url).pathname)
@@ -52,6 +67,18 @@ export function createApp(): Hono<HonoAppEnv> {
         },
       }, 404);
     }
+    if (
+      isSharedSlackIngress(c.env, c.req.url)
+      && !isAllowedSlackIngressRoute(c.req.method, new URL(c.req.url).pathname)
+    ) {
+      return c.json({
+        error: {
+          code: "not_found",
+          message: "The requested API route does not exist",
+          requestId: c.get("requestId") ?? null,
+        },
+      }, 404);
+    }
     await next();
   });
 
@@ -62,6 +89,7 @@ export function createApp(): Hono<HonoAppEnv> {
   app.route("/ingest", webhookIngestionRoutes);
   app.route("/ingest/resend", resendInboundRoutes);
   app.route("/socket", socketRoutes);
+  app.route("/slack", slackIngressRoutes);
 
   const identityApi = new Hono<HonoAppEnv>();
   identityApi.use("*", requireIdentityAuth);
