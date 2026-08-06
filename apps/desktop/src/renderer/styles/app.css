@@ -591,7 +591,8 @@ pre {
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
 .workstream-row { min-height: 30px; }
 .mini-state { background: #696962; border-radius: 50%; height: 6px; width: 6px; }
-.mini-state.active { background: var(--green); }
+.mini-state.active,
+.automation-status-dot.active { background: var(--green); }
 .mini-state.draft { background: var(--yellow); }
 .sidebar-empty { color: #65655f; font-size: 11px; margin: 3px 8px; }
 .sidebar-skeleton { animation: skeleton-pulse 1.5s ease-in-out infinite; background: #22231f; border-radius: 7px; height: 70px; }
@@ -1817,11 +1818,6 @@ pre {
 .automation-overview-title h1 { font-size: 13px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-overview-actions { gap: 4px; }
 .automation-overview-actions .button { font-size: 11px; }
-.automation-state { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 5px; }
-.automation-state > span { background: #77766f; border-radius: 50%; height: 6px; width: 6px; }
-.automation-state.active > span { background: var(--green); }
-.automation-state.paused > span { background: var(--yellow); }
-.automation-state.draft > span { background: var(--muted); }
 .overview-error { left: 50%; position: absolute; top: 60px; transform: translateX(-50%); z-index: 3; }
 .overview-error .inline-error { background: #3a2422; border-radius: 5px; padding: 6px 9px; }
 .automation-overview-scroll { min-height: 0; overflow: auto; }
@@ -1835,13 +1831,13 @@ pre {
 .automation-facts small { color: #77766f; font-size: 9.5px; line-height: 1.45; }
 .automation-email-address { align-items: center; background: #292a26; border: 1px solid #373832; border-radius: 6px; color: var(--ink-soft); display: grid; gap: 6px; grid-template-columns: 14px minmax(0, 1fr) 24px; min-height: 34px; padding: 4px 4px 4px 7px; }
 .automation-email-address > svg { color: var(--muted); }
-.automation-email-address > span { font-family: var(--mono); font-size: 9.5px; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
+.automation-email-value { font-family: var(--mono); font-size: 9.5px; line-height: 1.35; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .automation-email-address .automation-email-copy { height: 24px; justify-self: end; width: 24px; }
 .fact-status { background: #292a26; border-radius: 6px; padding: 5px 7px; width: fit-content; }
-.switch-visual { background: #50514b; border-radius: 999px; height: 12px; position: relative; width: 21px; }
-.switch-visual::after { background: #b3b2ab; border-radius: 50%; content: ''; height: 8px; left: 2px; position: absolute; top: 2px; }
-.switch-visual.is-on { background: #285a40; }
-.switch-visual.is-on::after { background: #7dd29a; transform: translateX(9px); }
+.automation-status-dot { background: #77766f; border-radius: 50%; flex: 0 0 10px; height: 10px; width: 10px; }
+.automation-status-dot.paused { background: var(--yellow); }
+.automation-status-dot.draft { background: var(--muted); }
+.automation-status-dot.error { background: var(--red); }
 .automation-main-column { min-width: 0; }
 .automation-update-banner { align-items: center; background: #25291f; border: 1px solid #3f4932; border-radius: 8px; display: grid; gap: 10px; grid-template-columns: 30px minmax(0, 1fr) auto; margin-bottom: 18px; padding: 10px; }
 .automation-update-icon { align-items: center; background: #38432b; border-radius: 6px; color: #bdcf91; display: flex; height: 30px; justify-content: center; width: 30px; }
@@ -1951,8 +1947,7 @@ pre {
   .inspector-rail { border-radius: 8px; min-width: 0; width: calc(100vw - 16px) !important; }
   .rail-resizer { display: none; }
   .automation-builder { padding-left: 18px; padding-right: 18px; }
-  .automation-overview-title > .badge,
-  .automation-state { display: none; }
+  .automation-overview-title > .badge { display: none; }
   .automation-facts { grid-template-columns: 1fr; }
   .automation-update-banner { grid-template-columns: 30px minmax(0, 1fr); }
   .automation-update-banner > .button { grid-column: 1 / -1; justify-content: center; }
