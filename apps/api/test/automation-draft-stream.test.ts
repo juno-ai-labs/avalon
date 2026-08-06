@@ -29,6 +29,7 @@ const draft = {
   },
   ready: false,
 };
+const draftId = "00000000-0000-7000-8000-000000000003";
 
 function testApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -51,7 +52,8 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("automation draft stream", () => {
   it("forwards activity and derives the final message from the submitted draft", async () => {
-    vi.spyOn(AutomationService.prototype, "compile").mockImplementation(async (_input, _requestId, options) => {
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const compile = vi.spyOn(AutomationService.prototype, "compile").mockImplementation(async (_input, _requestId, options) => {
       await options?.onStreamEvent?.({ type: "started" });
       await options?.onStreamEvent?.({
         type: "thinking",
@@ -81,10 +83,20 @@ describe("automation draft stream", () => {
     const response = await testApp().request("/automations/draft/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: [{ role: "user", content: "Check this blog every day." }] }),
+      body: JSON.stringify({ draftId, messages: [{ role: "user", content: "Check this blog every day." }] }),
     }, {} as Env);
 
     expect(response.status).toBe(200);
+    expect(compile).toHaveBeenCalledWith(
+      expect.objectContaining({ draftId }),
+      "request-stream-1",
+      expect.any(Object),
+    );
+    expect(consoleInfo).toHaveBeenCalledWith(expect.objectContaining({
+      event: "automation_draft_compile_started",
+      request_id: "request-stream-1",
+      draft_id: draftId,
+    }));
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const events = (await response.text())
       .split("\n")
