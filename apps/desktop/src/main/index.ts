@@ -66,8 +66,8 @@ import {
   type UpdateStatus,
 } from './updater';
 import {
-  canonicalUserDataDirectory,
   legacyPackagedUserDataDirectory,
+  userDataDirectoryForLaunch,
 } from './user-data-path';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
@@ -113,7 +113,14 @@ protocol.registerSchemesAsPrivileged([{
 // whenever their ad-hoc code requirement changes.
 app.setName(app.isPackaged ? 'Avalon' : 'Avalon Development');
 const appDataDirectory = app.getPath('appData');
-app.setPath('userData', canonicalUserDataDirectory(appDataDirectory, app.isPackaged));
+app.setPath(
+  'userData',
+  userDataDirectoryForLaunch(
+    appDataDirectory,
+    app.isPackaged,
+    app.commandLine.getSwitchValue('user-data-dir'),
+  ),
+);
 
 function userDataDirectory(): string {
   return app.getPath('userData');

@@ -15,6 +15,18 @@ export function canonicalUserDataDirectory(appDataDirectory: string, isPackaged:
   );
 }
 
+/**
+ * Keep an explicit Chromium user-data override for isolated launches such as
+ * release verification. Normal app launches still use Avalon's stable path.
+ */
+export function userDataDirectoryForLaunch(
+  appDataDirectory: string,
+  isPackaged: boolean,
+  explicitUserDataDirectory: string,
+): string {
+  return explicitUserDataDirectory || canonicalUserDataDirectory(appDataDirectory, isPackaged);
+}
+
 /** The package name was used by early builds before Avalon pinned userData. */
 export function legacyPackagedUserDataDirectory(appDataDirectory: string): string {
   return join(appDataDirectory, '@avalon', 'desktop');
