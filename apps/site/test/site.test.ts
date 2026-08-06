@@ -29,7 +29,29 @@ describe('public Avalon site', () => {
     expect(page).toContain('not a browser version');
     expect(page).not.toMatch(/<form\b/i);
     expect(page).not.toMatch(/sign[ -]?in/i);
-    expect(page).not.toMatch(/<script\b/i);
+    expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
+  });
+
+  it('shuffles four complete landing designs while keeping each landscape paired to its theme', () => {
+    const page = readProjectFile('index.html');
+    const script = readProjectFile('src/landing.ts');
+    const styles = readProjectFile('src/styles.css');
+    const themes = ['runway', 'valley', 'proof', 'afterlight'];
+    const names = ['Warp', 'Mesh', 'Trace', 'Orbit'];
+
+    for (const theme of themes) {
+      expect(page).toContain(`data-theme-panel="${theme}"`);
+      expect(page).toContain(`data-theme-select="${theme}"`);
+      expect(script).toContain(`"${theme}"`);
+      expect(styles).toContain(`html[data-theme='${theme}']`);
+    }
+    expect(script).toContain('Math.random()');
+    expect(script).toContain('requestedTheme : randomTheme()');
+    expect(styles).toContain("url('/concepts/biomes/high-desert.webp')");
+    expect(styles).toContain("url('/concepts/biomes/boreal-wetland.webp')");
+    expect(styles).toContain("url('/concepts/biomes/volcanic-coast.webp')");
+    expect(styles).toContain("url('/concepts/biomes/alpine-tundra.webp')");
+    for (const name of names) expect(page).toContain(name);
   });
 
   it('keeps Avalon inherent instead of presenting it as a removable participant', () => {
@@ -71,6 +93,7 @@ describe('public Avalon site', () => {
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/og.png', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../public/og-2026.png', import.meta.url))).toBe(true);
   });
 
   it('uses the same recency-only work-stream heading as the desktop sidebar', () => {
