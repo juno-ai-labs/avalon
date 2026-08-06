@@ -46,18 +46,25 @@ class ProjectionStatement {
   }
 }
 
-function projectionEnv(rows: ToolRow[], outputs: Record<string, unknown>): Env {
+function projectionEnv(
+  rows: ToolRow[],
+  outputs: Record<string, unknown>,
+  stalledReplayStage?: "get" | "body",
+): Env {
   return {
     DB: {
       prepare: (sql: string) => new ProjectionStatement(sql, rows) as unknown as D1PreparedStatement,
     } as D1Database,
     PAYLOADS: {
       get: vi.fn(async (key: string) => {
+        if (stalledReplayStage === "get") return new Promise<R2ObjectBody | null>(() => {});
         if (!(key in outputs)) return null;
         const body = JSON.stringify({ replayVersion: 1, output: outputs[key] });
         return {
           size: new TextEncoder().encode(body).byteLength,
-          text: async () => body,
+          text: stalledReplayStage === "body"
+            ? () => new Promise<string>(() => {})
+            : async () => body,
         } as R2ObjectBody;
       }),
     } as unknown as R2Bucket,
@@ -278,6 +285,74 @@ describe("durable UI-to-model transcript projection", () => {
     expect(stored.at(-1)?.sequenceNumber).toBe(300);
     expect(listMessages).toHaveBeenCalledTimes(2);
   });
+
+  it.each(["get", "body"] as const)(
+    "falls back to the durable summary when the R2 replay %s never settles",
+    async (stalledReplayStage) => {
+      vi.useFakeTimers();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const completed = "00000000-0000-4000-8000-000000000041";
+        const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
+        const env = projectionEnv([{
+          message_id: completed,
+          harness_run_id: PRIOR_RUN_ID,
+          tool_call_id: call,
+          tool_name: "connection_a_search",
+          input_json: '{"query":"first"}',
+          output_ref: "results/stalled.json",
+          output_summary: "Stored summary",
+          status: "completed",
+          error_json: null,
+        }], {
+          "results/stalled.json": { records: [{ id: "one" }] },
+        }, stalledReplayStage);
+        const projectionPromise = __integrationTesting.projectModelProtocolTranscript(env, {
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          triggerMessageId: null,
+        }, [
+          message("00000000-0000-4000-8000-000000000040", 1, {
+            author: "human",
+            textContent: "Find the record",
+          }),
+          message(completed, 2, {
+            author: "agent",
+            messageType: "tool",
+            structuredContent: { invocation: {} },
+          }),
+          message("00000000-0000-4000-8000-000000000042", 3, {
+            author: "human",
+            textContent: "Continue",
+          }),
+        ]);
+
+        await vi.advanceTimersByTimeAsync(2_000);
+        const projection = await projectionPromise;
+
+        expect(projection.messages).toContainEqual({
+          role: "tool",
+          tool_call_id: call,
+          content: JSON.stringify({
+            success: true,
+            data: {
+              summary: "Stored summary",
+              resultAvailability: "summary_only",
+            },
+          }),
+        });
+        expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+          event: "tool_replay_payload_timeout",
+          output_ref: "results/stalled.json",
+          stage: stalledReplayStage,
+          timeout_ms: 2_000,
+        }));
+      } finally {
+        warn.mockRestore();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("reconstructs matched parallel tool protocol for a second run and omits dangling UI rows", async () => {
     const completedOne = "00000000-0000-4000-8000-000000000011";
