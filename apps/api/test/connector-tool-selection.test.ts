@@ -308,6 +308,10 @@ describe("connector tools selected for harness runs", () => {
       pluginId: googlePluginId,
       connectionId: WORKSPACE_CONNECTION_ID,
       definition: { name: "drive.search", mode: "read", idempotency: "safe" },
+      legacyReceiptIdentity: {
+        canonicalToolName: "google.drive.search",
+        toolSurfaceHash: expect.any(String),
+      },
     });
     expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
       pluginId: googlePolicy.pluginId,
@@ -318,6 +322,24 @@ describe("connector tools selected for harness runs", () => {
       connectionId: googlePolicy.connectionId,
       toolSurfaceHash: googlePolicy.toolSurfaceHash,
     }), googlePolicy)).toBe(true);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
+      pluginId: googlePolicy.pluginId,
+      canonicalToolName: googlePolicy.legacyReceiptIdentity?.canonicalToolName,
+      capability: googlePolicy.definition.capability,
+      mode: googlePolicy.definition.mode,
+      idempotency: googlePolicy.definition.idempotency,
+      connectionId: googlePolicy.connectionId,
+      toolSurfaceHash: googlePolicy.legacyReceiptIdentity?.toolSurfaceHash,
+    }), googlePolicy)).toBe(true);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
+      pluginId: googlePolicy.pluginId,
+      canonicalToolName: googlePolicy.legacyReceiptIdentity?.canonicalToolName,
+      capability: googlePolicy.definition.capability,
+      mode: googlePolicy.definition.mode,
+      idempotency: googlePolicy.definition.idempotency,
+      connectionId: googlePolicy.connectionId,
+      toolSurfaceHash: googlePolicy.toolSurfaceHash,
+    }), googlePolicy)).toBe(false);
     expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
       pluginId: googlePolicy.pluginId,
       canonicalToolName: googlePolicy.definition.name,
@@ -462,6 +484,13 @@ describe("connector tools selected for harness runs", () => {
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("run_subagent");
     expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
     expect(childTools.frozenConnections.has(`connection:${WORKSPACE_CONNECTION_ID}`)).toBe(true);
+    expect(__integrationTesting.eligibleConnectionCapabilityMap(
+      childTools.plugins,
+      childTools.frozenConnections,
+    )).toEqual({
+      [WORKSPACE_CONNECTION_ID]: childTools.plugins[2]?.tools.map((tool) =>
+        tool.definition.capability),
+    });
   });
 
   it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
