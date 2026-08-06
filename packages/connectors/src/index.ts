@@ -18,6 +18,7 @@ import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
 import { createSlackConnector, type SlackConnectorConfig } from "./slack";
+import { createXConnector, type XConnectorConfig } from "./x";
 
 export {
   assertPrincipalAccess,
@@ -145,6 +146,13 @@ export {
   type VerifyNotionWebhookInput,
   type VerifiedNotionWebhook,
 } from "./notion";
+export {
+  createXConnector,
+  XAgentPluginDescriptor,
+  XCapabilities,
+  xTools,
+  type XConnectorConfig,
+} from "./x";
 
 export interface GoogleConnectorConfig {
   clientId: string;
@@ -3029,6 +3037,7 @@ export function createConnectorRegistry(input: {
   linear?: LinearConnectorConfig;
   notion?: NotionConnectorConfig;
   slack?: SlackConnectorConfig;
+  x?: XConnectorConfig;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
   if (input.google) adapters.push(createGoogleConnector(input.google));
@@ -3036,6 +3045,7 @@ export function createConnectorRegistry(input: {
   if (input.linear) adapters.push(createLinearConnector(input.linear));
   if (input.notion) adapters.push(createNotionConnector(input.notion));
   if (input.slack) adapters.push(createSlackConnector(input.slack));
+  if (input.x) adapters.push(createXConnector(input.x));
   return new ConnectorRegistry(adapters);
 }
 

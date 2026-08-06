@@ -77,6 +77,10 @@ const slackStart = z.discriminatedUnion("scope", [
     ])).min(1),
   }),
 ]);
+const xCreate = z.object({
+  scope: ScopeSchema,
+  capabilities: z.array(z.literal("x.read")).min(1),
+});
 const githubSetup = z.object({
   installation_id: z.string().regex(/^\d{1,32}$/u),
   state: z.string().min(20).max(200),
@@ -106,6 +110,9 @@ connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c
 );
 connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json"))),
+);
+connectionRoutes.post("/x", zValidator("json", xCreate), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).createX(c.req.valid("json")), 201),
 );
 connectionRoutes.post("/slack/link/preview", zValidator("json", slackLink), async (c) =>
   c.json(await new SlackAgentService(c.env).previewLink(getAuth(c), c.req.valid("json").token)),

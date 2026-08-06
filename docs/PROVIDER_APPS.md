@@ -141,4 +141,6 @@ Global and EU each need region-specific values for:
 
 - `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID`, `NOTION_WEBHOOK_SETUP_TOKEN`
 
+Both regions need `X_API_KEY` to expose the read-only X connector.
+
 Both regions also need `FIRECRAWL_API_KEY`. The agent's web search and page fetch tools are omitted entirely when it is absent.
