@@ -602,9 +602,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
                     const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                    const supportsMultipleWorkspaceInstalls = provider.provider === 'slack';
-                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || (hasActiveWorkspaceConnection && !supportsMultipleWorkspaceInstalls);
-                    const workspaceConnectTitle = hasActiveWorkspaceConnection && !supportsMultipleWorkspaceInstalls
+                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
+                    const workspaceConnectTitle = hasActiveWorkspaceConnection
                       ? `A ${provider.name} workspace connection is already installed. Manage it below.`
                       : connections.isLoading
                         ? 'Checking installed workspace connections…'
@@ -628,7 +627,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                               onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') })}
                               title={workspaceConnectTitle}
                             >
-                              {hasActiveWorkspaceConnection && supportsMultipleWorkspaceInstalls ? 'Connect another workspace' : 'Connect workspace'}
+                              Connect workspace
                             </Button>
                           )}
                         </div>
