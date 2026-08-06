@@ -1,5 +1,44 @@
+import {
+  IdSchema,
+  IanaTimezoneSchema,
+  MemberRoleSchema,
+  RefreshTokenSchema,
+  RegionSchema,
+  TimestampSchema,
+  type Session,
+} from '@avalon/contracts';
+import { z } from 'zod';
+
 const PACIFIC_TIMEZONE = 'America/Los_Angeles';
 const EU_TIMEZONE = 'Europe/London';
+
+// Persisted authentication is a compatibility boundary, not an API response.
+// Keep this schema explicit so unrelated additive wire-contract changes do not
+// turn a still-valid refresh credential into a sign-out after an app update.
+const storedSessionSchema = z.object({
+  accessToken: z.string().min(20),
+  refreshToken: RefreshTokenSchema,
+  expiresAt: TimestampSchema,
+  user: z.object({
+    id: IdSchema,
+    email: z.string().email(),
+    name: z.string().min(1),
+    avatarUrl: z.string().url().nullable(),
+    timezone: IanaTimezoneSchema,
+    createdAt: TimestampSchema,
+  }),
+  workspace: z.object({
+    id: IdSchema,
+    name: z.string().min(1).max(120),
+    slug: z.string().min(2).max(80),
+    region: RegionSchema,
+    role: MemberRoleSchema,
+    timezone: IanaTimezoneSchema,
+    logAgentInference: z.boolean().default(false),
+    createdAt: TimestampSchema,
+  }).nullable(),
+  apiBaseUrl: z.string().url(),
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -31,4 +70,9 @@ export function normalizeLegacyStoredSession(value: unknown): unknown {
         }
       : workspace,
   };
+}
+
+export function parseLegacyStoredSession(value: unknown): Session | null {
+  const parsed = storedSessionSchema.safeParse(normalizeLegacyStoredSession(value));
+  return parsed.success ? parsed.data : null;
 }

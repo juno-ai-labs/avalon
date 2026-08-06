@@ -10,11 +10,13 @@ import {
 import { useQueryClient } from '@tanstack/react-query';
 import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
 import { AvalonApi } from './api';
+import {
+  readDevicePreferences,
+  setDeviceSelectedRegion,
+  setDeviceWorkspaceName,
+} from './device-preferences';
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
 import type { Region } from './types';
-
-const REGION_STORAGE_KEY = 'avalon:selected-region';
-const WORKSPACE_NAME_STORAGE_KEY = 'avalon:workspace-name';
 
 export interface PendingInvitation {
   token: string;
@@ -49,15 +51,6 @@ interface AppSessionValue {
 
 const AppSessionContext = createContext<AppSessionValue | null>(null);
 
-function readRegion(): Region | null {
-  const value = window.localStorage.getItem(REGION_STORAGE_KEY);
-  return value === 'global' || value === 'eu' ? value : null;
-}
-
-function readWorkspaceName(): string {
-  return window.localStorage.getItem(WORKSPACE_NAME_STORAGE_KEY)?.trim() ?? '';
-}
-
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
   if (session.workspace) return session.workspace.region;
   return runtime.api.eu === session.apiBaseUrl ? 'eu' : 'global';
@@ -65,8 +58,8 @@ function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Regi
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [runtime, setRuntime] = useState<RuntimeConfig | null>(null);
-  const [region, setRegion] = useState<Region | null>(() => readRegion());
-  const [workspaceName, setWorkspaceNameState] = useState(() => readWorkspaceName());
+  const [region, setRegion] = useState<Region | null>(() => readDevicePreferences().selectedRegion ?? null);
+  const [workspaceName, setWorkspaceNameState] = useState(() => readDevicePreferences().workspaceName ?? '');
   const [session, setSession] = useState<DesktopSession | null>(null);
   const [pendingInvitation, setPendingInvitation] = useState<PendingInvitation | null>(null);
   const [booting, setBooting] = useState(true);
@@ -79,10 +72,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     setSession(nextSession);
     const nextRegion = nextSession.workspace?.region
       ?? (runtime?.api.eu === nextSession.apiBaseUrl ? 'eu' : 'global');
-    window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+    setDeviceSelectedRegion(nextRegion);
     setRegion(nextRegion);
     if (nextSession.workspace) {
-      window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+      setDeviceWorkspaceName(nextSession.workspace.name);
       setWorkspaceNameState(nextSession.workspace.name);
     }
     queryClient.clear();
@@ -97,16 +90,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         setSession(nextSession);
         if (nextSession) {
           const nextRegion = regionForSession(nextRuntime, nextSession);
-          window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+          setDeviceSelectedRegion(nextRegion);
           setRegion(nextRegion);
           if (nextSession.workspace) {
-            window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+            setDeviceWorkspaceName(nextSession.workspace.name);
             setWorkspaceNameState(nextSession.workspace.name);
           }
         } else {
           // Avalon has one identity control plane. A data region is selected
           // only after sign-in, when creating a new workspace.
-          window.localStorage.setItem(REGION_STORAGE_KEY, 'global');
+          setDeviceSelectedRegion('global');
           setRegion('global');
         }
       })
@@ -125,15 +118,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       const nextRegion = nextSession.workspace?.region
         ?? (runtime ? regionForSession(runtime, nextSession) : null);
       if (nextRegion) {
-        window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+        setDeviceSelectedRegion(nextRegion);
         setRegion(nextRegion);
       }
       if (nextSession.workspace) {
-        window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+        setDeviceWorkspaceName(nextSession.workspace.name);
         setWorkspaceNameState(nextSession.workspace.name);
       }
     } else {
-      window.localStorage.setItem(REGION_STORAGE_KEY, 'global');
+      setDeviceSelectedRegion('global');
       setRegion('global');
     }
   }), [bridge, queryClient, runtime]);
@@ -156,6 +149,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const nextSession = await bridge.createDevelopmentSession(api.baseUrl, workspaceName || 'Avalon Development');
     setSession(nextSession);
     if (nextSession.workspace) {
+      setDeviceSelectedRegion(nextSession.workspace.region);
+      setDeviceWorkspaceName(nextSession.workspace.name);
       setRegion(nextSession.workspace.region);
       setWorkspaceNameState(nextSession.workspace.name);
     }
@@ -184,8 +179,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const nextSession = await bridge.refreshSession();
     setSession(nextSession);
     if (nextSession.workspace) {
-      window.localStorage.setItem(REGION_STORAGE_KEY, nextSession.workspace.region);
-      window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+      setDeviceSelectedRegion(nextSession.workspace.region);
+      setDeviceWorkspaceName(nextSession.workspace.name);
       setRegion(nextSession.workspace.region);
       setWorkspaceNameState(nextSession.workspace.name);
     }
@@ -195,7 +190,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const finishWorkspaceSetup = useCallback(async (name: string, selectedRegion: Region): Promise<void> => {
     const normalized = name.trim();
     if (normalized.length < 2) throw new Error('Enter an organization name with at least two characters.');
-    window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, normalized);
+    setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
     const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized });
     applySession(nextSession);
@@ -206,25 +201,25 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       await bridge.logout();
     } finally {
       setSession(null);
-      window.localStorage.setItem(REGION_STORAGE_KEY, 'global');
+      setDeviceSelectedRegion('global');
       setRegion('global');
       queryClient.clear();
     }
   }, [bridge, queryClient]);
 
   const selectRegion = useCallback((nextRegion: Region) => {
-    window.localStorage.setItem(REGION_STORAGE_KEY, nextRegion);
+    setDeviceSelectedRegion(nextRegion);
     setRegion(nextRegion);
   }, []);
 
   const setWorkspaceName = useCallback((name: string) => {
     const normalized = name.trim();
-    window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, normalized);
+    setDeviceWorkspaceName(normalized);
     setWorkspaceNameState(normalized);
   }, []);
 
   const editWorkspaceSetup = useCallback(() => {
-    window.localStorage.removeItem(REGION_STORAGE_KEY);
+    setDeviceSelectedRegion(null);
     setRegion(null);
     setDeepLinkError(null);
   }, []);
@@ -320,7 +315,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         setDeepLinkError('The sign-in link did not match a native authentication attempt.');
         return;
       }
-      window.localStorage.setItem(REGION_STORAGE_KEY, callbackRegion);
+      setDeviceSelectedRegion(callbackRegion);
       setRegion(callbackRegion);
       setExchangingTicket(true);
       setDeepLinkError(null);
@@ -333,7 +328,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         })
         .then((nextSession) => {
           if (nextSession.workspace) {
-            window.localStorage.setItem(WORKSPACE_NAME_STORAGE_KEY, nextSession.workspace.name);
+            setDeviceWorkspaceName(nextSession.workspace.name);
             setWorkspaceNameState(nextSession.workspace.name);
           }
           setSession(nextSession);
@@ -403,7 +398,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       clearPendingInvitation: () => {
         setPendingInvitation(null);
         if (session?.workspace) {
-          window.localStorage.setItem(REGION_STORAGE_KEY, session.workspace.region);
+          setDeviceSelectedRegion(session.workspace.region);
           setRegion(session.workspace.region);
         }
       },
