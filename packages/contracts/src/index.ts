@@ -660,6 +660,7 @@ export const CreateAutomationRequestSchema = z.object({
   defaultPluginIds: z.array(ModelPluginIdSchema).default([])
 });
 export const CompileAutomationRequestSchema = z.object({
+  draftId: IdSchema.optional(),
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null)
 });

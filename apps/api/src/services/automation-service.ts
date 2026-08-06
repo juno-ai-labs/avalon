@@ -92,7 +92,7 @@ export class AutomationService {
   }
 
   async compile(
-    input: { messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null },
+    input: { draftId?: string | undefined; messages: Array<{ role: "user" | "assistant"; content: string }>; currentDraft?: AutomationDraft | null },
     requestId: string,
     options: {
       onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
