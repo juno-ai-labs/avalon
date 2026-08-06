@@ -224,7 +224,7 @@ describe("Linear connector", () => {
     };
     const adapter = linearAdapter(fetcher);
     const connection = linearConnection([LinearCapabilities.read]);
-    const result = await adapter.executeTool("linear.list_teams", {}, {
+    const result = await adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
       signal: AbortSignal.timeout(1_000),
@@ -244,19 +244,19 @@ describe("Linear connector", () => {
       });
     });
     const connection = personalLinearConnection([LinearCapabilities.read]);
-    await expect(adapter.executeTool("linear.list_teams", {}, {
+    await expect(adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "user", userId: "avalon-user-1" },
       signal: AbortSignal.timeout(1_000),
     })).resolves.toMatchObject({ summary: "Listed Linear teams" });
     expect(graphqlCalls).toBe(1);
 
-    await expect(adapter.executeTool("linear.list_teams", {}, {
+    await expect(adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "user", userId: "another-user" },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/another principal/i);
-    await expect(adapter.executeTool("linear.list_teams", {}, {
+    await expect(adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
       signal: AbortSignal.timeout(1_000),
@@ -349,7 +349,7 @@ describe("Linear connector", () => {
       });
     };
     const adapter = linearAdapter(fetcher);
-    await adapter.executeTool("linear.update_issue", {
+    await adapter.executeTool("update_issue", {
       issueId: "issue-1",
       stateId: "state-started",
     }, {
@@ -358,7 +358,7 @@ describe("Linear connector", () => {
       signal: AbortSignal.timeout(1_000),
     });
     expect(variables).toEqual({ id: "issue-1", input: { stateId: "state-started" } });
-    const updateSchema = adapter.manifest.tools.find((tool) => tool.name === "linear.update_issue")?.inputSchema;
+    const updateSchema = adapter.manifest.tools.find((tool) => tool.name === "update_issue")?.inputSchema;
     expect(updateSchema).toMatchObject({
       properties: { stateId: expect.any(Object) },
     });

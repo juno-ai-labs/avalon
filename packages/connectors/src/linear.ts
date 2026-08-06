@@ -66,7 +66,7 @@ export const LinearCapabilityScopes = {
 
 const linearTools: ToolDefinition[] = [
   {
-    name: "linear.search_issues",
+    name: "search_issues",
     description: "Search recent Linear issues by title using the authorized Linear connection.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -83,7 +83,7 @@ const linearTools: ToolDefinition[] = [
     },
   },
   {
-    name: "linear.read_issue",
+    name: "read_issue",
     description: "Read one Linear issue and a bounded page of its comments.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -91,7 +91,7 @@ const linearTools: ToolDefinition[] = [
     inputSchema: idInputSchema("issueId"),
   },
   {
-    name: "linear.list_teams",
+    name: "list_teams",
     description: "List teams available to the authorized Linear identity.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -99,7 +99,7 @@ const linearTools: ToolDefinition[] = [
     inputSchema: pageInputSchema(50),
   },
   {
-    name: "linear.list_projects",
+    name: "list_projects",
     description: "List recently updated Linear projects.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -107,7 +107,7 @@ const linearTools: ToolDefinition[] = [
     inputSchema: pageInputSchema(25),
   },
   {
-    name: "linear.read_project",
+    name: "read_project",
     description: "Read one Linear project by provider ID.",
     capability: LinearCapabilities.read,
     mode: "read",
@@ -115,7 +115,7 @@ const linearTools: ToolDefinition[] = [
     inputSchema: idInputSchema("projectId"),
   },
   {
-    name: "linear.create_issue",
+    name: "create_issue",
     description: "Create an issue in a Linear team as the authorized Linear identity.",
     capability: LinearCapabilities.issueCreate,
     mode: "write",
@@ -135,7 +135,7 @@ const linearTools: ToolDefinition[] = [
     },
   },
   {
-    name: "linear.update_issue",
+    name: "update_issue",
     description: "Update selected fields on an existing Linear issue as the authorized Linear identity.",
     capability: LinearCapabilities.write,
     mode: "write",
@@ -158,7 +158,7 @@ const linearTools: ToolDefinition[] = [
     },
   },
   {
-    name: "linear.create_comment",
+    name: "create_comment",
     description: "Add a comment to a Linear issue as the authorized Linear identity.",
     capability: LinearCapabilities.commentCreate,
     mode: "write",
@@ -598,7 +598,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         throw new ConnectorError("unsupported_capability", `The Linear connection has not granted ${definition?.capability ?? name}`);
       }
 
-      if (name === "linear.search_issues") {
+      if (name === "search_issues") {
         const args = searchIssuesSchema.parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
           query AvalonSearchIssues($query: String!, $first: Int!, $after: String) {
@@ -617,12 +617,12 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         return { output: boundLinearValue(issues), summary: `Searched Linear issues for “${args.query.slice(0, 80)}”` };
       }
 
-      if (name === "linear.read_issue") {
+      if (name === "read_issue") {
         const issueId = z.object({ issueId: idSchema }).parse(rawArgs).issueId;
         return { output: await readIssue(context.connection, issueId, context.signal), summary: `Read Linear issue ${issueId}` };
       }
 
-      if (name === "linear.list_teams") {
+      if (name === "list_teams") {
         const args = pageSchema(50).parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
           query AvalonListTeams($first: Int!, $after: String) {
@@ -635,7 +635,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         return { output: boundLinearValue(requiredRecord(data, "teams", "Linear did not return teams")), summary: "Listed Linear teams" };
       }
 
-      if (name === "linear.list_projects") {
+      if (name === "list_projects") {
         const args = pageSchema(25).parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
           query AvalonListProjects($first: Int!, $after: String) {
@@ -648,12 +648,12 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         return { output: boundLinearValue(requiredRecord(data, "projects", "Linear did not return projects")), summary: "Listed Linear projects" };
       }
 
-      if (name === "linear.read_project") {
+      if (name === "read_project") {
         const projectId = z.object({ projectId: idSchema }).parse(rawArgs).projectId;
         return { output: await readProject(context.connection, projectId, context.signal), summary: `Read Linear project ${projectId}` };
       }
 
-      if (name === "linear.create_issue") {
+      if (name === "create_issue") {
         const args = createIssueSchema.parse(rawArgs);
         const input = definedValues(args);
         const data = await graphql(context.connection, context.signal, `
@@ -667,7 +667,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         return { output: boundLinearValue(issue), summary: `Created Linear issue ${stringValue(issue, "identifier") ?? id}`, providerOperationId: id };
       }
 
-      if (name === "linear.update_issue") {
+      if (name === "update_issue") {
         const args = updateIssueSchema.parse(rawArgs);
         const { issueId, ...updates } = args;
         const data = await graphql(context.connection, context.signal, `
@@ -681,7 +681,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         return { output: boundLinearValue(issue), summary: `Updated Linear issue ${stringValue(issue, "identifier") ?? id}`, providerOperationId: id };
       }
 
-      if (name === "linear.create_comment") {
+      if (name === "create_comment") {
         const args = createCommentSchema.parse(rawArgs);
         const data = await graphql(context.connection, context.signal, `
           mutation AvalonCreateComment($input: CommentCreateInput!) {

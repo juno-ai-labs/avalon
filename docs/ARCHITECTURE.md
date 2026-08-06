@@ -30,7 +30,7 @@ flowchart LR
   A --> T["Authorized connection plugins"]
   W --> R
   T --> G["Google APIs"]
-  T --> M["Web monitor / signed webhook"]
+  T --> M["Signed webhook"]
 ```
 
 Canonical product state lives in D1. Large activity payloads, uploads, snapshots, and artifacts live in R2 with relational metadata in D1. Durable Objects coordinate ordering, presence, sockets, and alarms but are not canonical stores.
@@ -94,7 +94,6 @@ Connector adapters expose typed authorization, polling, webhook normalization, h
 - One public GitHub App with installation tokens, expiring user authorization, a signature-verifying smart ingress, regional fanout, resource discovery, and normalized repository activity.
 - One public Linear app with Global and EU OAuth callbacks, app-actor attribution, a signature-verifying smart ingress, regional fanout, a first-class resource surface, and a feature-gated `protocol_only` native-agent surface; plus a separate public Notion integration with regional callbacks and signed regional webhook ingestion.
 - Signed generic webhooks with HMAC, timestamp, replay, schema, and deduplication checks.
-- Web monitoring with conditional requests, bounded fetches, content hashing, readable text extraction, and R2 snapshots.
 
 Google ingestion uses provider cursors rather than push delivery: Gmail history IDs, Calendar sync/completion cursors, and Drive change page tokens. Drive changes are MIME-classified into Drive, Docs, or Sheets resources, so the same Drive poll produces `drive.file_changed`, `docs.document_changed`, or `sheets.spreadsheet_changed`. There is no Google webhook or push-channel implementation; Avalon watches operate after a polled activity has been normalized.
 

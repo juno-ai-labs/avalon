@@ -195,7 +195,7 @@ describe('useWorkstreamSocket', () => {
       createdAt: '2026-07-31T19:20:02.000Z',
       toolEvent: {
         id: '00000000-0000-7000-8000-000000000081',
-        name: 'google.drive.search',
+        name: 'google_drive_search',
         status: 'completed',
       },
     };

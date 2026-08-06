@@ -301,7 +301,7 @@ describe("scoped agent memory", () => {
     expect(personalAutomationScopes.map((scope) => scope.kind))
       .toEqual(["workspace", "user", "automation"]);
 
-    const search = memoryTool(env, input("owner"), "avalon.memory_search");
+    const search = memoryTool(env, input("owner"), "search");
     expect(search.definition.inputSchema).toMatchObject({
       additionalProperties: false,
       required: ["query"],
@@ -317,7 +317,7 @@ describe("scoped agent memory", () => {
   it("isolates user and workstream memory while sharing workspace memory", async () => {
     const { env } = fixture();
     const ownerInput = input("owner");
-    const add = memoryTool(env, ownerInput, "avalon.memory_add");
+    const add = memoryTool(env, ownerInput, "add");
     await add.execute(
       { scopeKind: "user", text: "Owner prefers crimson reports", rationale: "Durable preference" },
       toolContext(ownerInput, "add-owner-user"),
@@ -347,7 +347,7 @@ describe("scoped agent memory", () => {
       .toEqual([expect.objectContaining({ scopeKind: "workspace" })]);
     expect((await memorySearch(env, ownerInput, "obsolete chartreuse")).results).toEqual([]);
 
-    await expect(memoryTool(env, memberInput, "avalon.memory_add").execute(
+    await expect(memoryTool(env, memberInput, "add").execute(
       { scopeKind: "workspace", text: "Members cannot write this", rationale: "Unauthorized" },
       toolContext(memberInput, "member-workspace-write"),
     )).rejects.toThrow("memory_scope_not_writable:workspace");
@@ -357,7 +357,7 @@ describe("scoped agent memory", () => {
     const { env } = fixture();
     const first = input("workspace", 1);
     const second = input("workspace", 2);
-    const added = await memoryTool(env, first, "avalon.memory_add").execute(
+    const added = await memoryTool(env, first, "add").execute(
       { scopeKind: "automation", text: "Use the crimson summary template", rationale: "Future runs need this" },
       toolContext(first, "add-automation"),
     );
@@ -373,7 +373,7 @@ describe("scoped agent memory", () => {
   it("replays receipts and uses revision CAS for updates and invalidation", async () => {
     const { database, env } = fixture();
     const runInput = input("owner");
-    const add = memoryTool(env, runInput, "avalon.memory_add");
+    const add = memoryTool(env, runInput, "add");
     const args = { scopeKind: "user", text: "Favorite color is crimson", rationale: "Preference" };
     const first = await add.execute(args, toolContext(runInput, "receipt-add"));
     const replay = await add.execute(args, toolContext(runInput, "receipt-add"));
@@ -382,7 +382,7 @@ describe("scoped agent memory", () => {
     expect(database.prepare("SELECT COUNT(*) AS count FROM memory_mutations").get()).toEqual({ count: 1 });
 
     const memoryItemId = (first.output as { memoryItemId: string }).memoryItemId;
-    const update = memoryTool(env, runInput, "avalon.memory_update");
+    const update = memoryTool(env, runInput, "update");
     const updated = await update.execute(
       { memoryItemId, expectedRevision: 1, text: "Favorite color is azure", rationale: "Preference changed" },
       toolContext(runInput, "receipt-update"),
@@ -393,7 +393,7 @@ describe("scoped agent memory", () => {
       toolContext(runInput, "receipt-stale-update"),
     )).rejects.toThrow("memory_revision_conflict");
 
-    const invalidated = await memoryTool(env, runInput, "avalon.memory_invalidate").execute(
+    const invalidated = await memoryTool(env, runInput, "invalidate").execute(
       { memoryItemId, expectedRevision: 2, reason: "Preference is no longer valid" },
       toolContext(runInput, "receipt-invalidate"),
     );
@@ -410,7 +410,7 @@ describe("scoped agent memory", () => {
   it("uses hybrid retrieval, rejects stale vectors, and degrades to FTS", async () => {
     const { database, env, ai, vector } = fixture();
     const runInput = input("owner");
-    const added = await memoryTool(env, runInput, "avalon.memory_add").execute(
+    const added = await memoryTool(env, runInput, "add").execute(
       { scopeKind: "user", text: "The report palette is crimson", rationale: "Durable style" },
       toolContext(runInput, "vector-add"),
     );
@@ -425,7 +425,7 @@ describe("scoped agent memory", () => {
     expect(semantic.results).toEqual([expect.objectContaining({ text: "The report palette is crimson" })]);
 
     const memoryItemId = (added.output as { memoryItemId: string }).memoryItemId;
-    await memoryTool(env, runInput, "avalon.memory_update").execute(
+    await memoryTool(env, runInput, "update").execute(
       { memoryItemId, expectedRevision: 1, text: "The report palette is azure", rationale: "Palette changed" },
       toolContext(runInput, "vector-update"),
     );
@@ -458,7 +458,7 @@ describe("scoped agent memory", () => {
   it("freezes recalled results and the context hash for deterministic retries", async () => {
     const { database, env } = fixture();
     const runInput = input("owner");
-    await memoryTool(env, runInput, "avalon.memory_add").execute(
+    await memoryTool(env, runInput, "add").execute(
       { scopeKind: "user", text: "Use the crimson dashboard", rationale: "Presentation preference" },
       toolContext(runInput, "snapshot-add"),
     );
@@ -488,7 +488,7 @@ describe("scoped agent memory", () => {
     const { env } = fixture();
     const firstRun = input("workspace", 1);
     const secondRun = input("workspace", 2);
-    const created = await tableTool(env, firstRun, "avalon.table_create").execute({
+    const created = await tableTool(env, firstRun, "create").execute({
       scopeKind: "automation",
       name: "Seen blog entries",
       description: "One row per blog entry discovered by this automation.",
@@ -525,17 +525,17 @@ describe("scoped agent memory", () => {
       ],
       rationale: "Record fetched feed entries before reporting",
     };
-    const inserted = await tableTool(env, firstRun, "avalon.table_insert_rows").execute(
+    const inserted = await tableTool(env, firstRun, "insert_rows").execute(
       insertArgs,
       toolContext(firstRun, "insert-seen-entries"),
     );
     expect(inserted.output).toMatchObject({ insertedCount: 2, existingCount: 0 });
-    expect(await tableTool(env, firstRun, "avalon.table_insert_rows").execute(
+    expect(await tableTool(env, firstRun, "insert_rows").execute(
       insertArgs,
       toolContext(firstRun, "insert-seen-entries"),
     )).toEqual(inserted);
 
-    const discovered = await tableTool(env, secondRun, "avalon.table_search").execute(
+    const discovered = await tableTool(env, secondRun, "search").execute(
       { query: "blog entries" },
       toolContext(secondRun, "search-table"),
     );
@@ -543,7 +543,7 @@ describe("scoped agent memory", () => {
       tables: [expect.objectContaining({ memoryTableId, scopeKind: "automation" })],
     });
 
-    const queried = await tableTool(env, secondRun, "avalon.table_query").execute({
+    const queried = await tableTool(env, secondRun, "query").execute({
       memoryTableId,
       search: "launch",
       filter: {
@@ -571,7 +571,7 @@ describe("scoped agent memory", () => {
     const launchRow = (queried.output as {
       rows: Array<{ memoryTableRowId: string; revision: number }>;
     }).rows[0]!;
-    await tableTool(env, secondRun, "avalon.table_update_rows").execute({
+    await tableTool(env, secondRun, "update_rows").execute({
       memoryTableId,
       rows: [{
         memoryTableRowId: launchRow.memoryTableRowId,
@@ -580,7 +580,7 @@ describe("scoped agent memory", () => {
       }],
       rationale: "Delivery completed",
     }, toolContext(secondRun, "mark-reported"));
-    await expect(tableTool(env, secondRun, "avalon.table_update_rows").execute({
+    await expect(tableTool(env, secondRun, "update_rows").execute({
       memoryTableId,
       rows: [{
         memoryTableRowId: launchRow.memoryTableRowId,
@@ -590,7 +590,7 @@ describe("scoped agent memory", () => {
       rationale: "Stale update",
     }, toolContext(secondRun, "stale-update"))).rejects.toThrow("memory_table_row_revision_conflict");
 
-    const updated = await tableTool(env, firstRun, "avalon.table_query").execute({
+    const updated = await tableTool(env, firstRun, "query").execute({
       memoryTableId,
       filter: { column: "reported", op: "eq", value: true },
       orderBy: [{ column: "firstSeenAt", direction: "desc" }],
@@ -602,7 +602,7 @@ describe("scoped agent memory", () => {
     });
     const nextCursor = (updated.output as { nextCursor: string | null }).nextCursor;
     expect(nextCursor).toEqual(expect.any(String));
-    const nextPage = await tableTool(env, firstRun, "avalon.table_query").execute({
+    const nextPage = await tableTool(env, firstRun, "query").execute({
       memoryTableId,
       filter: { column: "reported", op: "eq", value: true },
       orderBy: [{ column: "firstSeenAt", direction: "desc" }],
@@ -613,7 +613,7 @@ describe("scoped agent memory", () => {
     const archiveRow = (nextPage.output as {
       rows: Array<{ memoryTableRowId: string; revision: number }>;
     }).rows[0]!;
-    await tableTool(env, firstRun, "avalon.table_invalidate_rows").execute({
+    await tableTool(env, firstRun, "invalidate_rows").execute({
       memoryTableId,
       rows: [{
         memoryTableRowId: archiveRow.memoryTableRowId,
@@ -621,13 +621,13 @@ describe("scoped agent memory", () => {
       }],
       reason: "Remove a retired feed entry",
     }, toolContext(firstRun, "invalidate-archive"));
-    await expect(tableTool(env, firstRun, "avalon.table_query").execute({
+    await expect(tableTool(env, firstRun, "query").execute({
       memoryTableId,
       filter: { column: "reported", op: "eq", value: true },
       pageSize: 1,
       cursor: nextCursor,
     }, toolContext(firstRun, "query-stale-cursor"))).rejects.toThrow("memory_table_cursor_stale");
-    expect(await tableTool(env, secondRun, "avalon.table_query").execute({
+    expect(await tableTool(env, secondRun, "query").execute({
       memoryTableId,
       filter: { column: "itemKey", op: "eq", value: "https://example.com/archive" },
       select: ["itemKey"],
@@ -672,9 +672,9 @@ describe("scoped agent memory", () => {
     const { env } = fixture();
     const owner = input("owner");
     const member = input("member");
-    const search = tableTool(env, owner, "avalon.table_search");
+    const search = tableTool(env, owner, "search");
     expect(Object.keys((search.definition.inputSchema as { properties: object }).properties)).toEqual(["query"]);
-    const query = tableTool(env, owner, "avalon.table_query");
+    const query = tableTool(env, owner, "query");
     expect(Object.keys((query.definition.inputSchema as { properties: object }).properties))
       .not.toContain("scopes");
     expect(query.definition.inputSchema).toMatchObject({
@@ -685,7 +685,7 @@ describe("scoped agent memory", () => {
       { query: "private ledger", scopes: ["user"] },
       toolContext(owner, "table-search-with-scope"),
     )).rejects.toThrow();
-    await tableTool(env, owner, "avalon.table_create").execute({
+    await tableTool(env, owner, "create").execute({
       scopeKind: "user",
       name: "Private ledger",
       description: "Owner-only structured state.",
@@ -694,7 +694,7 @@ describe("scoped agent memory", () => {
       keyColumns: ["key"],
       rationale: "Keep owner state isolated",
     }, toolContext(owner, "create-private-table"));
-    expect(await tableTool(env, member, "avalon.table_search").execute(
+    expect(await tableTool(env, member, "search").execute(
       { query: "private ledger" },
       toolContext(member, "member-table-search"),
     )).toMatchObject({ output: { tables: [] } });

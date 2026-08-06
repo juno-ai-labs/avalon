@@ -14,7 +14,6 @@ CREATE TABLE _repair_resource_watches AS SELECT * FROM resource_watches;
 CREATE TABLE _repair_tool_invocations AS SELECT * FROM tool_invocations;
 CREATE TABLE _repair_schedules AS SELECT * FROM schedules;
 CREATE TABLE _repair_webhook_receipts AS SELECT * FROM webhook_receipts;
-CREATE TABLE _repair_web_monitor_snapshots AS SELECT * FROM web_monitor_snapshots;
 
 -- Remove referencing tables before their parents so ON DELETE actions cannot
 -- erase rows that are waiting in the repair copies.
@@ -25,7 +24,6 @@ DROP TABLE workstream_resources;
 DROP TABLE tool_invocations;
 DROP TABLE schedules;
 DROP TABLE webhook_receipts;
-DROP TABLE web_monitor_snapshots;
 DROP TABLE activities;
 DROP TABLE resources;
 
@@ -180,18 +178,6 @@ CREATE TABLE webhook_receipts (
   UNIQUE (connection_id, signature_hash)
 );
 
-CREATE TABLE web_monitor_snapshots (
-  id TEXT PRIMARY KEY,
-  connection_id TEXT NOT NULL REFERENCES connector_connections(id) ON DELETE CASCADE,
-  content_hash TEXT NOT NULL,
-  etag TEXT,
-  last_modified TEXT,
-  content_ref TEXT,
-  fetched_at TEXT NOT NULL,
-  changed_at TEXT,
-  UNIQUE (connection_id, content_hash)
-);
-
 INSERT INTO activities SELECT * FROM _repair_activities;
 INSERT INTO resources SELECT * FROM _repair_resources;
 INSERT INTO automation_runs SELECT * FROM _repair_automation_runs;
@@ -201,7 +187,6 @@ INSERT INTO resource_watches SELECT * FROM _repair_resource_watches;
 INSERT INTO tool_invocations SELECT * FROM _repair_tool_invocations;
 INSERT INTO schedules SELECT * FROM _repair_schedules;
 INSERT INTO webhook_receipts SELECT * FROM _repair_webhook_receipts;
-INSERT INTO web_monitor_snapshots SELECT * FROM _repair_web_monitor_snapshots;
 
 DROP TABLE _repair_activities;
 DROP TABLE _repair_resources;
@@ -212,7 +197,6 @@ DROP TABLE _repair_resource_watches;
 DROP TABLE _repair_tool_invocations;
 DROP TABLE _repair_schedules;
 DROP TABLE _repair_webhook_receipts;
-DROP TABLE _repair_web_monitor_snapshots;
 
 CREATE INDEX activities_status_idx ON activities(workspace_id, processing_status, received_at);
 CREATE INDEX activities_resource_idx ON activities(workspace_id, provider, provider_resource_id);

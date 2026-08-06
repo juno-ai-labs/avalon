@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   CreateWebhookConnectionRequestSchema,
-  CreateWebMonitorRequestSchema,
   IdSchema,
   ScopeSchema,
 } from "@avalon/contracts";
@@ -101,9 +100,6 @@ connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
 });
 connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequestSchema), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json")), 201),
-);
-connectionRoutes.post("/web-monitor", zValidator("json", CreateWebMonitorRequestSchema), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).createWebMonitor(c.req.valid("json")), 201),
 );
 
 export const connectionCallbackRoutes = new Hono<HonoAppEnv>();
