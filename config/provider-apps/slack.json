@@ -34,7 +34,7 @@
     },
     "bot_user": {
       "display_name": "Avalon",
-      "always_online": false
+      "always_online": true
     },
     "shortcuts": [
       {
@@ -81,7 +81,9 @@
         "search:read.files",
         "search:read.public",
         "search:read.users",
-        "team.billing:read"
+        "team.billing:read",
+        "users:read",
+        "users:read.email"
       ],
       "user": [
         "canvases:read",

@@ -62,6 +62,17 @@ Queue workers atomically lease jobs, retry failed or abandoned work, and clear t
 
 Slack users are never matched to Avalon accounts by mutable profile fields or email alone.
 
+Person-mention notification routing is deliberately narrower than account linking. When an
+active Avalon member is mentioned, Avalon first uses that member's confirmed Slack link for
+an installed team. If no link exists, every healthy workspace installation may resolve the
+member's verified Avalon login email with `users.lookupByEmail`; Avalon sends a bot-authored
+DM only when exactly one installed team returns a valid active human. This lookup is used only
+as a delivery address: it does not create a `slack_user_links` row, authenticate the recipient,
+or authorize personal Slack tools. Missing, ambiguous, invalid, or incompletely authorized
+matches fall back to the ordinary mention email. Existing installations must complete the
+Avalon OAuth flow again to grant the additive `users:read` and `users:read.email` bot scopes;
+until then, lookup-based mentions use email without disabling the existing Slack Agent.
+
 1. An unlinked user opens Avalon Home or sends a prompt.
 2. The regional service creates a random, hashed, 15-minute link challenge bound to the workspace installation and Slack user ID.
 3. The HTTPS handoff keeps the token in a URL fragment, removes it from browser history, and opens the signed-in Avalon desktop app.
@@ -121,6 +132,7 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - Message shortcut **Work on this with Avalon**: prefill the task modal with the selected message.
 - `/avalon [request]`: start the request; an empty command opens the modal.
 - Result buttons: open the canonical task or provide feedback.
+- Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
 - Avalon links: privacy-safe unfurls that require the viewer's normal Avalon authorization for details.
 
 Every web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history.
@@ -145,6 +157,15 @@ As a user with the appropriate personal grants, I can ask Avalon to send a messa
 
 As an Avalon admin, I can install the same Avalon app into several Slack workspaces. Each installation has its own health, links, sessions, and automation destinations. No installation becomes the implicit default when more than one is available.
 
+### Notify a mentioned teammate
+
+As an Avalon member, when I mention an active teammate in a work stream, Avalon sends that
+teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
+Slack link is preferred; otherwise Avalon uses an exact verified-email lookup without silently
+linking the accounts. The message identifies the author, workspace, work stream, complete
+mention text, and a secure **Open in Avalon** handoff. If Slack cannot resolve or deliver it,
+Avalon sends the existing mention email instead.
+
 ### Morning Gmail briefing
 
 As a member, I can request: **“Check my Gmail every morning and send me the stack-ranked top 3 emails in Slack.”**
@@ -165,6 +186,7 @@ At each run Avalon ranks actionable inbox items, sends up to three (fewer if few
 - OAuth and connection lifecycle: `apps/api/src/services/connection-service.ts`
 - Shared routing: `apps/api/src/services/slack-routing-service.ts`
 - Agent/App Home/interactions/delivery: `apps/api/src/services/slack-agent-service.ts`
+- Workspace-bot mention delivery: `apps/api/src/services/slack-mention-service.ts`
 - Signed routes: `apps/api/src/routes/slack.ts`
 - Workflow output sink: `apps/api/src/workflows/workstream-loop.ts`
 - Desktop install and automation destination: `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `apps/desktop/src/renderer/screens/new-automation.tsx`
