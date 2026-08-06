@@ -67,6 +67,12 @@ export interface WorkstreamSummary {
   origin: 'ad_hoc' | 'automation';
   automationName?: string;
   harnessStatus: HarnessStatus;
+  latestAttentionSequenceNumber: number;
+  readThroughSequenceNumber: number;
+  manualUnreadFromSequenceNumber: number | null;
+  manualUnreadGeneration: number;
+  hasUnread: boolean;
+  firstUnreadSequenceNumber: number | null;
   lastActivityAt: string;
   plannedFor?: string;
   preview?: string;
@@ -228,6 +234,7 @@ export interface Message {
 export interface MessagePage {
   items: Message[];
   nextCursor: string | null;
+  newerCursor: string | null;
 }
 
 export interface BackgroundTask {

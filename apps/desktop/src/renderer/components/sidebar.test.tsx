@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Workspace, WorkstreamSummary } from '../lib/types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { Sidebar } from './sidebar';
 
@@ -13,6 +13,20 @@ const workspace: Workspace = {
   timezone: 'America/Los_Angeles',
   logAgentInference: false,
   currentUser: { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
+};
+
+const defaultActions = {
+  onMarkWorkstreamUnread: async (): Promise<void> => undefined,
+  onRenameWorkstream: async (): Promise<void> => undefined,
+  onRunAutomation: async (): Promise<void> => undefined,
+};
+
+const automation: AutomationSummary = {
+  id: 'automation-1',
+  name: 'Daily product brief',
+  scope: 'you',
+  status: 'active',
+  nextRunAt: '2026-08-01T16:00:00.000Z',
 };
 
 function workstream(
@@ -27,6 +41,12 @@ function workstream(
     title,
     origin,
     harnessStatus,
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
     lastActivityAt,
   };
 }
@@ -35,13 +55,20 @@ describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it('resizes from the keyboard and exposes its constrained width', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -61,7 +88,7 @@ describe('Sidebar work-stream markers', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -83,6 +110,7 @@ describe('Sidebar work-stream markers', () => {
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
           <Sidebar
+            {...defaultActions}
             automations={[]}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -117,6 +145,7 @@ describe('Sidebar work-stream markers', () => {
         <MemoryRouter>
           <Tooltip.Provider>
             <Sidebar
+              {...defaultActions}
               automations={[]}
               onSignOut={vi.fn()}
               workspace={workspace}
@@ -144,5 +173,71 @@ describe('Sidebar work-stream markers', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('shows the requested automation actions on right click and runs the automation', async () => {
+    const onRunAutomation = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            onRunAutomation={onRunAutomation}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Turn into template' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveClass('menu-item-danger');
+    expect(screen.queryByText(/^[PTRADU]$/u)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
+    await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
+  });
+
+  it('marks work streams unread on the server and renames from the menu', async () => {
+    const onMarkWorkstreamUnread = vi.fn(async () => undefined);
+    const onRenameWorkstream = vi.fn(async () => undefined);
+    const target = workstream('rename-me', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onMarkWorkstreamUnread={onMarkWorkstreamUnread}
+            onRenameWorkstream={onRenameWorkstream}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Quarterly planning/u });
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Pin' })).toBeVisible();
+    expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveClass('menu-item-danger');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
+    await waitFor(() => expect(onMarkWorkstreamUnread).toHaveBeenCalledWith(target));
+
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
+    const input = await screen.findByRole('textbox', { name: 'Work stream name' });
+    fireEvent.change(input, { target: { value: 'Launch planning' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+    await waitFor(() => expect(onRenameWorkstream).toHaveBeenCalledWith(target, 'Launch planning'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename work stream' })).not.toBeInTheDocument());
   });
 });

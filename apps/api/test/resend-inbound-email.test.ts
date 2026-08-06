@@ -114,6 +114,7 @@ class FakeDatabase {
   automationEmailBudgetAvailable = true;
   nextSequence = 1;
   workstreamLastActivityAt: string | null = null;
+  workstreamLatestAttentionSequenceNumber = 0;
 
   prepare(sql: string): FakeStatement {
     this.prepareCalls += 1;
@@ -362,8 +363,12 @@ class FakeDatabase {
       });
       return result(1);
     }
-    if (sql.includes("UPDATE workstreams SET last_activity_at")) {
-      this.workstreamLastActivityAt = String(values[0]);
+    if (sql.includes("UPDATE workstreams") && sql.includes("latest_attention_sequence_number")) {
+      this.workstreamLatestAttentionSequenceNumber = Math.max(
+        this.workstreamLatestAttentionSequenceNumber,
+        Number(values[0]),
+      );
+      this.workstreamLastActivityAt = String(values[1]);
       return result(1);
     }
     throw new Error(`Unexpected run query: ${sql}`);

@@ -4206,6 +4206,13 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           };
         }
         const at = nowIso();
+        const elicitation = {
+          id, workstreamId: input.workstreamId, harnessRunId: input.harnessRunId,
+          prompt: args.prompt, responseType: args.responseType, options: args.options,
+          minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
+          targetUserId: null, status: "open" as const, answer: null,
+          answeredByUserId: null, createdAt: at, answeredAt: null,
+        };
         await env.DB.batch([
           env.DB.prepare(
             `INSERT INTO elicitations
@@ -4216,17 +4223,39 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
              ON CONFLICT(id) DO NOTHING`,
           ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.prompt, args.responseType, JSON.stringify(args.options), args.minimumSelections, args.maximumSelections, null, at),
           env.DB.prepare(
-            `UPDATE workstreams SET harness_status = 'needs_input', last_activity_at = ?, updated_at = ?
-             WHERE id = ? AND workspace_id = ?`,
-          ).bind(at, at, input.workstreamId, input.workspaceId),
+            `INSERT INTO messages
+             (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+              message_type, text_content, structured_content_json, sequence_number, created_at, edited_at)
+             SELECT ?, ?, ?, w.id, 'agent', NULL, 'elicitation', '', ?, w.next_sequence_number, ?, NULL
+             FROM workstreams w
+             WHERE w.id = ? AND w.workspace_id = ?
+               AND EXISTS (
+                 SELECT 1 FROM elicitations e
+                 WHERE e.id = ? AND e.workstream_id = w.id AND e.workspace_id = w.workspace_id
+               )
+             ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+          ).bind(
+            id,
+            `elicitation:${id}`,
+            input.workspaceId,
+            JSON.stringify({ kind: "elicitation", elicitation }),
+            at,
+            input.workstreamId,
+            input.workspaceId,
+            id,
+          ),
+          env.DB.prepare(
+            `UPDATE workstreams
+             SET next_sequence_number = next_sequence_number + 1,
+                 latest_attention_sequence_number = next_sequence_number,
+                 harness_status = 'needs_input', last_activity_at = ?, updated_at = ?
+             WHERE id = ? AND workspace_id = ?
+               AND EXISTS (
+                 SELECT 1 FROM messages
+                 WHERE id = ? AND workstream_id = ? AND workspace_id = ?
+               )`,
+          ).bind(at, at, input.workstreamId, input.workspaceId, id, input.workstreamId, input.workspaceId),
         ]);
-        const elicitation = {
-          id, workstreamId: input.workstreamId, harnessRunId: input.harnessRunId,
-          prompt: args.prompt, responseType: args.responseType, options: args.options,
-          minimumSelections: args.minimumSelections, maximumSelections: args.maximumSelections,
-          targetUserId: null, status: "open" as const, answer: null,
-          answeredByUserId: null, createdAt: at, answeredAt: null,
-        };
         await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
         return { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
       },
