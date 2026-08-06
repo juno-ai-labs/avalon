@@ -31,6 +31,7 @@ import { issueSocketTicket } from "./socket-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
+import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -1025,7 +1026,7 @@ export class WorkstreamService {
 
   private scheduleMentionNotifications(message: Message, workstream: Workstream): void {
     const task = this.sendMentionNotifications(message, workstream).catch((error: unknown) => {
-      console.warn("Mention email delivery failed", {
+      console.warn("Mention notification delivery failed", {
         messageId: message.id,
         region: this.env.AVALON_REGION,
         reason: error instanceof ApiError ? error.code : "unknown_error",
@@ -1070,19 +1071,29 @@ export class WorkstreamService {
       })) continue;
       recipients.set(row.person_id, row);
     }
-    await Promise.all([...recipients.values()].map((recipient) => sendWorkstreamMentionEmail(this.env, {
-      messageId: message.id,
-      recipientUserId: recipient.person_id,
-      recipientEmail: recipient.email,
-      recipientName: recipient.name,
-      authorName: author.user.name,
-      workspaceName: recipient.workspace_name,
-      workstreamId: message.workstreamId,
-      workstreamTitle: String(workstream.title),
-      workstreamEmailAddress: workstream.emailAddress,
-      messageText: message.textContent,
-      region: this.env.AVALON_REGION,
-    })));
+    await Promise.all([...recipients.values()].map(async (recipient) => {
+      const common = {
+        messageId: message.id,
+        recipientUserId: recipient.person_id,
+        recipientEmail: recipient.email,
+        authorName: author.user.name,
+        workspaceName: recipient.workspace_name,
+        workstreamId: message.workstreamId,
+        workstreamTitle: String(workstream.title),
+        messageText: message.textContent,
+      };
+      const slack = await sendWorkstreamMentionSlack(this.env, {
+        ...common,
+        workspaceId: this.auth.workspaceId,
+      });
+      if (slack === "sent") return;
+      await sendWorkstreamMentionEmail(this.env, {
+        ...common,
+        recipientName: recipient.name,
+        workstreamEmailAddress: workstream.emailAddress,
+        region: this.env.AVALON_REGION,
+      });
+    }));
   }
 
   private async nonParticipantIds(workstreamId: string, ids: string[]): Promise<string[]> {

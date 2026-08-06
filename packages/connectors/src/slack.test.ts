@@ -5,6 +5,7 @@ import {
   parseSlackAgentInvocation,
   slackApi,
   SlackCapabilities,
+  SlackWorkspaceBotScopes,
   verifySlackRequest,
 } from "./slack";
 import type { FetchLike } from "./provider-utils";
@@ -106,6 +107,8 @@ describe("Slack connector", () => {
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.agent, "personal")).toBe(false);
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "personal")).toBe(true);
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "workspace")).toBe(false);
+    expect(SlackWorkspaceBotScopes).toContain("users:read.email");
+    expect(SlackWorkspaceBotScopes).toContain("users:read");
   });
 
   it("discovers the hosted MCP tool name before invoking it", async () => {
@@ -259,6 +262,16 @@ describe("Slack connector", () => {
         },
         response_metadata: { next_cursor: "" },
       });
+      if (url.pathname.endsWith("users.lookupByEmail")) return json({
+        ok: true,
+        user: {
+          id: "UADA",
+          team_id: "TACME",
+          deleted: false,
+          is_bot: false,
+          profile: { email: "ada@example.com" },
+        },
+      });
       return json({ ok: true, plan: 42 });
     });
 
@@ -269,6 +282,17 @@ describe("Slack connector", () => {
     }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({ results: { users: [{ user_id: "U1" }] } });
     await expect(slackApi("xoxb", "team.billing.info", {}, AbortSignal.timeout(1_000), fetcher))
       .rejects.toThrow(/malformed response/iu);
+    await expect(slackApi("xoxb", "users.lookupByEmail", {
+      email: "ada@example.com",
+    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+      user: { id: "UADA", team_id: "TACME", deleted: false },
+    });
+    await expect(slackApi("xoxb", "users.lookupByEmail", {
+      email: "not-an-email",
+    }, AbortSignal.timeout(1_000), fetcher)).rejects.toThrow();
+    await expect(slackApi("xoxb", "conversations.open", {
+      users: ["U1"],
+    } as never, AbortSignal.timeout(1_000), fetcher)).rejects.toThrow();
     await expect(slackApi("xoxb", "chat.postMessage", {
       channel: "C1",
       text: "x".repeat(40_001),

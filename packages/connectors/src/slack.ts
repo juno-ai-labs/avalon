@@ -61,6 +61,8 @@ export const SlackWorkspaceBotScopes = [
   "search:read.public",
   "search:read.users",
   "team.billing:read",
+  "users:read",
+  "users:read.email",
 ] as const;
 
 export const SlackCapabilityScopes: Record<string, readonly string[]> = {
@@ -253,10 +255,22 @@ const SlackWebApiSchemas = {
     response: SlackOkSchema,
   },
   "conversations.open": {
-    request: z.object({ users: z.union([SlackIdSchema, z.array(SlackIdSchema).min(1)]) }).strict(),
+    request: z.object({ users: SlackIdSchema }).strict(),
     response: SlackOkSchema.extend({ channel: SlackChannelSchema }),
   },
   "team.billing.info": { request: z.object({}).strict(), response: SlackOkSchema.extend({ plan: z.string().min(1) }) },
+  "users.lookupByEmail": {
+    request: z.object({ email: z.string().email().max(254) }).strict(),
+    response: SlackOkSchema.extend({
+      user: z.object({
+        id: SlackIdSchema,
+        team_id: SlackIdSchema,
+        deleted: z.boolean().optional(),
+        is_bot: z.boolean().optional(),
+        is_app_user: z.boolean().optional(),
+      }).passthrough(),
+    }),
+  },
   "views.open": {
     request: z.object({ trigger_id: z.string().min(1), view: SlackViewSchema }).strict(),
     response: SlackOkSchema.extend({ view: z.record(z.string(), z.unknown()).optional() }),
