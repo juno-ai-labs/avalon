@@ -348,6 +348,7 @@ export function mapMessage(message: WireMessage): Message {
     sequenceNumber: message.sequenceNumber,
     authorType: message.author.type === 'human' ? 'human' : message.author.type,
     ...(message.author.type === 'human' ? { author: mapUser(message.author.user) } : {}),
+    ...(message.author.type === 'external' ? { externalActor: { ...message.author.actor } } : {}),
     messageType,
     text: message.textContent,
     mentions: message.mentions.map((mention) => ({

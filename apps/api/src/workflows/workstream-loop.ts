@@ -197,7 +197,13 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     const text = message?.textContent ?? terminalSlackText(outcome);
     const deliveryKey = `${input.harnessRunId}:${outcome.status}`;
     const slack = new SlackAgentService(this.env);
-    await slack.deliverWorkstreamOutcome(input.workspaceId, input.workstreamId, text, deliveryKey);
+    await slack.deliverWorkstreamOutcome(
+      input.workspaceId,
+      input.workstreamId,
+      text,
+      deliveryKey,
+      outcome.status,
+    );
     if (input.automationSubscriptionId) {
       const automation = await this.env.DB.prepare(
         `SELECT t.name FROM automation_subscriptions s

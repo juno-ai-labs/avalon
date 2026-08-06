@@ -147,8 +147,17 @@ export const WorkstreamSchema = z.object({
   archivedAt: TimestampSchema.nullable()
 });
 
+export const ExternalActorSchema = z.object({
+  provider: z.string().min(1).max(80),
+  providerAccountId: z.string().min(1).max(200),
+  providerUserId: z.string().min(1).max(200),
+  displayName: z.string().min(1).max(180),
+  avatarUrl: z.string().url().nullable(),
+});
+
 export const MessageAuthorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("human"), user: UserSchema }),
+  z.object({ type: z.literal("external"), actor: ExternalActorSchema }),
   z.object({ type: z.literal("agent") }),
   z.object({ type: z.literal("system") })
 ]);
@@ -1095,6 +1104,7 @@ export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
+export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;

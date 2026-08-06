@@ -187,6 +187,14 @@ export interface MessageMention {
   endOffset: number;
 }
 
+export interface ExternalActor {
+  provider: string;
+  providerAccountId: string;
+  providerUserId: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
 export interface Message {
   id: string;
   /**
@@ -197,8 +205,9 @@ export interface Message {
   clientMessageId?: string;
   workstreamId: string;
   sequenceNumber: number;
-  authorType: 'human' | 'agent' | 'system';
+  authorType: 'human' | 'external' | 'agent' | 'system';
   author?: WorkspaceMember;
+  externalActor?: ExternalActor;
   messageType:
     | 'text'
     | 'thought'
