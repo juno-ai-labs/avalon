@@ -3,6 +3,7 @@ import {
   DEVICE_PREFERENCES_STORAGE_KEY,
   readDevicePreferences,
   setDeviceSelectedRegion,
+  setDeviceMicrophoneId,
   setDeviceWorkspaceName,
 } from './device-preferences';
 
@@ -12,16 +13,19 @@ describe('device preferences', () => {
   it('stores renderer preferences in one versioned record', () => {
     setDeviceSelectedRegion('eu');
     setDeviceWorkspaceName('  European Research  ');
+    setDeviceMicrophoneId('  microphone-42  ');
 
     expect(readDevicePreferences()).toEqual({
       version: 1,
       selectedRegion: 'eu',
       workspaceName: 'European Research',
+      microphoneDeviceId: 'microphone-42',
     });
     expect(JSON.parse(window.localStorage.getItem(DEVICE_PREFERENCES_STORAGE_KEY)!)).toEqual({
       version: 1,
       selectedRegion: 'eu',
       workspaceName: 'European Research',
+      microphoneDeviceId: 'microphone-42',
     });
   });
 

@@ -8,6 +8,7 @@ export interface DevicePreferences {
   version: 1;
   selectedRegion?: Region;
   workspaceName?: string;
+  microphoneDeviceId?: string;
 }
 
 function parsedPreferences(value: string | null): DevicePreferences | null {
@@ -19,12 +20,17 @@ function parsedPreferences(value: string | null): DevicePreferences | null {
     if (candidate['version'] !== 1) return null;
     const selectedRegion = candidate['selectedRegion'];
     const workspaceName = candidate['workspaceName'];
+    const microphoneDeviceId = candidate['microphoneDeviceId'];
     if (selectedRegion !== undefined && selectedRegion !== 'global' && selectedRegion !== 'eu') return null;
     if (workspaceName !== undefined && typeof workspaceName !== 'string') return null;
+    if (microphoneDeviceId !== undefined && typeof microphoneDeviceId !== 'string') return null;
     return {
       version: 1,
       ...(selectedRegion ? { selectedRegion } : {}),
       ...(typeof workspaceName === 'string' ? { workspaceName: workspaceName.trim() } : {}),
+      ...(typeof microphoneDeviceId === 'string' && microphoneDeviceId.trim()
+        ? { microphoneDeviceId: microphoneDeviceId.trim() }
+        : {}),
     };
   } catch {
     return null;
@@ -64,5 +70,11 @@ export function setDeviceSelectedRegion(selectedRegion: Region | null): void {
 export function setDeviceWorkspaceName(workspaceName: string): void {
   const preferences = readDevicePreferences();
   preferences.workspaceName = workspaceName.trim();
+  writeDevicePreferences(preferences);
+}
+
+export function setDeviceMicrophoneId(microphoneDeviceId: string): void {
+  const preferences = readDevicePreferences();
+  preferences.microphoneDeviceId = microphoneDeviceId.trim() || 'default';
   writeDevicePreferences(preferences);
 }

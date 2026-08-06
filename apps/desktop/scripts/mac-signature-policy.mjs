@@ -1,5 +1,6 @@
 export const NESTED_COMPONENT_ENTITLEMENTS = Object.freeze([
   'com.apple.security.cs.allow-jit',
+  'com.apple.security.device.audio-input',
   'com.apple.security.network.client',
 ]);
 
@@ -13,6 +14,12 @@ export function assertExactNestedEntitlements(keys, label) {
       `${label} entitlements must be exactly {${expected.join(', ')}}; found {${actual.join(', ')}}`,
     );
   }
+}
+
+export function assertEntitlementPlistMatchesPolicy(contents, label) {
+  const keys = [...contents.matchAll(/<key>([^<]+)<\/key>\s*<true\s*\/>/gu)]
+    .map((match) => match[1]);
+  assertExactNestedEntitlements(keys, label);
 }
 
 export function assertDeveloperIdDetails(details, expectedTeam, label) {

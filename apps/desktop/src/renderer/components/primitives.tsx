@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { statusLabel } from '../lib/format';
 import type { HarnessStatus, WorkspaceMember } from '../lib/types';
+import type { SocketState } from '../lib/use-workstream-socket';
 
 export function AvalonMark({ className }: { className?: string }): React.JSX.Element {
   return <span aria-hidden="true" className={clsx('avalon-mark', className)} />;
@@ -56,6 +57,54 @@ export function StatusDot({ status, compact = false }: { status: HarnessStatus; 
       {!compact && <span>{statusLabel[status]}</span>}
       {compact && <span className="sr-only">{statusLabel[status]}</span>}
     </span>
+  );
+}
+
+const socketStateCopy: Record<SocketState, { label: string; description: string }> = {
+  idle: {
+    label: 'Live updates are loading',
+    description: 'Live updates are waiting for this work stream to load.',
+  },
+  connecting: {
+    label: 'Connecting to live updates',
+    description: 'Avalon is connecting to live work-stream updates.',
+  },
+  connected: {
+    label: 'Live updates connected',
+    description: 'Live work-stream updates are connected.',
+  },
+  reconnecting: {
+    label: 'Reconnecting live updates',
+    description: 'The connection was interrupted. Avalon is reconnecting live updates.',
+  },
+  unavailable: {
+    label: 'Live updates unavailable',
+    description: 'Live updates are unavailable. Avalon will keep trying to reconnect.',
+  },
+};
+
+export function SocketStatusIndicator({ state }: { state: SocketState }): React.JSX.Element {
+  const copy = socketStateCopy[state];
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>
+        <span
+          aria-label={copy.label}
+          className={clsx('socket-state', 'header-socket-state', `socket-${state}`)}
+          role="status"
+          tabIndex={0}
+        >
+          <span aria-hidden="true" />
+          <span className="sr-only">{copy.label}</span>
+        </span>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+          {copy.description}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   );
 }
 
