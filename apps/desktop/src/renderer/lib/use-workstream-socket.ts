@@ -23,7 +23,7 @@ import {
   removeTranscriptMessage,
   upsertTranscriptMessage,
 } from './transcript';
-import type { Message, WorkstreamDetail } from './types';
+import type { Message, WorkstreamDetail, WorkstreamSummary } from './types';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -306,6 +306,32 @@ function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boo
   return status === 'running' || status === 'scheduled';
 }
 
+function advanceWorkstreamAttention<T extends WorkstreamSummary>(
+  workstream: T,
+  message: Message,
+): T {
+  if (message.messageType === 'tool_event' || message.realtimeOrder !== undefined) return workstream;
+  const latestAttentionSequenceNumber = Math.max(
+    workstream.latestAttentionSequenceNumber,
+    message.sequenceNumber,
+  );
+  if (latestAttentionSequenceNumber === workstream.latestAttentionSequenceNumber) return workstream;
+  const hasUnread = workstream.manualUnreadFromSequenceNumber !== null
+    || latestAttentionSequenceNumber > workstream.readThroughSequenceNumber;
+  return {
+    ...workstream,
+    latestAttentionSequenceNumber,
+    hasUnread,
+    firstUnreadSequenceNumber: workstream.manualUnreadFromSequenceNumber
+      ?? (hasUnread
+        ? Math.min(latestAttentionSequenceNumber, workstream.readThroughSequenceNumber + 1)
+        : null),
+    lastActivityAt: message.createdAt > workstream.lastActivityAt
+      ? message.createdAt
+      : workstream.lastActivityAt,
+  };
+}
+
 export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string, enabled: boolean): SocketState {
   const queryClient = useQueryClient();
   const [state, setState] = useState<SocketState>('idle');
@@ -408,7 +434,14 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           current ? { ...current, viewers: event.viewers.map(mapViewer) } : current,
         );
       } else if (event.type === 'message_created') {
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, mapMessage(event.message)));
+        const message = mapMessage(event.message);
+        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, message));
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+          current ? advanceWorkstreamAttention(current, message) : current);
+        queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+          current?.map((workstream) => workstream.id === workstreamId
+            ? advanceWorkstreamAttention(workstream, message)
+            : workstream));
       } else if (event.type === 'stream_completed') {
         const cursor = streamCursors.get(event.message.id);
         if (cursor) {
@@ -418,8 +451,15 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
             completed: true,
           });
         }
+        const message = mapMessage(event.message);
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          insertMessage(current, mapMessage(event.message)));
+          insertMessage(current, message));
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+          current ? advanceWorkstreamAttention(current, message) : current);
+        queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+          current?.map((workstream) => workstream.id === workstreamId
+            ? advanceWorkstreamAttention(workstream, message)
+            : workstream));
       } else if (event.type === 'stream_started' || event.type === 'stream_delta') {
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
           applyStreamingSocketEvent(current, event, workstreamId, streamCursors));

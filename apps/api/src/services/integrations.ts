@@ -4253,8 +4253,23 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
                AND EXISTS (
                  SELECT 1 FROM messages
                  WHERE id = ? AND workstream_id = ? AND workspace_id = ?
+               )
+               AND next_sequence_number = (
+                 SELECT sequence_number FROM messages
+                 WHERE id = ? AND workstream_id = ? AND workspace_id = ?
                )`,
-          ).bind(at, at, input.workstreamId, input.workspaceId, id, input.workstreamId, input.workspaceId),
+          ).bind(
+            at,
+            at,
+            input.workstreamId,
+            input.workspaceId,
+            id,
+            input.workstreamId,
+            input.workspaceId,
+            id,
+            input.workstreamId,
+            input.workspaceId,
+          ),
         ]);
         await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, { type: "elicitation_created", elicitation });
         return { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };

@@ -23,7 +23,7 @@ function migrateFreshDatabase(): DatabaseSync {
 
 describe("database migrations", () => {
   it("establishes a rollout baseline and stores independent per-user read cursors", () => {
-    const database = migrateDatabaseThrough("0036_scoped_agent_memory.sql");
+    const database = migrateDatabaseThrough("0038_remove_web_monitor.sql");
     database.exec(`
       INSERT INTO users
         (id, google_subject, email, name, created_at, updated_at)
@@ -52,7 +52,7 @@ describe("database migrations", () => {
     `);
 
     database.exec(readFileSync(
-      new URL("../migrations/0037_workstream_read_state.sql", import.meta.url),
+      new URL("../migrations/0039_workstream_read_state.sql", import.meta.url),
       "utf8",
     ));
 
