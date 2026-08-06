@@ -413,6 +413,7 @@ describe("connector tools selected for harness runs", () => {
     )).toHaveLength(1);
     expect(selected.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
       "avalon:time",
+      "avalon:tables",
       "avalon:memory",
       "avalon:workstream",
     ]);

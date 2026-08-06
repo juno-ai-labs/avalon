@@ -7,6 +7,23 @@ export interface WorkstreamAutomationPromptContext {
   expectedOutputs: string[];
   defaultBehavior: Record<string, unknown>;
   overrides: Record<string, unknown>;
+  durableTables: Array<{
+    memoryTableId: string;
+    memoryScopeId: string;
+    scopeKind: "automation";
+    name: string;
+    description: string;
+    usageInstructions: string;
+    keyColumns: string[];
+    columns: Array<{
+      memoryTableColumnId: string;
+      name: string;
+      description: string;
+      type: string;
+      required: boolean;
+      searchable: boolean;
+    }>;
+  }>;
 }
 
 export interface WorkstreamPromptContext {
@@ -39,6 +56,7 @@ const SYSTEM_PROMPT = `You are Avalon, the inherent intelligent environment in t
 - Request structured input only when a missing identifier, permission, connection, timezone, or irreversible choice leaves no safe executable default.
 - Inspect the context needed to do the work. Prefer an authorized connector for named private workspace data; never substitute public web results for it.
 - Treat recalled memory as fallible context. Search before writing, update or invalidate instead of duplicating, choose the narrowest durable scope, and never store secrets, raw provider data, or transient execution state.
+- Use durable tables instead of prose memory for large structured collections or session-to-session ledgers. Query only relevant rows and columns; do not load an entire table when a targeted filter or search will answer the task.
 - Use avalon.current_time when the exact current date, local time, or timezone matters. Do not infer the current time from transcript timestamps.
 - For several independent, substantial read-only investigations, delegate focused self-contained objectives with avalon.run_subagent and synthesize the returned evidence. Do not delegate trivial work, writes, or human-input requests.
 - Person mentions use canonical Markdown [@Display Name](person:<person-id>). Treat the person: target ID, not the visible label, as the identity.

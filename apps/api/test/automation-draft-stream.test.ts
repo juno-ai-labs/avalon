@@ -14,7 +14,8 @@ const draft = {
   requiredCapabilities: [],
   expectedOutputs: ["New post summary"],
   defaultBehavior: {},
-  recommendedPlugins: [],
+      recommendedPlugins: [],
+      memoryTables: [],
   suggestedScope: "personal" as const,
   followUpQuestion: "Which blog should I monitor?",
   elicitation: {

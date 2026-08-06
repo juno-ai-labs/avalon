@@ -15,6 +15,10 @@ import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
+import {
+  buildAutomationMemoryTableStatements,
+  ensureAutomationMemoryTables,
+} from "./memory-table-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
@@ -162,6 +166,13 @@ export class AutomationService {
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = this.automationRouteInput(subscriptionId);
     const emailRoute = await emailRouting.reserveAutomation(routeInput);
+    const memoryTables = buildAutomationMemoryTableStatements(this.env, {
+      workspaceId: this.auth.workspaceId,
+      automationSubscriptionId: subscriptionId,
+      definitions: input.draft.memoryTables,
+      createdByUserId: this.auth.userId,
+      createdAt: at,
+    });
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO automation_templates
@@ -173,9 +184,9 @@ export class AutomationService {
         `INSERT INTO automation_template_versions
          (id, template_id, version_number, overview, instructions, trigger_definitions_json,
           required_capabilities_json, expected_outputs_json, default_behavior_json,
-          recommended_plugins_json, created_by_user_id, created_at)
-         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(versionId, templateId, input.draft.overview, input.draft.instructions, JSON.stringify(input.draft.triggers), JSON.stringify(input.draft.requiredCapabilities), JSON.stringify(input.draft.expectedOutputs), JSON.stringify(input.draft.defaultBehavior), JSON.stringify(input.draft.recommendedPlugins), this.auth.userId, at),
+          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(versionId, templateId, input.draft.overview, input.draft.instructions, JSON.stringify(input.draft.triggers), JSON.stringify(input.draft.requiredCapabilities), JSON.stringify(input.draft.expectedOutputs), JSON.stringify(input.draft.defaultBehavior), JSON.stringify(input.draft.recommendedPlugins), JSON.stringify(input.draft.memoryTables), this.auth.userId, at),
       this.env.DB.prepare(
         `INSERT INTO automation_subscriptions
          (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
@@ -184,6 +195,7 @@ export class AutomationService {
           next_run_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
       ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+      ...memoryTables.statements,
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
          (id, workspace_id, automation_subscription_id, schedule_type, rrule,
@@ -224,7 +236,8 @@ export class AutomationService {
       updateAvailable
         ? this.env.DB.prepare(
             `SELECT id, version_number, overview, instructions, trigger_definitions_json,
-              required_capabilities_json, expected_outputs_json, recommended_plugins_json
+              required_capabilities_json, expected_outputs_json, recommended_plugins_json,
+              memory_tables_json
              FROM automation_template_versions
              WHERE template_id = ? AND version_number = ?`,
           ).bind(row.template_id, row.latest_version_number).first<Record<string, unknown>>()
@@ -238,6 +251,7 @@ export class AutomationService {
       requiredCapabilities: parseJson(row.required_capabilities_json, []), expectedOutputs: parseJson(row.expected_outputs_json, []),
       executionPrincipal: parseJson(row.execution_principal_json, {}),
       recommendedPlugins: parseJson(row.recommended_plugins_json, []),
+      memoryTables: parseJson(row.memory_tables_json, []),
       defaultPluginIds: parseJson(row.default_plugins_json, []),
       templateUpdate: latestVersion ? {
         versionId: String(latestVersion.id),
@@ -248,6 +262,7 @@ export class AutomationService {
         requiredCapabilities: parseJson(latestVersion.required_capabilities_json, []),
         expectedOutputs: parseJson(latestVersion.expected_outputs_json, []),
         recommendedPlugins: parseJson(latestVersion.recommended_plugins_json, []),
+        memoryTables: parseJson(latestVersion.memory_tables_json, []),
       } : null,
       nextPlannedWorkstream: planned ? toWorkstream(planned) : null, recentRuns: runs.items,
     };
@@ -290,9 +305,9 @@ export class AutomationService {
           `INSERT INTO automation_template_versions
            (id, template_id, version_number, overview, instructions, trigger_definitions_json,
             required_capabilities_json, expected_outputs_json, default_behavior_json,
-            recommended_plugins_json, created_by_user_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(versionId, row.template_id, versionNumber, row.overview ?? "", input.instructions, row.trigger_definitions_json, row.required_capabilities_json, row.expected_outputs_json, row.default_behavior_json, row.recommended_plugins_json ?? "[]", this.auth.userId, at),
+            recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(versionId, row.template_id, versionNumber, row.overview ?? "", input.instructions, row.trigger_definitions_json, row.required_capabilities_json, row.expected_outputs_json, row.default_behavior_json, row.recommended_plugins_json ?? "[]", row.memory_tables_json ?? "[]", this.auth.userId, at),
         this.env.DB.prepare(
           `UPDATE automation_templates SET latest_version_number = ?, updated_at = ? WHERE id = ?`,
         ).bind(versionNumber, at, row.template_id),
@@ -416,9 +431,9 @@ export class AutomationService {
         `INSERT INTO automation_template_versions
          (id, template_id, version_number, overview, instructions, trigger_definitions_json,
           required_capabilities_json, expected_outputs_json, default_behavior_json,
-          recommended_plugins_json, created_by_user_id, created_at)
-         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(versionId, templateId, input.draft.overview, input.draft.instructions, JSON.stringify(input.draft.triggers), JSON.stringify(input.draft.requiredCapabilities), JSON.stringify(input.draft.expectedOutputs), JSON.stringify(input.draft.defaultBehavior), JSON.stringify(input.draft.recommendedPlugins), this.auth.userId, at),
+          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(versionId, templateId, input.draft.overview, input.draft.instructions, JSON.stringify(input.draft.triggers), JSON.stringify(input.draft.requiredCapabilities), JSON.stringify(input.draft.expectedOutputs), JSON.stringify(input.draft.defaultBehavior), JSON.stringify(input.draft.recommendedPlugins), JSON.stringify(input.draft.memoryTables), this.auth.userId, at),
     ]);
     return { id: templateId, latestVersionId: versionId, latestVersionNumber: 1 };
   }
@@ -448,9 +463,9 @@ export class AutomationService {
         `INSERT INTO automation_template_versions
          (id, template_id, version_number, overview, instructions, trigger_definitions_json,
           required_capabilities_json, expected_outputs_json, default_behavior_json,
-          recommended_plugins_json, created_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(id, templateId, number, draft.overview, draft.instructions, JSON.stringify(draft.triggers), JSON.stringify(draft.requiredCapabilities), JSON.stringify(draft.expectedOutputs), JSON.stringify(draft.defaultBehavior), JSON.stringify(draft.recommendedPlugins), this.auth.userId, at),
+          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(id, templateId, number, draft.overview, draft.instructions, JSON.stringify(draft.triggers), JSON.stringify(draft.requiredCapabilities), JSON.stringify(draft.expectedOutputs), JSON.stringify(draft.defaultBehavior), JSON.stringify(draft.recommendedPlugins), JSON.stringify(draft.memoryTables), this.auth.userId, at),
       this.env.DB.prepare("UPDATE automation_templates SET latest_version_number = ?, updated_at = ? WHERE id = ?").bind(number, at, templateId),
     ]);
     return { id, versionNumber: number };
@@ -469,6 +484,7 @@ export class AutomationService {
       triggers: parseJson(template.trigger_definitions_json, []), requiredCapabilities: parseJson(template.required_capabilities_json, []),
       expectedOutputs: parseJson(template.expected_outputs_json, []), defaultBehavior: parseJson(template.default_behavior_json, {}),
       recommendedPlugins: parseJson(template.recommended_plugins_json, []),
+      memoryTables: parseJson(template.memory_tables_json, []),
       suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
     };
     await this.validateDefaultPluginIds("personal", input.defaultPluginIds);
@@ -479,6 +495,13 @@ export class AutomationService {
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = this.automationRouteInput(subscriptionId);
     const emailRoute = await emailRouting.reserveAutomation(routeInput);
+    const memoryTables = buildAutomationMemoryTableStatements(this.env, {
+      workspaceId: this.auth.workspaceId,
+      automationSubscriptionId: subscriptionId,
+      definitions: draft.memoryTables,
+      createdByUserId: this.auth.userId,
+      createdAt: at,
+    });
     await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO automation_subscriptions
@@ -488,6 +511,7 @@ export class AutomationService {
           next_run_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'personal', ?, ?, '{}', ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
       ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+      ...memoryTables.statements,
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
          (id, workspace_id, automation_subscription_id, schedule_type, rrule,
@@ -519,6 +543,12 @@ export class AutomationService {
     const schedules = triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
     const nextRunAt = schedules.map((schedule) => schedule.nextRunAt).sort()[0] ?? null;
     const enabled = subscription.status === "paused" ? 0 : 1;
+    await ensureAutomationMemoryTables(this.env, {
+      workspaceId: this.auth.workspaceId,
+      automationSubscriptionId: subscriptionId,
+      definitions: parseJson(version.memory_tables_json, []),
+      createdByUserId: this.auth.userId,
+    });
     await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE automation_subscriptions
@@ -818,7 +848,7 @@ export class AutomationService {
       `SELECT s.*, t.name, t.description, t.latest_version_number,
        v.version_number, v.overview, v.instructions, v.trigger_definitions_json,
        v.required_capabilities_json, v.expected_outputs_json, v.default_behavior_json,
-       v.recommended_plugins_json
+       v.recommended_plugins_json, v.memory_tables_json
        , t.owner_user_id AS template_owner_user_id
        FROM automation_subscriptions s JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
