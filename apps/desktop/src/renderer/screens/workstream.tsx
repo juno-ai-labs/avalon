@@ -42,7 +42,7 @@ import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
-import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, StatusDot } from '../components/primitives';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -231,9 +231,11 @@ export function AddResourceDialog({
 
 function WorkstreamHeader({
   workstream,
+  socketState,
   onAddParticipant,
 }: {
   workstream: WorkstreamDetail;
+  socketState: ReturnType<typeof useWorkstreamSocket>;
   onAddParticipant: () => void;
 }): React.JSX.Element {
   const openRail = useUiStore((state) => state.openRail);
@@ -263,6 +265,7 @@ function WorkstreamHeader({
         </div>
       </div>
       <div className="workstream-header-actions window-no-drag">
+        <SocketStatusIndicator state={socketState} />
         <button className="participant-header-button" onClick={onAddParticipant} type="button">
           <AvatarStack members={workstream.participants} />
           <UserPlus aria-hidden="true" size={13} />
@@ -924,7 +927,11 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   return (
     <div className="workstream-screen">
-      <WorkstreamHeader onAddParticipant={() => setParticipantDialogOpen(true)} workstream={displayedDetail} />
+      <WorkstreamHeader
+        onAddParticipant={() => setParticipantDialogOpen(true)}
+        socketState={socketState}
+        workstream={displayedDetail}
+      />
       <div
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
         onDragEnter={transcriptDrop.onDragEnter}
@@ -1015,6 +1022,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         )}
         <div className="composer-stack">
           <WorkstreamComposer
+            api={api ?? undefined}
             attachments={attachmentDraft.attachments}
             error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
             fileInputRef={fileInputRef}
@@ -1028,8 +1036,8 @@ export function WorkstreamScreen(): React.JSX.Element {
               await stop.mutateAsync();
             }}
             sending={sending}
-            socketState={socketState}
             uploading={attachmentDraft.uploading}
+            key={displayedDetail.id}
             workstream={displayedDetail}
           />
         </div>

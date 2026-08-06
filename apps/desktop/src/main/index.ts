@@ -38,6 +38,7 @@ import {
 } from './api-response-error';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
+import { allowsTrustedAudioCapture } from './media-permission';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -1212,10 +1213,21 @@ function installContentSecurityPolicy(): void {
     });
   });
 
-  electronSession.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
-    callback(false);
+  electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(allowsTrustedAudioCapture({
+      isMainWindow: webContents === mainWindow?.webContents,
+      mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
+      permission,
+      trustedRenderer: rendererNavigationAllowed(details.requestingUrl),
+    }));
   });
-  electronSession.defaultSession.setPermissionCheckHandler(() => false);
+  electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+    allowsTrustedAudioCapture({
+      isMainWindow: webContents === mainWindow?.webContents,
+      mediaTypes: details.mediaType ? [details.mediaType] : [],
+      permission,
+      trustedRenderer: rendererNavigationAllowed(requestingOrigin),
+    }));
 }
 
 const singleInstanceLock = app.requestSingleInstanceLock();

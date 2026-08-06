@@ -20,6 +20,8 @@ publish:
 mac:
   icon: resources/icon.icon
   category: public.app-category.productivity
+  extendInfo:
+    NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation.
   hardenedRuntime: true
   forceCodeSigning: true
   gatekeeperAssess: false
