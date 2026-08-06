@@ -131,8 +131,65 @@ describe("database migrations", () => {
     const database = migrateFreshDatabase();
     database.exec(readFileSync(new URL("../seed.sql", import.meta.url), "utf8"));
     expect(database.prepare(
-      "SELECT model_plugin_id FROM connector_connections WHERE id = '00000000-0000-7000-8000-000000000040'",
-    ).get()).toEqual({ model_plugin_id: "plugin_web_monitor" });
+      "SELECT provider, connection_id FROM resources WHERE id = '00000000-0000-7000-8000-000000000041'",
+    ).get()).toEqual({ provider: "fixture", connection_id: null });
+    database.close();
+  });
+
+  it("removes legacy web-monitor data and prevents the retired connector from returning", () => {
+    const database = migrateDatabaseThrough("0037_scoped_memory_tables.sql");
+    database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-monitor', 'google-monitor', 'monitor@example.com', 'Monitor Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-monitor', 'Monitor', 'monitor', 'global', 'user-monitor', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES ('connection-monitor', 'workspace-monitor', 'web_monitor', 'personal', 'user-monitor',
+              'Legacy monitor', '["web.read"]', 'plugin_web_monitor', 'healthy', '{}', '{}',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO resources
+        (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+         title, metadata_json, created_at, updated_at)
+      VALUES ('resource-monitor', 'workspace-monitor', 'connection-monitor', 'web_page',
+              'web_monitor', 'legacy-page', 'Legacy page', '{}', '2026-01-01', '2026-01-01');
+      CREATE TABLE web_monitor_snapshots (
+        id TEXT PRIMARY KEY,
+        connection_id TEXT NOT NULL REFERENCES connector_connections(id) ON DELETE CASCADE,
+        content_hash TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+      INSERT INTO web_monitor_snapshots (id, connection_id, content_hash, fetched_at)
+      VALUES ('snapshot-monitor', 'connection-monitor', 'hash', '2026-01-01');
+      PRAGMA ignore_check_constraints = OFF;
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0038_remove_web_monitor.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'web_monitor_snapshots'",
+    ).get()).toBeUndefined();
+    expect(database.prepare(
+      "SELECT id FROM connector_connections WHERE id = 'connection-monitor'",
+    ).get()).toBeUndefined();
+    expect(database.prepare(
+      "SELECT id FROM resources WHERE id = 'resource-monitor'",
+    ).get()).toBeUndefined();
+    expect(() => database.exec(`
+      PRAGMA ignore_check_constraints = ON;
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+      VALUES ('connection-monitor-new', 'workspace-monitor', 'web_monitor', 'personal', 'user-monitor',
+              'Monitor', '[]', 'plugin_web_monitor', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01');
+    `)).toThrow(/has been removed/u);
     database.close();
   });
 

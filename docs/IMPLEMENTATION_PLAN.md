@@ -43,7 +43,7 @@
 - [x] Add real Gmail, Calendar, and Drive reads; Gmail and Calendar writes; native bounded Docs/Sheets reads and writes; and Drive change-token normalization for Drive, Docs, and Sheets activity.
 - [x] Add one smart-routed public GitHub App, one smart-routed public Linear app with a first-class resource surface and feature-gated `protocol_only` native-agent surface, and regional Notion connection adapters with bounded tools, resource hydration, credential lifecycle, and signed inbound events.
 - [x] Replace model-native web discovery with bounded Firecrawl search and page-fetch tools and regional usage accounting.
-- [x] Add HMAC generic webhooks, web monitoring, R2 snapshots, normalized activities, Queue ingestion, and deduplication.
+- [x] Add HMAC generic webhooks, normalized activities, Queue ingestion, and deduplication.
 - [x] Add direct watches/triggers and deterministic-then-LLM contextual routing with accept/dismiss feedback.
 
 ## Phase 7 — hardening and delivery
