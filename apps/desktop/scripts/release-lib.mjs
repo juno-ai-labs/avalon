@@ -67,13 +67,15 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-export function assertNextMinorReleaseVersion(currentVersion, nextVersion) {
+export function assertNextReleaseVersion(currentVersion, nextVersion) {
   const current = parseVersion(currentVersion);
   assertMinorReleaseVersion(nextVersion);
   const expectedVersion = `${current.major}.${current.minor + 1}.0`;
-  if (nextVersion !== expectedVersion) {
+  const stablePromotion = current.major === 0 && nextVersion === '1.0.0';
+  if (nextVersion !== expectedVersion && !stablePromotion) {
     throw new Error(
-      `Next Avalon release after ${currentVersion} must be ${expectedVersion}; received ${nextVersion}`,
+      `Next Avalon release after ${currentVersion} must be ${expectedVersion}`
+        + `${current.major === 0 ? ' or the one-time stable promotion 1.0.0' : ''}; received ${nextVersion}`,
     );
   }
   return nextVersion;
