@@ -36,6 +36,10 @@ type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema>;
 type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
+interface AcknowledgeReadInput {
+  readThroughSequenceNumber: number;
+  observedManualUnreadGeneration: number;
+}
 
 const ACTIVITY_RESOURCE_LOOKUP_SQL = `SELECT id FROM resources
   WHERE workspace_id = ?
@@ -123,10 +127,16 @@ export class WorkstreamService {
   async list(limit: number, before?: string) {
     const cursorClause = before ? "AND w.last_activity_at < ?" : "";
     const statement = this.env.DB.prepare(
-      `SELECT w.*, t.name AS origin_label
+      `SELECT w.*, t.name AS origin_label,
+         rs.user_id AS viewer_read_state_user_id,
+         rs.read_through_sequence_number AS viewer_read_through_sequence_number,
+         rs.manual_unread_from_sequence_number AS viewer_manual_unread_from_sequence_number,
+         rs.manual_unread_generation AS viewer_manual_unread_generation
        FROM workstreams w
        LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
        LEFT JOIN automation_templates t ON t.id = s.template_id
+       LEFT JOIN workstream_read_states rs
+         ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.workspace_id = ? AND w.archived_at IS NULL ${cursorClause}
          AND (
            w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
@@ -138,8 +148,8 @@ export class WorkstreamService {
        ORDER BY w.last_activity_at DESC LIMIT ?`,
     );
     const result = before
-      ? await statement.bind(this.auth.workspaceId, before, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
-      : await statement.bind(this.auth.workspaceId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
+      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
+      : await statement.bind(this.auth.userId, this.auth.workspaceId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
     const rows = result.results ?? [];
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
@@ -277,12 +287,105 @@ export class WorkstreamService {
     return toWorkstream(await this.requireWorkstreamForUpdate(id));
   }
 
-  async messages(id: string, limit: number, before?: number) {
+  async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
     await this.requireWorkstream(id);
+    if (around !== undefined) {
+      const olderLimit = Math.max(1, Math.min(50, Math.floor(limit / 4)));
+      const newerLimit = Math.max(1, limit - olderLimit);
+      const [older, newer] = await Promise.all([
+        this.database.workstreams.listMessages(this.auth.workspaceId, id, olderLimit + 1, around + 1),
+        this.database.workstreams.listMessagesAfter(this.auth.workspaceId, id, around, newerLimit + 1),
+      ]);
+      const hasOlder = older.length > olderLimit;
+      const hasNewer = newer.length > newerLimit;
+      if (hasOlder) older.shift();
+      if (hasNewer) newer.pop();
+      const items = [...older, ...newer];
+      return {
+        items,
+        nextCursor: hasOlder ? String(items[0]?.sequenceNumber ?? "") : null,
+        newerCursor: hasNewer ? String(items.at(-1)?.sequenceNumber ?? "") : null,
+      };
+    }
+    if (after !== undefined) {
+      const items = await this.database.workstreams.listMessagesAfter(this.auth.workspaceId, id, after, limit + 1);
+      const hasMore = items.length > limit;
+      if (hasMore) items.pop();
+      return {
+        items,
+        nextCursor: null,
+        newerCursor: hasMore ? String(items.at(-1)?.sequenceNumber ?? "") : null,
+      };
+    }
     const items = await this.database.workstreams.listMessages(this.auth.workspaceId, id, limit + 1, before);
     const hasMore = items.length > limit;
     if (hasMore) items.shift();
-    return { items, nextCursor: hasMore ? String(items[0]?.sequenceNumber ?? "") : null };
+    return {
+      items,
+      nextCursor: hasMore ? String(items[0]?.sequenceNumber ?? "") : null,
+      newerCursor: null,
+    };
+  }
+
+  async acknowledgeRead(id: string, input: AcknowledgeReadInput) {
+    const workstream = await this.requireWorkstream(id);
+    if (input.readThroughSequenceNumber > workstream.latestAttentionSequenceNumber) {
+      throw new ApiError(422, "invalid_read_sequence", "The read cursor is ahead of the latest message requiring attention");
+    }
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `INSERT INTO workstream_read_states
+       (workspace_id, workstream_id, user_id, read_through_sequence_number,
+        manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+       VALUES (?, ?, ?, ?, NULL, 0, ?)
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         read_through_sequence_number = MAX(
+           workstream_read_states.read_through_sequence_number,
+           excluded.read_through_sequence_number
+         ),
+         manual_unread_from_sequence_number = CASE
+           WHEN workstream_read_states.manual_unread_generation = ?
+             AND excluded.read_through_sequence_number >= COALESCE(
+               workstream_read_states.manual_unread_from_sequence_number,
+               excluded.read_through_sequence_number
+             )
+           THEN NULL
+           ELSE workstream_read_states.manual_unread_from_sequence_number
+         END,
+         updated_at = excluded.updated_at`,
+    ).bind(
+      this.auth.workspaceId,
+      id,
+      this.auth.userId,
+      input.readThroughSequenceNumber,
+      at,
+      input.observedManualUnreadGeneration,
+    ).run();
+    return this.requireWorkstream(id);
+  }
+
+  async markUnread(id: string) {
+    const workstream = await this.requireWorkstream(id);
+    if (workstream.latestAttentionSequenceNumber === 0) return workstream;
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `INSERT INTO workstream_read_states
+       (workspace_id, workstream_id, user_id, read_through_sequence_number,
+        manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?)
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         manual_unread_from_sequence_number = excluded.manual_unread_from_sequence_number,
+         manual_unread_generation = workstream_read_states.manual_unread_generation + 1,
+         updated_at = excluded.updated_at`,
+    ).bind(
+      this.auth.workspaceId,
+      id,
+      this.auth.userId,
+      workstream.readThroughSequenceNumber,
+      workstream.latestAttentionSequenceNumber,
+      at,
+    ).run();
+    return this.requireWorkstream(id);
   }
 
   async createMessage(id: string, input: CreateMessageInput) {
@@ -506,10 +609,25 @@ export class WorkstreamService {
       ),
       this.env.DB.prepare(
         `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
+         latest_attention_sequence_number = next_sequence_number,
          last_activity_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ?
            AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
       ).bind(at, at, id, this.auth.workspaceId, responseMessageId),
+      this.env.DB.prepare(
+        `INSERT INTO workstream_read_states
+         (workspace_id, workstream_id, user_id, read_through_sequence_number,
+          manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+         SELECT m.workspace_id, m.workstream_id, ?, m.sequence_number, NULL, 0, ?
+         FROM messages m WHERE m.id = ? AND m.workspace_id = ? AND m.workstream_id = ?
+         ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+           read_through_sequence_number = MAX(
+             workstream_read_states.read_through_sequence_number,
+             excluded.read_through_sequence_number
+           ),
+           manual_unread_from_sequence_number = NULL,
+           updated_at = excluded.updated_at`,
+      ).bind(this.auth.userId, at, responseMessageId, this.auth.workspaceId, id),
     ]);
     if (Number(responseWrites[0]?.meta.changes ?? 0) !== 1) {
       throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
@@ -635,9 +753,16 @@ export class WorkstreamService {
 
   private async loadVisibleWorkstreamRow(id: string, includeArchived: boolean): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
-      `SELECT w.*, t.name AS origin_label FROM workstreams w
+      `SELECT w.*, t.name AS origin_label,
+         rs.user_id AS viewer_read_state_user_id,
+         rs.read_through_sequence_number AS viewer_read_through_sequence_number,
+         rs.manual_unread_from_sequence_number AS viewer_manual_unread_from_sequence_number,
+         rs.manual_unread_generation AS viewer_manual_unread_generation
+       FROM workstreams w
        LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
        LEFT JOIN automation_templates t ON t.id = s.template_id
+       LEFT JOIN workstream_read_states rs
+         ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
          AND (
@@ -647,7 +772,7 @@ export class WorkstreamService {
            WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
          )
        )`,
-    ).bind(id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
+    ).bind(this.auth.userId, id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
   }
@@ -711,10 +836,25 @@ export class WorkstreamService {
       ).bind(messageId, input.clientMessageId, this.auth.workspaceId, this.auth.userId, input.text, at, workstreamId, this.auth.workspaceId),
       this.env.DB.prepare(
         `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
+         latest_attention_sequence_number = next_sequence_number,
          last_activity_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ?
            AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
       ).bind(at, at, workstreamId, this.auth.workspaceId, messageId),
+      this.env.DB.prepare(
+        `INSERT INTO workstream_read_states
+         (workspace_id, workstream_id, user_id, read_through_sequence_number,
+          manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+         SELECT m.workspace_id, m.workstream_id, ?, m.sequence_number, NULL, 0, ?
+         FROM messages m WHERE m.id = ? AND m.workspace_id = ? AND m.workstream_id = ?
+         ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+           read_through_sequence_number = MAX(
+             workstream_read_states.read_through_sequence_number,
+             excluded.read_through_sequence_number
+           ),
+           manual_unread_from_sequence_number = NULL,
+           updated_at = excluded.updated_at`,
+      ).bind(this.auth.userId, at, messageId, this.auth.workspaceId, workstreamId),
       ...attachmentStatements,
     ]);
     const inserted = Number(results[1]?.meta.changes ?? 0) > 0;
@@ -1250,6 +1390,16 @@ function safeArtifactFileName(title: string, artifactType: string): string {
 }
 
 function toWorkstream(row: Record<string, unknown>) {
+  const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
+  const hasPersistedReadState = row.viewer_read_state_user_id != null;
+  const readThroughSequenceNumber = hasPersistedReadState
+    ? Number(row.viewer_read_through_sequence_number ?? 0)
+    : Number(row.unread_tracking_start_sequence_number ?? 0);
+  const manualUnreadFromSequenceNumber = row.viewer_manual_unread_from_sequence_number == null
+    ? null
+    : Number(row.viewer_manual_unread_from_sequence_number);
+  const hasUnread = manualUnreadFromSequenceNumber != null
+    || latestAttentionSequenceNumber > readThroughSequenceNumber;
   return {
     id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""),
     emailAddress: row.email_address == null ? null : String(row.email_address),
@@ -1257,6 +1407,13 @@ function toWorkstream(row: Record<string, unknown>) {
     originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id),
     automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),
     plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status) as "scheduled" | "running" | "needs_input" | "completed" | "failed" | "idle",
+    latestAttentionSequenceNumber,
+    readThroughSequenceNumber,
+    manualUnreadFromSequenceNumber,
+    manualUnreadGeneration: Number(row.viewer_manual_unread_generation ?? 0),
+    hasUnread,
+    firstUnreadSequenceNumber: manualUnreadFromSequenceNumber
+      ?? (hasUnread ? Math.min(latestAttentionSequenceNumber, readThroughSequenceNumber + 1) : null),
     lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
   };
 }

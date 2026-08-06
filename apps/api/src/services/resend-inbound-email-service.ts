@@ -582,9 +582,11 @@ export class ResendRegionalEmailService {
           createdAt,
         ),
         this.env.DB.prepare(
-          `UPDATE workstreams SET last_activity_at = ?, updated_at = ?
+          `UPDATE workstreams
+           SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?),
+               last_activity_at = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ?`,
-        ).bind(createdAt, createdAt, input.workstreamId, input.workspaceId),
+        ).bind(sequence.sequence_number, createdAt, createdAt, input.workstreamId, input.workspaceId),
         this.env.DB.prepare(
           `UPDATE workstream_email_receipts
            SET payload_ref = ?, processed_at = ?, error_json = NULL,

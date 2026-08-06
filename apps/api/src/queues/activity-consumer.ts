@@ -350,9 +350,13 @@ async function injectActivityMessage(
   if ((inserted.meta.changes ?? 0) === 0) return true;
 
   await env.DB.prepare(
-    `UPDATE workstreams SET last_activity_at = ?1, updated_at = ?1 WHERE id = ?2 AND workspace_id = ?3`
+    `UPDATE workstreams
+        SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?1),
+            last_activity_at = ?2,
+            updated_at = ?2
+      WHERE id = ?3 AND workspace_id = ?4`
   )
-    .bind(createdAt, workstreamId, activity.workspace_id)
+    .bind(sequence.sequence_number, createdAt, workstreamId, activity.workspace_id)
     .run();
 
   const canonicalMessage: AvalonMessage = {

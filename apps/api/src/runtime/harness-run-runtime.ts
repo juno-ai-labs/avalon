@@ -1301,6 +1301,24 @@ export async function persistHarnessFinalMessage(
       message.createdAt,
       hostOutcome.status,
     ),
+    db.prepare(
+      `UPDATE workstreams
+          SET latest_attention_sequence_number = MAX(latest_attention_sequence_number, ?4),
+              last_activity_at = ?5,
+              updated_at = ?5
+        WHERE id = ?1 AND workspace_id = ?2
+          AND EXISTS (
+            SELECT 1 FROM messages
+             WHERE id = ?3 AND workstream_id = ?1 AND workspace_id = ?2
+               AND author_type = 'agent' AND message_type = 'text'
+          )`,
+    ).bind(
+      input.workstreamId,
+      input.workspaceId,
+      message.id,
+      message.sequenceNumber,
+      message.createdAt,
+    ),
   ]);
   const persisted = await db.prepare(
     `SELECT message.id
