@@ -184,6 +184,9 @@ importers:
       remark-gfm:
         specifier: latest
         version: 4.0.1
+      thinking-orbs:
+        specifier: 0.2.0
+        version: 0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       tw-fade:
         specifier: ^0.8.0
         version: 0.8.0(tailwindcss@3.4.19(tsx@4.23.5))
@@ -4053,6 +4056,12 @@ packages:
 
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
+
+  thinking-orbs@0.2.0:
+    resolution: {integrity: sha512-CQux/YsLlB9nY60BDpZ/uW7knAvXg+U2T/gzrzuLRw8xlzfJPLXZxAg2tbbIBGp/nE2Kol1GfbMOJnoH+tcb/A==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   tiny-async-pool@1.3.0:
     resolution: {integrity: sha512-01EAw5EDrcVrdgyCLgoSPvqznC0sVxDSVeiOz09FUpjh71G79VCqneOr+xvt7T1r76CF6ZZfPjHorN2+d+3mqA==}
@@ -8467,6 +8476,11 @@ snapshots:
   thenify@3.3.1:
     dependencies:
       any-promise: 1.3.0
+
+  thinking-orbs@0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
 
   tiny-async-pool@1.3.0:
     dependencies:

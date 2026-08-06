@@ -14,6 +14,11 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText: vi.fn() }) }));
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: ({ paused = false, state }: { paused?: boolean; state: string }) => (
+    <span data-paused={String(paused)} data-state={state} data-testid="thinking-orb" />
+  ),
+}));
 
 function renderScreen(): void {
   const queryClient = new QueryClient({
