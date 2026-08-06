@@ -24,5 +24,8 @@
 /og.png
   Cache-Control: public, max-age=86400
 
+/og-2026.png
+  Cache-Control: public, max-age=86400
+
 /auth/desktop/*
   Cache-Control: no-store
