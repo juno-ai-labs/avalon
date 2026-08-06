@@ -253,6 +253,68 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
+  it('consumes a Slack link token only through the authenticated regional session', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...euSession,
+      expiresAt: '2030-08-02T00:00:00.000Z',
+    });
+    bridge.openSettings.mockResolvedValueOnce(undefined);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const fetchRequest = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        teamId: 'T01234567',
+        slackUserId: 'U01234567',
+        workspaceName: 'Acme',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+      linked: true,
+      teamId: 'T01234567',
+      slackUserId: 'U01234567',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    act(() => deepLinkListener?.(`avalon://slack/link?token=${'a'.repeat(43)}`));
+
+    await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(2));
+    const [previewUrl, previewInit] = fetchRequest.mock.calls[0]!;
+    const [linkUrl, linkInit] = fetchRequest.mock.calls[1]!;
+    expect(previewUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link/preview');
+    expect(linkUrl).toBe('https://eu.api.with-avalon.com/connections/slack/link');
+    expect(new Headers(previewInit?.headers).get('authorization')).toBe(`Bearer ${euSession.accessToken}`);
+    expect(previewInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
+    expect(linkInit?.body).toBe(JSON.stringify({ token: 'a'.repeat(43) }));
+    expect(confirm).toHaveBeenCalledWith('Connect Slack user U01234567 from Acme to your current Avalon account?');
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    fetchRequest.mockRestore();
+    confirm.mockRestore();
+  });
+
+  it('does not consume a Slack link token when the user rejects its identity preview', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...euSession,
+      expiresAt: '2030-08-02T00:00:00.000Z',
+    });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const fetchRequest = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({
+      teamId: 'T01234567',
+      slackUserId: 'U01234567',
+      workspaceName: 'Acme',
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    act(() => deepLinkListener?.(`avalon://slack/link?token=${'a'.repeat(43)}`));
+
+    await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    expect(fetchRequest).toHaveBeenCalledTimes(1);
+    expect(String(fetchRequest.mock.calls[0]?.[0])).toContain('/connections/slack/link/preview');
+    expect(bridge.openSettings).not.toHaveBeenCalled();
+    fetchRequest.mockRestore();
+    confirm.mockRestore();
+  });
+
   it('opens the desktop settings window from a notification deep link', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
@@ -273,10 +335,32 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
+  it('opens Connections and automation creation from exact public handoff links', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    bridge.openSettings.mockResolvedValue(undefined);
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    act(() => deepLinkListener?.('avalon://settings/connections'));
+    await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
+
+    act(() => deepLinkListener?.('avalon://automations/new'));
+    await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
   it.each([
-    'avalon://settings/connections',
     'avalon://settings/workspace?section=connections',
     'avalon://settings/Workspace',
+    'avalon://automations/new?template=unknown',
   ])('rejects a non-canonical settings deep link: %s', async (rawUrl) => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,

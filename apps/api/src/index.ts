@@ -3,6 +3,7 @@ import type { Env } from "./env";
 import { consumeActivityQueue } from "./queues/activity-consumer";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { processMemoryIndexOutbox } from "./services/memory-service";
+import { SlackAgentService } from "./services/slack-agent-service";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -44,6 +45,8 @@ export { InboundEmailRegionalBridge } from "./inbound-email-regional-bridge";
 export { WorkstreamEmailRoutingBridge } from "./workstream-email-routing-bridge";
 export { LinearRegionalBridge } from "./linear-regional-bridge";
 export { LinearRoutingBridge } from "./linear-routing-bridge";
+export { SlackRegionalBridge } from "./slack-regional-bridge";
+export { SlackRoutingBridge } from "./slack-routing-bridge";
 
 export default {
   fetch: app.fetch,
@@ -53,6 +56,7 @@ export default {
       reapExpiredHarnessAttempts(env),
       reapExpiredDraftAttachments(env),
       processMemoryIndexOutbox(env),
+      new SlackAgentService(env).maintainIngress(),
     ]));
   },
 } satisfies ExportedHandler<Env>;

@@ -833,9 +833,19 @@ function emitDeepLink(rawUrl: string): void {
       && (deepLink.searchParams.get('region') === 'global' || deepLink.searchParams.get('region') === 'eu');
     const isSettings = deepLink.protocol === `${customProtocol}:`
       && deepLink.hostname === 'settings'
-      && deepLink.pathname === '/workspace'
+      && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections')
       && deepLink.search === '';
-    if (!isAuthentication && !isWorkstream && !isInvitation && !isSettings) return;
+    const isAutomation = deepLink.protocol === `${customProtocol}:`
+      && deepLink.hostname === 'automations'
+      && deepLink.pathname === '/new'
+      && deepLink.search === '';
+    const isSlackLink = deepLink.protocol === `${customProtocol}:`
+      && deepLink.hostname === 'slack'
+      && deepLink.pathname === '/link'
+      && /^[A-Za-z0-9_-]{20,500}$/u.test(deepLink.searchParams.get('token') ?? '')
+      && [...deepLink.searchParams.keys()].every((key) => key === 'token')
+      && deepLink.searchParams.getAll('token').length === 1;
+    if (!isAuthentication && !isWorkstream && !isInvitation && !isSettings && !isAutomation && !isSlackLink) return;
     sendDeepLink(deepLink.toString());
   } catch {
     // Ignore malformed protocol payloads from the operating system.

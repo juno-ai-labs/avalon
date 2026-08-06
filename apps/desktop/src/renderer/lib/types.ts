@@ -339,6 +339,12 @@ export interface AutomationDetail extends AutomationSummary {
   expectedOutputs: string[];
   recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
   defaultPluginIds: string[];
+  deliveryTargets?: Array<{
+    type: 'slack_agent_dm';
+    connectionId: string;
+    displayName: string;
+    status: 'active' | 'needs_input' | 'disabled';
+  }>;
   executionScope: string;
   owner?: WorkspaceMember;
   runs: AutomationRunSummary[];
@@ -365,6 +371,7 @@ export interface AutomationDraftSummary {
   scope: Scope;
   triggerSummary: string;
   capabilities: string[];
+  requiresSlackDelivery: boolean;
 }
 
 export interface AutomationDraftResponse {
