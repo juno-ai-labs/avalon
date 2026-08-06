@@ -675,7 +675,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     requestAnimationFrame(() => transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' }));
   }, [atBottom, transcript, transcriptVirtualizer]);
 
-  if (workstream.isLoading || messages.isLoading) return <LoadingState label="Opening work stream…" />;
+  if (workstream.isLoading || messages.isLoading) {
+    return <LoadingState label="Opening work stream…" orbSize={64} orbState="connecting" />;
+  }
   if (workstream.error || messages.error || !workstream.data) {
     return (
       <div className="screen-error-state screen-with-titlebar">

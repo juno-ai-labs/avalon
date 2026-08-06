@@ -4,6 +4,7 @@ import * as Select from '@radix-ui/react-select';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import clsx from 'clsx';
 import { Check, ChevronDown, LoaderCircle, X } from 'lucide-react';
+import { ThinkingOrb, type OrbSize, type OrbState } from 'thinking-orbs';
 import {
   forwardRef,
   type ButtonHTMLAttributes,
@@ -192,10 +193,20 @@ export function Modal({ open, onOpenChange, title, description, children, footer
   );
 }
 
-export function LoadingState({ label = 'Loading…' }: { label?: string }): React.JSX.Element {
+export function LoadingState({
+  label = 'Loading…',
+  orbSize = 20,
+  orbState,
+}: {
+  label?: string;
+  orbSize?: OrbSize;
+  orbState?: OrbState;
+}): React.JSX.Element {
   return (
     <div aria-live="polite" className="center-state" role="status">
-      <LoaderCircle aria-hidden="true" className="spin" size={18} />
+      {orbState
+        ? <ThinkingOrb aria-hidden="true" className="loading-orb" size={orbSize} state={orbState} theme="dark" />
+        : <LoaderCircle aria-hidden="true" className="spin" size={18} />}
       <span>{label}</span>
     </div>
   );

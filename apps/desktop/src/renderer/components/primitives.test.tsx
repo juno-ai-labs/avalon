@@ -1,7 +1,13 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
-import { AvalonMark, DropdownSelect, StatusDot } from './primitives';
+import { AvalonMark, DropdownSelect, LoadingState, StatusDot } from './primitives';
+
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
+    <span data-size={size} data-state={state} data-testid="thinking-orb" />
+  ),
+}));
 
 describe('AvalonMark', () => {
   it('renders the shared mask-backed brand mark without the retired starburst SVG', () => {
@@ -32,6 +38,16 @@ describe('StatusDot', () => {
 
     expect(screen.getByText('Running')).toBeVisible();
     expect(screen.getByText('Running').parentElement).toHaveClass('status-running');
+  });
+});
+
+describe('LoadingState', () => {
+  it('renders the large connecting orb for the work-stream opening state', () => {
+    render(<LoadingState label="Opening work stream…" orbSize={64} orbState="connecting" />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Opening work stream…');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'connecting');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '64');
   });
 });
 
