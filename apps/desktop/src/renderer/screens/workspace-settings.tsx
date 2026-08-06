@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AtSign,
   Building2,
   Bug,
   CalendarDays,
@@ -53,7 +54,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'general', label: 'General', searchTerms: 'region data residency organization', icon: SlidersHorizontal },
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
       { id: 'workspace', label: 'Workspace', searchTerms: 'organization members invitations invite roles', icon: Users },
-      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack integrations', icon: Plug },
+      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack x integrations', icon: Plug },
     ],
   },
   {
@@ -146,6 +147,15 @@ const connectorProviders = [
     icon: FileText,
     scopes: ['you'] as const,
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
+  },
+  {
+    id: 'x' as const,
+    provider: 'x' as const,
+    name: 'X',
+    description: 'User timelines, threads, replies, and List timelines.',
+    icon: AtSign,
+    scopes: ['you', 'workspace'] as const,
+    capabilities: ['x.read'],
   },
 ] as const;
 
@@ -242,10 +252,15 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     staleTime: 5_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+      if (input.provider === 'x') {
+        await api!.createXConnection(input.scope, input.capabilities);
+        return;
+      }
       const url = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
       await desktopBridge().openExternal(url);
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
   });
   const testConnection = useMutation({
     mutationFn: (id: string) => api!.testConnection(id),
@@ -645,7 +660,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span>{connections.data?.length ?? 0}</span>
                   </div>
                   <div className="settings-connection-list settings-list-card">
-                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)).map((connection) => (
+                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack', 'x'].includes(connection.connectorType)).map((connection) => (
                       <div className="settings-connection-row" key={connection.id}>
                         <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
