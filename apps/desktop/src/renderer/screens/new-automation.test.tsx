@@ -11,9 +11,10 @@ const api = vi.hoisted(() => ({
   createAutomation: vi.fn(),
   getConnections: vi.fn(),
 }));
+const copyText = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText: vi.fn() }) }));
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, state }: { paused?: boolean; state: string }) => (
     <span data-paused={String(paused)} data-state={state} data-testid="thinking-orb" />
@@ -71,6 +72,34 @@ describe('New automation composer', () => {
     ));
     await waitFor(() => expect(composer).toHaveValue(''));
     expect(composer).toHaveStyle({ height: 'auto' });
+  });
+
+  it('copies the stable automation draft ID from the overflow menu', async () => {
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('What should the automation monitor?');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'What should the automation monitor?' }), {
+      target: { value: 'Only on weekdays' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenNthCalledWith(
+      2,
+      { message: 'Only on weekdays', draftId: 'draft-1' },
+      expect.any(Function),
+    ));
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy draft ID' }));
+
+    expect(copyText).toHaveBeenCalledWith('draft-1');
   });
 
   it('uses workstream chat messages while streaming research and the assistant response', async () => {

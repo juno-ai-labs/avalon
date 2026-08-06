@@ -1,3 +1,4 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
@@ -7,6 +8,8 @@ import {
   Check,
   ChevronRight,
   Clock3,
+  Ellipsis,
+  Info,
   LoaderCircle,
   Sparkles,
   Users,
@@ -17,7 +20,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
-import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
+import { AvalonMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
 import {
@@ -458,9 +461,31 @@ export function NewAutomationScreen(): React.JSX.Element {
     void submitAsync(message).catch(() => undefined);
   };
 
+  const draftId = draft?.draftId;
+
   return (
     <div className="new-automation-screen screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
+      <div className="new-automation-actions window-no-drag">
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <IconButton label="More automation actions"><Ellipsis size={16} /></IconButton>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+              <DropdownMenu.Item
+                className="menu-item"
+                disabled={!draftId}
+                onSelect={() => {
+                  if (draftId) void desktopBridge().copyText(draftId);
+                }}
+              >
+                <Info size={14} /> Copy draft ID
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
       <div className={clsx('automation-builder', (turns.length > 0 || draft) && 'has-conversation')}>
         {templatesOpen ? (
           <TemplateBrowser

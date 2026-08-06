@@ -11,6 +11,7 @@ type AgentInferenceSource = "workstream" | "automation_compiler" | "inline_child
 export interface AgentInferenceLogContext {
   workspaceId: string;
   requestId: string;
+  draftId?: string;
   source: AgentInferenceSource;
   workstreamId?: string;
   parentRequestId?: string;
@@ -38,6 +39,7 @@ export function createAgentInferenceLogger(
       const metadata = {
         inferenceRequestId: request.inferenceRequestId,
         requestId: context.requestId,
+        ...(context.draftId ? { draftId: context.draftId } : {}),
         ...(context.parentRequestId ? { parentRequestId: context.parentRequestId } : {}),
         workspaceId: context.workspaceId,
         ...(context.workstreamId ? { workstreamId: context.workstreamId } : {}),
@@ -60,6 +62,7 @@ export function createAgentInferenceLogger(
         customMetadata: {
           workspaceId: context.workspaceId,
           requestId: context.requestId,
+          ...(context.draftId ? { draftId: context.draftId } : {}),
           inferenceRequestId: request.inferenceRequestId,
           source: context.source,
         },
@@ -96,6 +99,7 @@ export function createAgentInferenceLogger(
 
       logStructuredEvent(env, "info", "agent_inference_payload_logged", {
         request_id: context.requestId,
+        draft_id: context.draftId,
         inference_request_id: request.inferenceRequestId,
         workspace_id: context.workspaceId,
         workstream_id: context.workstreamId,
@@ -178,6 +182,7 @@ async function bestEffort(
   } catch (error) {
     logStructuredEvent(env, "warn", "agent_inference_payload_log_failed", {
       request_id: context.requestId,
+      draft_id: context.draftId,
       inference_request_id: inferenceRequestId,
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
