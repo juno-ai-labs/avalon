@@ -35,17 +35,36 @@ import type { DesktopSettingsSection } from '../common/settings';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import {
+  migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
+  readStoredAuthFile,
+  readStoredProfileFile,
   readStoredSessionFile,
+  removeStoredStateFiles,
   removeStoredSessionFiles,
-  writeStoredSessionFile,
+  tombstoneStoredStateFiles,
+  writeStoredAuthFile,
+  writeStoredProfileFile,
 } from './session-file';
-import { normalizeLegacyStoredSession } from './stored-session';
+import {
+  parseStoredAuth,
+  parseStoredProfile,
+  sessionFromStoredState,
+  sessionsShareBinding,
+  storedAuthFromSession,
+  storedProfileFromSession,
+  type StoredAuth,
+} from './stored-auth';
+import { parseLegacyStoredSession } from './stored-session';
 import {
   initializeAutoUpdate,
   type AutoUpdateController,
   type UpdateStatus,
 } from './updater';
+import {
+  canonicalUserDataDirectory,
+  legacyPackagedUserDataDirectory,
+} from './user-data-path';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 // Never let inherited development environment variables choose the renderer
@@ -56,10 +75,12 @@ const allowedExternalProtocols = new Set(['https:', 'http:']);
 const customProtocol = 'avalon';
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
+const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let rendererReady = false;
+let inMemoryAuth: StoredAuth | null = null;
 let inMemorySession: WireSession | null = null;
 let refreshInFlight: Promise<DesktopSession> | null = null;
 let sessionMutationTail: Promise<void> = Promise.resolve();
@@ -67,6 +88,7 @@ let sessionLifecycleEpoch = 0;
 let loggingOut = false;
 let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
+let updateInstallationPending = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
@@ -86,6 +108,8 @@ protocol.registerSchemesAsPrivileged([{
 // release identity, so sharing `Avalon Safe Storage` would make macOS re-prompt
 // whenever their ad-hoc code requirement changes.
 app.setName(app.isPackaged ? 'Avalon' : 'Avalon Development');
+const appDataDirectory = app.getPath('appData');
+app.setPath('userData', canonicalUserDataDirectory(appDataDirectory, app.isPackaged));
 
 function userDataDirectory(): string {
   return app.getPath('userData');
@@ -136,11 +160,47 @@ async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-async function persistSessionUnlocked(value: WireSession): Promise<void> {
-  if (safeStorage.isEncryptionAvailable()) {
-    const encrypted = safeStorage.encryptString(JSON.stringify(value));
-    await writeStoredSessionFile(userDataDirectory(), encrypted);
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error && 'code' in error ? String(error.code) : undefined;
+}
+
+function regionForStoredSession(value: WireSession): AvalonRegion {
+  const region = value.workspace?.region ?? 'global';
+  if (runtimeConfig().api[region] !== value.apiBaseUrl) {
+    throw new Error('The session endpoint does not match its credential binding');
   }
+  return region;
+}
+
+function apiBaseForAuth(auth: StoredAuth): string {
+  return runtimeConfig().api[auth.binding.region];
+}
+
+async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
+  const auth = storedAuthFromSession(value, regionForStoredSession(value));
+  if (safeStorage.isEncryptionAvailable()) {
+    // Credentials are the durable boundary. Write them before the disposable
+    // profile cache so an interrupted update can always recover by refreshing.
+    await writeStoredAuthFile(
+      userDataDirectory(),
+      safeStorage.encryptString(JSON.stringify(auth)),
+    );
+    await writeStoredProfileFile(
+      userDataDirectory(),
+      safeStorage.encryptString(JSON.stringify(storedProfileFromSession(value))),
+    );
+    try {
+      await removeStoredSessionFiles(userDataDirectory());
+    } catch {
+      // The split credential is authoritative. Logout still removes or
+      // tombstones every legacy location before another launch can use it.
+    }
+  }
+  return auth;
+}
+
+async function persistSessionUnlocked(value: WireSession): Promise<void> {
+  inMemoryAuth = await writeSplitSessionFiles(value);
   inMemorySession = value;
   broadcastSessionChanged(value);
 }
@@ -149,45 +209,99 @@ async function persistSession(value: WireSession): Promise<void> {
   await withSessionMutation(() => persistSessionUnlocked(value));
 }
 
-async function loadStoredSession(): Promise<WireSession | null> {
-  if (inMemorySession) return inMemorySession;
-  if (!safeStorage.isEncryptionAvailable()) return null;
+async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> {
   try {
     const encrypted = await readStoredSessionFile(userDataDirectory());
     const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
-    const normalized = normalizeLegacyStoredSession(parsed);
-    const validated = SessionSchema.safeParse(normalized);
-    if (!validated.success) return null;
-    if (normalized !== parsed) {
-      await writeStoredSessionFile(userDataDirectory(), safeStorage.encryptString(JSON.stringify(validated.data)));
+    const legacySession = parseLegacyStoredSession(parsed);
+    if (!legacySession) {
+      console.warn('[avalon] the legacy desktop session did not match its durable schema');
+      return null;
     }
-    inMemorySession = validated.data;
-    return validated.data;
-  } catch {
+    const auth = await writeSplitSessionFiles(legacySession);
+    inMemoryAuth = auth;
+    inMemorySession = legacySession;
+    return auth;
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') {
+      console.warn('[avalon] could not migrate the encrypted desktop session', error);
+    }
+    return null;
+  }
+}
+
+async function loadStoredAuth(): Promise<StoredAuth | null> {
+  if (inMemoryAuth) return inMemoryAuth;
+  if (!safeStorage.isEncryptionAvailable()) return null;
+  try {
+    const encrypted = await readStoredAuthFile(userDataDirectory());
+    const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
+    const auth = parseStoredAuth(parsed);
+    if (!auth) {
+      console.warn('[avalon] the stored desktop credential did not match its durable schema');
+      return null;
+    }
+    inMemoryAuth = auth;
+    return auth;
+  } catch (error) {
+    if (errorCode(error) === 'ENOENT') return migrateLegacySessionToSplitStorage();
+    console.warn('[avalon] could not restore the stored desktop credential', error);
+    return null;
+  }
+}
+
+async function loadStoredSession(): Promise<WireSession | null> {
+  if (inMemorySession) return inMemorySession;
+  const auth = await loadStoredAuth();
+  if (!auth) return null;
+  if (inMemorySession) return inMemorySession;
+  try {
+    const encrypted = await readStoredProfileFile(userDataDirectory());
+    const parsed: unknown = JSON.parse(safeStorage.decryptString(encrypted));
+    const profile = parseStoredProfile(parsed);
+    if (!profile) {
+      console.warn('[avalon] discarding an incompatible desktop profile cache');
+      return null;
+    }
+    const stored = sessionFromStoredState(auth, profile, apiBaseForAuth(auth));
+    if (!stored) {
+      console.warn('[avalon] discarding a desktop profile cache with a mismatched credential binding');
+      return null;
+    }
+    inMemorySession = stored;
+    return stored;
+  } catch (error) {
+    if (errorCode(error) !== 'ENOENT') {
+      console.warn('[avalon] could not restore the desktop profile cache', error);
+    }
     return null;
   }
 }
 
 async function clearStoredSessionUnlocked(): Promise<void> {
+  inMemoryAuth = null;
   inMemorySession = null;
   let failure: unknown;
-  try {
-    await removeStoredSessionFiles(userDataDirectory());
-  } catch (error) {
-    const code = error instanceof Error && 'code' in error ? error.code : undefined;
-    if (code !== 'ENOENT') {
-      failure = error;
-      // If deletion is blocked but the file is still writable, replace the
-      // credential with an encrypted value that cannot parse as a Session.
-      // A restart will remain signed out instead of reviving stale tokens.
+  const directories = [
+    userDataDirectory(),
+    ...(app.isPackaged ? [legacyPackagedUserDataDirectory(appDataDirectory)] : []),
+  ];
+  for (const directory of directories) {
+    try {
+      await removeStoredStateFiles(directory);
+    } catch (error) {
+      let directoryFailure: unknown = error;
+      // If deletion is blocked but the files are still writable, replace every
+      // credential and private cache copy with a value that no schema accepts.
       if (safeStorage.isEncryptionAvailable()) {
         try {
-          await writeStoredSessionFile(userDataDirectory(), safeStorage.encryptString('{}'));
-          failure = undefined;
+          await tombstoneStoredStateFiles(directory, safeStorage.encryptString('{}'));
+          directoryFailure = undefined;
         } catch {
-          // Preserve the original deletion error for the caller.
+          // Preserve this directory's original deletion error for the caller.
         }
       }
+      if (directoryFailure !== undefined && failure === undefined) failure = directoryFailure;
     }
   }
   broadcastSessionChanged(null);
@@ -318,7 +432,7 @@ async function exchangeDesktopTicket(input: unknown): Promise<DesktopSession> {
     ) {
       throw new Error('A newer Avalon sign-in attempt replaced this callback');
     }
-    if (await loadStoredSession()) {
+    if (await loadStoredAuth()) {
       desktopAuthAttempts.discard(candidate.attemptId as string);
       throw new Error('Another Avalon sign-in completed first');
     }
@@ -520,49 +634,58 @@ async function declineInvitation(input: unknown): Promise<void> {
   if (!response.ok) throw await responseError(response);
 }
 
-async function refreshSession(): Promise<DesktopSession> {
+function storedAuthMatches(left: StoredAuth, right: StoredAuth): boolean {
+  return left.accessToken === right.accessToken
+    && left.refreshToken === right.refreshToken
+    && left.binding.userId === right.binding.userId
+    && left.binding.workspaceId === right.binding.workspaceId
+    && left.binding.region === right.binding.region;
+}
+
+async function refreshWireSession(): Promise<WireSession> {
   const expectedLifecycleEpoch = sessionLifecycleEpoch;
-  const previous = await loadStoredSession();
-  if (!previous) throw new Error('No Avalon session is available to refresh');
+  const previousAuth = await loadStoredAuth();
+  if (!previousAuth) throw new Error('No Avalon session is available to refresh');
   if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
     throw new Error('Avalon was signed out while the session was refreshing');
   }
-  const apiBaseUrl = validatedApiBase(previous.apiBaseUrl);
-  const session = await requestSession(apiBaseUrl, '/auth/refresh', { refreshToken: previous.refreshToken }, previous.accessToken);
-  if (session.user.id !== previous.user.id || session.apiBaseUrl !== apiBaseUrl) {
-    throw new Error('The refreshed session did not match the signed-in account');
-  }
-  if (session.workspace && runtimeConfig().api[session.workspace.region] !== apiBaseUrl) {
-    throw new Error('The refreshed workspace belongs to another region');
-  }
-  if (
-    previous.workspace
-    && (
-      !session.workspace
-      || session.workspace.id !== previous.workspace.id
-      || session.workspace.region !== previous.workspace.region
-    )
-  ) {
-    throw new Error('The refreshed session did not match the signed-in workspace');
+  const apiBaseUrl = apiBaseForAuth(previousAuth);
+  const session = await requestSession(
+    apiBaseUrl,
+    '/auth/refresh',
+    { refreshToken: previousAuth.refreshToken },
+    previousAuth.accessToken,
+  );
+  if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
+    throw new Error('The refreshed session did not match the stored credential binding');
   }
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
       throw new Error('Avalon was signed out while the session was refreshing');
     }
-    const current = await loadStoredSession();
-    if (!current) throw new Error('Avalon was signed out while the session was refreshing');
-    const sameBinding =
-      current.apiBaseUrl === previous.apiBaseUrl
-      && current.user.email.toLocaleLowerCase('en-US') === previous.user.email.toLocaleLowerCase('en-US')
-      && current.workspace?.id === previous.workspace?.id
-      && current.workspace?.region === previous.workspace?.region;
-    if (!sameBinding) return publicSession(current);
+    const currentAuth = await loadStoredAuth();
+    if (!currentAuth) throw new Error('Avalon was signed out while the session was refreshing');
+    if (!storedAuthMatches(currentAuth, previousAuth)) {
+      const current = await loadStoredSession();
+      if (current) return current;
+      throw new Error('A newer Avalon credential replaced this refresh request');
+    }
     await persistSessionUnlocked(session);
-    return publicSession(session);
+    return session;
   });
 }
 
+async function refreshSession(): Promise<DesktopSession> {
+  return publicSession(await refreshWireSession());
+}
+
 function coalescedRefreshSession(): Promise<DesktopSession> {
+  if (updateInstallationPending) {
+    return loadStoredSession().then((stored) => {
+      if (!stored) throw new Error('No Avalon session is available while installing the update');
+      return publicSession(stored);
+    });
+  }
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = refreshSession().finally(() => {
     refreshInFlight = null;
@@ -571,12 +694,16 @@ function coalescedRefreshSession(): Promise<DesktopSession> {
 }
 
 async function logout(): Promise<void> {
+  // The renderer treats a failed expiry refresh as a reason to clear native
+  // credentials. During updater shutdown, networking is expected to be torn
+  // down; preserve the session for the replacement process instead.
+  if (updateInstallationPending) return;
   sessionLifecycleEpoch += 1;
   loggingOut = true;
   desktopAuthAttempts.clear();
   const failures: unknown[] = [];
   try {
-    const stored = await loadStoredSession();
+    const stored = await loadStoredAuth();
     try {
       await clearStoredSession();
     } catch (error) {
@@ -585,7 +712,7 @@ async function logout(): Promise<void> {
     settingsWindow?.close();
     if (stored) {
       try {
-        const apiBaseUrl = validatedApiBase(stored.apiBaseUrl);
+        const apiBaseUrl = apiBaseForAuth(stored);
         const response = await net.fetch(`${apiBaseUrl}/auth/logout`, {
           method: 'POST',
           headers: {
@@ -606,6 +733,27 @@ async function logout(): Promise<void> {
   if (failures.length > 0) {
     throw new AggregateError(failures, 'Avalon signed out locally but could not finish every logout cleanup step');
   }
+}
+
+async function prepareForUpdateInstall(): Promise<void> {
+  updateInstallationPending = true;
+  if (refreshInFlight) {
+    await new Promise<void>((resolvePreparation) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolvePreparation();
+      };
+      const timer = setTimeout(finish, UPDATE_SESSION_SETTLE_TIMEOUT_MS);
+      void refreshInFlight!.then(finish, finish);
+    });
+  }
+  // A slow request may still be in the network layer after the bounded wait,
+  // but atomic file replacement keeps the last credential intact if Squirrel
+  // terminates it. The server accepts that predecessor briefly on relaunch.
+  await sessionMutationTail;
 }
 
 function isAllowedExternalUrl(rawUrl: string): boolean {
@@ -702,6 +850,17 @@ function registerIpc(): void {
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
     const stored = await loadStoredSession();
+    // The profile cache is intentionally disposable. If it is missing or from
+    // an incompatible app version, rebuild it from the durable credential
+    // instead of treating the user as signed out.
+    if (!stored && await loadStoredAuth()) {
+      try {
+        return await coalescedRefreshSession();
+      } catch (error) {
+        console.warn('[avalon] could not rebuild the desktop profile cache', error);
+        return null;
+      }
+    }
     if (!stored) return null;
     const endpointIsConfigured = Object.values(runtimeConfig().api).includes(stored.apiBaseUrl);
     const workspaceMatchesEndpoint = !stored.workspace
@@ -1068,11 +1227,20 @@ if (!singleInstanceLock) {
     app.setAppUserModelId('app.avalon.desktop');
     app.setAsDefaultProtocolClient(customProtocol);
     try {
+      if (app.isPackaged) {
+        await migrateLegacyUserDataStoredSessionFile(
+          userDataDirectory(),
+          legacyPackagedUserDataDirectory(appDataDirectory),
+        );
+      }
       await migrateLegacyStoredSessionFile(userDataDirectory());
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
       if (code !== 'ENOENT') console.warn('[avalon] could not migrate the legacy desktop session file', error);
     }
+    // Complete the one-time full-session to split-state migration before any
+    // renderer window can issue concurrent session requests.
+    await loadStoredAuth();
     await installRendererProtocol();
     installContentSecurityPolicy();
     registerIpc();
@@ -1084,6 +1252,7 @@ if (!singleInstanceLock) {
       currentVersion: app.getVersion(),
       showMessageBox: (options) => dialog.showMessageBox(options),
       openExternal: (url) => shell.openExternal(url),
+      beforeInstall: prepareForUpdateInstall,
       onStatusChange: (status) => {
         updateStatus = status;
         installApplicationMenu();
