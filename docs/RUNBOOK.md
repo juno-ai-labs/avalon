@@ -88,7 +88,7 @@ expected `Strict-Transport-Security` header over HTTPS.
 
 ### Release version policy
 
-Every new Avalon release advances exactly one minor version and resets the patch to zero. The release following `0.1.5` is `0.2.0`, followed by `0.3.0`; do not create patch releases, prereleases, skip a minor, or jump the major version. Immediately after a verified publication, move the root and desktop package versions to the next minor development version. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
+Every new Avalon release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Immediately after a verified publication, move the root and desktop package versions to the next minor development version. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
 
 ### Desktop icon release gate
 

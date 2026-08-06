@@ -8,7 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 import {
-  assertNextMinorReleaseVersion,
+  assertNextReleaseVersion,
   compareVersions,
   loadReleaseDirectory,
   normalizeReleasePrefix,
@@ -119,7 +119,7 @@ if (!arguments_.dryRun && confirmation !== release.feed.version) {
 }
 
 if (arguments_.dryRun && compareVersions(currentSiteConfig.version, release.feed.version) < 0) {
-  assertNextMinorReleaseVersion(currentSiteConfig.version, release.feed.version);
+  assertNextReleaseVersion(currentSiteConfig.version, release.feed.version);
 }
 
 const accountId = arguments_.dryRun ? process.env.CLOUDFLARE_ACCOUNT_ID?.trim() : required('CLOUDFLARE_ACCOUNT_ID');
@@ -445,13 +445,13 @@ try {
       );
     }
     if (comparison < 0) {
-      assertNextMinorReleaseVersion(existingFeed.version, release.feed.version);
+      assertNextReleaseVersion(existingFeed.version, release.feed.version);
     }
     if (comparison === 0 && !existingBytes.equals(release.manifestBytes)) {
       throw new Error(`Release ${release.feed.version} already has different latest-mac.yml bytes in R2`);
     }
   } else if (compareVersions(currentSiteConfig.version, release.feed.version) < 0) {
-    assertNextMinorReleaseVersion(currentSiteConfig.version, release.feed.version);
+    assertNextReleaseVersion(currentSiteConfig.version, release.feed.version);
   }
 
   // Each immutable payload is hash-verified through R2 and HEAD/Range-verified

@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import {
   assertMinorReleaseVersion,
-  assertNextMinorReleaseVersion,
+  assertNextReleaseVersion,
   assertReleaseTag,
   compareVersions,
   normalizeReleasePrefix,
@@ -25,13 +25,15 @@ test('release tag must exactly match both package versions', () => {
   assert.throws(() => assertReleaseTag('v1.2.0-beta.1', '1.2.0-beta.1', '1.2.0-beta.1'), /stable minor/u);
 });
 
-test('release versions advance exactly one minor and reset patch to zero', () => {
+test('release versions advance one minor, with a one-time 1.0.0 stable promotion', () => {
   assert.equal(assertMinorReleaseVersion('0.2.0'), '0.2.0');
-  assert.equal(assertNextMinorReleaseVersion('0.1.5', '0.2.0'), '0.2.0');
-  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '0.1.6'), /patch 0/u);
-  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '0.2.1'), /patch 0/u);
-  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '0.3.0'), /must be 0\.2\.0/u);
-  assert.throws(() => assertNextMinorReleaseVersion('0.1.5', '1.0.0'), /must be 0\.2\.0/u);
+  assert.equal(assertNextReleaseVersion('0.1.5', '0.2.0'), '0.2.0');
+  assert.equal(assertNextReleaseVersion('0.32.0', '1.0.0'), '1.0.0');
+  assert.equal(assertNextReleaseVersion('1.0.0', '1.1.0'), '1.1.0');
+  assert.throws(() => assertNextReleaseVersion('0.1.5', '0.1.6'), /patch 0/u);
+  assert.throws(() => assertNextReleaseVersion('0.1.5', '0.2.1'), /patch 0/u);
+  assert.throws(() => assertNextReleaseVersion('0.1.5', '0.3.0'), /must be 0\.2\.0/u);
+  assert.throws(() => assertNextReleaseVersion('1.0.0', '2.0.0'), /must be 1\.1\.0/u);
 });
 
 test('semantic versions compare with prerelease precedence', () => {
