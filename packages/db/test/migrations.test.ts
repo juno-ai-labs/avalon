@@ -343,6 +343,11 @@ describe("database migrations", () => {
          execution_principal_json, status, created_at, updated_at)
       VALUES ('subscription-slack-migration', 'workspace-slack-migration', 'template-slack-migration',
               'version-slack-migration', 'personal', 'user-slack-migration', '{}', 'active', '2026-01-01', '2026-01-01');
+      INSERT INTO schedules
+        (id, workspace_id, automation_subscription_id, schedule_type, interval_seconds,
+         timezone, next_run_at, created_at, updated_at)
+      VALUES ('schedule-slack-retained', 'workspace-slack-migration', 'subscription-slack-migration',
+              'interval', 3600, 'UTC', '2026-01-02', '2026-01-01', '2026-01-01');
       INSERT INTO automation_runs
         (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
          trigger_activity_id, status, created_at)
@@ -360,7 +365,8 @@ describe("database migrations", () => {
       .toEqual({ trigger_activity_id: "activity-slack-migration" });
     expect(database.prepare("SELECT connection_id FROM tool_invocations WHERE id = 'tool-slack-migration'").get())
       .toEqual({ connection_id: "connection-slack-migration" });
-    for (const table of ["activities", "activity_suggestions", "resource_watches", "schedules", "webhook_receipts"]) {
+    expect(database.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 2 });
+    for (const table of ["activities", "activity_suggestions", "resource_watches", "webhook_receipts"]) {
       expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 1 });
     }
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

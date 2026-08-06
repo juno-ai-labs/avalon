@@ -127,7 +127,7 @@ SET connection_id = (
   WHERE restored.id = tool_invocations.id
 )
 WHERE id IN (SELECT id FROM _slack_restore_tool_connections);
-INSERT INTO schedules SELECT * FROM _slack_restore_schedules;
+INSERT OR IGNORE INTO schedules SELECT * FROM _slack_restore_schedules;
 INSERT INTO webhook_receipts SELECT * FROM _slack_restore_webhook_receipts;
 
 DROP TABLE _slack_restore_activities;
