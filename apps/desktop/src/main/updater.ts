@@ -39,6 +39,8 @@ export interface AutoUpdateDependencies {
   readonly currentVersion: string;
   readonly showMessageBox: (options: MessageBoxOptions) => Promise<MessageBoxReturnValue>;
   readonly openExternal: (url: string) => Promise<unknown>;
+  /** Flush protected local state before Squirrel terminates the process. */
+  readonly beforeInstall?: () => Promise<void>;
   readonly onStatusChange?: (status: UpdateStatus) => void;
   readonly log?: UpdateLogger;
   /** Test seam; production uses electron-updater's singleton. */
@@ -105,6 +107,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   let downloadRetryCount = 0;
   let downloadRetryScheduled = false;
   let manualRecoveryPrompted = false;
+  let installInFlight = false;
   const setStatus = (next: UpdateStatus): void => {
     if (sameStatus(status, next)) return;
     status = next;
@@ -138,6 +141,23 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
         log.error('[avalon] failed to open the manual update download', error);
       });
     });
+  };
+  const installUpdate = (): void => {
+    if (installInFlight) return;
+    installInFlight = true;
+    void Promise.resolve()
+      .then(() => deps.beforeInstall?.())
+      .then(() => updater.quitAndInstall(false, true))
+      .catch((error: unknown) => {
+        installInFlight = false;
+        log.error('[avalon] could not prepare the downloaded update for installation', error);
+        void showDialog({
+          type: 'warning',
+          message: 'Couldn’t restart to update',
+          detail: 'Avalon kept your current session and did not install the update. Please try again.',
+          buttons: ['OK'],
+        });
+      });
   };
 
   const scheduleTimeout = deps.scheduleTimeout
@@ -226,7 +246,7 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
       defaultId: 0,
       cancelId: 1,
     }).then((result) => {
-      if (result?.response === 0) updater.quitAndInstall(false, true);
+      if (result?.response === 0) installUpdate();
     });
   });
   updater.on('error', (error) => {
@@ -268,6 +288,6 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
   return {
     enabled: true,
     checkForUpdates: () => runCheck(true),
-    installDownloadedUpdate: () => updater.quitAndInstall(false, true),
+    installDownloadedUpdate: installUpdate,
   };
 }

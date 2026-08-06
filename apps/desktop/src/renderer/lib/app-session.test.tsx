@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
 import { AppSessionProvider, useAppSession } from './app-session';
+import { readDevicePreferences } from './device-preferences';
 
 let deepLinkListener: ((url: string) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
@@ -116,7 +117,8 @@ describe('single-platform desktop identity routing', () => {
       attemptId: 'a'.repeat(43),
     }));
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
-    expect(window.localStorage.getItem('avalon:selected-region')).toBe('global');
+    expect(readDevicePreferences().selectedRegion).toBe('global');
+    expect(window.localStorage.getItem('avalon:selected-region')).toBeNull();
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
@@ -189,7 +191,7 @@ describe('single-platform desktop identity routing', () => {
 
     expect(await screen.findByText('global:invite')).toBeVisible();
     expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.with-avalon.com');
-    expect(window.localStorage.getItem('avalon:selected-region')).toBe('global');
+    expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workspace-onboarding'] });
     invalidate.mockRestore();
   });
@@ -211,7 +213,7 @@ describe('single-platform desktop identity routing', () => {
 
     expect(await screen.findByText('global:invite')).toBeVisible();
     expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.with-avalon.com');
-    expect(window.localStorage.getItem('avalon:selected-region')).toBe('global');
+    expect(readDevicePreferences().selectedRegion).toBe('global');
   });
 
   it('replaces or clears the provider session when another native window changes it', async () => {

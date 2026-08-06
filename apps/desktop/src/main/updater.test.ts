@@ -72,7 +72,11 @@ describe('desktop auto-update runtime', () => {
   });
 
   it('surfaces progress and installs a downloaded update after confirmation', async () => {
-    const { updater, statuses, showMessageBox } = setup();
+    let finishPreparing!: () => void;
+    const beforeInstall = vi.fn(() => new Promise<void>((resolve) => {
+      finishPreparing = resolve;
+    }));
+    const { updater, statuses, showMessageBox } = setup({ beforeInstall });
     showMessageBox.mockResolvedValueOnce({ response: 0, checkboxChecked: false });
 
     updater.emit('update-available', { version: '1.1.0' });
@@ -86,9 +90,26 @@ describe('desktop auto-update runtime', () => {
       message: 'Update ready',
       buttons: ['Restart Now', 'Later'],
     }));
-    await vi.waitFor(() => {
-      expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    await vi.waitFor(() => expect(beforeInstall).toHaveBeenCalledOnce());
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    finishPreparing();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true));
+  });
+
+  it('keeps the app running when protected state cannot be prepared', async () => {
+    const beforeInstall = vi.fn(async () => {
+      throw new Error('session flush failed');
     });
+    const { controller, updater, showMessageBox } = setup({ beforeInstall });
+
+    controller.installDownloadedUpdate();
+
+    await vi.waitFor(() => {
+      expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Couldn’t restart to update',
+      }));
+    });
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
   });
 
   it('reports a manual no-update result and gates unpackaged builds', async () => {
