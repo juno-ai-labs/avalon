@@ -8,6 +8,11 @@ const copyText = vi.hoisted(() => vi.fn());
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText }),
 }));
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
+    <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
+  ),
+}));
 
 afterEach(() => vi.useRealTimers());
 
@@ -43,6 +48,9 @@ describe('MessageBlock model timing', () => {
 
     expect(screen.getByText('working for 1m 22s')).toBeInTheDocument();
     expect(container.querySelector('.thought-block')).toHaveClass('thought-active');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'solving');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '20');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'false');
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
@@ -58,6 +66,7 @@ describe('MessageBlock model timing', () => {
     );
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     expect(container.querySelector('.thought-block')).not.toHaveClass('thought-active');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
   });
 });
 

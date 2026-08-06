@@ -44,6 +44,7 @@
     "react-markdown": "latest",
     "react-router-dom": "latest",
     "remark-gfm": "latest",
+    "thinking-orbs": "0.2.0",
     "tw-fade": "^0.8.0",
     "zod": "catalog:",
     "zustand": "latest"
