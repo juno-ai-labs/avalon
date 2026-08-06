@@ -34,7 +34,7 @@ import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from '../components/inspector-rail';
 import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
 
-type RunFilter = 'all' | 'scheduled' | 'manual' | 'activity' | 'webhook';
+type RunFilter = 'all' | 'scheduled' | 'manual';
 
 function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void }): React.JSX.Element {
   return (
@@ -159,7 +159,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
           <span className="header-origin-icon"><Zap size={15} /></span>
           <div><span>Automations</span><h1>{detail.name}</h1></div>
           <Badge>{detail.scope === 'you' ? 'You' : 'Workspace'}</Badge>
-          <span className={clsx('automation-state', detail.status)}><span />{detail.status[0]!.toUpperCase() + detail.status.slice(1)}</span>
         </div>
         <div className="automation-overview-actions window-no-drag">
           <IconButton label="Open runs inspector" onClick={() => openRail('runs')}><PanelRight size={15} /></IconButton>
@@ -191,27 +190,19 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       <div className="automation-overview-scroll">
         <div className="automation-overview-layout">
           <aside className="automation-facts" aria-label="Automation details">
-            <section><h2>Status</h2><p className="fact-status"><span className={clsx('switch-visual', detail.status === 'active' && 'is-on')} /><strong>{detail.status[0]!.toUpperCase() + detail.status.slice(1)}</strong></p></section>
+            <section><h2>Status</h2><p className="fact-status"><span aria-hidden="true" className={clsx('automation-status-dot', detail.status)} /><strong>{detail.status[0]!.toUpperCase() + detail.status.slice(1)}</strong></p></section>
             <section><h2>Repeats</h2><p><CalendarClock size={14} />{detail.scheduleSummary ?? detail.triggerSummary}</p></section>
             {automationEmailAddress && (
               <section className="automation-email-fact">
                 <h2>Email address</h2>
                 <div className="automation-email-address">
                   <Mail aria-hidden="true" size={13} />
-                  <span title={automationEmailAddress}>{automationEmailAddress}</span>
+                  <span className="automation-email-value" title={automationEmailAddress}>{automationEmailAddress}</span>
                   <IconButton
                     className="automation-email-copy"
-                    label={automationEmailCopyState === 'copied'
-                      ? `Automation email address copied ${automationEmailAddress}`
-                      : automationEmailCopyState === 'failed'
-                        ? `Copy failed; retry automation email address ${automationEmailAddress}`
-                        : `Copy automation email address ${automationEmailAddress}`}
+                    label="Copy automation email"
                     onClick={() => void copyAutomationEmail()}
-                    title={automationEmailCopyState === 'copied'
-                      ? 'Copied'
-                      : automationEmailCopyState === 'failed'
-                        ? 'Copy failed — click to retry'
-                        : 'Copy automation email address'}
+                    title="Copy automation email"
                     tooltipSide="right"
                   >
                     {automationEmailCopyState === 'copied'
@@ -236,10 +227,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
               </section>
             )}
             <section><h2>Execution</h2><p><Users size={14} />{detail.executionScope}</p><small>{detail.scope === 'you' ? 'Uses your authorized connections' : 'Uses explicitly bound workspace connections'}</small></section>
-            <section>
-              <h2>Connected capabilities</h2>
-              <div className="capability-list">{detail.capabilities.length ? detail.capabilities.map((capability) => <Badge key={capability}>{capability}</Badge>) : <span className="muted-notice">No capabilities bound</span>}</div>
-            </section>
             {detail.nextRun && <section><h2>Next run</h2><p><Clock3 size={14} />{formatRelative(detail.nextRun.triggerTime)}</p><Button className="button-quiet" onClick={() => void navigate(`/workstreams/${detail.nextRun!.workstreamId}`)}>Open planned work stream <ChevronRight size={13} /></Button></section>}
           </aside>
 
@@ -264,7 +251,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
             <section className="run-history-section">
               <header><div><h2>Runs</h2><span>{detail.runs.length} total</span></div></header>
               <div className="run-filter" role="group" aria-label="Filter automation runs">
-                {(['all', 'scheduled', 'manual', 'activity', 'webhook'] as const).map((value) => (
+                {(['all', 'scheduled', 'manual'] as const).map((value) => (
                   <button className={filter === value ? 'is-selected' : ''} key={value} onClick={() => setFilter(value)} type="button">
                     {value[0]!.toUpperCase() + value.slice(1)}
                   </button>
