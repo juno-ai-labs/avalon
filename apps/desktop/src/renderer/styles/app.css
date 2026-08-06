@@ -1801,6 +1801,12 @@ pre {
 .automation-plugin-defaults label { cursor: pointer; display: block; padding: 9px; }
 .automation-plugin-defaults input { height: 1px; opacity: 0; position: absolute; width: 1px; }
 .automation-plugin-defaults label { align-items: flex-start; display: flex; gap: 9px; }
+.automation-delivery-target { background: #1d1e1b; border-top: 1px solid var(--line); display: grid; gap: 7px; padding: 13px 17px; }
+.automation-delivery-target label { display: flex; flex-direction: column; gap: 2px; }
+.automation-delivery-target strong { color: var(--ink-soft); font-size: 10.5px; }
+.automation-delivery-target small,
+.automation-delivery-target > span { color: var(--muted); font-size: 9.5px; }
+.automation-delivery-target select { background: #242521; border: 1px solid #3d3e38; border-radius: 7px; color: var(--ink); font-size: 10.5px; padding: 8px 9px; }
 .automation-plugin-check { align-items: center; border: 1px solid #55564f; border-radius: 4px; color: #171815; display: flex; flex: 0 0 auto; height: 17px; justify-content: center; margin-top: 1px; width: 17px; }
 .automation-plugin-defaults input:checked + .automation-plugin-check { background: var(--yellow); border-color: var(--yellow); }
 .automation-plugin-defaults input:focus-visible + .automation-plugin-check { box-shadow: 0 0 0 2px rgba(206, 220, 0, .22); }

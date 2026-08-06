@@ -277,6 +277,96 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("preserves every connector foreign-key branch while adding Slack inside a transaction", () => {
+    const database = migrateDatabaseThrough("0038_remove_web_monitor.sql");
+    database.exec("PRAGMA foreign_keys = ON");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-slack-migration', 'google-slack-migration', 'migration@example.com', 'Migration Owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-slack-migration', 'Migration', 'slack-migration', 'global', 'user-slack-migration', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, display_name, granted_scopes_json,
+         status, cursor_json, config_json, created_at, updated_at, model_plugin_id)
+      VALUES ('connection-slack-migration', 'workspace-slack-migration', 'google', 'workspace',
+              'Existing connector', '[]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01', 'plugin_google');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-slack-migration', 'workspace-slack-migration', 'Migration', 'Preserve data',
+              'ad_hoc', 'user-slack-migration', 'completed', '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('harness-slack-migration', 'workspace-slack-migration', 'workstream-slack-migration',
+              'test', '{}', 'completed', '2026-01-01');
+      INSERT INTO resources
+        (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
+         title, metadata_json, created_at, updated_at)
+      VALUES ('resource-slack-migration', 'workspace-slack-migration', 'connection-slack-migration',
+              'fixture', 'google', 'resource-1', 'Resource', '{}', '2026-01-01', '2026-01-01');
+      INSERT INTO activities
+        (id, workspace_id, connection_id, connection_scope, provider, provider_event_id,
+         event_type, occurred_at, received_at, title, dedupe_key)
+      VALUES ('activity-slack-migration', 'workspace-slack-migration', 'connection-slack-migration',
+              'workspace', 'google', 'event-1', 'updated', '2026-01-01', '2026-01-01', 'Activity', 'dedupe-1');
+      INSERT INTO activity_suggestions
+        (id, workspace_id, activity_id, workstream_id, confidence, reason, created_at)
+      VALUES ('suggestion-slack-migration', 'workspace-slack-migration', 'activity-slack-migration',
+              'workstream-slack-migration', 1, 'Preserve me', '2026-01-01');
+      INSERT INTO resource_watches
+        (id, workspace_id, workstream_id, resource_id, connection_id, watch_type, created_at, updated_at)
+      VALUES ('watch-slack-migration', 'workspace-slack-migration', 'workstream-slack-migration',
+              'resource-slack-migration', 'connection-slack-migration', 'changes', '2026-01-01', '2026-01-01');
+      INSERT INTO tool_invocations
+        (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name,
+         connection_id, input_hash, input_json, status)
+      VALUES ('tool-slack-migration', 'workspace-slack-migration', 'workstream-slack-migration',
+              'harness-slack-migration', 'call-1', 'fixture', 'connection-slack-migration', 'hash', '{}', 'completed');
+      INSERT INTO schedules
+        (id, workspace_id, connector_connection_id, schedule_type, interval_seconds,
+         timezone, next_run_at, created_at, updated_at)
+      VALUES ('schedule-slack-migration', 'workspace-slack-migration', 'connection-slack-migration',
+              'interval', 3600, 'UTC', '2026-01-02', '2026-01-01', '2026-01-01');
+      INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
+      VALUES ('receipt-slack-migration', 'connection-slack-migration', 'signature', '2026-01-01', '2026-02-01');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state, created_at, updated_at)
+      VALUES ('template-slack-migration', 'workspace-slack-migration', 'user-slack-migration',
+              'Template', 'Template', 'private', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         created_by_user_id, created_at)
+      VALUES ('version-slack-migration', 'template-slack-migration', 1, 'Run', '[]',
+              'user-slack-migration', '2026-01-01');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, status, created_at, updated_at)
+      VALUES ('subscription-slack-migration', 'workspace-slack-migration', 'template-slack-migration',
+              'version-slack-migration', 'personal', 'user-slack-migration', '{}', 'active', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
+         trigger_activity_id, status, created_at)
+      VALUES ('run-slack-migration', 'workspace-slack-migration', 'subscription-slack-migration',
+              'workstream-slack-migration', 'activity', 'activity-slack-migration', 'completed', '2026-01-01');
+    `);
+
+    database.exec("BEGIN");
+    database.exec(readFileSync(new URL("../migrations/0039_slack_connector.sql", import.meta.url), "utf8"));
+    database.exec("COMMIT");
+
+    expect(database.prepare("SELECT connection_id FROM resources WHERE id = 'resource-slack-migration'").get())
+      .toEqual({ connection_id: "connection-slack-migration" });
+    expect(database.prepare("SELECT trigger_activity_id FROM automation_runs WHERE id = 'run-slack-migration'").get())
+      .toEqual({ trigger_activity_id: "activity-slack-migration" });
+    expect(database.prepare("SELECT connection_id FROM tool_invocations WHERE id = 'tool-slack-migration'").get())
+      .toEqual({ connection_id: "connection-slack-migration" });
+    for (const table of ["activities", "activity_suggestions", "resource_watches", "schedules", "webhook_receipts"]) {
+      expect(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 1 });
+    }
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("cuts over active prototype runs and installs immutable Bind durability rails", () => {
     const database = migrateDatabaseThrough("0025_user_workspace_timezones.sql");
     database.exec(`

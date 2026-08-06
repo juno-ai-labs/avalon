@@ -43,6 +43,12 @@ export interface ConnectorNativeAgentExecutionContext {
   signal: AbortSignal;
 }
 
+/** Provider-hosted conversational ingress parsed only after request verification. */
+export interface ConnectorMessagingAgentAdapter<Invocation = unknown> {
+  capability: string;
+  parseInvocation(payload: unknown): Invocation;
+}
+
 /**
  * Provider-native agent operations live in the connector control plane. They
  * are intentionally separate from model-callable tools and are dispatched by
@@ -122,6 +128,7 @@ export interface ConnectorAdapter {
    */
   capabilityConnectionScopes?: Readonly<Record<string, readonly Scope[]>>;
   nativeAgent?: ConnectorNativeAgentAdapter;
+  messagingAgent?: ConnectorMessagingAgentAdapter;
   beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
   handleAuthorizationCallback?(input: ConnectorAuthorizationCallbackInput): Promise<Record<string, unknown>>;
   refreshCredentials?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<Record<string, unknown>>;
@@ -166,6 +173,15 @@ export class ConnectorError extends Error {
     super(message);
     this.name = "ConnectorError";
   }
+}
+
+/** Provider-directed retry delay carried across queue and Workflow boundaries. */
+export function connectorRetryAfterMs(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const details = (error as { details?: unknown }).details;
+  if (!details || typeof details !== "object") return null;
+  const value = (details as { retryAfterMs?: unknown }).retryAfterMs;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 export function assertPrincipalAccess(

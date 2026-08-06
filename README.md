@@ -7,7 +7,7 @@ The product includes:
 - Ad-hoc and automation-created work streams with multiplayer presence, participants, resources, messages, structured questions, and activity suggestions.
 - A bounded Bind 10 adapter over OpenRouter with credential-scoped connector plugins, immutable run authority, streamed responses, durable tool receipts, and classified fallback routing.
 - Versioned natural-language automations with calendar, interval, connector-activity, semantic-activity, and manual triggers.
-- Google Mail + Calendar and Google Drive + Docs + Sheets presets backed by one incrementally scoped Google connector family; one smart-routed public GitHub App; public Linear OAuth; public Notion connection; and signed generic webhooks.
+- Google Mail + Calendar and Google Drive + Docs + Sheets presets backed by one incrementally scoped Google connector family; smart-routed public GitHub, Linear, and Slack apps; public Notion connection; and signed generic webhooks.
 - Firecrawl-backed public web search and clean-markdown page fetch tools, available only from the server-side agent harness.
 - Global and European Union workspace regions with separate deployment configurations.
 - Hibernating work-stream WebSockets with bounded room replay, turn/epoch stream resets, duplicate suppression, and REST resynchronization.
@@ -22,7 +22,7 @@ apps/api               Hono Cloudflare Worker and runtime components
 packages/contracts     Shared Zod contracts
 packages/db            D1 migration, repositories, and explicit local seed
 packages/agent-harness Bind 10/OpenRouter adapter, prompts, classifiers, and tool execution
-packages/connectors    Google, GitHub, Linear, Notion, and webhook adapters
+packages/connectors    Google, GitHub, Linear, Notion, Slack, and webhook adapters
 docs                   Product, architecture, security, and operations
 ```
 

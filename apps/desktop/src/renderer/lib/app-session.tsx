@@ -251,11 +251,57 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (
         deepLink.protocol === 'avalon:'
         && deepLink.hostname === 'settings'
-        && deepLink.pathname === '/workspace'
+        && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections')
         && deepLink.search === ''
       ) {
         setDeepLinkError(null);
-        void desktopBridge().openSettings('workspace');
+        void desktopBridge().openSettings(deepLink.pathname === '/connections' ? 'connections' : 'workspace');
+        return;
+      }
+      if (
+        deepLink.protocol === 'avalon:'
+        && deepLink.hostname === 'automations'
+        && deepLink.pathname === '/new'
+        && deepLink.search === ''
+      ) {
+        if (!session?.workspace) {
+          setDeepLinkError('Sign in before creating an automation.');
+          return;
+        }
+        setDeepLinkError(null);
+        window.location.hash = '/automations/new';
+        return;
+      }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'slack' && deepLink.pathname === '/link') {
+        const token = deepLink.searchParams.get('token');
+        const exactToken = token
+          && /^[A-Za-z0-9_-]{20,500}$/u.test(token)
+          && [...deepLink.searchParams.keys()].every((key) => key === 'token')
+          && deepLink.searchParams.getAll('token').length === 1;
+        if (!exactToken || !session?.workspace || !api) {
+          setDeepLinkError('Sign in to the matching Avalon workspace before connecting Slack.');
+          return;
+        }
+        setDeepLinkError(null);
+        void api.previewSlackUserLink(token)
+          .then((preview) => {
+            const confirmed = window.confirm(
+              `Connect Slack user ${preview.slackUserId} from ${preview.workspaceName} to your current Avalon account?`,
+            );
+            if (!confirmed) return null;
+            return api.linkSlackUser(token);
+          })
+          .then(async (result) => {
+            if (!result) return;
+            await Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['connections'] }),
+              queryClient.invalidateQueries({ queryKey: ['automation'] }),
+            ]);
+            await desktopBridge().openSettings('connections');
+          })
+          .catch((error: unknown) => {
+            setDeepLinkError(error instanceof Error ? error.message : 'Slack could not be connected.');
+          });
         return;
       }
       if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'invitations' && deepLink.pathname === '/accept') {
@@ -341,7 +387,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const unsubscribe = bridge.onDeepLink(handleDeepLink);
     void bridge.consumePendingDeepLinks().then((deepLinks) => deepLinks.forEach(handleDeepLink));
     return unsubscribe;
-  }, [bridge, queryClient, runtime, session]);
+  }, [api, bridge, queryClient, runtime, session]);
 
   useEffect(() => {
     if (!session) return;

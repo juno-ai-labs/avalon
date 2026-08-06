@@ -128,6 +128,15 @@ Global and EU use the same public Linear app identity and webhook secret:
 
 - `LINEAR_OAUTH_CLIENT_ID`, `LINEAR_OAUTH_CLIENT_SECRET`, `LINEAR_WEBHOOK_SECRET`
 
+Global and EU use the same public Slack Marketplace app identity and request-signing secret:
+
+- `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`
+- The source manifest is `config/provider-apps/slack.json`; `slack manifest validate` reads it through the checked-in `.slack` hook.
+- OAuth callbacks are regional. Events, interactivity, commands, and unfurls use `https://slack.with-avalon.com` and the opaque team router.
+- Do not create separate regional Slack apps: that would split Marketplace/MCP identity and break team-route uniqueness.
+
+See `docs/SLACK_INTEGRATION.md` for scope rationale, user linking, App Home, zero-copy behavior, automation delivery, review evidence, and acceptance tests.
+
 Global and EU each need region-specific values for:
 
 - `NOTION_OAUTH_CLIENT_ID`, `NOTION_OAUTH_CLIENT_SECRET`, `NOTION_INTEGRATION_ID`, `NOTION_WEBHOOK_SETUP_TOKEN`

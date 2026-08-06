@@ -497,6 +497,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     expectedOutputs: detail.expectedOutputs,
     recommendedPlugins: detail.recommendedPlugins,
     defaultPluginIds: detail.defaultPluginIds,
+    deliveryTargets: detail.deliveryTargets,
     executionScope: detail.executionPrincipal['type'] === 'workspace' ? 'Workspace' : 'You',
     runs,
     ...(detail.templateUpdate
@@ -1223,18 +1224,30 @@ export class AvalonApi {
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
+              requiresSlackDelivery: raw.expectedOutputs.some((output) => /\bslack\b/iu.test(output)),
             },
           }
         : {}),
     };
   }
 
-  async createAutomation(draftId: string, defaultPluginIds: string[]): Promise<AutomationDetail> {
+  async createAutomation(
+    draftId: string,
+    defaultPluginIds: string[],
+    slackDeliveryConnectionId?: string,
+  ): Promise<AutomationDetail> {
     const state = this.drafts.get(draftId);
     if (!state?.draft?.ready) throw new ApiError('Finish the automation conversation before creating it.', 422, 'automation_not_ready');
     const raw = await this.request('/automations', {
       method: 'POST',
-      body: { draft: state.draft, scope: state.draft.suggestedScope, defaultPluginIds },
+      body: {
+        draft: state.draft,
+        scope: state.draft.suggestedScope,
+        defaultPluginIds,
+        deliveryTargets: slackDeliveryConnectionId
+          ? [{ type: 'slack_agent_dm', connectionId: slackDeliveryConnectionId }]
+          : [],
+      },
       schema: WireAutomationDetailSchema,
     });
     this.automationDetails.set(raw.id, raw);
@@ -1275,7 +1288,7 @@ export class AvalonApi {
   }
 
   async startProviderConnection(
-    provider: 'google' | 'github' | 'linear' | 'notion',
+    provider: 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<string> {
@@ -1304,6 +1317,22 @@ export class AvalonApi {
 
   async disconnectConnection(id: string): Promise<void> {
     await this.requestVoid(`/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async linkSlackUser(token: string): Promise<{ linked: true; teamId: string; slackUserId: string }> {
+    return this.request('/connections/slack/link', {
+      method: 'POST',
+      body: { token },
+      schema: z.object({ linked: z.literal(true), teamId: z.string().min(1), slackUserId: z.string().min(1) }),
+    });
+  }
+
+  async previewSlackUserLink(token: string): Promise<{ teamId: string; slackUserId: string; workspaceName: string }> {
+    return this.request('/connections/slack/link/preview', {
+      method: 'POST',
+      body: { token },
+      schema: z.object({ teamId: z.string().min(1), slackUserId: z.string().min(1), workspaceName: z.string().min(1) }),
+    });
   }
 
   async beginGoogleLogin(
