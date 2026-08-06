@@ -56,6 +56,17 @@ describe('New automation composer', () => {
     api.createAutomation.mockResolvedValue({ id: 'automation-1' });
   });
 
+  it('uses the shared connection, attachment, and dictation controls', () => {
+    renderScreen();
+
+    expect(screen.getByRole('button', { name: 'Mention a connection' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a connection' }));
+    expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('@');
+  });
+
   it('collapses to its default height after a successful send', async () => {
     renderScreen();
 

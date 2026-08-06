@@ -157,6 +157,7 @@ export interface CreateWorkstreamInput {
   openingMessage: string;
   clientMessageId: string;
   participantUserIds: string[];
+  attachmentIds?: string[];
 }
 
 export interface CreateMessageInput {
@@ -227,6 +228,36 @@ export function createDatabase(db: D1DatabaseLike) {
       const externalActorJson = input.openingAuthor.type === "external"
         ? JSON.stringify(ExternalActorSchema.parse(input.openingAuthor.actor))
         : null;
+      const attachmentStatements = [...new Set(input.attachmentIds ?? [])].flatMap((resourceId, position) => [
+        db
+          .prepare(
+            `INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
+             SELECT ?, r.id, ?, ? FROM resources r
+             WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
+               AND r.uploaded_by_user_id = ? AND r.attachment_status = 'draft'
+               AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
+             ON CONFLICT(message_id, resource_id) DO NOTHING`
+          )
+          .bind(messageId, position, at, resourceId, input.workspaceId, input.creatorUserId, messageId),
+        db
+          .prepare(
+            `INSERT INTO workstream_resources
+             (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+             SELECT ?, r.id, ?, 0, 'message_attachment', ? FROM resources r
+             WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
+               AND r.uploaded_by_user_id = ?
+               AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
+             ON CONFLICT(workstream_id, resource_id) DO NOTHING`
+          )
+          .bind(workstreamId, input.creatorUserId, at, resourceId, input.workspaceId, input.creatorUserId, messageId),
+        db
+          .prepare(
+            `UPDATE resources SET attachment_status = 'attached', updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND uploaded_by_user_id = ?
+               AND EXISTS (SELECT 1 FROM message_attachments WHERE message_id = ? AND resource_id = ?)`
+          )
+          .bind(at, resourceId, input.workspaceId, input.creatorUserId, messageId, resourceId),
+      ]);
       const statements = [
         db
           .prepare(
@@ -288,7 +319,8 @@ export function createDatabase(db: D1DatabaseLike) {
               input.creatorUserId === userId ? "creator" : "explicit",
               at
             )
-        )
+        ),
+        ...attachmentStatements,
       ];
       const results = await db.batch(statements);
       if (results.some((result) => !result.success)) {
