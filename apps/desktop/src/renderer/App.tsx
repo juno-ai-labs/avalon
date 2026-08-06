@@ -24,6 +24,8 @@ const queryClient = new QueryClient({
   },
 });
 
+const workspaceMembersRefreshIntervalMs = 5 * 60 * 1_000;
+
 class ErrorBoundary extends Component<PropsWithChildren, { error: Error | null }> {
   override state: { error: Error | null } = { error: null };
 
@@ -110,6 +112,14 @@ function WorkspaceApp(): React.JSX.Element {
     queryFn: ({ signal }) => api!.getWorkspace(signal),
     enabled: Boolean(api && session),
     staleTime: 30_000,
+  });
+  useQuery({
+    queryKey: ['workspace-members'],
+    queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
+    enabled: Boolean(api && session?.workspace),
+    refetchInterval: workspaceMembersRefreshIntervalMs,
+    refetchIntervalInBackground: true,
+    staleTime: workspaceMembersRefreshIntervalMs,
   });
 
   useEffect(() => {
