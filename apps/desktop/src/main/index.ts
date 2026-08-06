@@ -32,6 +32,10 @@ import type {
 } from '../common/desktop';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import {
+  definitivelyInvalidatesStoredCredential,
+  responseError,
+} from './api-response-error';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import {
@@ -350,14 +354,6 @@ function validatedApiBase(rawUrl: unknown): string {
     throw new Error('The requested endpoint does not match an Avalon region');
   }
   return normalized;
-}
-
-async function responseError(response: Response): Promise<Error> {
-  const body: unknown = await response.json().catch(() => null);
-  const nested = body && typeof body === 'object' && 'error' in body
-    ? (body as { error?: { message?: string } }).error
-    : undefined;
-  return new Error(nested?.message ?? `Avalon authentication failed (${response.status})`);
 }
 
 async function requestSession(
@@ -756,6 +752,10 @@ async function prepareForUpdateInstall(): Promise<void> {
   await sessionMutationTail;
 }
 
+function rollBackFailedUpdateInstall(): void {
+  updateInstallationPending = false;
+}
+
 function isAllowedExternalUrl(rawUrl: string): boolean {
   try {
     const url = new URL(rawUrl);
@@ -857,6 +857,13 @@ function registerIpc(): void {
       try {
         return await coalescedRefreshSession();
       } catch (error) {
+        if (definitivelyInvalidatesStoredCredential(error)) {
+          try {
+            await clearStoredSession();
+          } catch (cleanupError) {
+            console.warn('[avalon] could not clear an invalid desktop credential', cleanupError);
+          }
+        }
         console.warn('[avalon] could not rebuild the desktop profile cache', error);
         return null;
       }
@@ -1253,6 +1260,7 @@ if (!singleInstanceLock) {
       showMessageBox: (options) => dialog.showMessageBox(options),
       openExternal: (url) => shell.openExternal(url),
       beforeInstall: prepareForUpdateInstall,
+      onInstallFailed: rollBackFailedUpdateInstall,
       onStatusChange: (status) => {
         updateStatus = status;
         installApplicationMenu();

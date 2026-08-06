@@ -41,6 +41,8 @@ export interface AutoUpdateDependencies {
   readonly openExternal: (url: string) => Promise<unknown>;
   /** Flush protected local state before Squirrel terminates the process. */
   readonly beforeInstall?: () => Promise<void>;
+  /** Roll back preparation side effects when installation does not start. */
+  readonly onInstallFailed?: () => Promise<void> | void;
   readonly onStatusChange?: (status: UpdateStatus) => void;
   readonly log?: UpdateLogger;
   /** Test seam; production uses electron-updater's singleton. */
@@ -148,10 +150,16 @@ export function initializeAutoUpdate(deps: AutoUpdateDependencies): AutoUpdateCo
     void Promise.resolve()
       .then(() => deps.beforeInstall?.())
       .then(() => updater.quitAndInstall(false, true))
-      .catch((error: unknown) => {
-        installInFlight = false;
+      .catch(async (error: unknown) => {
         log.error('[avalon] could not prepare the downloaded update for installation', error);
-        void showDialog({
+        try {
+          await deps.onInstallFailed?.();
+        } catch (rollbackError) {
+          log.error('[avalon] could not roll back failed update preparation', rollbackError);
+        } finally {
+          installInFlight = false;
+        }
+        await showDialog({
           type: 'warning',
           message: 'Couldn’t restart to update',
           detail: 'Avalon kept your current session and did not install the update. Please try again.',

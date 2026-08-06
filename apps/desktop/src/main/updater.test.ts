@@ -100,7 +100,8 @@ describe('desktop auto-update runtime', () => {
     const beforeInstall = vi.fn(async () => {
       throw new Error('session flush failed');
     });
-    const { controller, updater, showMessageBox } = setup({ beforeInstall });
+    const onInstallFailed = vi.fn();
+    const { controller, updater, showMessageBox } = setup({ beforeInstall, onInstallFailed });
 
     controller.installDownloadedUpdate();
 
@@ -110,6 +111,36 @@ describe('desktop auto-update runtime', () => {
       }));
     });
     expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(onInstallFailed).toHaveBeenCalledOnce();
+  });
+
+  it('rolls back protected state and allows a retry when restart fails', async () => {
+    const beforeInstall = vi.fn(async () => undefined);
+    let finishRollback!: () => void;
+    const onInstallFailed = vi.fn(() => new Promise<void>((resolve) => {
+      finishRollback = resolve;
+    }));
+    const { controller, updater, showMessageBox } = setup({ beforeInstall, onInstallFailed });
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('restart failed');
+    });
+
+    controller.installDownloadedUpdate();
+
+    await vi.waitFor(() => expect(onInstallFailed).toHaveBeenCalledOnce());
+    controller.installDownloadedUpdate();
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+
+    finishRollback();
+    await vi.waitFor(() => {
+      expect(showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
+        message: 'Couldn’t restart to update',
+      }));
+    });
+
+    controller.installDownloadedUpdate();
+    await vi.waitFor(() => expect(updater.quitAndInstall).toHaveBeenCalledTimes(2));
+    expect(beforeInstall).toHaveBeenCalledTimes(2);
   });
 
   it('reports a manual no-update result and gates unpackaged builds', async () => {
