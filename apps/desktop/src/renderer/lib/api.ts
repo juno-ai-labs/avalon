@@ -823,15 +823,16 @@ export class AvalonApi {
     return mapWorkstreamSummary(workstream);
   }
 
-  async createWorkstream(input: { openingMessage: string; participantIds: string[] }): Promise<CreatedWorkstream> {
+  async createWorkstream(input: { openingMessage: string; participantIds: string[]; attachmentIds?: string[] }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
     const response = await this.request('/workstreams', {
       method: 'POST',
       body: {
-        objective: input.openingMessage,
+        objective: input.openingMessage.trim() || 'Review the attached files',
         openingMessage: input.openingMessage,
         participantUserIds: input.participantIds,
         clientMessageId,
+        attachmentIds: input.attachmentIds ?? [],
       },
       schema: createWorkstreamResponseSchema,
     });
@@ -1148,7 +1149,7 @@ export class AvalonApi {
   }
 
   async compileAutomation(
-    input: { message: string; draftId?: string; templateId?: string },
+    input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
     const draftId = input.draftId ?? crypto.randomUUID();
@@ -1160,7 +1161,12 @@ export class AvalonApi {
         Accept: 'text/event-stream',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ draftId, messages, currentDraft: previous.draft }),
+      body: JSON.stringify({
+        draftId,
+        messages,
+        currentDraft: previous.draft,
+        attachmentIds: input.attachmentIds ?? [],
+      }),
     });
     if (!response.ok) return this.throwResponseError(response);
     const streamState: {

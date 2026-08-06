@@ -1152,6 +1152,7 @@ export class SlackAgentService {
           participantUserIds: [],
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
+          attachmentIds: [],
         })
       : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
           actor: ExternalActorSchema.parse(input.actor),

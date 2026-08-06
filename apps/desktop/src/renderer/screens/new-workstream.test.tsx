@@ -96,6 +96,17 @@ describe('New work-stream home', () => {
     expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
   });
 
+  it('uses the shared mention, attachment, and dictation controls', async () => {
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Mention a participant or connection' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant or connection' }));
+    expect(await screen.findByRole('dialog', { name: 'Add people' })).toBeVisible();
+  });
+
   it('keeps participant selection above the composer and sends selected people', async () => {
     renderScreen();
 

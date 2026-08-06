@@ -641,8 +641,11 @@ export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().min(1).max(4000),
   participantUserIds: z.array(IdSchema).max(25).default([]),
-  openingMessage: z.string().min(1).max(50000),
-  clientMessageId: z.string().min(1).max(120)
+  openingMessage: z.string().max(50000),
+  clientMessageId: z.string().min(1).max(120),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
+}).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
+  message: "An opening message must include text or an attachment",
 });
 
 export const UpdateWorkstreamRequestSchema = z.object({
@@ -697,7 +700,8 @@ export const CreateAutomationRequestSchema = z.object({
 export const CompileAutomationRequestSchema = z.object({
   draftId: IdSchema.optional(),
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
-  currentDraft: AutomationDraftSchema.nullable().default(null)
+  currentDraft: AutomationDraftSchema.nullable().default(null),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
 });
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
