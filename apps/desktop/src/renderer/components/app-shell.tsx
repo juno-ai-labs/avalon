@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CSSProperties, PropsWithChildren } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { useUiStore } from '../lib/ui-store';
-import type { Workspace } from '../lib/types';
+import type { Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
@@ -12,6 +13,9 @@ interface AppShellProps extends PropsWithChildren {
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const { api, signOut } = useAppSession();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
@@ -27,6 +31,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     queryFn: ({ signal }) => api!.getWorkstreams(signal),
     enabled: Boolean(api),
     staleTime: 10_000,
+    refetchInterval: 15_000,
   });
 
   const shellStyle = {
@@ -39,6 +44,33 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       <Sidebar
         automations={automations.data ?? []}
         loading={automations.isLoading || workstreams.isLoading}
+        onMarkWorkstreamUnread={async (workstream) => {
+          if (!api) return;
+          const updated = await api.markWorkstreamUnread(workstream.id);
+          queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+            current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+          );
+          queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
+            current ? { ...current, ...updated } : current,
+          );
+          if (location.pathname === `/workstreams/${updated.id}`) void navigate('/workstreams/new');
+        }}
+        onRenameWorkstream={async (workstream, title) => {
+          if (!api) return;
+          const updated = await api.renameWorkstream(workstream.id, title);
+          queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+            current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+          );
+          queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
+            current ? { ...current, title: updated.title } : current,
+          );
+        }}
+        onRunAutomation={async (automation) => {
+          if (!api) return;
+          const workstream = await api.runAutomation(automation.id);
+          await queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+          void navigate(`/workstreams/${workstream.id}`);
+        }}
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}

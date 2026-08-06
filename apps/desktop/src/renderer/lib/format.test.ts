@@ -13,6 +13,12 @@ function stream(
     origin: 'ad_hoc',
     harnessStatus,
     lastActivityAt,
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
   };
 }
 
