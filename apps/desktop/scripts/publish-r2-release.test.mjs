@@ -165,6 +165,26 @@ test('dry-run rejects a release that does not advance exactly one minor version'
   }
 });
 
+test('dry-run accepts the one-time stable promotion from 0.x to 1.0.0', async () => {
+  const fixture = await createFixture({ currentVersion: '0.32.0', releaseVersion: '1.0.0' });
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [
+      publisherPath.pathname,
+      '--dry-run',
+      '--release-dir', fixture.releaseDirectory,
+      '--site-config', fixture.configPath,
+    ], {
+      env: environmentWithoutReleaseCredentials(),
+      encoding: 'utf8',
+    });
+    const plan = JSON.parse(stdout);
+    assert.equal(plan.siteRelease.version, '1.0.0');
+    assert.equal(await readFile(fixture.configPath, 'utf8'), fixture.configBytes);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test('purges exact immutable URLs in one confirmed Cloudflare request', async () => {
   const urls = [
     `https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-${version}-arm64.dmg`,
