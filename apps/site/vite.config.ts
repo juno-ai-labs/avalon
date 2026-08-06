@@ -31,6 +31,8 @@ export default defineConfig(async () => {
       rollupOptions: {
         input: {
           main: `${projectRoot}index.html`,
+          concepts: `${projectRoot}concepts/index.html`,
+          horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
           invite: `${projectRoot}invite/index.html`,
           authHandoff: `${projectRoot}auth/desktop/index.html`,
           notFound: `${projectRoot}404.html`,
