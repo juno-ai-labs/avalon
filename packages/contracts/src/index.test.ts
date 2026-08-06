@@ -148,6 +148,48 @@ describe("boundary contracts", () => {
     expect(activity.plugins).toHaveLength(25);
   });
 
+  it("validates automation-scoped durable table declarations and natural keys", () => {
+    const base = {
+      name: "Blog watch",
+      description: "Report newly published blog entries.",
+      overview: "Checks the feed and reports only entries not seen by prior runs.",
+      instructions: "Query Seen entries, insert fetched entries by URL, and report only newly inserted rows.",
+      triggers: [{ type: "interval" as const, intervalSeconds: 86_400, summary: "Daily" }],
+      requiredCapabilities: [],
+      expectedOutputs: ["New-entry report"],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      suggestedScope: "personal" as const,
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const draft = AutomationDraftSchema.parse({
+      ...base,
+      memoryTables: [{
+        name: "Seen entries",
+        description: "One row per discovered entry.",
+        usageInstructions: "Seed the first run without reporting; later insert by URL and report newly inserted rows.",
+        columns: [
+          { name: "url", description: "Canonical entry URL", type: "url", required: true, searchable: false },
+          { name: "title", description: "Entry title", type: "string", required: true, searchable: true },
+        ],
+        keyColumns: ["url"],
+      }],
+    });
+    expect(draft.memoryTables[0]?.keyColumns).toEqual(["url"]);
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      memoryTables: [{
+        name: "Broken",
+        description: "Invalid key declaration.",
+        usageInstructions: "Cannot be materialized.",
+        columns: [{ name: "url", description: "URL", type: "url", required: true, searchable: false }],
+        keyColumns: ["missing"],
+      }],
+    }).success).toBe(false);
+  });
+
   it("validates ordered socket mutations", () => {
     expect(
       ClientSocketEventSchema.parse({

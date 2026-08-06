@@ -127,6 +127,7 @@ describe("agent harness", () => {
       }],
       requiredCapabilities: [],
       recommendedPlugins: [],
+      memoryTables: [],
       expectedOutputs: ["Project summary"],
       defaultBehavior: "{}",
       suggestedScope: "personal",
@@ -1994,6 +1995,8 @@ describe("agent harness", () => {
     expect(schema).not.toContain('"ready"');
     expect(schema).not.toContain('"followUpQuestion"');
     expect(schema).not.toContain('"requiredCapabilities"');
+    expect(schema).toContain('"memoryTables"');
+    expect(schema).toContain('"usageInstructions"');
   });
 
   it("normalizes every supported automation trigger shape", () => {

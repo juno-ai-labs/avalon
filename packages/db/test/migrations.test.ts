@@ -56,6 +56,38 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("creates typed scoped-memory tables and stores automation table declarations", () => {
+    const database = migrateFreshDatabase();
+    expect(database.prepare("PRAGMA table_info(automation_template_versions)").all())
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "memory_tables_json", notnull: 1 }),
+      ]));
+    expect(database.prepare("PRAGMA table_info(memory_tables)").all())
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "memory_table_id", pk: 1 }),
+        expect.objectContaining({ name: "memory_scope_id", notnull: 1 }),
+        expect.objectContaining({ name: "key_column_ids_json", notnull: 1 }),
+        expect.objectContaining({ name: "data_revision", notnull: 1 }),
+      ]));
+    expect(database.prepare("PRAGMA table_info(memory_table_rows)").all())
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "natural_key_hash", notnull: 1 }),
+        expect.objectContaining({ name: "data_json", notnull: 1 }),
+        expect.objectContaining({ name: "revision", notnull: 1 }),
+        expect.objectContaining({ name: "invalidated_at" }),
+      ]));
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_table_rows_fts'",
+    ).get()).toEqual({ name: "memory_table_rows_fts" });
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_table_cells'",
+    ).get()).toEqual({ name: "memory_table_cells" });
+    expect(database.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memory_table_mutations'",
+    ).get()).toEqual({ name: "memory_table_mutations" });
+    database.close();
+  });
+
   it("keeps full agent inference logging opt-in and creates its regional payload index", () => {
     const database = migrateFreshDatabase();
     database.exec(`

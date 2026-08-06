@@ -242,6 +242,64 @@ export const AutomationPluginRecommendationSchema = z.object({
   reason: z.string().min(1).max(800),
 });
 
+export const MemoryTableColumnTypeSchema = z.enum([
+  "string",
+  "url",
+  "number",
+  "integer",
+  "boolean",
+  "datetime",
+  "date",
+]);
+
+export const AutomationMemoryTableColumnSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(800),
+  type: MemoryTableColumnTypeSchema,
+  required: z.boolean().default(false),
+  searchable: z.boolean().default(false),
+}).strict();
+
+export const AutomationMemoryTableSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(1200),
+  usageInstructions: z.string().trim().min(1).max(4000),
+  columns: z.array(AutomationMemoryTableColumnSchema).min(1),
+  keyColumns: z.array(z.string().trim().min(1).max(120)).min(1),
+}).strict().superRefine((table, context) => {
+  const names = new Map<string, number>();
+  table.columns.forEach((column, index) => {
+    const normalized = column.name.toLocaleLowerCase();
+    if (names.has(normalized)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["columns", index, "name"],
+        message: "Memory-table column names must be unique",
+      });
+    }
+    names.set(normalized, index);
+  });
+  const keyNames = new Set<string>();
+  table.keyColumns.forEach((name, index) => {
+    const normalized = name.toLocaleLowerCase();
+    if (!names.has(normalized)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["keyColumns", index],
+        message: "Every key column must name a declared column",
+      });
+    }
+    if (keyNames.has(normalized)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["keyColumns", index],
+        message: "Key columns must be unique",
+      });
+    }
+    keyNames.add(normalized);
+  });
+});
+
 export const AutomationDraftElicitationSchema = z.object({
   responseType: z.enum(["free_text", "single_select", "multi_select"]),
   prompt: z.string().min(1).max(4000),
@@ -404,10 +462,24 @@ export const AutomationDraftSchema = z.object({
   expectedOutputs: z.array(z.string()).default([]),
   defaultBehavior: z.record(z.string(), z.unknown()).default({}),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
+  memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   suggestedScope: ScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
+}).superRefine((draft, context) => {
+  const names = new Set<string>();
+  draft.memoryTables.forEach((table, index) => {
+    const normalized = table.name.toLocaleLowerCase();
+    if (names.has(normalized)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["memoryTables", index, "name"],
+        message: "Memory-table names must be unique within an automation",
+      });
+    }
+    names.add(normalized);
+  });
 });
 
 export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
@@ -483,6 +555,7 @@ export const AutomationTemplateUpdateSchema = z.object({
   requiredCapabilities: z.array(z.string()),
   expectedOutputs: z.array(z.string()),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
+  memoryTables: z.array(AutomationMemoryTableSchema).default([]),
 });
 
 export const AutomationDetailSchema = AutomationSummarySchema.extend({
@@ -496,6 +569,7 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   expectedOutputs: z.array(z.string()).default([]),
   executionPrincipal: z.record(z.string(), z.unknown()),
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
+  memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
   nextPlannedWorkstream: WorkstreamSchema.nullable(),
@@ -937,6 +1011,9 @@ export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
+export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
+export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
+export type MemoryTableColumnType = z.infer<typeof MemoryTableColumnTypeSchema>;
 export type AutomationDraftStreamEvent = z.infer<typeof AutomationDraftStreamEventSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;

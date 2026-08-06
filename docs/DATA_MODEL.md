@@ -25,6 +25,7 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 
 - `automation_templates` and immutable `automation_template_versions` separate shared behavior from credentials.
 - `automation_subscriptions` pins one version and owns scope, principal, connector bindings, overrides, and schedule state.
+- `memory_scopes` owns durable work-stream, automation, user, and workspace memory authority. `memory_items` stores compact prose facts; `memory_tables`, `memory_table_columns`, `memory_table_rows`, and `memory_table_cells` store typed collections with natural-key deduplication and targeted queries. Automation template versions declare table schemas, while every subscription owns an independent materialized automation scope and shares it across its generated work streams.
 - `automation_runs.workstream_id` is unique, enforcing the one-run/one-work-stream contract.
 - The partial unique index on `(automation_subscription_id, planned_for)` converges early-open and alarm-driven scheduled-run creation.
 - `harness_runs` records each bounded model loop. `tool_invocations` is unique on `(harness_run_id, tool_call_id)` and stores input hashes plus side-effect state.

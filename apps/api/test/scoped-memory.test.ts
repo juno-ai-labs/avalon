@@ -11,6 +11,11 @@ import {
   processMemoryIndexOutbox,
   resolveMemoryAccess,
 } from "../src/services/memory-service";
+import {
+  buildAutomationMemoryTableStatements,
+  createMemoryTableTools,
+  loadAutomationMemoryTableContext,
+} from "../src/services/memory-table-service";
 
 const migrationsDirectory = new URL("../../../packages/db/migrations/", import.meta.url);
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
@@ -265,6 +270,12 @@ function memoryTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
   return tool;
 }
 
+function tableTool(env: Env, runInput: WorkstreamWorkflowInput, name: string) {
+  const tool = createMemoryTableTools(env, runInput).find((candidate) => candidate.definition.name === name);
+  if (!tool) throw new Error(`missing tool ${name}`);
+  return tool;
+}
+
 describe("scoped agent memory", () => {
   it("derives the complete scope union and never exposes search scope selectors", async () => {
     const { database, env } = fixture();
@@ -471,5 +482,221 @@ describe("scoped agent memory", () => {
     expect(() => database.prepare(
       "UPDATE harness_run_memory_contexts SET query_text = 'mutated' WHERE harness_run_id = ?",
     ).run(RUN_ONE)).toThrow(/harness_run_memory_context_immutable/u);
+  });
+
+  it("shares automation tables across runs and queries only matching projected rows", async () => {
+    const { env } = fixture();
+    const firstRun = input("workspace", 1);
+    const secondRun = input("workspace", 2);
+    const created = await tableTool(env, firstRun, "avalon.table_create").execute({
+      scopeKind: "automation",
+      name: "Seen blog entries",
+      description: "One row per blog entry discovered by this automation.",
+      usageInstructions: "Insert by canonical URL before reporting. Query only candidate URLs or pending rows.",
+      columns: [
+        { name: "itemKey", description: "Canonical URL", type: "url", required: true, searchable: false },
+        { name: "site", description: "Source site", type: "string", required: true, searchable: true },
+        { name: "title", description: "Entry title", type: "string", required: true, searchable: true },
+        { name: "firstSeenAt", description: "First discovery time", type: "datetime", required: true, searchable: false },
+        { name: "reported", description: "Whether delivery succeeded", type: "boolean", required: true, searchable: false },
+      ],
+      keyColumns: ["itemKey"],
+      rationale: "Deduplicate blog entries across automation runs",
+    }, toolContext(firstRun, "create-seen-entries"));
+    const memoryTableId = (created.output as { memoryTableId: string }).memoryTableId;
+
+    const insertArgs = {
+      memoryTableId,
+      rows: [
+        {
+          itemKey: "https://example.com/launch",
+          site: "Example",
+          title: "Launch notes",
+          firstSeenAt: "2026-08-01T12:00:00-07:00",
+          reported: false,
+        },
+        {
+          itemKey: "https://example.com/archive",
+          site: "Example",
+          title: "Archive update",
+          firstSeenAt: "2026-07-01T12:00:00-07:00",
+          reported: true,
+        },
+      ],
+      rationale: "Record fetched feed entries before reporting",
+    };
+    const inserted = await tableTool(env, firstRun, "avalon.table_insert_rows").execute(
+      insertArgs,
+      toolContext(firstRun, "insert-seen-entries"),
+    );
+    expect(inserted.output).toMatchObject({ insertedCount: 2, existingCount: 0 });
+    expect(await tableTool(env, firstRun, "avalon.table_insert_rows").execute(
+      insertArgs,
+      toolContext(firstRun, "insert-seen-entries"),
+    )).toEqual(inserted);
+
+    const discovered = await tableTool(env, secondRun, "avalon.table_search").execute(
+      { query: "blog entries" },
+      toolContext(secondRun, "search-table"),
+    );
+    expect(discovered.output).toMatchObject({
+      tables: [expect.objectContaining({ memoryTableId, scopeKind: "automation" })],
+    });
+
+    const queried = await tableTool(env, secondRun, "avalon.table_query").execute({
+      memoryTableId,
+      search: "launch",
+      filter: {
+        all: [
+          { column: "site", op: "eq", value: "example" },
+          { column: "firstSeenAt", op: "gte", value: "2026-08-01T00:00:00Z" },
+          { column: "reported", op: "eq", value: false },
+        ],
+      },
+      select: ["itemKey", "title"],
+      pageSize: 10,
+    }, toolContext(secondRun, "query-launch"));
+    expect(queried.output).toMatchObject({
+      memoryTableId,
+      rows: [{
+        revision: 1,
+        values: {
+          itemKey: "https://example.com/launch",
+          title: "Launch notes",
+        },
+      }],
+      nextCursor: null,
+    });
+
+    const launchRow = (queried.output as {
+      rows: Array<{ memoryTableRowId: string; revision: number }>;
+    }).rows[0]!;
+    await tableTool(env, secondRun, "avalon.table_update_rows").execute({
+      memoryTableId,
+      rows: [{
+        memoryTableRowId: launchRow.memoryTableRowId,
+        expectedRevision: 1,
+        values: { reported: true, title: "Launch notes revised" },
+      }],
+      rationale: "Delivery completed",
+    }, toolContext(secondRun, "mark-reported"));
+    await expect(tableTool(env, secondRun, "avalon.table_update_rows").execute({
+      memoryTableId,
+      rows: [{
+        memoryTableRowId: launchRow.memoryTableRowId,
+        expectedRevision: 1,
+        values: { reported: false },
+      }],
+      rationale: "Stale update",
+    }, toolContext(secondRun, "stale-update"))).rejects.toThrow("memory_table_row_revision_conflict");
+
+    const updated = await tableTool(env, firstRun, "avalon.table_query").execute({
+      memoryTableId,
+      filter: { column: "reported", op: "eq", value: true },
+      orderBy: [{ column: "firstSeenAt", direction: "desc" }],
+      select: ["title", "reported"],
+      pageSize: 1,
+    }, toolContext(firstRun, "query-reported"));
+    expect(updated.output).toMatchObject({
+      rows: [{ revision: 2, values: { title: "Launch notes revised", reported: true } }],
+    });
+    const nextCursor = (updated.output as { nextCursor: string | null }).nextCursor;
+    expect(nextCursor).toEqual(expect.any(String));
+    const nextPage = await tableTool(env, firstRun, "avalon.table_query").execute({
+      memoryTableId,
+      filter: { column: "reported", op: "eq", value: true },
+      orderBy: [{ column: "firstSeenAt", direction: "desc" }],
+      select: ["itemKey"],
+      pageSize: 1,
+      cursor: nextCursor,
+    }, toolContext(firstRun, "query-reported-page-two"));
+    const archiveRow = (nextPage.output as {
+      rows: Array<{ memoryTableRowId: string; revision: number }>;
+    }).rows[0]!;
+    await tableTool(env, firstRun, "avalon.table_invalidate_rows").execute({
+      memoryTableId,
+      rows: [{
+        memoryTableRowId: archiveRow.memoryTableRowId,
+        expectedRevision: archiveRow.revision,
+      }],
+      reason: "Remove a retired feed entry",
+    }, toolContext(firstRun, "invalidate-archive"));
+    await expect(tableTool(env, firstRun, "avalon.table_query").execute({
+      memoryTableId,
+      filter: { column: "reported", op: "eq", value: true },
+      pageSize: 1,
+      cursor: nextCursor,
+    }, toolContext(firstRun, "query-stale-cursor"))).rejects.toThrow("memory_table_cursor_stale");
+    expect(await tableTool(env, secondRun, "avalon.table_query").execute({
+      memoryTableId,
+      filter: { column: "itemKey", op: "eq", value: "https://example.com/archive" },
+      select: ["itemKey"],
+    }, toolContext(secondRun, "query-invalidated"))).toMatchObject({ output: { rows: [] } });
+  });
+
+  it("materializes draft-declared tables with stable runtime IDs and operating instructions", async () => {
+    const { env } = fixture();
+    const materialized = buildAutomationMemoryTableStatements(env, {
+      workspaceId: WORKSPACE_ID,
+      automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
+      createdByUserId: OWNER_ID,
+      createdAt: "2026-08-05T12:00:00.000Z",
+      definitions: [{
+        name: "Watch sources",
+        description: "One row per feed watched by the automation.",
+        usageInstructions: "Query active rows before fetching; update lastSuccessfulAccessAt only after parsing succeeds.",
+        columns: [
+          { name: "sourceKey", description: "Stable source key", type: "string", required: true, searchable: false },
+          { name: "feedUrl", description: "Verified feed URL", type: "url", required: true, searchable: false },
+          { name: "lastSuccessfulAccessAt", description: "Last successful parse", type: "datetime", required: false, searchable: false },
+        ],
+        keyColumns: ["sourceKey"],
+      }],
+    });
+    await env.DB.batch(materialized.statements);
+    const context = await loadAutomationMemoryTableContext(env, WORKSPACE_ID, AUTOMATION_SUBSCRIPTION_ID);
+    expect(context).toEqual([expect.objectContaining({
+      memoryTableId: materialized.tables[0]?.memoryTableId,
+      memoryScopeId: materialized.tables[0]?.memoryScopeId,
+      scopeKind: "automation",
+      name: "Watch sources",
+      keyColumns: ["sourceKey"],
+      usageInstructions: expect.stringContaining("only after parsing succeeds"),
+      columns: expect.arrayContaining([
+        expect.objectContaining({ name: "feedUrl", type: "url" }),
+      ]),
+    })]);
+  });
+
+  it("keeps structured tables scope-authorized and exposes no read scope selector", async () => {
+    const { env } = fixture();
+    const owner = input("owner");
+    const member = input("member");
+    const search = tableTool(env, owner, "avalon.table_search");
+    expect(Object.keys((search.definition.inputSchema as { properties: object }).properties)).toEqual(["query"]);
+    const query = tableTool(env, owner, "avalon.table_query");
+    expect(Object.keys((query.definition.inputSchema as { properties: object }).properties))
+      .not.toContain("scopes");
+    expect(query.definition.inputSchema).toMatchObject({
+      $defs: { filterNode: { anyOf: expect.any(Array) } },
+      properties: { filter: { $ref: "#/$defs/filterNode" } },
+    });
+    await expect(search.execute(
+      { query: "private ledger", scopes: ["user"] },
+      toolContext(owner, "table-search-with-scope"),
+    )).rejects.toThrow();
+    await tableTool(env, owner, "avalon.table_create").execute({
+      scopeKind: "user",
+      name: "Private ledger",
+      description: "Owner-only structured state.",
+      usageInstructions: "Use only for the owner's recurring work.",
+      columns: [{ name: "key", description: "Stable key", type: "string", required: true, searchable: true }],
+      keyColumns: ["key"],
+      rationale: "Keep owner state isolated",
+    }, toolContext(owner, "create-private-table"));
+    expect(await tableTool(env, member, "avalon.table_search").execute(
+      { query: "private ledger" },
+      toolContext(member, "member-table-search"),
+    )).toMatchObject({ output: { tables: [] } });
   });
 });
