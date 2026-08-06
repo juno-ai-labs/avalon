@@ -1,11 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUp, ChevronRight, LoaderCircle, Plus } from 'lucide-react';
+import { ChevronRight, Plus } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatRelative } from '../lib/format';
-import type { Message, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
-import { Avatar, AvatarStack, AvalonMark, Button, InlineError, Modal, StatusDot } from '../components/primitives';
+import { useFileAttachments } from '../lib/use-file-attachments';
+import type { Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { ComposerInput } from '../components/composer-input';
+import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot } from '../components/primitives';
+
+interface CreateWorkstreamInput {
+  attachmentIds: string[];
+  attachments: MessageAttachment[];
+  openingMessage: string;
+  participantIds: string[];
+}
 
 function WaitingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
   const summary = workstream.preview ?? workstream.objective ?? workstream.automationName;
@@ -73,10 +83,13 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const [message, setMessage] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
+  const attachmentDraft = useFileAttachments(api);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -99,8 +112,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   );
 
   const create = useMutation({
-    mutationFn: (input: { openingMessage: string; participantIds: string[] }) =>
-      api!.createWorkstream(input),
+    mutationFn: (input: CreateWorkstreamInput) =>
+      api!.createWorkstream({
+        openingMessage: input.openingMessage,
+        participantIds: input.participantIds,
+        ...(input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
+      }),
     onError: (_error, input) => {
       setMessage((current) => current.length > 0 ? current : input.openingMessage);
     },
@@ -134,6 +151,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         author: workspace.currentUser,
         messageType: 'text',
         text: input.openingMessage,
+        attachments: input.attachments,
         createdAt: created.createdAt,
       };
       queryClient.setQueryData(['workstream', created.workstream.id], detail);
@@ -142,18 +160,33 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+      attachmentDraft.consume();
       void navigate(`/workstreams/${created.workstream.id}`);
     },
   });
 
   const submit = (): void => {
     const openingMessage = message.trim();
-    if (!openingMessage || submittingRef.current) return;
+    const readyAttachments = attachmentDraft.ready;
+    if ((!openingMessage && readyAttachments.length === 0) || attachmentDraft.uploading || submittingRef.current) return;
     submittingRef.current = true;
     const participantIds = selectedMembers.map((member) => member.id);
     setMessage('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    create.mutate({ openingMessage, participantIds });
+    const createdAt = new Date().toISOString();
+    create.mutate({
+      attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
+      attachments: readyAttachments.map((attachment) => ({
+        id: attachment.resource!.id,
+        fileName: attachment.file.name,
+        mimeType: attachment.file.type || 'application/octet-stream',
+        sizeBytes: attachment.file.size,
+        contentAvailable: true,
+        createdAt,
+      })),
+      openingMessage,
+      participantIds,
+    });
   };
 
   const participants = [workspace.currentUser, ...selectedMembers];
@@ -199,34 +232,32 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           </button>
         </div>
 
-        <div className="hero-composer">
-          <textarea
-            aria-label="Opening work-stream message"
-            autoFocus
-            onChange={(event) => {
-              setMessage(event.target.value);
-              event.target.style.height = 'auto';
-              event.target.style.height = `${Math.min(event.target.scrollHeight, 220)}px`;
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-            placeholder="Describe a task or ask a question…"
-            ref={textareaRef}
-            rows={2}
-            value={message}
-          />
-          <div className="hero-composer-footer">
-            <span>Enter to create · Shift+Enter for a new line</span>
-            <button aria-label="Create work stream" disabled={!message.trim() || create.isPending || submittingRef.current} onClick={submit} type="button">
-              {create.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <ArrowUp aria-hidden="true" size={16} />}
-            </button>
-          </div>
-        </div>
-        {create.error && <InlineError>{create.error.message}</InlineError>}
+        <ComposerInput
+          api={api ?? undefined}
+          ariaLabel="Opening work-stream message"
+          attachments={attachmentDraft.attachments}
+          autoFocus
+          className="hero-composer"
+          error={create.error?.message ?? attachmentDraft.error}
+          fileInputRef={fileInputRef}
+          footerHint="Enter to create · Shift+Enter for a new line"
+          maxHeight={220}
+          onAttach={attachmentDraft.addFiles}
+          onMention={() => setPickerOpen(true)}
+          onOpenAttachment={setAttachmentPreview}
+          onRemoveAttachment={attachmentDraft.removeAttachment}
+          onRetryAttachment={attachmentDraft.retryAttachment}
+          onSubmit={submit}
+          onValueChange={setMessage}
+          placeholder="Describe a task or ask a question…"
+          ref={textareaRef}
+          rows={2}
+          submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || create.isPending || submittingRef.current}
+          submitLabel="Create work stream"
+          submitting={create.isPending}
+          uploading={attachmentDraft.uploading}
+          value={message}
+        />
         {members.error && <p className="muted-notice">People could not be loaded. You can still create this work stream with yourself.</p>}
       </section>
 
@@ -244,6 +275,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         open={pickerOpen}
         selected={selectedIds}
       />
+      <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
   );
 }

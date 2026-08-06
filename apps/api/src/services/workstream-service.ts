@@ -255,6 +255,8 @@ export class WorkstreamService {
 
   async create(input: CreateWorkstreamInput) {
     await this.assertMembersExist(input.participantUserIds);
+    const attachmentIds = [...new Set(input.attachmentIds)];
+    await this.assertDraftAttachments(attachmentIds);
     const title = input.title ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
     const workstreamId = newId();
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
@@ -275,6 +277,7 @@ export class WorkstreamService {
       openingMessage: input.openingMessage,
       clientMessageId: input.clientMessageId,
       participantUserIds: input.participantUserIds,
+      attachmentIds,
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);

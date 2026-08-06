@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   ArrowLeft,
-  ArrowUp,
+  AtSign,
   CalendarClock,
   Check,
   ChevronRight,
@@ -19,6 +19,8 @@ import {
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
+import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { ComposerInput } from '../components/composer-input';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
@@ -32,6 +34,7 @@ import {
 } from '../lib/elicitation';
 import { desktopBridge } from '../lib/platform';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
+import { useFileAttachments } from '../lib/use-file-attachments';
 import type {
   AutomationDraftQuestion,
   AutomationDraftResponse,
@@ -50,6 +53,8 @@ const AUTOMATION_USER = {
 };
 
 interface AutomationCompilePayload {
+  attachmentIds: string[];
+  attachmentLocalIds: string[];
   message: string;
   templateId?: string;
   turnId: string;
@@ -311,7 +316,10 @@ export function NewAutomationScreen(): React.JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState('');
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
   const [streamingAssistant, setStreamingAssistant] = useState<{ hasText: boolean; text: string }>({
@@ -323,6 +331,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [slackDeliveryConnectionId, setSlackDeliveryConnectionId] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+  const attachmentDraft = useFileAttachments(api);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -337,6 +346,33 @@ export function NewAutomationScreen(): React.JSX.Element {
     enabled: Boolean(api),
     staleTime: 10_000,
   });
+  const visibleMentionConnections = mentionQuery === null
+    ? []
+    : (connections.data ?? [])
+      .filter((connection) => connection.displayName.toLowerCase().includes(mentionQuery.toLowerCase()))
+      .slice(0, 8);
+
+  const updateInput = (value: string): void => {
+    setInput(value);
+    setMentionQuery(value.match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null);
+  };
+
+  const beginConnectionMention = (): void => {
+    setInput((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    setMentionQuery('');
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      textarea?.focus();
+      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+  };
+
+  const insertConnectionMention = (connection: WorkstreamConnection): void => {
+    const atIndex = input.lastIndexOf('@');
+    setInput(`${input.slice(0, atIndex)}@${connection.displayName} `);
+    setMentionQuery(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
 
   useEffect(() => {
     const summary = draft?.summary;
@@ -370,6 +406,7 @@ export function NewAutomationScreen(): React.JSX.Element {
         message: payload.message,
         ...(draft?.draftId ? { draftId: draft.draftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
+        ...(payload.attachmentIds.length > 0 ? { attachmentIds: payload.attachmentIds } : {}),
       }, (event) => {
         if (event.type === 'started') {
           setStreamingAssistant({ hasText: false, text: '' });
@@ -442,8 +479,10 @@ export function NewAutomationScreen(): React.JSX.Element {
           : [...updated, automationTextMessage(payload.turnId, 'human', payload.message)];
       });
       setInput('');
+      setMentionQuery(null);
     },
     onSuccess: (response, payload) => {
+      for (const localId of payload.attachmentLocalIds) attachmentDraft.removeAttachment(localId);
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
       const responseMessage = response.question
@@ -486,9 +525,16 @@ export function NewAutomationScreen(): React.JSX.Element {
     turnId: string = crypto.randomUUID(),
     elicitation?: AutomationCompilePayload['elicitation'],
   ): Promise<void> => {
-    const trimmed = message.trim();
-    if (!trimmed || compile.isPending) return;
-    await compile.mutateAsync({ message: trimmed, turnId, ...(elicitation ? { elicitation } : {}) });
+    const readyAttachments = attachmentDraft.ready;
+    const trimmed = message.trim() || (readyAttachments.length > 0 ? 'Create an automation based on the attached files.' : '');
+    if (!trimmed || attachmentDraft.uploading || compile.isPending) return;
+    await compile.mutateAsync({
+      attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
+      attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
+      message: trimmed,
+      turnId,
+      ...(elicitation ? { elicitation } : {}),
+    });
   };
 
   const submit = (message = input): void => {
@@ -525,6 +571,7 @@ export function NewAutomationScreen(): React.JSX.Element {
           <TemplateBrowser
             onBack={() => setTemplatesOpen(false)}
             onSelect={(template) => {
+              for (const attachment of attachmentDraft.attachments) attachmentDraft.removeAttachment(attachment.localId);
               setTemplatesOpen(false);
               setDefaultPluginIds([]);
               setSelectedTemplate(template);
@@ -609,29 +656,43 @@ export function NewAutomationScreen(): React.JSX.Element {
 
             {!selectedTemplate && (
               <div className="automation-composer-wrap">
-                <div className="automation-composer">
-                  <textarea
-                    aria-label={draft?.question?.prompt ?? 'Describe an automation'}
-                    onChange={(event) => setInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        submit();
-                      }
-                    }}
-                    placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}
-                    ref={textareaRef}
-                    rows={1}
-                    value={input}
-                  />
-                  <button aria-label="Send" disabled={!input.trim() || compile.isPending} onClick={() => submit()} type="button">
-                    {compile.isPending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
-                  </button>
-                </div>
-                {(compile.error || create.error || connections.error) && (
+                {visibleMentionConnections.length > 0 && (
+                  <div className="mention-popover" role="listbox" aria-label="Connections">
+                    {visibleMentionConnections.map((connection) => (
+                      <button key={connection.id} onClick={() => insertConnectionMention(connection)} role="option" type="button">
+                        <span className="mention-icon"><AtSign size={14} /></span>
+                        <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Your connection' : 'Workspace connection'}</small></span>
+                        <Badge>Connection</Badge>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <ComposerInput
+                  api={api ?? undefined}
+                  ariaLabel={draft?.question?.prompt ?? 'Describe an automation'}
+                  attachments={attachmentDraft.attachments}
+                  className="automation-composer"
+                  fileInputRef={fileInputRef}
+                  mentionLabel="Mention a connection"
+                  onAttach={attachmentDraft.addFiles}
+                  onMention={beginConnectionMention}
+                  onOpenAttachment={setAttachmentPreview}
+                  onRemoveAttachment={attachmentDraft.removeAttachment}
+                  onRetryAttachment={attachmentDraft.retryAttachment}
+                  onSubmit={() => submitAsync().catch(() => undefined)}
+                  onValueChange={updateInput}
+                  placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}
+                  ref={textareaRef}
+                  submitDisabled={attachmentDraft.uploading || (!input.trim() && attachmentDraft.ready.length === 0) || compile.isPending}
+                  submitLabel="Send"
+                  submitting={compile.isPending}
+                  uploading={attachmentDraft.uploading}
+                  value={input}
+                />
+                {(compile.error || create.error || connections.error || attachmentDraft.error) && (
                   <div className="automation-error-actions">
                     <InlineError>
-                      {compile.error?.message ?? create.error?.message ?? connections.error?.message}
+                      {compile.error?.message ?? create.error?.message ?? connections.error?.message ?? attachmentDraft.error}
                       {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
                     </InlineError>
                     {compile.error && compile.variables?.message && <Button onClick={() => compile.mutate(compile.variables!)}>Retry</Button>}
@@ -650,6 +711,7 @@ export function NewAutomationScreen(): React.JSX.Element {
           </>
         )}
       </div>
+      <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
   );
 }

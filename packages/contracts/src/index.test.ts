@@ -7,6 +7,7 @@ import {
   ClientSocketEventSchema,
   CompileAutomationRequestSchema,
   CreateAutomationRequestSchema,
+  CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
@@ -57,6 +58,24 @@ describe("boundary contracts", () => {
     });
   });
 
+  it("allows a new work stream to start with text, attachments, or both", () => {
+    const base = {
+      clientMessageId: id,
+      objective: "Review the attached files",
+      participantUserIds: [],
+    };
+    expect(CreateWorkstreamRequestSchema.parse({
+      ...base,
+      openingMessage: "",
+      attachmentIds: [id],
+    }).attachmentIds).toEqual([id]);
+    expect(CreateWorkstreamRequestSchema.safeParse({
+      ...base,
+      openingMessage: "",
+      attachmentIds: [],
+    }).success).toBe(false);
+  });
+
   it("defaults inference logging off and accepts only explicit workspace preference updates", () => {
     expect(WorkspaceSchema.parse({
       id,
@@ -92,10 +111,12 @@ describe("boundary contracts", () => {
     })).toMatchObject({
       draftId: id,
       currentDraft: null,
+      attachmentIds: [],
     });
     expect(CompileAutomationRequestSchema.parse({
       messages: [{ role: "user", content: "Check the blog every day." }],
-    })).toMatchObject({ currentDraft: null });
+      attachmentIds: [id],
+    })).toMatchObject({ currentDraft: null, attachmentIds: [id] });
   });
 
   it("exposes stable member-safe harness failure codes", () => {
