@@ -101,8 +101,15 @@ export const messageSchema = z
     id: z.string(),
     workstreamId: z.string(),
     sequenceNumber: z.number(),
-    authorType: z.enum(['human', 'agent', 'system']),
+    authorType: z.enum(['human', 'external', 'agent', 'system']),
     author: workspaceMemberSchema.optional(),
+    externalActor: z.object({
+      provider: z.string(),
+      providerAccountId: z.string(),
+      providerUserId: z.string(),
+      displayName: z.string(),
+      avatarUrl: z.string().nullable(),
+    }).optional(),
     messageType: z.enum([
       'text',
       'tool_event',

@@ -12,6 +12,7 @@ import {
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
+  MessageSchema,
   MentionSchema,
   RefreshRequestSchema,
   ServerSocketEventSchema,
@@ -24,6 +25,38 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("represents provider members as external actors without manufacturing Avalon users", () => {
+    const message = MessageSchema.parse({
+      id,
+      clientMessageId: "slack:event:1",
+      workspaceId: id,
+      workstreamId: id,
+      author: {
+        type: "external",
+        actor: {
+          provider: "slack",
+          providerAccountId: "T123",
+          providerUserId: "U456",
+          displayName: "Taylor",
+          avatarUrl: null,
+        },
+      },
+      messageType: "text",
+      textContent: "Investigate this",
+      structuredContent: null,
+      mentions: [],
+      attachments: [],
+      sequenceNumber: 1,
+      createdAt: "2026-08-06T00:00:00.000Z",
+      editedAt: null,
+    });
+
+    expect(message.author).toMatchObject({
+      type: "external",
+      actor: { provider: "slack", providerUserId: "U456" },
+    });
+  });
+
   it("defaults inference logging off and accepts only explicit workspace preference updates", () => {
     expect(WorkspaceSchema.parse({
       id,

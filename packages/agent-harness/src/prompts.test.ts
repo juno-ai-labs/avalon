@@ -87,7 +87,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "fb5b981dac33d3d5d9a0e8f6859d4a14c0143a6a8407c2f33bb0f9cfd11569bd",
+        hash: "173983840ea59a63c5441a1b49d791944909480f7b5a9eb767b23a8607ebc081",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -95,7 +95,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "1f263d304684f742f3992c69481413e1ee7e73f3f53a3373b15eeaea51e42965",
+        hash: "a73d6bb394d773908ee8ecbd2382fceb12e3d44638d99dc141ebd6adc23646ca",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -250,6 +250,21 @@ describe("prompt renderers", () => {
 
     expect(prompt).toContain("[@Display Name](person:<person-id>)");
     expect(prompt).toContain("target ID, not the visible label");
+  });
+
+  it("keeps workspace authority separate from external actor attribution and personal connectors", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Investigate from Slack",
+      objective: "Investigate the incident reported in Slack.",
+      executionAuthority: "workspace",
+    });
+
+    expect(prompt).toContain("authorized by the Avalon workspace");
+    expect(prompt).toContain("not by the Slack member");
+    expect(prompt).toContain("not by the person who installed the Slack app");
+    expect(prompt).toContain("Use only shared workspace-scoped connections");
+    expect(prompt).toContain("request structured input");
+    expect(prompt).toContain('"executionAuthority": "workspace"');
   });
 
   it("keeps fixed prompt overhead bounded", () => {

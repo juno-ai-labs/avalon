@@ -6,8 +6,8 @@
   "display_information": {
     "name": "Avalon",
     "description": "A durable AI agent for cross-app work and personal automations.",
-    "long_description": "Avalon is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. Avalon keeps the task's own work history in Avalon, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Avalon Agent DM. Avalon does not scrape or mirror Slack workspaces. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
-    "background_color": "#111827"
+    "long_description": "Avalon is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. Slack members can start workspace-authorized tasks without linking an Avalon account; those tasks use only shared workspace connections and remain attributed to the initiating Slack identity. Linking is required to claim personal authority or use personal connectors. Avalon keeps the task's own work history in Avalon, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Avalon Agent DM. Avalon does not scrape or mirror Slack workspaces. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
+    "background_color": "#1B2400"
   },
   "features": {
     "agent_view": {

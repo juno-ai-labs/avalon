@@ -275,6 +275,32 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
+  it('preserves externally attributed Slack actors in renderer messages', () => {
+    expect(mapMessage({
+      ...message,
+      author: {
+        type: 'external' as const,
+        actor: {
+          provider: 'slack',
+          providerAccountId: 'T123',
+          providerUserId: 'U456',
+          displayName: 'Taylor',
+          avatarUrl: 'https://example.com/taylor.png',
+        },
+      },
+      textContent: 'Investigate this incident',
+    })).toMatchObject({
+      authorType: 'external',
+      externalActor: {
+        provider: 'slack',
+        providerAccountId: 'T123',
+        providerUserId: 'U456',
+        displayName: 'Taylor',
+      },
+      text: 'Investigate this incident',
+    });
+  });
+
   it('lists searchable connector resources with an opaque pagination cursor', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
