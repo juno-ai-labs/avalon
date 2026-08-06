@@ -198,6 +198,42 @@ describe('Workspace settings', () => {
     ));
   });
 
+  it('offers one Slack card with personal MCP and workspace Agent authorization', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const slackCard = (await screen.findByText('Slack')).closest('article');
+    expect(slackCard).not.toBeNull();
+    expect(screen.queryByText('Slack knowledge')).not.toBeInTheDocument();
+    expect(screen.queryByText('Slack actions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Avalon Agent for Slack')).not.toBeInTheDocument();
+
+    fireEvent.click(within(slackCard!).getByRole('button', { name: 'Connect for me' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'slack',
+      'you',
+      [
+        'slack.search',
+        'slack.messages.read',
+        'slack.files.read',
+        'slack.users.read',
+        'slack.messages.write',
+        'slack.conversations.write',
+        'slack.reactions.write',
+        'slack.canvases.read',
+        'slack.canvases.write',
+      ],
+    ));
+
+    await waitFor(() => expect(within(slackCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(slackCard!).getByRole('button', { name: 'Connect workspace' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
+      'slack',
+      'workspace',
+      ['slack.agent', 'slack.notifications.write'],
+    ));
+  });
+
   it.each(['healthy', 'reconnect_required'] as const)(
     'disables duplicate workspace authorization for an existing %s Linear installation',
     async (status) => {
