@@ -37,7 +37,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
-import { createElicitationMessage } from './transcript';
+import { createElicitationMessage, upsertTranscriptMessage } from './transcript';
 import type {
   ActivitySuggestionData,
   ArtifactData,
@@ -339,9 +339,9 @@ export function mapMessage(message: WireMessage): Message {
       ? 'activity_suggestion'
       : message.messageType;
   return {
-    // The open question arrives as a realtime-only block while its durable
-    // answer is later stored as a message. Give both representations one UI
-    // identity so the answer replaces the open card instead of duplicating it.
+    // The durable open question and its later durable answer are separate
+    // transcript rows. Give both representations one UI identity;
+    // messagesWithTransientBlocks collapses that identity to the answer.
     id: elicitation.success ? elicitationMessageId(elicitation.data.id) : message.id,
     ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
@@ -416,10 +416,19 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 }
 
 export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
-  let sequence = mapped.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
-  const mappedIds = new Set(mapped.map((message) => message.id));
+  // Both the question and its durable human response remain separate rows in
+  // the model transcript. mapMessage intentionally gives those rows one UI
+  // identity, so collapse the canonical page before React and the virtualizer
+  // see duplicate keys. Message pages are ordered by sequence, which makes the
+  // later answered response replace the earlier open question.
+  const canonicalMessages = mapped.reduce<Message[]>(
+    (messages, message) => upsertTranscriptMessage(messages, message),
+    [],
+  );
+  let sequence = canonicalMessages.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
+  const canonicalIds = new Set(canonicalMessages.map((message) => message.id));
   const elicitationMessages = (detail.openElicitations ?? [])
-    .filter((elicitation) => !mappedIds.has(elicitationMessageId(elicitation.id)))
+    .filter((elicitation) => !canonicalIds.has(elicitationMessageId(elicitation.id)))
     .map((elicitation) => createElicitationMessage({
     id: elicitationMessageId(elicitation.id),
     workstreamId: detail.id,
@@ -437,7 +446,7 @@ export function messagesWithTransientBlocks(mapped: Message[], detail: Workstrea
     createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
     activitySuggestion: suggestion,
   }));
-  return [...mapped, ...elicitationMessages, ...suggestionMessages];
+  return [...canonicalMessages, ...elicitationMessages, ...suggestionMessages];
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
