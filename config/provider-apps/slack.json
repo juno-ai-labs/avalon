@@ -110,7 +110,8 @@
         "chat:write"
       ]
     },
-    "token_management_enabled": true
+    "token_management_enabled": true,
+    "pkce_enabled": true
   },
   "settings": {
     "event_subscriptions": {
