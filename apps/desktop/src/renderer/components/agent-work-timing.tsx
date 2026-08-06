@@ -25,27 +25,31 @@ export function AgentWorkTiming({
     return () => window.clearInterval(timer);
   }, [active, startedAt]);
 
-  const activeDuration = active && startedAt !== undefined
+  const running = active && startedAt !== undefined;
+  const activeDuration = running
     ? Math.max(0, now - startedAt)
     : 0;
   const verb = active ? 'working' : 'worked';
   const label = `${verb} for ${formatDuration(durationMs + activeDuration) ?? '0ms'}`;
+  const accessibleLabel = active ? 'Avalon is working' : label;
 
   return (
     <div
-      aria-label={label}
-      aria-live={active ? 'off' : 'polite'}
-      className={clsx('agent-work-timing', active && 'agent-work-timing-active')}
+      aria-atomic="true"
+      aria-label={accessibleLabel}
+      aria-live="polite"
+      className={clsx('agent-work-timing', running && 'agent-work-timing-active')}
+      role="status"
     >
       <ThinkingOrb
         aria-hidden="true"
         className="agent-work-timing-orb"
-        paused={!active}
+        paused={!running}
         size={20}
         state="solving"
         theme="dark"
       />
-      <span className="agent-work-timing-label">{label}</span>
+      <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
     </div>
   );
 }

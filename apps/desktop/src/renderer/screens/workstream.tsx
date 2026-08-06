@@ -42,7 +42,7 @@ import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
-import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, StatusDot } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -68,7 +68,7 @@ export function workstreamRunTiming(
   run: HarnessRunMetadata | undefined,
   now = Date.now(),
 ): AgentWorkTimingProps | null {
-  if (!run || status === 'scheduled') return null;
+  if (!run || status === 'scheduled' || status === 'needs_input') return null;
   const startedAt = Date.parse(run.startedAt ?? run.createdAt);
   if (!Number.isFinite(startedAt)) return null;
   if (status === 'running') return { active: true, durationMs: 0, startedAt };
@@ -691,7 +691,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   }, [atBottom, transcript, transcriptVirtualizer]);
 
   if (workstream.isLoading || messages.isLoading) {
-    return <LoadingState label="Opening work stream…" orbSize={64} orbState="connecting" />;
+    return <OpeningState label="Opening work stream…" />;
   }
   if (workstream.error || messages.error || !workstream.data) {
     return (
