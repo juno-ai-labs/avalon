@@ -1144,7 +1144,7 @@ export class AvalonApi {
         Accept: 'text/event-stream',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ messages, currentDraft: previous.draft }),
+      body: JSON.stringify({ draftId, messages, currentDraft: previous.draft }),
     });
     if (!response.ok) return this.throwResponseError(response);
     const streamState: {

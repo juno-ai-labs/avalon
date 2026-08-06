@@ -219,10 +219,11 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
     const streamed: unknown[] = [];
 
-    await expect(api.compileAutomation(
+    const result = await api.compileAutomation(
       { message: 'Check this blog every 24 hours.' },
       (event) => streamed.push(event),
-    )).resolves.toMatchObject({
+    );
+    expect(result).toMatchObject({
       assistantMessage: 'Which blog should I monitor?',
       question: {
         prompt: 'Paste the full blog URL.',
@@ -234,6 +235,11 @@ describe('Avalon API wire adapter', () => {
     const request = fetchMock.mock.calls[0]!;
     expect(String(request[0])).toBe('https://api.avalon.test/automations/draft/stream');
     expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');
+    expect(JSON.parse(String(request[1]?.body))).toMatchObject({
+      draftId: result.draftId,
+      messages: [{ role: 'user', content: 'Check this blog every 24 hours.' }],
+      currentDraft: null,
+    });
   });
 
   it('maps representative work-stream and message wire records into renderer models', () => {
