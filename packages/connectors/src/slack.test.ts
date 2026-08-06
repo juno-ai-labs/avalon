@@ -272,6 +272,16 @@ describe("Slack connector", () => {
           profile: { email: "ada@example.com" },
         },
       });
+      if (url.pathname.endsWith("users.info")) return json({
+        ok: true,
+        user: {
+          id: "UADA",
+          team_id: "TACME",
+          deleted: false,
+          is_bot: false,
+          profile: { display_name: "Ada", email: "ada@example.com" },
+        },
+      });
       return json({ ok: true, plan: 42 });
     });
 
@@ -286,6 +296,11 @@ describe("Slack connector", () => {
       email: "ada@example.com",
     }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
       user: { id: "UADA", team_id: "TACME", deleted: false },
+    });
+    await expect(slackApi("xoxb", "users.info", {
+      user: "UADA",
+    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+      user: { id: "UADA", team_id: "TACME", profile: { email: "ada@example.com" } },
     });
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "not-an-email",

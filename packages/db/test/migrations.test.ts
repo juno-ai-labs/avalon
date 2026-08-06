@@ -211,6 +211,83 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("migrates Slack sessions and permits workspace-owned externally attributed work streams", () => {
+    const database = migrateDatabaseThrough("0040_realtime_transcription_admission.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-slack', 'google-slack', 'slack@example.com', 'Slack Member', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-slack', 'Slack', 'slack-workspace', 'global',
+              'user-slack', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, status, cursor_json, config_json,
+         created_at, updated_at, model_plugin_id)
+      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+              'Slack workspace', '[]', 'healthy', '{}', '{}',
+              '2026-01-01', '2026-01-01', 'plugin_slack_workspace');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-linked', 'workspace-slack', 'Linked', 'Existing linked task',
+              'ad_hoc', 'user-slack', 'completed', 2,
+              '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
+         slack_channel_id, slack_thread_ts, workstream_id, context_json, created_at, updated_at)
+      VALUES ('session-linked', 'workspace-slack', 'connection-slack', 'user-slack',
+              'T123', 'U123', 'D123', '1.0', 'workstream-linked', '{}',
+              '2026-01-01', '2026-01-01');
+    `);
+    database.exec(readFileSync(
+      new URL("../migrations/0041_slack_workspace_workstreams.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      `SELECT linked_user_id, execution_scope, assigned_user_id, assignment_method
+       FROM slack_agent_sessions WHERE id = 'session-linked'`,
+    ).get()).toEqual({
+      linked_user_id: "user-slack",
+      execution_scope: "user",
+      assigned_user_id: "user-slack",
+      assignment_method: "explicit_link",
+    });
+    expect(database.prepare(
+      "SELECT public_channel_mode, private_channel_mode FROM slack_agent_policies WHERE connection_id = 'connection-slack'",
+    ).get()).toEqual({ public_channel_mode: "all_invited", private_channel_mode: "disabled" });
+
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-ownerless', 'workspace-slack', 'Ownerless', 'Workspace task',
+              'ad_hoc', NULL, 'running', 2,
+              '2026-02-01', '2026-02-01', '2026-02-01');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, author_user_id, message_type,
+         text_content, sequence_number, external_actor_json, created_at)
+      VALUES ('message-external', 'workspace-slack', 'workstream-ownerless', 'system', NULL,
+              'text', 'Investigate this', 1,
+              '{"provider":"slack","providerAccountId":"T123","providerUserId":"U999","displayName":"External Member","avatarUrl":null}',
+              '2026-02-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-ownerless', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+              'T123', 'U999', 'C123', '2.0', 'event:ownerless', 'workstream-ownerless',
+              'app_mention', 'public', '{}', '2026-02-01', '2026-02-01');
+    `);
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-ownerless'",
+    ).get()).toEqual({ created_by_user_id: null });
+    database.close();
+  });
+
   it("applies the development seed after every migration", () => {
     const database = migrateFreshDatabase();
     database.exec(readFileSync(new URL("../seed.sql", import.meta.url), "utf8"));

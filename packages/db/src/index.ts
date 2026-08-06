@@ -1,5 +1,7 @@
+import { ExternalActorSchema } from "@avalon/contracts";
 import type {
   AutomationSummary,
+  ExternalActor,
   HarnessStatus,
   Message,
   Scope,
@@ -92,8 +94,13 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
 
 function toMessage(row: Record<string, unknown>): Message {
   const authorType = String(row.author_type);
+  const externalActor = ExternalActorSchema.safeParse(
+    parseJson<unknown>(row.external_actor_json, null),
+  );
   const author =
-    authorType === "human"
+    externalActor.success
+      ? { type: "external" as const, actor: externalActor.data }
+      : authorType === "human"
       ? {
           type: "human" as const,
           user: {
@@ -143,7 +150,10 @@ export interface CreateWorkstreamInput {
   title: string;
   objective: string;
   emailAddress: string;
-  creatorUserId: string;
+  creatorUserId: string | null;
+  openingAuthor:
+    | { type: "human"; userId: string }
+    | { type: "external"; actor: ExternalActor };
   openingMessage: string;
   clientMessageId: string;
   participantUserIds: string[];
@@ -157,6 +167,16 @@ export interface CreateMessageInput {
   clientMessageId: string;
   mentions: Array<Record<string, unknown>>;
   attachmentIds?: string[];
+}
+
+export interface CreateExternalMessageInput {
+  workspaceId: string;
+  workstreamId: string;
+  actor: ExternalActor;
+  text: string;
+  clientMessageId: string;
+  structuredContent?: Record<string, unknown> | null;
+  messageType?: "text" | "elicitation";
 }
 
 export function createDatabase(db: D1DatabaseLike) {
@@ -197,7 +217,16 @@ export function createDatabase(db: D1DatabaseLike) {
       const workstreamId = input.id ?? newId();
       const messageId = newId();
       const at = nowIso();
-      const uniqueParticipants = [...new Set([input.creatorUserId, ...input.participantUserIds])];
+      const uniqueParticipants = [...new Set([
+        ...(input.creatorUserId ? [input.creatorUserId] : []),
+        ...input.participantUserIds,
+      ])];
+      const openingAuthorUserId = input.openingAuthor.type === "human"
+        ? input.openingAuthor.userId
+        : null;
+      const externalActorJson = input.openingAuthor.type === "external"
+        ? JSON.stringify(ExternalActorSchema.parse(input.openingAuthor.actor))
+        : null;
       const statements = [
         db
           .prepare(
@@ -221,26 +250,30 @@ export function createDatabase(db: D1DatabaseLike) {
           .prepare(
             `INSERT INTO messages
              (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-              message_type, text_content, sequence_number, created_at)
-             VALUES (?, ?, ?, ?, 'human', ?, 'text', ?, 1, ?)`
+              message_type, text_content, sequence_number, created_at, external_actor_json)
+             VALUES (?, ?, ?, ?, ?, ?, 'text', ?, 1, ?, ?)`
           )
           .bind(
             messageId,
             input.clientMessageId,
             input.workspaceId,
             workstreamId,
-            input.creatorUserId,
+            input.openingAuthor.type === "human" ? "human" : "system",
+            openingAuthorUserId,
             input.openingMessage,
-            at
+            at,
+            externalActorJson,
           ),
-        db
-          .prepare(
-            `INSERT INTO workstream_read_states
-             (workspace_id, workstream_id, user_id, read_through_sequence_number,
-              manual_unread_from_sequence_number, manual_unread_generation, updated_at)
-             VALUES (?, ?, ?, 1, NULL, 0, ?)`
-          )
-          .bind(input.workspaceId, workstreamId, input.creatorUserId, at),
+        ...(input.creatorUserId ? [
+          db
+            .prepare(
+              `INSERT INTO workstream_read_states
+               (workspace_id, workstream_id, user_id, read_through_sequence_number,
+                manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+               VALUES (?, ?, ?, 1, NULL, 0, ?)`
+            )
+            .bind(input.workspaceId, workstreamId, input.creatorUserId, at),
+        ] : []),
         ...uniqueParticipants.map((userId) =>
           db
             .prepare(
@@ -252,7 +285,7 @@ export function createDatabase(db: D1DatabaseLike) {
               workstreamId,
               userId,
               input.creatorUserId,
-              userId === input.creatorUserId ? "creator" : "explicit",
+              input.creatorUserId === userId ? "creator" : "explicit",
               at
             )
         )
@@ -264,6 +297,89 @@ export function createDatabase(db: D1DatabaseLike) {
       const created = await workstreams.get(input.workspaceId, workstreamId);
       if (!created) throw new RepositoryError("database_error", "Created work stream was not readable");
       return { workstream: created, messageId };
+    },
+
+    async getMessageByClientId(
+      workspaceId: string,
+      workstreamId: string,
+      clientMessageId: string,
+    ): Promise<Message | null> {
+      const row = await db.prepare(
+        `SELECT m.*, u.email AS author_email, u.name AS author_name,
+           u.avatar_url AS author_avatar_url, u.timezone AS author_timezone,
+           u.created_at AS author_created_at,
+           COALESCE((SELECT json_group_array(json_object(
+             'type', mm.mention_type,
+             'userId', mm.mentioned_user_id,
+             'connectorType', mm.connector_type,
+             'displayName', mentioned_person.name,
+             'avatarUrl', mentioned_person.avatar_url,
+             'startOffset', mm.start_offset,
+             'endOffset', mm.end_offset
+           )) FROM message_mentions mm
+             LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
+             WHERE mm.message_id = m.id), '[]') AS mentions_json,
+           COALESCE((SELECT json_group_array(json_object(
+             'id', attachment_resource.id,
+             'fileName', attachment_resource.title,
+             'mimeType', COALESCE(attachment_resource.mime_type, 'application/octet-stream'),
+             'sizeBytes', COALESCE(json_extract(attachment_resource.metadata_json, '$.size'), 0),
+             'contentAvailable', CASE WHEN attachment_resource.content_ref IS NULL THEN 0 ELSE 1 END,
+             'createdAt', attachment_resource.created_at
+           )) FROM message_attachments ma
+             JOIN resources attachment_resource ON attachment_resource.id = ma.resource_id
+             WHERE ma.message_id = m.id ORDER BY ma.position), '[]') AS attachments_json
+         FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
+         WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.client_message_id = ?`,
+      ).bind(workspaceId, workstreamId, clientMessageId).first<Record<string, unknown>>();
+      return row ? toMessage(row) : null;
+    },
+
+    async createExternalMessage(input: CreateExternalMessageInput): Promise<{ message: Message; inserted: boolean }> {
+      const existing = await this.getMessageByClientId(
+        input.workspaceId,
+        input.workstreamId,
+        input.clientMessageId,
+      );
+      if (existing) return { message: existing, inserted: false };
+      const messageId = newId();
+      const at = nowIso();
+      const results = await db.batch([
+        db.prepare(
+          `INSERT INTO messages
+           (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+            message_type, text_content, structured_content_json, sequence_number, created_at,
+            external_actor_json)
+           SELECT ?, ?, ?, w.id, 'system', NULL, ?, ?, ?, w.next_sequence_number, ?, ?
+           FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
+           ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+        ).bind(
+          messageId,
+          input.clientMessageId,
+          input.workspaceId,
+          input.messageType ?? "text",
+          input.text,
+          input.structuredContent == null ? null : JSON.stringify(input.structuredContent),
+          at,
+          JSON.stringify(ExternalActorSchema.parse(input.actor)),
+          input.workstreamId,
+          input.workspaceId,
+        ),
+        db.prepare(
+          `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
+             latest_attention_sequence_number = next_sequence_number,
+             last_activity_at = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ?
+             AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
+        ).bind(at, at, input.workstreamId, input.workspaceId, messageId),
+      ]);
+      const message = await this.getMessageByClientId(
+        input.workspaceId,
+        input.workstreamId,
+        input.clientMessageId,
+      );
+      if (!message) throw new RepositoryError("database_error", "Could not store external message");
+      return { message, inserted: Number(results[0]?.meta?.changes ?? 0) > 0 };
     },
 
     async addParticipant(

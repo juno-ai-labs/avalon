@@ -101,7 +101,7 @@ import {
 } from "./memory-table-service";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
-const WORKSTREAM_PROMPT_VERSION = "workstream-v5-structured-memory";
+const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
 const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
@@ -657,7 +657,19 @@ async function projectModelProtocolTranscript(
       issues.push({ kind: "empty_ui_message_omitted", healed: true });
       continue;
     }
-    if (message.author.type === "human") {
+    if (message.author.type === "external") {
+      const actor = message.author.actor;
+      projected.push({
+        role: "user",
+        content: [
+          `EXTERNALLY ATTRIBUTED ${actor.provider.toLocaleUpperCase()} WORKSPACE MEMBER REQUEST`,
+          `Display name: ${actor.displayName}`,
+          `Provider member ID: ${actor.providerUserId}`,
+          content,
+        ].join("\n"),
+      });
+    }
+    else if (message.author.type === "human") {
       if (message.attachments.length > 0 && message.id === input.triggerMessageId) {
         const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
           id: attachment.id,
@@ -2820,6 +2832,7 @@ async function loadRunPromptContext(
     systemPrompt: renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
+      executionAuthority: input.executionPrincipal.type,
       ...(automationContext ? { automation: automationContext } : {}),
     }),
     additionalMessages,

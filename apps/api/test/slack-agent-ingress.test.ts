@@ -67,6 +67,50 @@ describe("Slack Agent durable ingress", () => {
     });
   });
 
+  it("queues a start-task modal for an unlinked Slack member", async () => {
+    const database = new IngressDatabase();
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+
+    await expect(service.processInteraction({
+      type: "view_submission",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      view: {
+        id: "V1",
+        callback_id: "avalon_start_task_submit",
+        private_metadata: JSON.stringify({
+          kind: "shortcut",
+          channelType: "public",
+          channelId: "C1",
+          threadTs: "1.1",
+        }),
+        state: { values: { prompt: { value: { value: "Investigate this" } } } },
+      },
+    }, "modal-body")).resolves.toEqual({ response_action: "clear" });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "interaction:modal-body" }));
+  });
+
+  it("queues a slash command without requiring a personal Slack link", async () => {
+    const database = new IngressDatabase();
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+
+    await expect(service.processCommand({
+      team_id: "T1",
+      user_id: "U1",
+      command: "/avalon",
+      text: "Summarize the incident",
+      channel_id: "C1",
+      channel_name: "general",
+      trigger_id: "trigger-1",
+    }, "command-body")).resolves.toEqual({
+      response_type: "ephemeral",
+      text: "Avalon queued your request. I’ll continue in your Agent conversation.",
+    });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "command:command-body" }));
+  });
+
   it("does not acknowledge an event until its regional queue publish succeeds", async () => {
     const database = new IngressDatabase();
     let releaseQueue!: () => void;

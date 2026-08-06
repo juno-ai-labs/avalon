@@ -191,6 +191,22 @@ const SlackSearchChannelSchema = z.object({
 const SlackSearchUserSchema = z.object({
   user_id: SlackIdSchema,
 }).passthrough();
+const SlackUserSchema = z.object({
+  id: SlackIdSchema,
+  team_id: SlackIdSchema,
+  name: z.string().optional(),
+  real_name: z.string().optional(),
+  deleted: z.boolean().optional(),
+  is_bot: z.boolean().optional(),
+  is_app_user: z.boolean().optional(),
+  profile: z.object({
+    display_name: z.string().optional(),
+    real_name: z.string().optional(),
+    email: z.string().email().optional(),
+    image_192: z.string().url().optional(),
+    image_72: z.string().url().optional(),
+  }).passthrough().optional(),
+}).passthrough();
 const SlackSearchContextResponseSchema = SlackOkSchema.extend({
   results: z.object({
     messages: z.array(SlackSearchMessageSchema).optional(),
@@ -262,14 +278,12 @@ const SlackWebApiSchemas = {
   "users.lookupByEmail": {
     request: z.object({ email: z.string().email().max(254) }).strict(),
     response: SlackOkSchema.extend({
-      user: z.object({
-        id: SlackIdSchema,
-        team_id: SlackIdSchema,
-        deleted: z.boolean().optional(),
-        is_bot: z.boolean().optional(),
-        is_app_user: z.boolean().optional(),
-      }).passthrough(),
+      user: SlackUserSchema,
     }),
+  },
+  "users.info": {
+    request: z.object({ user: SlackIdSchema }).strict(),
+    response: SlackOkSchema.extend({ user: SlackUserSchema }),
   },
   "views.open": {
     request: z.object({ trigger_id: z.string().min(1), view: SlackViewSchema }).strict(),
