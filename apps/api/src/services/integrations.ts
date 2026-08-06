@@ -168,6 +168,33 @@ interface InlineChildToolOptions {
   activeCredentialPluginIds: ReadonlySet<string>;
 }
 
+// Receipt-only aliases for connector definitions renamed to prefix-free names
+// in 0.29. They are never rendered to the model or dispatched to providers.
+const LEGACY_PREFIXED_CANONICAL_CONNECTOR_TYPES = new Set([
+  "github",
+  "google",
+  "linear",
+  "notion",
+]);
+
+function legacyConnectorCanonicalToolName(connectorType: string, currentName: string): string | null {
+  return LEGACY_PREFIXED_CANONICAL_CONNECTOR_TYPES.has(connectorType)
+    ? `${connectorType}.${currentName}`
+    : null;
+}
+
+function eligibleConnectionCapabilityMap(
+  plugins: readonly HarnessPlugin[],
+  frozenConnections: ReadonlyMap<string, { connectionId: string }>,
+): Record<string, string[]> {
+  return Object.fromEntries(plugins.flatMap((plugin) => {
+    const frozen = frozenConnections.get(plugin.canonicalId);
+    return frozen
+      ? [[frozen.connectionId, plugin.tools.map((tool) => tool.definition.capability)]]
+      : [];
+  }));
+}
+
 async function persistInitialPluginActivations(
   requestedPluginIds: readonly string[],
   reauthorize: (pluginId: string) => boolean | Promise<boolean>,
@@ -1230,11 +1257,9 @@ export async function runWorkstreamHarness(
       ...harnessTools.plugins.flatMap((plugin) =>
         plugin.tools.map((tool) => tool.definition.capability)),
     ],
-    eligibleConnectionCapabilities: Object.fromEntries(
-      harnessTools.plugins.map((plugin) => [
-        harnessTools.frozenConnections.get(plugin.canonicalId)?.connectionId ?? plugin.canonicalId,
-        plugin.tools.map((tool) => tool.definition.capability),
-      ]),
+    eligibleConnectionCapabilities: eligibleConnectionCapabilityMap(
+      harnessTools.plugins,
+      harnessTools.frozenConnections,
     ),
     triggerPolicy: {
       reason: input.reason,
@@ -1634,6 +1659,15 @@ export async function runWorkstreamHarness(
             ...event.policy,
           }, harnessTools);
           const { mode, idempotency } = receiptPolicy.definition;
+          const executionPlan = {
+            pluginId: receiptPolicy.pluginId,
+            canonicalToolName: receiptPolicy.definition.name,
+            capability: receiptPolicy.definition.capability,
+            connectionId: receiptPolicy.connectionId,
+            mode,
+            idempotency,
+            toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+          };
           const receipt = await persistToolExecutionPlan(env.DB, liveness.lease, {
             harnessRunId: input.harnessRunId,
             workspaceId: input.workspaceId,
@@ -1643,15 +1677,8 @@ export async function runWorkstreamHarness(
             ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
             inputHash,
             input: event.input,
-            plan: {
-              pluginId: receiptPolicy.pluginId,
-              canonicalToolName: receiptPolicy.definition.name,
-              capability: receiptPolicy.definition.capability,
-              connectionId: receiptPolicy.connectionId,
-              mode,
-              idempotency,
-              toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-            },
+            plan: executionPlan,
+            compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
             ...(event.providerIdempotencyKey
               ? { providerIdempotencyKey: event.providerIdempotencyKey }
               : {}),
@@ -1720,6 +1747,16 @@ export async function runWorkstreamHarness(
           let planAlreadyAmbiguous = false;
           if (event.phase === "validation") {
             const mode = receiptPolicy.definition.mode;
+            const executionPlan = {
+              pluginId: receiptPolicy.pluginId,
+              canonicalToolName: receiptPolicy.definition.name,
+              capability: receiptPolicy.definition.capability,
+              connectionId: receiptPolicy.connectionId,
+              phase: "validation",
+              mode,
+              idempotency: receiptPolicy.definition.idempotency,
+              toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+            };
             const receipt = await persistToolExecutionPlan(env.DB, liveness.lease, {
               harnessRunId: input.harnessRunId,
               workspaceId: input.workspaceId,
@@ -1729,16 +1766,8 @@ export async function runWorkstreamHarness(
               ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
               inputHash,
               input: {},
-              plan: {
-                pluginId: receiptPolicy.pluginId,
-                canonicalToolName: receiptPolicy.definition.name,
-                capability: receiptPolicy.definition.capability,
-                connectionId: receiptPolicy.connectionId,
-                phase: "validation",
-                mode,
-                idempotency: receiptPolicy.definition.idempotency,
-                toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-              },
+              plan: executionPlan,
+              compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
               mode,
             });
             invocationId = receipt.invocationId;
@@ -1951,6 +1980,7 @@ async function createInlineChildHarnessSurface(options: {
   const childPlugins: HarnessPlugin[] = [...childBuiltinPlugins];
   const childFrozenConnections = new Map<string, FrozenConnectorPlugin>();
   const childPluginSurfaceHashes = new Map<string, string>();
+  const childLegacyPluginSurfaceHashes = new Map<string, string>();
   const childConnectionByTool = new Map<string, string>();
   const childIdempotencyByTool = new Map<string, "safe" | "provider_key" | "record_before_execute">();
   const childModeByTool = new Map<string, "read" | "write">(
@@ -2002,6 +2032,16 @@ async function createInlineChildHarnessSurface(options: {
     const surfaceHash = await connectorToolSurfaceHash(pluginId, readTools);
     childFrozenConnections.set(pluginId, frozen);
     childPluginSurfaceHashes.set(pluginId, surfaceHash);
+    if (LEGACY_PREFIXED_CANONICAL_CONNECTOR_TYPES.has(frozen.connectorType)) {
+      childLegacyPluginSurfaceHashes.set(
+        pluginId,
+        await connectorToolSurfaceHash(
+          pluginId,
+          readTools,
+          (name) => legacyConnectorCanonicalToolName(frozen.connectorType, name) ?? name,
+        ),
+      );
+    }
     for (const tool of readTools) {
       const wireName = stableWireToolName(parentPlugin.shortWireName, tool.definition.name);
       childConnectionByTool.set(wireName, frozen.connectionId);
@@ -2029,6 +2069,7 @@ async function createInlineChildHarnessSurface(options: {
     plugins: childPlugins,
     frozenConnections: childFrozenConnections,
     pluginSurfaceHashes: childPluginSurfaceHashes,
+    legacyPluginSurfaceHashes: childLegacyPluginSurfaceHashes,
     connectionByTool: childConnectionByTool,
     idempotencyByTool: childIdempotencyByTool,
     modeByTool: childModeByTool,
@@ -2208,11 +2249,9 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 plugin.tools.map((tool) => tool.definition.capability)),
               ...childPlugins.flatMap((plugin) => plugin.tools.map((tool) => tool.definition.capability)),
             ],
-            eligibleConnectionCapabilities: Object.fromEntries(
-              childPlugins.map((plugin) => [
-                childFrozenConnections.get(plugin.canonicalId)?.connectionId ?? plugin.canonicalId,
-                plugin.tools.map((tool) => tool.definition.capability),
-              ]),
+            eligibleConnectionCapabilities: eligibleConnectionCapabilityMap(
+              childPlugins,
+              childFrozenConnections,
             ),
             triggerPolicy: {
               kind: "sub_agent",
@@ -2432,6 +2471,15 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 }, childHarnessTools);
                 const mode = receiptPolicy.definition.mode;
                 if (mode !== "read") throw new ConnectorError("unauthorized", "Child write tool rejected");
+                const executionPlan = {
+                  pluginId: receiptPolicy.pluginId,
+                  canonicalToolName: receiptPolicy.definition.name,
+                  capability: receiptPolicy.definition.capability,
+                  connectionId: receiptPolicy.connectionId,
+                  mode,
+                  idempotency: receiptPolicy.definition.idempotency,
+                  toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+                };
                 const receipt = await persistToolExecutionPlan(options.env.DB, childLiveness.lease, {
                   harnessRunId: childInput.harnessRunId,
                   workspaceId: childInput.workspaceId,
@@ -2441,15 +2489,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
                   inputHash,
                   input: event.input,
-                  plan: {
-                    pluginId: receiptPolicy.pluginId,
-                    canonicalToolName: receiptPolicy.definition.name,
-                    capability: receiptPolicy.definition.capability,
-                    connectionId: receiptPolicy.connectionId,
-                    mode,
-                    idempotency: receiptPolicy.definition.idempotency,
-                    toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-                  },
+                  plan: executionPlan,
+                  compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
                   mode,
                 });
                 await assertChildOwned();
@@ -2498,6 +2539,16 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 const inputHash = await canonicalToolInputHash({});
                 let invocation = await loadToolInvocation(options.env, childInput.harnessRunId, event.toolCallId);
                 if (!invocation && event.phase === "validation") {
+                  const executionPlan = {
+                    pluginId: receiptPolicy.pluginId,
+                    canonicalToolName: receiptPolicy.definition.name,
+                    capability: receiptPolicy.definition.capability,
+                    connectionId: receiptPolicy.connectionId,
+                    phase: "validation",
+                    mode: receiptPolicy.definition.mode,
+                    idempotency: receiptPolicy.definition.idempotency,
+                    toolSurfaceHash: receiptPolicy.toolSurfaceHash,
+                  };
                   const receipt = await persistToolExecutionPlan(options.env.DB, childLiveness.lease, {
                     harnessRunId: childInput.harnessRunId,
                     workspaceId: childInput.workspaceId,
@@ -2507,16 +2558,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                     ...(receiptPolicy.connectionId ? { connectionId: receiptPolicy.connectionId } : {}),
                     inputHash,
                     input: {},
-                    plan: {
-                      pluginId: receiptPolicy.pluginId,
-                      canonicalToolName: receiptPolicy.definition.name,
-                      capability: receiptPolicy.definition.capability,
-                      connectionId: receiptPolicy.connectionId,
-                      phase: "validation",
-                      mode: receiptPolicy.definition.mode,
-                      idempotency: receiptPolicy.definition.idempotency,
-                      toolSurfaceHash: receiptPolicy.toolSurfaceHash,
-                    },
+                    plan: executionPlan,
+                    compatiblePriorPlans: compatiblePriorReceiptPlans(executionPlan, receiptPolicy),
                     mode: receiptPolicy.definition.mode,
                   });
                   invocation = await loadToolInvocation(options.env, childInput.harnessRunId, event.toolCallId);
@@ -2954,6 +2997,7 @@ async function loadHarnessTools(
   plugins: HarnessPlugin[];
   frozenConnections: Map<string, FrozenConnectorPlugin>;
   pluginSurfaceHashes: Map<string, string>;
+  legacyPluginSurfaceHashes: Map<string, string>;
   connectionByTool: Map<string, string>;
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
@@ -2992,6 +3036,7 @@ async function loadHarnessTools(
   const plugins: HarnessPlugin[] = [...builtinPlugins];
   const frozenConnections = new Map<string, FrozenConnectorPlugin>();
   const pluginSurfaceHashes = new Map<string, string>();
+  const legacyPluginSurfaceHashes = new Map<string, string>();
   const connectionByTool = new Map<string, string>();
   const idempotencyByTool = new Map<string, "safe" | "provider_key" | "record_before_execute">();
   const modeByTool = new Map<string, "read" | "write">(
@@ -3093,6 +3138,16 @@ async function loadHarnessTools(
     const surfaceHash = await connectorToolSurfaceHash(pluginId, pluginTools);
     frozenConnections.set(pluginId, frozen);
     pluginSurfaceHashes.set(pluginId, surfaceHash);
+    if (LEGACY_PREFIXED_CANONICAL_CONNECTOR_TYPES.has(frozen.connectorType)) {
+      legacyPluginSurfaceHashes.set(
+        pluginId,
+        await connectorToolSurfaceHash(
+          pluginId,
+          pluginTools,
+          (name) => legacyConnectorCanonicalToolName(frozen.connectorType, name) ?? name,
+        ),
+      );
+    }
     plugins.push({
       canonicalId: pluginId,
       modelId: modelPluginId,
@@ -3113,6 +3168,7 @@ async function loadHarnessTools(
     plugins: plugins.sort((left, right) => left.canonicalId.localeCompare(right.canonicalId)),
     frozenConnections,
     pluginSurfaceHashes,
+    legacyPluginSurfaceHashes,
     connectionByTool,
     idempotencyByTool,
     modeByTool,
@@ -3235,11 +3291,15 @@ function stableWireToolName(prefix: string, toolName: string): string {
   return `${prefix}_${normalized}`.slice(0, 64);
 }
 
-async function connectorToolSurfaceHash(pluginId: string, tools: readonly HarnessTool[]): Promise<string> {
+async function connectorToolSurfaceHash(
+  pluginId: string,
+  tools: readonly HarnessTool[],
+  canonicalToolName: (name: string) => string = (name) => name,
+): Promise<string> {
   return sha256(JSON.stringify({
     pluginId,
     tools: tools.map(({ definition }) => ({
-      name: definition.name,
+      name: canonicalToolName(definition.name),
       capability: definition.capability,
       mode: definition.mode,
       idempotency: definition.idempotency,
@@ -3635,6 +3695,10 @@ interface ResolvedToolReceiptPolicy {
   definition: ToolDefinition;
   connectionId: string | null;
   toolSurfaceHash: string | null;
+  legacyReceiptIdentity: {
+    canonicalToolName: string;
+    toolSurfaceHash: string;
+  } | null;
 }
 
 /**
@@ -3660,7 +3724,13 @@ function resolveHarnessToolReceiptPolicy(
     throw new ConnectorError("unauthorized", "Tool policy identity is outside this run scope");
   }
   if (isCoreHarnessPlugin(identity.pluginId, harnessTools)) {
-    return { pluginId: identity.pluginId, definition, connectionId: null, toolSurfaceHash: null };
+    return {
+      pluginId: identity.pluginId,
+      definition,
+      connectionId: null,
+      toolSurfaceHash: null,
+      legacyReceiptIdentity: null,
+    };
   }
   if (isLoadableBuiltinHarnessPlugin(identity.pluginId, harnessTools)) {
     const toolSurfaceHash = harnessTools.pluginSurfaceHashes.get(identity.pluginId);
@@ -3672,6 +3742,7 @@ function resolveHarnessToolReceiptPolicy(
       definition,
       connectionId: null,
       toolSurfaceHash,
+      legacyReceiptIdentity: null,
     };
   }
   const frozen = harnessTools.frozenConnections.get(identity.pluginId);
@@ -3683,6 +3754,16 @@ function resolveHarnessToolReceiptPolicy(
     definition,
     connectionId: frozen.connectionId,
     toolSurfaceHash: harnessTools.pluginSurfaceHashes.get(identity.pluginId) ?? null,
+    legacyReceiptIdentity: (() => {
+      const canonicalToolName = legacyConnectorCanonicalToolName(
+        frozen.connectorType,
+        definition.name,
+      );
+      const toolSurfaceHash = harnessTools.legacyPluginSurfaceHashes.get(identity.pluginId);
+      return canonicalToolName && toolSurfaceHash
+        ? { canonicalToolName, toolSurfaceHash }
+        : null;
+    })(),
   };
 }
 
@@ -3692,13 +3773,32 @@ function storedToolPolicyMatches(
 ): boolean {
   if (!executionPlanJson) return false;
   const plan = parseJson<Record<string, unknown> | null>(executionPlanJson, null);
+  const currentIdentityMatches = plan?.canonicalToolName === expected.definition.name
+    && (plan.toolSurfaceHash ?? null) === expected.toolSurfaceHash;
+  const legacyIdentityMatches = Boolean(
+    expected.legacyReceiptIdentity
+    && plan?.canonicalToolName === expected.legacyReceiptIdentity.canonicalToolName
+    && plan.toolSurfaceHash === expected.legacyReceiptIdentity.toolSurfaceHash,
+  );
   return plan?.pluginId === expected.pluginId
-    && plan.canonicalToolName === expected.definition.name
+    && (currentIdentityMatches || legacyIdentityMatches)
     && plan.capability === expected.definition.capability
     && plan.mode === expected.definition.mode
     && plan.idempotency === expected.definition.idempotency
-    && (plan.connectionId ?? null) === expected.connectionId
-    && (plan.toolSurfaceHash ?? null) === expected.toolSurfaceHash;
+    && (plan.connectionId ?? null) === expected.connectionId;
+}
+
+function compatiblePriorReceiptPlans(
+  currentPlan: Record<string, unknown>,
+  expected: ResolvedToolReceiptPolicy,
+): Record<string, unknown>[] {
+  return expected.legacyReceiptIdentity
+    ? [{
+        ...currentPlan,
+        canonicalToolName: expected.legacyReceiptIdentity.canonicalToolName,
+        toolSurfaceHash: expected.legacyReceiptIdentity.toolSurfaceHash,
+      }]
+    : [];
 }
 
 async function stableRunToolSurfaceHash(
@@ -4711,6 +4811,7 @@ export const __integrationTesting = {
   createConnectorToolContext,
   resolveHarnessToolReceiptPolicy,
   storedToolPolicyMatches,
+  eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,
   publishRuntimeEventBestEffort,
   workstreamHarnessTerminalResult,
