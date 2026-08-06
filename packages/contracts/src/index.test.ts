@@ -5,6 +5,7 @@ import {
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
   ClientSocketEventSchema,
+  CompileAutomationRequestSchema,
   CreateAutomationRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   BackgroundTaskSchema,
@@ -49,6 +50,19 @@ describe("boundary contracts", () => {
     });
     expect(AnswerElicitationRequestSchema.parse({ skipped: true })).toEqual({ skipped: true });
     expect(AnswerElicitationRequestSchema.safeParse({ skipped: true, answer: "hidden" }).success).toBe(false);
+  });
+
+  it("carries a stable draft ID while accepting legacy automation compile requests", () => {
+    expect(CompileAutomationRequestSchema.parse({
+      draftId: id,
+      messages: [{ role: "user", content: "Check the blog every day." }],
+    })).toMatchObject({
+      draftId: id,
+      currentDraft: null,
+    });
+    expect(CompileAutomationRequestSchema.parse({
+      messages: [{ role: "user", content: "Check the blog every day." }],
+    })).toMatchObject({ currentDraft: null });
   });
 
   it("exposes stable member-safe harness failure codes", () => {

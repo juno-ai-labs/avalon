@@ -90,9 +90,9 @@ describe("agent inference logging", () => {
     const { env, objects, statements } = fixture(true);
     const logger = createAgentInferenceLogger(env, {
       workspaceId: "workspace-1",
-      workstreamId: "workstream-1",
       requestId: "run-1",
-      source: "workstream",
+      draftId: "00000000-0000-7000-8000-000000000091",
+      source: "automation_compiler",
     });
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-05T01:02:03.000Z"));
@@ -125,6 +125,7 @@ describe("agent inference logging", () => {
     expect(JSON.parse(serialized)).toMatchObject({
       metadata: {
         requestId: "run-1",
+        draftId: "00000000-0000-7000-8000-000000000091",
         messageCount: 1,
         toolCount: 1,
       },

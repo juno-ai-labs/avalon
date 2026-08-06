@@ -13,6 +13,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
+import { logEvent } from "../observability/logger";
 import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -25,6 +26,7 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
   const input = c.req.valid("json");
   const requestId = c.get("requestId");
   const service = new AutomationService(c.env, getAuth(c));
+  logEvent(c, "info", "automation_draft_compile_started", { draft_id: input.draftId });
   return streamSSE(c, async (stream) => {
     try {
       const draft = await service.compile(input, requestId, {
@@ -63,9 +65,11 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
     }
   });
 });
-automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => c.json(
-  await new AutomationService(c.env, getAuth(c)).compile(c.req.valid("json"), c.get("requestId")),
-));
+automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => {
+  const input = c.req.valid("json");
+  logEvent(c, "info", "automation_draft_compile_started", { draft_id: input.draftId });
+  return c.json(await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId")));
+});
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).create(c.req.valid("json")), 201));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).get(c.req.valid("param").id)));
 automationRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", updateBody), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))));

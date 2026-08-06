@@ -756,6 +756,7 @@ export async function classifyWorkstreamMessage(
 export async function compileAutomationDraft(
   env: Env,
   input: {
+    draftId?: string | undefined;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     currentDraft?: AutomationDraft | null;
     defaultTimezones: { personal: string; workspace: string };
@@ -771,6 +772,7 @@ export async function compileAutomationDraft(
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
     requestId: input.requestId,
+    ...(input.draftId ? { draftId: input.draftId } : {}),
     source: "automation_compiler",
   });
   try {
@@ -794,6 +796,7 @@ export async function compileAutomationDraft(
       onDiagnostic: (diagnostic: StructuredModelDiagnostic) => {
         logStructuredEvent(env, diagnostic.validationIssues ? "warn" : "info", "automation_compiler", {
           request_id: input.requestId,
+          draft_id: input.draftId,
           workspace_id: input.workspaceId,
           stage: diagnostic.stage,
           schema_name: diagnostic.schemaName,
@@ -822,6 +825,7 @@ export async function compileAutomationDraft(
     const providerFailure = error instanceof OpenRouterError ? error : null;
     logStructuredEvent(env, "error", "automation_compiler", {
       request_id: input.requestId,
+      draft_id: input.draftId,
       workspace_id: input.workspaceId,
       stage: "failed",
       schema_name: "automation_draft",
