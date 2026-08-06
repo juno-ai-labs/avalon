@@ -123,19 +123,43 @@ describe('Automation template updates', () => {
 
     const emailAddress = await screen.findByText('luminous-tidal-structured-curie@automation.with-avalon.com');
     expect(emailAddress).toBeVisible();
+    expect(emailAddress).toHaveClass('automation-email-value');
     expect(screen.getByText('Email this address from your Avalon account email to start a new work stream.')).toBeVisible();
 
-    const copyButton = screen.getByRole('button', {
-      name: 'Copy automation email address luminous-tidal-structured-curie@automation.with-avalon.com',
-    });
+    const copyButton = screen.getByRole('button', { name: 'Copy automation email' });
+    expect(copyButton).toHaveAttribute('title', 'Copy automation email');
     expect(copyButton).not.toHaveTextContent('luminous-tidal-structured-curie@automation.with-avalon.com');
     fireEvent.click(copyButton);
     expect(copyText).toHaveBeenCalledWith('luminous-tidal-structured-curie@automation.with-avalon.com');
     await waitFor(() => {
-      expect(screen.getByRole('button', {
-        name: 'Automation email address copied luminous-tidal-structured-curie@automation.with-avalon.com',
-      })).toHaveAttribute('title', 'Copied');
+      expect(screen.getByRole('status')).toHaveTextContent('Automation email address copied.');
     });
+    expect(screen.getByRole('button', { name: 'Copy automation email' })).toHaveAttribute('title', 'Copy automation email');
+  });
+
+  it('uses a lime circular status indicator without duplicating status in the header', async () => {
+    renderScreen();
+
+    const statusHeading = await screen.findByRole('heading', { name: 'Status' });
+    const statusSection = statusHeading.closest('section');
+    expect(statusSection?.querySelector('.automation-status-dot')).toHaveClass('active');
+    expect(document.querySelector('.automation-overview-header .automation-state')).not.toBeInTheDocument();
+  });
+
+  it('shows only supported run filters and omits connected capabilities', async () => {
+    renderScreen();
+
+    expect(await screen.findByRole('heading', { name: 'Runs' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Connected capabilities' })).not.toBeInTheDocument();
+
+    const filters = screen.getByRole('group', { name: 'Filter automation runs' });
+    expect(within(filters).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'All',
+      'Scheduled',
+      'Manual',
+    ]);
+    expect(within(filters).queryByRole('button', { name: 'Activity' })).not.toBeInTheDocument();
+    expect(within(filters).queryByRole('button', { name: 'Webhook' })).not.toBeInTheDocument();
   });
 
   it('explains that workspace automation mail must come from a workspace member', async () => {
@@ -151,15 +175,10 @@ describe('Automation template updates', () => {
     copyText.mockRejectedValueOnce(new Error('clipboard unavailable'));
     renderScreen();
 
-    const emailAddress = 'luminous-tidal-structured-curie@automation.with-avalon.com';
-    fireEvent.click(await screen.findByRole('button', {
-      name: `Copy automation email address ${emailAddress}`,
-    }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy automation email' }));
     await waitFor(() => {
-      expect(screen.getByRole('button', {
-        name: `Copy failed; retry automation email address ${emailAddress}`,
-      })).toHaveAttribute('title', 'Copy failed — click to retry');
+      expect(screen.getByRole('status')).toHaveTextContent('could not be copied');
     });
-    expect(screen.getByRole('status')).toHaveTextContent('could not be copied');
+    expect(screen.getByRole('button', { name: 'Copy automation email' })).toHaveAttribute('title', 'Copy automation email');
   });
 });
