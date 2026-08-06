@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AgentWorkTiming } from '../components/agent-work-timing';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
@@ -526,7 +527,11 @@ export function NewAutomationScreen(): React.JSX.Element {
                     ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingAssistant.text, true)} />
                     : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
                       ? null
-                      : <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
+                      : <AgentWorkTiming
+                          active
+                          durationMs={0}
+                          {...(compile.submittedAt > 0 ? { startedAt: compile.submittedAt } : {})}
+                        />
                 )}
                 {draft && (
                   <DraftSummary

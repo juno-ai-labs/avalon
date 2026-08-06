@@ -2,13 +2,14 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
-import type { BackgroundTask, ElicitationData, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, WorkstreamResource } from '../lib/types';
 import {
   AddResourceDialog,
   JumpToLatestButton,
   manualElicitationResponse,
   mergeBackgroundTasks,
   RunFailureNotice,
+  workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
 
@@ -21,6 +22,32 @@ const openElicitation: ElicitationData = {
   maximumSelections: 1,
   status: 'open',
 };
+
+const harnessRun: HarnessRunMetadata = {
+  id: 'run-one',
+  origin: 'message',
+  status: 'running',
+  startedAt: '2026-08-05T12:00:00.000Z',
+  createdAt: '2026-08-05T11:59:59.000Z',
+};
+
+describe('workstreamRunTiming', () => {
+  it('adapts the current harness run to the shared live work timer', () => {
+    expect(workstreamRunTiming('running', harnessRun)).toEqual({
+      active: true,
+      durationMs: 0,
+      startedAt: Date.parse('2026-08-05T12:00:00.000Z'),
+    });
+  });
+
+  it('retains the canonical elapsed time after the turn completes', () => {
+    expect(workstreamRunTiming('completed', {
+      ...harnessRun,
+      status: 'completed',
+      completedAt: '2026-08-05T12:01:23.000Z',
+    })).toEqual({ active: false, durationMs: 83_000 });
+  });
+});
 
 describe('manualElicitationResponse', () => {
   it('turns a composer entry into a custom single-select response', () => {
