@@ -384,7 +384,7 @@ describe("API security utilities", () => {
       },
       connection,
       () => adapter.executeTool(
-        "google.gmail.search",
+        "gmail.search",
         { query: "from:example.com" },
         {
           connection,

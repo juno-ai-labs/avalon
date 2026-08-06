@@ -6,7 +6,6 @@ import {
   createGoogleConnector,
   createLinearConnector,
   createNotionConnector,
-  createWebMonitorConnector,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
 } from "./index";
@@ -64,9 +63,20 @@ describe("connector agent plugins", () => {
     };
     expect(() => new ConnectorRegistry([mismatchedProvider])).toThrow(/provider type must match/u);
 
+    const webhook = createGenericWebhookConnector();
     const mismatchedTools: ConnectorAdapter = {
-      ...createWebMonitorConnector(),
-      agentPlugin: { ...createWebMonitorConnector().agentPlugin, tools: [] },
+      ...webhook,
+      agentPlugin: {
+        ...webhook.agentPlugin,
+        tools: [{
+          name: "unexpected",
+          description: "Unexpected test tool",
+          capability: "test.read",
+          mode: "read",
+          idempotency: "safe",
+          inputSchema: { type: "object", additionalProperties: false, properties: {} },
+        }],
+      },
     };
     expect(() => new ConnectorRegistry([mismatchedTools])).toThrow(/tools must match/u);
   });
@@ -75,7 +85,6 @@ describe("connector agent plugins", () => {
 function configuredAdapters(): ConnectorAdapter[] {
   return [
     createGenericWebhookConnector(),
-    createWebMonitorConnector(),
     createGoogleConnector({
       clientId: REMOTE_MARKERS[0],
       clientSecret: REMOTE_MARKERS[1],

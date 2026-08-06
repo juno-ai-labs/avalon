@@ -14,7 +14,6 @@ import {
 import type {
   Connection,
   CreateWebhookConnectionRequestSchema,
-  CreateWebMonitorRequestSchema,
   Scope,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
@@ -30,7 +29,6 @@ import { createGitHubInstallState } from "../lib/github-install-state";
 import { LinearRoutingService } from "./linear-routing-service";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
-type CreateMonitorInput = z.infer<typeof CreateWebMonitorRequestSchema>;
 
 const capabilityScopes: Record<string, readonly string[]> = {
   "gmail.read": GoogleCapabilityScopes.gmailRead,
@@ -883,27 +881,6 @@ export class ConnectionService {
     };
   }
 
-  async createWebMonitor(input: CreateMonitorInput) {
-    const auth = this.requireAuth();
-    this.assertScopeAllowed(input.scope);
-    assertPublicMonitorUrl(input.url);
-    const id = newId();
-    const at = nowIso();
-    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "web_monitor");
-    await this.env.DB.prepare(
-      `INSERT INTO connector_connections
-       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-        granted_scopes_json, model_plugin_id, status, cursor_json, config_json, next_poll_at, created_at, updated_at)
-       VALUES (?, ?, 'web_monitor', ?, ?, ?, '["web.read"]', ?, 'healthy', '{}', ?, ?, ?, ?)`,
-    ).bind(id, auth.workspaceId, input.scope, input.scope === "personal" ? auth.userId : null, `Monitor ${new URL(input.url).hostname}`, modelPluginId, JSON.stringify({ url: input.url, intervalSeconds: input.intervalSeconds, phrase: input.phrase, region: this.env.AVALON_REGION }), at, at, at).run();
-    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
-      provider: "web_monitor", scope: input.scope, host: new URL(input.url).hostname,
-    });
-    await this.createPollSchedule(auth.workspaceId, id, input.intervalSeconds);
-    await this.refreshScheduler(auth.workspaceId);
-    return (await this.list()).find((item) => item.id === id);
-  }
-
   async ingestWebhook(connectionId: string, rawBody: string, signatureHeader: string | null) {
     if (rawBody.length > numericEnv(this.env, "WEB_FETCH_MAX_BYTES", 2_000_000)) {
       throw new ApiError(413, "webhook_too_large", "Webhook payload exceeds the configured limit");
@@ -1226,35 +1203,6 @@ export function modelPluginIdBase(connectorType: string): string {
 
 function isModelPluginIdForBase(value: string, base: string): boolean {
   return value === base || new RegExp(`^${base}_[2-9][0-9]*$`, "u").test(value);
-}
-
-function assertPublicMonitorUrl(value: string): void {
-  const url = new URL(value);
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/gu, "");
-  if (
-    !["http:", "https:"].includes(url.protocol) ||
-    Boolean(url.username || url.password) ||
-    host === "localhost" ||
-    host.endsWith(".local") ||
-    host.endsWith(".internal") ||
-    host.endsWith(".lan") ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".home.arpa") ||
-    host === "metadata.google.internal" ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host === "::" ||
-    /^f[cd][0-9a-f]{2}:/u.test(host) ||
-    /^fe[89ab][0-9a-f]:/u.test(host) ||
-    /^::ffff:(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/u.test(host) ||
-    /^127\./u.test(host) ||
-    /^10\./u.test(host) ||
-    /^192\.168\./u.test(host) ||
-    /^169\.254\./u.test(host) ||
-    /^172\.(1[6-9]|2\d|3[01])\./u.test(host)
-  ) {
-    throw new ApiError(422, "unsafe_monitor_url", "Only public HTTP and HTTPS URLs may be monitored");
-  }
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | null {

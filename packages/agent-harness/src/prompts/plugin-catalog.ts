@@ -64,7 +64,7 @@ export function renderPromptPluginCatalog(input: RenderPromptPluginCatalogInput)
     if (bounded.length) {
       const omitted = available.length - bounded.length;
       if (omitted > 0) {
-        bounded.push(`- … ${omitted} more; use list_connector_plugins or search_connector_plugins to inspect them.`);
+        bounded.push(`- … ${omitted} more; use list_plugins or search_plugins to inspect them.`);
       }
       sections.push(`${input.availableHeading ?? "Available to load:"}\n${bounded.join("\n")}`);
     }

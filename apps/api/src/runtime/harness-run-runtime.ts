@@ -133,6 +133,8 @@ export interface ToolExecutionPlan {
   inputHash: string;
   input: unknown;
   plan: Record<string, unknown>;
+  /** Exact historical plans accepted only when fencing a pre-existing receipt. */
+  compatiblePriorPlans?: Record<string, unknown>[];
   providerIdempotencyKey?: string;
   mode: "read" | "write";
 }
@@ -1409,6 +1411,9 @@ export async function persistToolExecutionPlan(
   const invocationId = plan.invocationId ?? crypto.randomUUID();
   const executionPlanJson = stableJson(plan.plan);
   const executionPlanHash = await sha256Hex(executionPlanJson);
+  const compatiblePriorPlanHashes = new Set(await Promise.all(
+    (plan.compatiblePriorPlans ?? []).map((compatiblePlan) => sha256Hex(stableJson(compatiblePlan))),
+  ));
   const now = new Date().toISOString();
   const checkpointId = crypto.randomUUID();
   const results = await db.batch([
@@ -1474,7 +1479,10 @@ export async function persistToolExecutionPlan(
   }
   if (
     existing.input_hash !== plan.inputHash
-    || existing.execution_plan_hash !== executionPlanHash
+    || (
+      existing.execution_plan_hash !== executionPlanHash
+      && !compatiblePriorPlanHashes.has(existing.execution_plan_hash ?? "")
+    )
   ) {
     if (existing.status !== "completed" && existing.status !== "ambiguous") {
       await finalizeToolInvocationFailure(db, lease, {

@@ -208,7 +208,7 @@ describe('New automation composer', () => {
         overview: 'Reviews assigned issues and prepares a concise update.',
         recommendedPlugins: [{
           pluginId: 'plugin_linear',
-          recommendedTools: ['linear.search_issues'],
+          recommendedTools: ['linear_search_issues'],
           reason: 'Provides the issue data this automation needs.',
         }],
         scope: 'you',
@@ -224,7 +224,7 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('region', { name: 'Default plugins' })).toBeInTheDocument();
     expect(screen.getByText('Recommended')).toBeInTheDocument();
-    expect(screen.getByText('Suggested tools: linear.search_issues')).toBeInTheDocument();
+    expect(screen.getByText('Suggested tools: linear_search_issues')).toBeInTheDocument();
     expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));

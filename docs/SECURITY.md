@@ -43,11 +43,9 @@ Provider refresh tokens remain in the regional backend, encrypted with AES-GCM a
 
 Google scopes are requested incrementally. Sign-in does not grant Gmail, Calendar, or Drive access. Revoked/expired grants become an explicit reconnect state.
 
-## Webhooks and outbound fetches
+## Webhooks
 
 Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256 signature, a bounded replay window, a stored receipt, schema validation, size limits, and provider dedupe keys.
-
-Web monitoring allows only HTTP(S), rejects obvious local/private targets, bounds redirects, time, bytes, and content types, and hashes readable content before semantic processing. Hosted egress policy should additionally perform DNS/IP enforcement to prevent rebinding.
 
 ## Model boundary
 
