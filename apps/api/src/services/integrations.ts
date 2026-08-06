@@ -95,6 +95,8 @@ const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v4-memory";
 const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
+const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
+const TOOL_TRANSCRIPT_REPLAY_BUDGET_MS = 5_000;
 const INLINE_CHILD_SYSTEM_PROMPT = [
   "You are a focused read-only Avalon sub-agent.",
   "Complete exactly the delegated objective and return a concise result with evidence.",
@@ -496,6 +498,7 @@ async function projectModelProtocolTranscript(
       toolRows.push(...(rows.results ?? []));
     }
 
+    const replayDeadline = Date.now() + TOOL_TRANSCRIPT_REPLAY_BUDGET_MS;
     for (const row of toolRows) {
       if (row.status === "pending" || row.status === "started") {
         intentionallyOmittedToolMessageIds.add(row.message_id);
@@ -522,7 +525,9 @@ async function projectModelProtocolTranscript(
       const order = Number(stablePosition[2]);
       let resultContent: unknown;
       if (row.status === "completed") {
-        const exactOutput = row.output_ref ? await loadToolReplayOutput(env, row.output_ref) : null;
+        const exactOutput = row.output_ref
+          ? await loadToolReplayOutput(env, row.output_ref, replayDeadline)
+          : null;
         resultContent = {
           success: true,
           data: exactOutput ?? {
@@ -2866,15 +2871,58 @@ async function persistSuccessfulToolResult(
   return outputRef;
 }
 
-async function loadToolReplayOutput(env: Env, outputRef: string): Promise<unknown | null> {
+class ToolReplayReadTimeoutError extends Error {
+  constructor(
+    readonly stage: "get" | "body",
+    readonly timeoutMs: number,
+  ) {
+    super(`Tool replay payload ${stage} exceeded ${timeoutMs}ms`);
+    this.name = "ToolReplayReadTimeoutError";
+  }
+}
+
+async function awaitToolReplayRead<T>(
+  operation: () => Promise<T>,
+  deadline: number,
+  stage: "get" | "body",
+): Promise<T> {
+  const timeoutMs = Math.min(TOOL_REPLAY_READ_TIMEOUT_MS, deadline - Date.now());
+  if (timeoutMs <= 0) throw new ToolReplayReadTimeoutError(stage, 0);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const object = await env.PAYLOADS.get(outputRef);
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new ToolReplayReadTimeoutError(stage, timeoutMs)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function loadToolReplayOutput(
+  env: Env,
+  outputRef: string,
+  deadline = Date.now() + TOOL_REPLAY_READ_TIMEOUT_MS,
+): Promise<unknown | null> {
+  try {
+    const object = await awaitToolReplayRead(() => env.PAYLOADS.get(outputRef), deadline, "get");
     if (!object) return null;
-    const envelope = JSON.parse(await object.text()) as { replayVersion?: unknown; output?: unknown };
+    const body = await awaitToolReplayRead(() => object.text(), deadline, "body");
+    const envelope = JSON.parse(body) as { replayVersion?: unknown; output?: unknown };
     if (envelope.replayVersion !== 1 || !("output" in envelope)) return null;
     return envelope.output;
-  } catch {
-    // The D1 summary is a safe fallback when a payload was evicted or damaged.
+  } catch (error) {
+    if (error instanceof ToolReplayReadTimeoutError) {
+      logStructuredEvent(env, "warn", "tool_replay_payload_timeout", {
+        output_ref: outputRef,
+        stage: error.stage,
+        timeout_ms: error.timeoutMs,
+      });
+    }
+    // The D1 summary is a safe fallback when a payload is missing, damaged, or stalls.
     return null;
   }
 }
