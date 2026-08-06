@@ -1,5 +1,6 @@
 import { WorkstreamWorkflowInputSchema, type WorkstreamWorkflowInput } from "@avalon/contracts";
 import { createDatabase } from "@avalon/db";
+import { connectorRetryAfterMs } from "@avalon/connectors";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { z } from "zod";
 
@@ -15,6 +16,7 @@ import {
   type AttemptLease,
 } from "../runtime/harness-run-runtime";
 import { runWorkstreamHarness } from "../services/integrations";
+import { SlackAgentService } from "../services/slack-agent-service";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -23,6 +25,14 @@ const HarnessWorkflowOutcomeSchema = z.object({
     .object({ code: z.string(), message: z.string() })
     .optional(),
 });
+
+const SlackDeliveryRetryConfig = {
+  retries: {
+    limit: 5,
+    delay: ({ error }: { error: Error }) => Math.max(5_000, connectorRetryAfterMs(error) ?? 0),
+    backoff: "exponential" as const,
+  },
+};
 
 type HarnessWorkflowOutcome = z.infer<typeof HarnessWorkflowOutcomeSchema>;
 
@@ -43,6 +53,13 @@ function memberSafeFailure(error: unknown): HarnessWorkflowOutcome {
           : "The Avalon harness could not complete this run",
     },
   };
+}
+
+function terminalSlackText(outcome: HarnessWorkflowOutcome): string {
+  if (outcome.status === "stopped") return "Avalon stopped this task.";
+  if (outcome.status === "needs_input") return "Avalon needs more information before it can continue this task.";
+  if (outcome.status === "failed") return outcome.error?.message ?? "Avalon could not complete this task.";
+  return "Avalon completed the task without a text response.";
 }
 
 /** Static workflow definition used by every ad-hoc and automated harness run. */
@@ -86,6 +103,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
             "stopped",
           );
         });
+        await step.do("deliver-slack-cancelled-before-start", SlackDeliveryRetryConfig, async () => {
+          await this.deliverSlackDurably(input, outcome);
+        });
         return outcome;
       }
       if (claim.state === "claimed") {
@@ -101,6 +121,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       };
       await step.do("terminalize-queued-admission-timeout", async () => {
         await terminalizeQueuedHarnessRun(this.env.DB, input, identity, outcome.error!);
+      });
+      await step.do("deliver-slack-admission-timeout", SlackDeliveryRetryConfig, async () => {
+        await this.deliverSlackDurably(input, outcome);
       });
       return outcome;
     }
@@ -133,7 +156,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         .first<{ status: string; cancellation_requested_at: string | null }>();
       return row?.status === "stopped" || row?.cancellation_requested_at != null;
     });
-    const effectiveOutcome: HarnessWorkflowOutcome = stopped ? { status: "stopped" } : outcome;
+    const effectiveOutcome: HarnessWorkflowOutcome = stopped ? { ...outcome, status: "stopped" } : outcome;
 
     await step.do("terminalize-harness-attempt", async () => {
       await terminalizeHarnessAttempt(this.env.DB, input, lease!, {
@@ -150,12 +173,46 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     if (effectiveOutcome.messageId) {
       await this.publishPersistedFinalBestEffort(input, effectiveOutcome.messageId);
     }
+    await step.do("deliver-slack-terminal-outcome", SlackDeliveryRetryConfig, async () => {
+      await this.deliverSlackDurably(input, effectiveOutcome);
+    });
 
     await this.publishBestEffort(input, {
       type: "harness_status_changed",
       status: effectiveOutcome.status === "stopped" ? "idle" : effectiveOutcome.status,
     });
     return effectiveOutcome;
+  }
+
+  private async deliverSlackDurably(
+    input: WorkstreamWorkflowInput,
+    outcome: HarnessWorkflowOutcome,
+  ): Promise<void> {
+    const messages = outcome.messageId
+      ? await createDatabase(this.env.DB).workstreams.listMessages(input.workspaceId, input.workstreamId, 250)
+      : [];
+    const message = outcome.messageId
+      ? messages.find((candidate) => candidate.id === outcome.messageId)
+      : undefined;
+    const text = message?.textContent ?? terminalSlackText(outcome);
+    const deliveryKey = `${input.harnessRunId}:${outcome.status}`;
+    const slack = new SlackAgentService(this.env);
+    await slack.deliverWorkstreamOutcome(input.workspaceId, input.workstreamId, text, deliveryKey);
+    if (input.automationSubscriptionId) {
+      const automation = await this.env.DB.prepare(
+        `SELECT t.name FROM automation_subscriptions s
+         JOIN automation_templates t ON t.id = s.template_id
+         WHERE s.id = ? AND s.workspace_id = ?`,
+      ).bind(input.automationSubscriptionId, input.workspaceId).first<{ name: string }>();
+      await slack.deliverAutomationResult({
+        workspaceId: input.workspaceId,
+        automationSubscriptionId: input.automationSubscriptionId,
+        workstreamId: input.workstreamId,
+        title: automation?.name ?? "Avalon automation result",
+        text,
+        outcomeStatus: outcome.status,
+      });
+    }
   }
 
   private async publishPersistedFinalBestEffort(

@@ -214,6 +214,7 @@ describe('New automation composer', () => {
         scope: 'you',
         triggerSummary: 'Every hour',
         capabilities: ['linear.read'],
+        requiresSlackDelivery: false,
       },
     });
     renderScreen();
@@ -229,6 +230,56 @@ describe('New automation composer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear']));
+  });
+
+  it('allows Avalon-only delivery when a draft recommends Slack', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack-acme',
+        modelPluginId: 'plugin_slack_acme',
+        connectorType: 'slack',
+        displayName: 'Slack · Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+      },
+      {
+        id: 'connection-slack-juno',
+        modelPluginId: 'plugin_slack_juno',
+        connectorType: 'slack',
+        displayName: 'Slack · Juno',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+      },
+    ]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-slack-digest',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Morning email briefing',
+        description: 'Stack-ranks Gmail and delivers the top three to Slack.',
+        overview: 'Runs every morning.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Every day at 9:00 AM',
+        capabilities: ['gmail.read'],
+        requiresSlackDelivery: true,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Send my top three Gmail messages to Slack each morning' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const createButton = await screen.findByRole('button', { name: 'Create automation' });
+    const delivery = screen.getByRole('combobox', { name: /^Deliver results/ });
+    expect(delivery).toHaveValue('');
+    expect(createButton).toBeEnabled();
+    fireEvent.click(createButton);
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-slack-digest', []));
   });
 
   it('reuses one elicitation identity and preserves answer-response order', async () => {

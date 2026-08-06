@@ -65,6 +65,7 @@ import {
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
@@ -930,14 +931,8 @@ async function executeAutomationCreatorConnectorTool(
     capability,
     signal,
   );
+  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
   return withConnectorCredentialLifecycle(env, connection, async () => {
-    if (
-      adapter.refreshCredentials &&
-      typeof connection.credentials.expiresAt === "string" &&
-      Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
-    ) {
-      connection.credentials = await adapter.refreshCredentials(connection, signal);
-    }
     await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
     const health = await raceWithSignal(adapter.healthCheck(connection), signal);
     if (!health.ok) throw new ConnectorError("unauthorized", "Connector authorization is not healthy");
@@ -3376,15 +3371,9 @@ async function executeAuthorizedConnectorTool(
     signal,
     ownershipGuard,
   );
+  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
   return withConnectorCredentialLifecycle(env, connection, async () => {
     await ownershipGuard?.();
-    if (
-      adapter.refreshCredentials &&
-      typeof connection.credentials.expiresAt === "string" &&
-      Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
-    ) {
-      connection.credentials = await adapter.refreshCredentials(connection, signal);
-    }
     await ownershipGuard?.();
     // Membership, ownership, grants, and stored health are checked again after
     // credentials are available and immediately before external execution.
@@ -4442,20 +4431,10 @@ export async function pollConnectorConnection(
   if (!adapter.poll) {
     return { activityIds: [], cursor: context.cursor, baseCursorJson, nextPollAt: null };
   }
+  const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
+  const signal = AbortSignal.timeout(pollTimeoutMs);
+  await ensureFreshConnectorCredentials(env, context, adapter, signal);
   const result = await withConnectorCredentialLifecycle(env, context, async () => {
-    const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
-    const signal = AbortSignal.timeout(pollTimeoutMs);
-    if (
-      adapter.refreshCredentials &&
-      typeof context.credentials.expiresAt === "string" &&
-      Date.parse(context.credentials.expiresAt) < Date.now() + 60_000
-    ) {
-      credentials = await adapter.refreshCredentials(
-        context,
-        signal,
-      );
-      context.credentials = credentials;
-    }
     return adapter.poll!(context, signal);
   });
   const activityIds = new Set<string>();

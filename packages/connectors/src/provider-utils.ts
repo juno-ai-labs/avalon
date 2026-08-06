@@ -17,10 +17,7 @@ export async function providerJson(
     if (isAbortError(error)) throw error;
     throw new ConnectorError("provider_error", "The provider request could not be completed", error);
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) {
-    throw new ConnectorError("payload_too_large", "The provider response exceeded the configured size limit");
-  }
+  const bytes = await readResponseBytes(response, maxBytes);
   const text = new TextDecoder().decode(bytes);
   let payload: unknown = {};
   if (text) {
@@ -32,12 +29,58 @@ export async function providerJson(
   }
   if (!response.ok) {
     const message = providerErrorMessage(payload) ?? `The provider returned HTTP ${response.status}`;
+    const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
     throw new ConnectorError(response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error", message, {
       status: response.status,
+      ...(retryAfterMs != null ? { retryAfterMs } : {}),
     });
   }
   if (!isRecord(payload)) throw new ConnectorError("provider_error", "The provider returned an invalid response");
   return payload;
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+  if (/^\d+(?:\.\d+)?$/u.test(value.trim())) return Math.max(0, Math.ceil(Number(value) * 1_000));
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+export async function readResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength && /^\d+$/u.test(contentLength) && Number(contentLength) > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ConnectorError("payload_too_large", "The provider response exceeded the configured size limit");
+  }
+  if (!response.body) {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxBytes) throw new ConnectorError("payload_too_large", "The provider response exceeded the configured size limit");
+    return bytes;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ConnectorError("payload_too_large", "The provider response exceeded the configured size limit");
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export function jsonHeaders(token: string, extra: HeadersInit = {}): Headers {

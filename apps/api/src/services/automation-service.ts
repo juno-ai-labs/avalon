@@ -154,6 +154,7 @@ export class AutomationService {
     if (!input.draft.ready) throw new ApiError(422, "automation_not_ready", "Finish the automation conversation before creating it");
     this.assertScopeAllowed(input.scope);
     await this.validateDefaultPluginIds(input.scope, input.defaultPluginIds);
+    const deliveryTargets = await this.resolveSlackDeliveryTargets(input.scope, input.deliveryTargets);
     const templateId = newId();
     const versionId = newId();
     const subscriptionId = newId();
@@ -196,6 +197,12 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
       ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
       ...memoryTables.statements,
+      ...deliveryTargets.map((target) => this.env.DB.prepare(
+        `INSERT INTO automation_delivery_targets
+         (id, workspace_id, automation_subscription_id, target_type, connection_id,
+          user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'slack_agent_dm', ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind(newId(), this.auth.workspaceId, subscriptionId, target.connectionId, this.auth.userId, target.teamId, target.slackUserId, at, at)),
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
          (id, workspace_id, automation_subscription_id, schedule_type, rrule,
@@ -221,7 +228,7 @@ export class AutomationService {
       : (await new WorkstreamEmailRoutingService(this.env)
           .ensureAutomationAddress(this.automationRouteInput(id))).emailAddress;
     const updateAvailable = Number(row.latest_version_number) > Number(row.version_number);
-    const [runs, planned, latestVersion] = await Promise.all([
+    const [runs, planned, latestVersion, deliveryTargets] = await Promise.all([
       this.runs(id, 20),
       this.env.DB.prepare(
         `SELECT w.*, t.name AS origin_label FROM workstreams w
@@ -242,6 +249,13 @@ export class AutomationService {
              WHERE template_id = ? AND version_number = ?`,
           ).bind(row.template_id, row.latest_version_number).first<Record<string, unknown>>()
         : Promise.resolve(null),
+      this.env.DB.prepare(
+        `SELECT dt.connection_id, dt.status, cc.display_name
+         FROM automation_delivery_targets dt
+         JOIN connector_connections cc ON cc.id = dt.connection_id
+         WHERE dt.automation_subscription_id = ? AND dt.workspace_id = ?
+         ORDER BY dt.created_at`,
+      ).bind(id, this.auth.workspaceId).all<{ connection_id: string; status: "active" | "needs_input" | "disabled"; display_name: string }>(),
     ]);
     return {
       id: String(row.id), name: String(row.name), description: String(row.description), emailAddress, scope: String(row.scope), status: String(row.status),
@@ -253,6 +267,12 @@ export class AutomationService {
       recommendedPlugins: parseJson(row.recommended_plugins_json, []),
       memoryTables: parseJson(row.memory_tables_json, []),
       defaultPluginIds: parseJson(row.default_plugins_json, []),
+      deliveryTargets: (deliveryTargets.results ?? []).map((target) => ({
+        type: "slack_agent_dm" as const,
+        connectionId: target.connection_id,
+        displayName: target.display_name,
+        status: target.status,
+      })),
       templateUpdate: latestVersion ? {
         versionId: String(latestVersion.id),
         versionNumber: Number(latestVersion.version_number),
@@ -835,6 +855,32 @@ export class AutomationService {
 
   private assertScopeAllowed(scope: Scope): void {
     if (scope === "workspace" && this.auth.role !== "owner" && this.auth.role !== "admin") throw new ApiError(403, "workspace_admin_required", "Only administrators can create workspace automations");
+  }
+
+  private async resolveSlackDeliveryTargets(
+    scope: Scope,
+    targets: Array<{ type: "slack_agent_dm"; connectionId: string }>,
+  ): Promise<Array<{ connectionId: string; teamId: string; slackUserId: string }>> {
+    if (targets.length === 0) return [];
+    if (scope !== "personal") throw new ApiError(422, "personal_automation_required", "Slack Agent DM delivery requires a personal automation");
+    const resolved: Array<{ connectionId: string; teamId: string; slackUserId: string }> = [];
+    for (const target of targets) {
+      const row = await this.env.DB.prepare(
+        `SELECT cc.id, cc.provider_account_id, l.slack_user_id
+         FROM connector_connections cc
+         JOIN slack_user_links l ON l.connection_id = cc.id
+           AND l.workspace_id = cc.workspace_id AND l.user_id = ? AND l.status = 'active'
+         WHERE cc.id = ? AND cc.workspace_id = ? AND cc.connector_type = 'slack'
+           AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
+      ).bind(this.auth.userId, target.connectionId, this.auth.workspaceId).first<{
+        id: string;
+        provider_account_id: string;
+        slack_user_id: string;
+      }>();
+      if (!row) throw new ApiError(422, "slack_delivery_unavailable", "Connect your Avalon user in the selected Slack workspace before using it for automation delivery");
+      resolved.push({ connectionId: row.id, teamId: row.provider_account_id, slackUserId: row.slack_user_id });
+    }
+    return resolved;
   }
 
   private assertCanManageSubscription(subscription: Record<string, unknown>): void {

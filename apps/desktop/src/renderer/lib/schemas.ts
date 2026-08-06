@@ -213,6 +213,12 @@ export const automationDetailSchema = automationSummarySchema.extend({
     reason: z.string(),
   })).default([]),
   defaultPluginIds: z.array(z.string()).default([]),
+  deliveryTargets: z.array(z.object({
+    type: z.literal('slack_agent_dm'),
+    connectionId: z.string(),
+    displayName: z.string(),
+    status: z.enum(['active', 'needs_input', 'disabled']),
+  })).default([]),
   executionScope: z.string(),
   owner: workspaceMemberSchema.optional(),
   runs: z.array(automationRunSchema).default([]),

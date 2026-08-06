@@ -1,0 +1,16 @@
+{
+  "runtime": "node",
+  "hooks": {
+    "get-manifest": "node scripts/slack-manifest-hook.mjs"
+  },
+  "config": {
+    "sdk-managed-connection-enabled": true,
+    "watch": {
+      "manifest": {
+        "paths": [
+          "config/provider-apps/slack.json"
+        ]
+      }
+    }
+  }
+}

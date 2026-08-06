@@ -32,6 +32,11 @@ export default defineConfig(async () => {
         input: {
           main: `${projectRoot}index.html`,
           invite: `${projectRoot}invite/index.html`,
+          slackLink: `${projectRoot}slack/link/index.html`,
+          desktopOpen: `${projectRoot}open/index.html`,
+          slack: `${projectRoot}slack/index.html`,
+          privacy: `${projectRoot}privacy/index.html`,
+          support: `${projectRoot}support/index.html`,
           authHandoff: `${projectRoot}auth/desktop/index.html`,
           notFound: `${projectRoot}404.html`,
         },
