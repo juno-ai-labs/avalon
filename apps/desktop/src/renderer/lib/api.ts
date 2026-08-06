@@ -155,7 +155,9 @@ export interface MentionIdentity {
 }
 
 const wireWorkstreamPageSchema = CursorPageSchema(WireWorkstreamSchema);
-const wireMessagePageSchema = CursorPageSchema(WireMessageSchema);
+const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
+  newerCursor: z.string().nullable().default(null),
+});
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema);
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
@@ -254,6 +256,12 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     origin: workstream.originType,
     ...(workstream.originLabel ? { automationName: workstream.originLabel } : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
+    latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
+    readThroughSequenceNumber: workstream.readThroughSequenceNumber,
+    manualUnreadFromSequenceNumber: workstream.manualUnreadFromSequenceNumber,
+    manualUnreadGeneration: workstream.manualUnreadGeneration,
+    hasUnread: workstream.hasUnread,
+    firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     preview: workstream.objective,
@@ -409,7 +417,10 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 
 export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
   let sequence = mapped.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
-  const elicitationMessages = (detail.openElicitations ?? []).map((elicitation) => createElicitationMessage({
+  const mappedIds = new Set(mapped.map((message) => message.id));
+  const elicitationMessages = (detail.openElicitations ?? [])
+    .filter((elicitation) => !mappedIds.has(elicitationMessageId(elicitation.id)))
+    .map((elicitation) => createElicitationMessage({
     id: elicitationMessageId(elicitation.id),
     workstreamId: detail.id,
     sequenceNumber: ++sequence,
@@ -756,12 +767,48 @@ export class AvalonApi {
       origin: 'automation',
       harnessStatus: 'running',
       lastActivityAt: new Date().toISOString(),
+      latestAttentionSequenceNumber: 0,
+      readThroughSequenceNumber: 0,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
     };
   }
 
   async getWorkstreams(signal?: AbortSignal): Promise<WorkstreamSummary[]> {
     const page = await this.request('/workstreams?limit=250', { schema: wireWorkstreamPageSchema, signal });
     return page.items.map(mapWorkstreamSummary);
+  }
+
+  async renameWorkstream(id: string, title: string): Promise<WorkstreamSummary> {
+    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { title },
+      schema: WireWorkstreamSchema,
+    });
+    return mapWorkstreamSummary(workstream);
+  }
+
+  async acknowledgeWorkstreamRead(
+    id: string,
+    readThroughSequenceNumber: number,
+    observedManualUnreadGeneration: number,
+  ): Promise<WorkstreamSummary> {
+    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state`, {
+      method: 'PATCH',
+      body: { readThroughSequenceNumber, observedManualUnreadGeneration },
+      schema: WireWorkstreamSchema,
+    });
+    return mapWorkstreamSummary(workstream);
+  }
+
+  async markWorkstreamUnread(id: string): Promise<WorkstreamSummary> {
+    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}/read-state/mark-unread`, {
+      method: 'POST',
+      schema: WireWorkstreamSchema,
+    });
+    return mapWorkstreamSummary(workstream);
   }
 
   async createWorkstream(input: { openingMessage: string; participantIds: string[] }): Promise<CreatedWorkstream> {
@@ -824,18 +871,25 @@ export class AvalonApi {
     }
   }
 
-  async getMessagePage(id: string, before?: string, signal?: AbortSignal): Promise<MessagePage> {
+  async getMessagePage(id: string, options: {
+    before?: string;
+    after?: string;
+    around?: number;
+    signal?: AbortSignal;
+  } = {}): Promise<MessagePage> {
     const query = new URLSearchParams({ limit: '200' });
-    if (before) query.set('before', before);
+    if (options.before) query.set('before', options.before);
+    if (options.after) query.set('after', options.after);
+    if (options.around !== undefined) query.set('around', String(options.around));
     const page = await this.request(`/workstreams/${encodeURIComponent(id)}/messages?${query.toString()}`, {
       schema: wireMessagePageSchema,
-      signal,
+      ...(options.signal ? { signal: options.signal } : {}),
     });
-    return { items: page.items.map(mapMessage), nextCursor: page.nextCursor };
+    return { items: page.items.map(mapMessage), nextCursor: page.nextCursor, newerCursor: page.newerCursor };
   }
 
   async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
-    return (await this.getMessagePage(id, undefined, signal)).items;
+    return (await this.getMessagePage(id, { signal })).items;
   }
 
   async downloadArtifact(workstreamId: string, artifactId: string, signal?: AbortSignal): Promise<{

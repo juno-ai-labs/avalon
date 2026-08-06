@@ -256,8 +256,17 @@ describe("Avalon core write-tool idempotency", () => {
     expect(first).toMatchObject({ halt: "needs_input" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM elicitations").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT target_user_id FROM elicitations").get()).toEqual({ target_user_id: null });
-    expect(database.prepare("SELECT harness_status FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
-      .toEqual({ harness_status: "needs_input" });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE message_type = 'elicitation'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      `SELECT harness_status, next_sequence_number, latest_attention_sequence_number
+       FROM workstreams WHERE id = ?`,
+    ).get(WORKSTREAM_ID)).toEqual({
+      harness_status: "needs_input",
+      next_sequence_number: 2,
+      latest_attention_sequence_number: 1,
+    });
   });
 
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {
