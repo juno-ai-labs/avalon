@@ -1723,6 +1723,7 @@ pre {
 /* Conversational automation creation */
 
 .new-automation-screen { height: 100%; overflow: auto; }
+.new-automation-actions { position: fixed; right: 10px; top: 6px; z-index: 5; }
 .automation-builder { display: flex; flex-direction: column; margin: 0 auto; min-height: 100%; padding: 68px 38px 132px; width: min(996px, 100%); }
 .automation-builder-intro { margin: auto 0; padding: 30px 0 95px; text-align: center; }
 .automation-builder-intro > .avalon-mark { height: 29px; margin-bottom: 15px; width: 29px; }
