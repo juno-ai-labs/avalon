@@ -60,7 +60,7 @@ export const NotionCapabilitySettings = {
 
 export const notionTools: ToolDefinition[] = [
   {
-    name: "notion.search",
+    name: "search",
     description: "Search accessible Notion pages or data sources by title.",
     capability: NotionCapabilities.read,
     mode: "read",
@@ -78,7 +78,7 @@ export const notionTools: ToolDefinition[] = [
     },
   },
   {
-    name: "notion.retrieve_page",
+    name: "retrieve_page",
     description: "Retrieve bounded page metadata and enhanced Markdown content.",
     capability: NotionCapabilities.read,
     mode: "read",
@@ -86,7 +86,7 @@ export const notionTools: ToolDefinition[] = [
     inputSchema: idInputSchema("pageId"),
   },
   {
-    name: "notion.retrieve_data_source",
+    name: "retrieve_data_source",
     description: "Retrieve a Notion data source and its property schema.",
     capability: NotionCapabilities.read,
     mode: "read",
@@ -94,7 +94,7 @@ export const notionTools: ToolDefinition[] = [
     inputSchema: idInputSchema("dataSourceId"),
   },
   {
-    name: "notion.query_data_source",
+    name: "query_data_source",
     description: "Query one bounded page of rows from a Notion data source.",
     capability: NotionCapabilities.read,
     mode: "read",
@@ -111,7 +111,7 @@ export const notionTools: ToolDefinition[] = [
     },
   },
   {
-    name: "notion.create_page",
+    name: "create_page",
     description: "Create a Notion page from bounded enhanced Markdown.",
     capability: NotionCapabilities.insert,
     mode: "write",
@@ -128,7 +128,7 @@ export const notionTools: ToolDefinition[] = [
     },
   },
   {
-    name: "notion.update_page_markdown",
+    name: "update_page_markdown",
     description: "Apply bounded, targeted search-and-replace edits to a Notion page.",
     capability: NotionCapabilities.update,
     mode: "write",
@@ -158,7 +158,7 @@ export const notionTools: ToolDefinition[] = [
     },
   },
   {
-    name: "notion.append_page_markdown",
+    name: "append_page_markdown",
     description: "Append bounded enhanced Markdown to an existing Notion page.",
     capability: NotionCapabilities.update,
     mode: "write",
@@ -174,7 +174,7 @@ export const notionTools: ToolDefinition[] = [
     },
   },
   {
-    name: "notion.list_comments",
+    name: "list_comments",
     description: "List one bounded page of unresolved comments for a Notion page or block.",
     capability: NotionCapabilities.commentRead,
     mode: "read",
@@ -191,7 +191,7 @@ export const notionTools: ToolDefinition[] = [
     },
   },
   {
-    name: "notion.create_comment",
+    name: "create_comment",
     description: "Create a top-level page comment or reply to an existing Notion discussion.",
     capability: NotionCapabilities.commentInsert,
     mode: "write",
@@ -489,7 +489,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         throw new ConnectorError("unsupported_capability", `The Notion connection has not granted ${definition?.capability ?? name}`);
       }
 
-      if (name === "notion.search") {
+      if (name === "search") {
         const args = searchSchema.parse(rawArgs);
         const body: Record<string, unknown> = {
           query: args.query,
@@ -502,18 +502,18 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return { output: boundNotionValue(output), summary: `Searched Notion for “${args.query.slice(0, 80)}”` };
       }
 
-      if (name === "notion.retrieve_page") {
+      if (name === "retrieve_page") {
         const pageId = z.object({ pageId: idSchema }).strict().parse(rawArgs).pageId;
         return { output: await retrievePage(context.connection, pageId, context.signal), summary: `Read Notion page ${pageId}` };
       }
 
-      if (name === "notion.retrieve_data_source") {
+      if (name === "retrieve_data_source") {
         const dataSourceId = z.object({ dataSourceId: idSchema }).strict().parse(rawArgs).dataSourceId;
         const output = await request(context.connection, context.signal, "GET", `/data_sources/${encodeURIComponent(dataSourceId)}`);
         return { output: boundNotionValue(output), summary: `Read Notion data source ${dataSourceId}` };
       }
 
-      if (name === "notion.query_data_source") {
+      if (name === "query_data_source") {
         const args = queryDataSourceSchema.parse(rawArgs);
         const body: Record<string, unknown> = { page_size: args.pageSize };
         if (args.startCursor) body.start_cursor = args.startCursor;
@@ -521,7 +521,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return { output: boundNotionValue(output), summary: `Queried Notion data source ${args.dataSourceId}` };
       }
 
-      if (name === "notion.create_page") {
+      if (name === "create_page") {
         const args = createPageSchema.parse(rawArgs);
         const markdown = `# ${args.title}${args.markdown ? `\n\n${args.markdown}` : ""}`;
         const body: Record<string, unknown> = { markdown };
@@ -531,7 +531,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return { output: boundNotionValue(page), summary: `Created Notion page “${args.title}”`, providerOperationId: id };
       }
 
-      if (name === "notion.update_page_markdown") {
+      if (name === "update_page_markdown") {
         const args = updatePageSchema.parse(rawArgs);
         const output = await request(context.connection, context.signal, "PATCH", `/pages/${encodeURIComponent(args.pageId)}/markdown`, {
           type: "update_content",
@@ -546,7 +546,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return { output: boundMarkdown(output), summary: `Updated Notion page ${args.pageId}`, providerOperationId: args.pageId };
       }
 
-      if (name === "notion.append_page_markdown") {
+      if (name === "append_page_markdown") {
         const args = appendPageSchema.parse(rawArgs);
         const output = await request(context.connection, context.signal, "PATCH", `/pages/${encodeURIComponent(args.pageId)}/markdown`, {
           type: "insert_content",
@@ -555,7 +555,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return { output: boundMarkdown(output), summary: `Appended content to Notion page ${args.pageId}`, providerOperationId: args.pageId };
       }
 
-      if (name === "notion.list_comments") {
+      if (name === "list_comments") {
         const args = commentsListSchema.parse(rawArgs);
         const output = await request(context.connection, context.signal, "GET", "/comments", undefined, {
           block_id: args.blockId,
@@ -565,7 +565,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         return { output: boundNotionValue(output), summary: `Listed comments for Notion block ${args.blockId}` };
       }
 
-      if (name === "notion.create_comment") {
+      if (name === "create_comment") {
         const args = createCommentSchema.parse(rawArgs);
         const body: Record<string, unknown> = { markdown: args.markdown };
         if (args.pageId) body.parent = { page_id: args.pageId };

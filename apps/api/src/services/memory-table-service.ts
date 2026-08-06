@@ -1462,7 +1462,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
   return [
     {
       definition: {
-        name: "avalon.table_search",
+        name: "search",
         description: "Find structured durable-memory tables across every scope authorized by the host. Scope selectors are not accepted.",
         capability: "table.search",
         mode: "read",
@@ -1477,7 +1477,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     },
     {
       definition: {
-        name: "avalon.table_describe",
+        name: "describe",
         description: "Read one authorized durable table's schema, natural key, purpose, and usage instructions without loading its rows.",
         capability: "table.read",
         mode: "read",
@@ -1492,7 +1492,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     },
     {
       definition: {
-        name: "avalon.table_query",
+        name: "query",
         description: "Query only the matching rows and selected columns from an authorized durable table using typed filters, FTS, ordering, and cursor paging.",
         capability: "table.read",
         mode: "read",
@@ -1520,7 +1520,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     },
     {
       definition: {
-        name: "avalon.table_create",
+        name: "create",
         description: "Create a typed durable table in the narrowest host-authorized scope of the requested kind. Natural-key columns make inserts deduplicate safely.",
         capability: "table.write",
         mode: "write",
@@ -1541,7 +1541,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     },
     {
       definition: {
-        name: "avalon.table_insert_rows",
+        name: "insert_rows",
         description: "Insert rows by natural key, atomically ignoring rows that already exist and returning only rows newly inserted by this call.",
         capability: "table.write",
         mode: "write",
@@ -1556,7 +1556,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     },
     {
       definition: {
-        name: "avalon.table_update_rows",
+        name: "update_rows",
         description: "Patch authorized rows with revision compare-and-swap. Natural-key columns are immutable.",
         capability: "table.write",
         mode: "write",
@@ -1575,7 +1575,7 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
     },
     {
       definition: {
-        name: "avalon.table_invalidate_rows",
+        name: "invalidate_rows",
         description: "Reversibly invalidate authorized rows with revision compare-and-swap.",
         capability: "table.write",
         mode: "write",

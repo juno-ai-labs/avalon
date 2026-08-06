@@ -6,7 +6,7 @@ ALTER TABLE connector_connections RENAME TO connector_connections_before_provide
 CREATE TABLE connector_connections (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  connector_type TEXT NOT NULL CHECK (connector_type IN ('google', 'generic_webhook', 'web_monitor', 'github', 'linear', 'notion')),
+  connector_type TEXT NOT NULL CHECK (connector_type IN ('google', 'generic_webhook', 'github', 'linear', 'notion')),
   scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
   owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   provider_account_id TEXT,

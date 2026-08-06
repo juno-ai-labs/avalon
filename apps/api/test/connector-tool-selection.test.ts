@@ -1,12 +1,11 @@
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
-import { runHarness, type HarnessEvent, type HarnessToolContext } from "@avalon/agent-harness";
+import { runHarness, type HarnessEvent } from "@avalon/agent-harness";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const OTHER_WORKSPACE_ID = "10000000-0000-4000-8000-000000000001";
 const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
 const HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000003";
 const USER_ID = "00000000-0000-4000-8000-000000000004";
@@ -15,8 +14,6 @@ const WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000006";
 const OWNER_CONNECTION_ID = "00000000-0000-4000-8000-000000000007";
 const OTHER_CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
 const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000009";
-const WEB_MONITOR_CONNECTION_ID = "00000000-0000-4000-8000-000000000010";
-const OTHER_WORKSPACE_CONNECTION_ID = "00000000-0000-4000-8000-000000000011";
 const CHILD_HARNESS_RUN_ID = "00000000-0000-4000-8000-000000000012";
 
 const GOOGLE_WORKSPACE_CAPABILITIES = [
@@ -28,19 +25,19 @@ const GOOGLE_WORKSPACE_CAPABILITIES = [
 ] as const;
 
 const GOOGLE_WORKSPACE_TOOLS = [
-  "google.drive.search",
-  "google.drive.get_metadata",
-  "google.drive.download",
-  "google.drive.export",
-  "google.docs.read_document",
-  "google.docs.create_document",
-  "google.docs.append_text",
-  "google.docs.replace_text",
-  "google.sheets.read_spreadsheet",
-  "google.sheets.read_values",
-  "google.sheets.create_spreadsheet",
-  "google.sheets.update_values",
-  "google.sheets.append_values",
+  "drive.search",
+  "drive.get_metadata",
+  "drive.download",
+  "drive.export",
+  "docs.read_document",
+  "docs.create_document",
+  "docs.append_text",
+  "docs.replace_text",
+  "sheets.read_spreadsheet",
+  "sheets.read_values",
+  "sheets.create_spreadsheet",
+  "sheets.update_values",
+  "sheets.append_values",
 ] as const;
 
 const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
@@ -54,7 +51,7 @@ const GOOGLE_MAIL_CALENDAR_CAPABILITIES = [
 interface ConnectionRow extends Record<string, unknown> {
   id: string;
   workspace_id: string;
-  connector_type: "google" | "web_monitor";
+  connector_type: "google";
   scope: "personal" | "workspace";
   owner_user_id: string | null;
   granted_scopes_json: string;
@@ -77,7 +74,7 @@ class ToolSelectionDatabase {
   ) {
     const counts = new Map<string, number>();
     this.connections = connections.map((row) => {
-      const base = row.connector_type === "web_monitor" ? "plugin_web_monitor" : "plugin_google";
+      const base = "plugin_google";
       const key = `${row.workspace_id}:${base}`;
       const count = (counts.get(key) ?? 0) + 1;
       counts.set(key, count);
@@ -171,19 +168,16 @@ function connection(
   capabilities: readonly string[] = GOOGLE_WORKSPACE_CAPABILITIES,
   createdAt = "2026-08-01T00:00:00.000Z",
   workspaceId = WORKSPACE_ID,
-  connectorType: ConnectionRow["connector_type"] = "google",
 ): ConnectionRow {
   return {
     id,
     workspace_id: workspaceId,
-    connector_type: connectorType,
+    connector_type: "google",
     scope,
     owner_user_id: ownerUserId,
     granted_scopes_json: JSON.stringify(capabilities),
     cursor_json: "{}",
-    config_json: JSON.stringify(connectorType === "web_monitor"
-      ? { url: "https://example.com/workspace-fixture", intervalSeconds: 3600, region: "global" }
-      : {}),
+    config_json: "{}",
     status: "healthy",
     created_at: createdAt,
   };
@@ -222,13 +216,15 @@ function workflowInput(automationSubscriptionId: string | null = null): Workstre
 function googleToolNames(tools: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"]): string[] {
   return tools
     .map((tool) => tool.definition.name)
-    .filter((name) => name.startsWith("google."));
+    .filter((name) => (GOOGLE_WORKSPACE_TOOLS as readonly string[]).includes(name));
 }
 
 function pluginConnectionIds(
   selected: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>,
 ): string[] {
-  return selected.plugins.map((plugin) => plugin.canonicalId.slice("connection:".length));
+  return selected.plugins
+    .filter((plugin) => plugin.canonicalId.startsWith("connection:"))
+    .map((plugin) => plugin.canonicalId.slice("connection:".length));
 }
 
 function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
@@ -240,74 +236,18 @@ function childWorkflowInput(parent = workflowInput()): WorkstreamWorkflowInput {
 }
 
 describe("connector tools selected for harness runs", () => {
-  it("gives the automation architect executable connector tools with live authorization checks", async () => {
-    const database = new ToolSelectionDatabase([
-      connection(
-        WEB_MONITOR_CONNECTION_ID,
-        "workspace",
-        null,
-        ["web.read"],
-        "2026-08-01T00:00:01.000Z",
-        WORKSPACE_ID,
-        "web_monitor",
-      ),
-    ]);
-    const fetcher = vi.fn(async () => new Response("<main>Avalon status is healthy.</main>", {
-      headers: { "content-type": "text/html" },
-    }));
-    vi.stubGlobal("fetch", fetcher);
-
-    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(
-      env(database),
-      WORKSPACE_ID,
-      USER_ID,
-    );
-    const plugin = catalog.find((entry) => entry.pluginId === "plugin_web_monitor");
-    const tool = plugin?.tools.find((entry) => entry.name === "web_monitor_fetch");
-    expect(tool).toMatchObject({
-      canonicalName: "web_monitor.fetch",
-      capability: "web.read",
-      mode: "read",
-      idempotency: "safe",
-    });
-
-    const context: HarnessToolContext = {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      harnessRunId: HARNESS_RUN_ID,
-      toolCallId: "automation-creator-tool-1",
-      executionPrincipal: { type: "user", userId: USER_ID },
-      signal: new AbortController().signal,
-    };
-    await expect(tool!.execute!({}, context)).resolves.toMatchObject({
-      summary: "Fetched example.com",
-      output: { readableText: "Avalon status is healthy." },
-    });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-
-    database.memberStatus = "removed";
-    await expect(tool!.execute!({}, context)).rejects.toThrow(/active workspace member/i);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
   it("resolves durable receipt policy from canonical identity, never a provider wire alias", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
-      connection(
-        WEB_MONITOR_CONNECTION_ID,
-        "workspace",
-        null,
-        ["web.read"],
-        "2026-08-01T00:00:01.000Z",
-        WORKSPACE_ID,
-        "web_monitor",
-      ),
     ]);
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
+    const selected = await __integrationTesting.loadHarnessTools({
+      ...env(database),
+      FIRECRAWL_API_KEY: "firecrawl-test-key",
+    } as Env, workflowInput());
 
     const listPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
       pluginId: "avalon:discovery",
-      canonicalToolName: "list_connector_plugins",
+      canonicalToolName: "list_plugins",
       capability: "avalon.plugins.list",
       mode: "read",
       idempotency: "safe",
@@ -320,24 +260,31 @@ describe("connector tools selected for harness runs", () => {
       idempotency: "safe",
     }, selected);
     const timePolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: "avalon:time",
-      canonicalToolName: "avalon.current_time",
+      pluginId: "avalon:core",
+      canonicalToolName: "current_time",
       capability: "time.read",
       mode: "read",
       idempotency: "safe",
     }, selected);
     const workstreamPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
       pluginId: "avalon:workstream",
-      canonicalToolName: "avalon.read_workstream",
+      canonicalToolName: "read",
       capability: "workstream.read",
       mode: "read",
       idempotency: "safe",
     }, selected);
-    const monitorPluginId = `connection:${WEB_MONITOR_CONNECTION_ID}`;
-    const monitorPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: monitorPluginId,
-      canonicalToolName: "web_monitor.fetch",
-      capability: "web.read",
+    const webPolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: "avalon:web",
+      canonicalToolName: "search",
+      capability: "web.search",
+      mode: "read",
+      idempotency: "safe",
+    }, selected);
+    const googlePluginId = `connection:${WORKSPACE_CONNECTION_ID}`;
+    const googlePolicy = __integrationTesting.resolveHarnessToolReceiptPolicy({
+      pluginId: googlePluginId,
+      canonicalToolName: "drive.search",
+      capability: "drive.read",
       mode: "read",
       idempotency: "safe",
     }, selected);
@@ -345,34 +292,67 @@ describe("connector tools selected for harness runs", () => {
     expect(listPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(loadPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
     expect(timePolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
-    expect(workstreamPolicy).toMatchObject({ connectionId: null, definition: { mode: "read", idempotency: "safe" } });
-    expect(monitorPolicy).toMatchObject({
-      pluginId: monitorPluginId,
-      connectionId: WEB_MONITOR_CONNECTION_ID,
-      definition: { name: "web_monitor.fetch", mode: "read", idempotency: "safe" },
+    expect(workstreamPolicy).toMatchObject({
+      pluginId: "avalon:workstream",
+      connectionId: null,
+      toolSurfaceHash: expect.any(String),
+      definition: { name: "read", mode: "read", idempotency: "safe" },
+    });
+    expect(webPolicy).toMatchObject({
+      pluginId: "avalon:web",
+      connectionId: null,
+      toolSurfaceHash: expect.any(String),
+      definition: { name: "search", mode: "read", idempotency: "safe" },
+    });
+    expect(googlePolicy).toMatchObject({
+      pluginId: googlePluginId,
+      connectionId: WORKSPACE_CONNECTION_ID,
+      definition: { name: "drive.search", mode: "read", idempotency: "safe" },
+      legacyReceiptIdentity: {
+        canonicalToolName: "google.drive.search",
+        toolSurfaceHash: expect.any(String),
+      },
     });
     expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
-      pluginId: monitorPolicy.pluginId,
-      canonicalToolName: monitorPolicy.definition.name,
-      capability: monitorPolicy.definition.capability,
-      mode: monitorPolicy.definition.mode,
-      idempotency: monitorPolicy.definition.idempotency,
-      connectionId: monitorPolicy.connectionId,
-      toolSurfaceHash: monitorPolicy.toolSurfaceHash,
-    }), monitorPolicy)).toBe(true);
+      pluginId: googlePolicy.pluginId,
+      canonicalToolName: googlePolicy.definition.name,
+      capability: googlePolicy.definition.capability,
+      mode: googlePolicy.definition.mode,
+      idempotency: googlePolicy.definition.idempotency,
+      connectionId: googlePolicy.connectionId,
+      toolSurfaceHash: googlePolicy.toolSurfaceHash,
+    }), googlePolicy)).toBe(true);
     expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
-      pluginId: monitorPolicy.pluginId,
-      canonicalToolName: monitorPolicy.definition.name,
-      capability: monitorPolicy.definition.capability,
+      pluginId: googlePolicy.pluginId,
+      canonicalToolName: googlePolicy.legacyReceiptIdentity?.canonicalToolName,
+      capability: googlePolicy.definition.capability,
+      mode: googlePolicy.definition.mode,
+      idempotency: googlePolicy.definition.idempotency,
+      connectionId: googlePolicy.connectionId,
+      toolSurfaceHash: googlePolicy.legacyReceiptIdentity?.toolSurfaceHash,
+    }), googlePolicy)).toBe(true);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
+      pluginId: googlePolicy.pluginId,
+      canonicalToolName: googlePolicy.legacyReceiptIdentity?.canonicalToolName,
+      capability: googlePolicy.definition.capability,
+      mode: googlePolicy.definition.mode,
+      idempotency: googlePolicy.definition.idempotency,
+      connectionId: googlePolicy.connectionId,
+      toolSurfaceHash: googlePolicy.toolSurfaceHash,
+    }), googlePolicy)).toBe(false);
+    expect(__integrationTesting.storedToolPolicyMatches(JSON.stringify({
+      pluginId: googlePolicy.pluginId,
+      canonicalToolName: googlePolicy.definition.name,
+      capability: googlePolicy.definition.capability,
       mode: "write",
       idempotency: "record_before_execute",
-      connectionId: monitorPolicy.connectionId,
-      toolSurfaceHash: monitorPolicy.toolSurfaceHash,
-    }), monitorPolicy)).toBe(false);
+      connectionId: googlePolicy.connectionId,
+      toolSurfaceHash: googlePolicy.toolSurfaceHash,
+    }), googlePolicy)).toBe(false);
     expect(() => __integrationTesting.resolveHarnessToolReceiptPolicy({
-      pluginId: monitorPluginId,
-      canonicalToolName: "web_monitor.fetch",
-      capability: "web.read",
+      pluginId: googlePluginId,
+      canonicalToolName: "drive.search",
+      capability: "drive.read",
       mode: "write",
       idempotency: "record_before_execute",
     }, selected)).toThrow("outside this run scope");
@@ -383,7 +363,7 @@ describe("connector tools selected for harness runs", () => {
     const parentInput = workflowInput();
     const selected = await __integrationTesting.loadHarnessTools(env(database), parentInput);
 
-    const tool = __integrationTesting.installInlineChildAgentTool({
+    const tool = await __integrationTesting.installInlineChildAgentTool({
       env: env(database),
       input: parentInput,
       parentLease: () => ({
@@ -403,28 +383,48 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(tool.definition).toMatchObject({
-      name: "avalon.run_subagent",
+      name: "run_subagent",
       capability: "subagent.run",
       mode: "read",
       idempotency: "safe",
     });
     expect(selected.coreTools.filter(({ definition }) =>
-      definition.name === "avalon.run_subagent"
+      definition.name === "run_subagent"
     )).toHaveLength(1);
     expect(selected.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "avalon:time",
+      "avalon:core",
       "avalon:tables",
       "avalon:memory",
-      "avalon:workstream",
     ]);
-    expect(selected.corePlugins.find((plugin) =>
+    expect(selected.corePlugins.find((plugin) => plugin.canonicalId === "avalon:core")
+      ?.tools.map(({ definition }) => definition.name)).toEqual([
+        "current_time",
+        "request_elicitation",
+      ]);
+    expect(selected.plugins.find((plugin) =>
       plugin.canonicalId === "avalon:workstream"
-    )?.tools.filter(({ definition }) => definition.name === "avalon.run_subagent")).toHaveLength(1);
+    )?.tools.filter(({ definition }) => definition.name === "run_subagent")).toHaveLength(1);
+    expect(selected.plugins.find((plugin) =>
+      plugin.canonicalId === "avalon:workstream"
+    )).toMatchObject({
+      modelId: "avalon_workstream",
+      shortWireName: "workstream",
+      preload: true,
+      explicit: true,
+    });
+    expect(selected.plugins.find((plugin) =>
+      plugin.canonicalId === "avalon:workstream"
+    )?.tools.map(({ definition }) => definition.name)).toEqual(expect.arrayContaining([
+      "read",
+      "read_resource",
+      "create_artifact",
+      "run_subagent",
+    ]));
     expect(selected.tools.filter(({ definition }) =>
-      definition.name === "avalon.run_subagent"
+      definition.name === "run_subagent"
     )).toHaveLength(1);
-    expect(selected.modeByTool.get("avalon.run_subagent")).toBe("read");
-    expect(selected.idempotencyByTool.get("avalon.run_subagent")).toBe("safe");
+    expect(selected.modeByTool.get("workstream_run_subagent")).toBe("read");
+    expect(selected.idempotencyByTool.get("workstream_run_subagent")).toBe("safe");
   });
 
   it("builds a non-recursive read-only child surface from only inherited active plugins", async () => {
@@ -438,7 +438,7 @@ describe("connector tools selected for harness runs", () => {
       FIRECRAWL_API_KEY: "firecrawl-test-key",
     } as Env;
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-    expect(parentTools.plugins).toHaveLength(2);
+    expect(parentTools.plugins).toHaveLength(4);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
       .some((tool) => tool.definition.mode === "write")).toBe(true);
 
@@ -452,35 +452,45 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(childTools.plugins.map((plugin) => plugin.canonicalId)).toEqual([
+      "avalon:workstream",
+      "avalon:web",
       `connection:${WORKSPACE_CONNECTION_ID}`,
     ]);
     expect(childTools.plugins[0]).toMatchObject({ preload: true, explicit: true });
+    expect(childTools.plugins[1]).toMatchObject({ preload: false, explicit: false });
+    expect(childTools.plugins[2]).toMatchObject({ preload: true, explicit: true });
     expect(childTools.tools.every((tool) => tool.definition.mode === "read")).toBe(true);
-    expect(childTools.plugins[0]?.tools.map((tool) => tool.definition.name)).toEqual([
-      "google.drive.search",
-      "google.drive.get_metadata",
-      "google.drive.download",
-      "google.drive.export",
-      "google.docs.read_document",
-      "google.sheets.read_spreadsheet",
-      "google.sheets.read_values",
+    expect(childTools.plugins[2]?.tools.map((tool) => tool.definition.name)).toEqual([
+      "drive.search",
+      "drive.get_metadata",
+      "drive.download",
+      "drive.export",
+      "docs.read_document",
+      "sheets.read_spreadsheet",
+      "sheets.read_values",
     ]);
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "avalon.current_time",
-      "avalon.read_workstream",
-      "avalon.web_search",
-      "avalon.web_fetch",
-      "avalon.read_resource",
+      "current_time",
+      "read",
+      "search",
+      "fetch",
+      "read_resource",
     ]);
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
       .toBe(false);
     expect(childTools.corePlugins.map((plugin) => plugin.canonicalId)).toEqual([
-      "avalon:time",
-      "avalon:workstream",
+      "avalon:core",
     ]);
-    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.run_subagent");
+    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("run_subagent");
     expect(childTools.frozenConnections.has(`connection:${OWNER_CONNECTION_ID}`)).toBe(false);
     expect(childTools.frozenConnections.has(`connection:${WORKSPACE_CONNECTION_ID}`)).toBe(true);
+    expect(__integrationTesting.eligibleConnectionCapabilityMap(
+      childTools.plugins,
+      childTools.frozenConnections,
+    )).toEqual({
+      [WORKSPACE_CONNECTION_ID]: childTools.plugins[2]?.tools.map((tool) =>
+        tool.definition.capability),
+    });
   });
 
   it("does not give an inbound-email child an outbound Firecrawl channel", async () => {
@@ -503,12 +513,12 @@ describe("connector tools selected for harness runs", () => {
     });
 
     expect(childTools.coreTools.map((tool) => tool.definition.name)).toEqual([
-      "avalon.current_time",
-      "avalon.read_workstream",
-      "avalon.read_resource",
+      "current_time",
+      "read",
+      "read_resource",
     ]);
-    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.web_search");
-    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("avalon.web_fetch");
+    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
+    expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");
   });
 
   it("does not add plugin, schema, or result ceilings to child runs", () => {
@@ -526,7 +536,7 @@ describe("connector tools selected for harness runs", () => {
     ]);
     const parentInput = workflowInput();
     const selected = await __integrationTesting.loadHarnessTools(env(database), parentInput);
-    const tool = __integrationTesting.installInlineChildAgentTool({
+    const tool = await __integrationTesting.installInlineChildAgentTool({
       env: env(database),
       input: parentInput,
       parentLease: () => ({
@@ -561,57 +571,6 @@ describe("connector tools selected for harness runs", () => {
     )).rejects.toThrow("only inherit connector plugins already activated");
   });
 
-  it("executes a workspace tool as the workspace principal and omits another workspace's connection", async () => {
-    const fetcher = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(
-      "workspace-only fixture",
-      { status: 200, headers: { "content-type": "text/plain" } },
-    ));
-    vi.stubGlobal("fetch", fetcher);
-    const database = new ToolSelectionDatabase([
-      connection(
-        WEB_MONITOR_CONNECTION_ID,
-        "workspace",
-        null,
-        ["web.read"],
-        "2026-08-01T00:00:00.000Z",
-        WORKSPACE_ID,
-        "web_monitor",
-      ),
-      connection(
-        OTHER_WORKSPACE_CONNECTION_ID,
-        "workspace",
-        null,
-        ["drive.read"],
-        "2026-08-01T00:00:01.000Z",
-        OTHER_WORKSPACE_ID,
-      ),
-    ]);
-
-    const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
-
-    expect(selected.connectionByTool.get("web_monitor.fetch")).toBe(WEB_MONITOR_CONNECTION_ID);
-    expect(new Set(selected.connectionByTool.values())).not.toContain(OTHER_WORKSPACE_CONNECTION_ID);
-    expect(googleToolNames(selected.tools)).toEqual([]);
-
-    const tool = selected.tools.find(({ definition }) => definition.name === "web_monitor.fetch");
-    expect(tool).toBeDefined();
-    const result = await tool!.execute(
-      {},
-      {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
-        harnessRunId: HARNESS_RUN_ID,
-        toolCallId: "tool-web-monitor-fetch",
-        executionPrincipal: { type: "user", userId: USER_ID },
-        signal: new AbortController().signal,
-      },
-    );
-
-    expect(result.summary).toBe("Fetched example.com");
-    expect(result.output).toMatchObject({ readableText: "workspace-only fixture" });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-
   it("exposes every granted read and write tool from a workspace connection to an ad-hoc workstream", async () => {
     const database = new ToolSelectionDatabase([
       connection(WORKSPACE_CONNECTION_ID, "workspace", null),
@@ -622,10 +581,12 @@ describe("connector tools selected for harness runs", () => {
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
     expect(pluginConnectionIds(selected)).toEqual([WORKSPACE_CONNECTION_ID]);
-    expect(selected.plugins[0]?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
-    expect(selected.modeByTool.get("google.drive.search")).toBe("read");
-    expect(selected.modeByTool.get("google.docs.create_document")).toBe("write");
-    expect(selected.modeByTool.get("google.sheets.update_values")).toBe("write");
+    expect(selected.plugins.find((plugin) =>
+      plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`
+    )?.tools.map((tool) => tool.definition.name)).toEqual(GOOGLE_WORKSPACE_TOOLS);
+    expect(selected.modeByTool.get("google_drive_search")).toBe("read");
+    expect(selected.modeByTool.get("google_docs_create_document")).toBe("write");
+    expect(selected.modeByTool.get("google_sheets_update_values")).toBe("write");
   });
 
   it("exposes a personal connection only to its owning user", async () => {
@@ -650,7 +611,7 @@ describe("connector tools selected for harness runs", () => {
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
-    expect(selected.connectionByTool.get("google.drive.search")).toBe(OWNER_CONNECTION_ID);
+    expect(selected.connectionByTool.get("drive.search")).toBe(OWNER_CONNECTION_ID);
   });
 
   it("advertises every Google credential as a distinct capability-specific loadable plugin", async () => {
@@ -687,16 +648,16 @@ describe("connector tools selected for harness runs", () => {
     expect(mail?.systemMessage).toContain("do not substitute public web search");
     expect(mail?.systemMessage).not.toContain("Drive search");
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
-      "google.gmail.search",
-      "google.gmail.read_thread",
-      "google.gmail.read_message",
-      "google.gmail.create_draft",
-      "google.gmail.send",
-      "google.calendar.list_calendars",
-      "google.calendar.list_events",
-      "google.calendar.read_event",
-      "google.calendar.create_event",
-      "google.calendar.update_event",
+      "gmail.search",
+      "gmail.read_thread",
+      "gmail.read_message",
+      "gmail.create_draft",
+      "gmail.send",
+      "calendar.list_calendars",
+      "calendar.list_events",
+      "calendar.read_event",
+      "calendar.create_event",
+      "calendar.update_event",
     ]);
 
     expect(drive).toMatchObject({
@@ -720,7 +681,7 @@ describe("connector tools selected for harness runs", () => {
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
 
     expect(new Set(pluginConnectionIds(selected))).toEqual(new Set([OWNER_CONNECTION_ID, WORKSPACE_CONNECTION_ID]));
-    expect(selected.connectionByTool.get("google.drive.search")).toBe(WORKSPACE_CONNECTION_ID);
+    expect(selected.connectionByTool.get("drive.search")).toBe(WORKSPACE_CONNECTION_ID);
     expect(selected.plugins.find((plugin) => plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`)).toMatchObject({
       preload: true,
       explicit: true,
@@ -743,7 +704,9 @@ describe("connector tools selected for harness runs", () => {
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));
-    expect(selected.plugins[0]).toMatchObject({
+    expect(selected.plugins.find((plugin) =>
+      plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`
+    )).toMatchObject({
       canonicalId: `connection:${WORKSPACE_CONNECTION_ID}`,
       preload: true,
       explicit: true,
@@ -763,8 +726,10 @@ describe("connector tools selected for harness runs", () => {
     );
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
-    expect(selected.plugins).toHaveLength(1);
-    expect(selected.plugins[0]).toMatchObject({
+    expect(selected.plugins.filter((plugin) => plugin.canonicalId.startsWith("connection:"))).toHaveLength(1);
+    expect(selected.plugins.find((plugin) =>
+      plugin.canonicalId === `connection:${WORKSPACE_CONNECTION_ID}`
+    )).toMatchObject({
       canonicalId: `connection:${WORKSPACE_CONNECTION_ID}`,
       modelId: "plugin_google",
       shortWireName: "google",
@@ -789,20 +754,20 @@ describe("connector tools selected for harness runs", () => {
     const selected = await __integrationTesting.loadHarnessTools(env(database), input);
 
     expect(googleToolNames(selected.tools)).toEqual([
-      "google.drive.search",
-      "google.drive.get_metadata",
-      "google.drive.download",
-      "google.drive.export",
-      "google.docs.read_document",
-      "google.sheets.read_spreadsheet",
-      "google.sheets.read_values",
+      "drive.search",
+      "drive.get_metadata",
+      "drive.download",
+      "drive.export",
+      "docs.read_document",
+      "sheets.read_spreadsheet",
+      "sheets.read_values",
     ]);
     expect(selected.tools
-      .filter((tool) => tool.definition.name.startsWith("google."))
+      .filter((tool) => (GOOGLE_WORKSPACE_TOOLS as readonly string[]).includes(tool.definition.name))
       .every((tool) => tool.definition.mode === "read"))
       .toBe(true);
-    expect(selected.modeByTool.has("google.docs.create_document")).toBe(false);
-    expect(selected.connectionByTool.has("google.sheets.update_values")).toBe(false);
+    expect(selected.modeByTool.has("google_docs_create_document")).toBe(false);
+    expect(selected.connectionByTool.has("google_sheets_update_values")).toBe(false);
   });
 
   it.each([
@@ -848,7 +813,9 @@ describe("connector tools selected for harness runs", () => {
     const providerFetch = vi.fn<typeof globalThis.fetch>();
     vi.stubGlobal("fetch", providerFetch);
     const selected = await __integrationTesting.loadHarnessTools(env(database), workflowInput());
-    const plugin = selected.plugins[0]!;
+    const plugin = selected.plugins.find((candidate) =>
+      candidate.canonicalId === `connection:${OWNER_CONNECTION_ID}`
+    )!;
     const wireToolName = "google_drive_search";
     const events: HarnessEvent[] = [];
     let modelTurn = 0;

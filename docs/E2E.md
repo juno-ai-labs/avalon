@@ -11,7 +11,7 @@ pnpm dev:api
 pnpm smoke:local
 ```
 
-The smoke check signs in through development-only authentication, verifies protected workspace routes, validates the right-rail fixtures and persisted tool transcript, replays a human message without duplicating agent work, rejects a private-network web monitor, receives a realtime snapshot, and rejects reuse of the single-use socket ticket. It does not create provider data or send email.
+The smoke check signs in through development-only authentication, verifies protected workspace routes, validates the right-rail fixtures and persisted tool transcript, replays a human message without duplicating agent work, receives a realtime snapshot, and rejects reuse of the single-use socket ticket. It does not create provider data or send email.
 
 Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production.
 
@@ -63,16 +63,15 @@ Pass evidence: one work stream, two persistent participants, no Avalon participa
 
 ## PRD flow 2 — recurring web automation
 
-Use a publicly reachable test page whose response body can be changed between two known versions; private and loopback addresses must be rejected.
+Use a stable public topic with authoritative sources, such as a cloud provider's model-release catalog.
 
-1. Create **Check this blog every 24 hours** from natural language and review the compiled interval before creation.
-2. Bind a Web Monitor connection to the public page and create the automation.
-3. Run it manually. Confirm exactly one run work stream, a successful fetch tool event, an R2-backed snapshot reference, and a completed gray work-stream state.
+1. Create **Check for new model releases every 24 hours** from natural language and review the compiled interval before creation.
+2. Confirm the automation requires the `avalon:web` plugin and no connector binding.
+3. Run it manually. Confirm exactly one run work stream, successful `web_search` and selected `web_fetch` tool events, source-linked output, and a completed gray work-stream state.
 4. Retry the same manual-run request with its original idempotency key. Confirm the existing run and work stream are returned and no second harness launches.
-5. Change the test page, invoke the connector poll, and wait for the normalized activity to pass through the activity Queue.
-6. Confirm a new automation run uses the next planned work stream, the changed snapshot is retained, and the following recurrence remains scheduled.
+5. Let the next recurrence become due and confirm it creates the next planned work stream while preserving the following schedule.
 
-Pass evidence: two distinct snapshots, one initial manual run, one change-triggered run, no duplicate for the manual retry, and no fetch of a private-network redirect target.
+Pass evidence: one initial manual run, one scheduled recurrence, authoritative source links, and no duplicate for the manual retry.
 
 ## PRD flow 3 — Google activity
 
@@ -81,17 +80,17 @@ Run this only in provider test accounts after enabling the five Google APIs and 
 ### Mail + Calendar preset
 
 1. In Settings, choose **Google Mail + Calendar** and confirm the Avalon authorization request contains only `gmail.read`, `gmail.draft`, `gmail.send`, `calendar.read`, and `calendar.write` plus identity scopes. It must not request Drive, Docs, or Sheets capabilities.
-2. Exercise `google.gmail.search`, `google.gmail.read_thread` or `google.gmail.read_message`, and `google.gmail.create_draft`. Confirm the draft is present in the provider account, the tool event stores a provider operation reference, and the returned content is bounded/redacted. Do not call `google.gmail.send` during a production smoke test.
-3. Exercise `google.calendar.list_calendars`, then use an explicit returned calendar ID with `google.calendar.list_events`, `google.calendar.read_event`, `google.calendar.create_event`, and `google.calendar.update_event` against a clearly named disposable event.
+2. Exercise `google_gmail_search`, `google_gmail_read_thread` or `google_gmail_read_message`, and `google_gmail_create_draft`. Confirm the draft is present in the provider account, the tool event stores a provider operation reference, and the returned content is bounded/redacted. Do not call `google_gmail_send` during a production smoke test.
+3. Exercise `google_calendar_list_calendars`, then use an explicit returned calendar ID with `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event` against a clearly named disposable event.
 4. Establish Gmail and Calendar poll baselines, then create a new test message and modify the test event. Run the owning connector poll and confirm normalized `email.received`/`email.updated` and `calendar.event_changed` activity is persisted and queued before its cursor advances.
 5. Bind a personal automation to the connection and confirm one activity creates one authorized work stream with visible tool events. Confirm a Docs or Sheets tool is rejected because this connection does not hold those capabilities.
 
 ### Drive + Docs + Sheets preset
 
 1. In Settings, choose **Google Drive + Docs + Sheets** and confirm the Avalon authorization request contains only `drive.read`, `docs.read`, `docs.write`, `sheets.read`, and `sheets.write` plus identity scopes. It must not request Gmail or Calendar capabilities.
-2. Exercise `google.drive.search` and `google.drive.get_metadata` against a disposable fixture; also verify one bounded `google.drive.download` or `google.drive.export` result.
-3. Exercise the native Docs tools: create a document with `google.docs.create_document`, read it with `google.docs.read_document`, append text with `google.docs.append_text`, and replace an exact fixture string with `google.docs.replace_text`.
-4. Exercise the native Sheets tools: create a spreadsheet with `google.sheets.create_spreadsheet`, inspect it with `google.sheets.read_spreadsheet`, write an explicit A1 range with `google.sheets.update_values`, append rows with `google.sheets.append_values`, and read the result with `google.sheets.read_values`.
+2. Exercise `google_drive_search` and `google_drive_get_metadata` against a disposable fixture; also verify one bounded `google_drive_download` or `google_drive_export` result.
+3. Exercise the native Docs tools: create a document with `google_docs_create_document`, read it with `google_docs_read_document`, append text with `google_docs_append_text`, and replace an exact fixture string with `google_docs_replace_text`.
+4. Exercise the native Sheets tools: create a spreadsheet with `google_sheets_create_spreadsheet`, inspect it with `google_sheets_read_spreadsheet`, write an explicit A1 range with `google_sheets_update_values`, append rows with `google_sheets_append_values`, and read the result with `google_sheets_read_values`.
 5. Establish the Drive change-token baseline before editing the Doc and Sheet. After both edits, run the connector poll and confirm the same Drive poll emits `docs.document_changed` and `sheets.spreadsheet_changed`, persists/queues them once, and then advances the Drive cursor. No Google webhook or push delivery should be involved.
 6. Bind an automation to this connection and confirm Gmail and Calendar tools are rejected because the connection does not hold those capabilities.
 

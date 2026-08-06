@@ -205,7 +205,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["google", "generic_webhook", "web_monitor", "github", "linear", "notion"]),
+  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -662,12 +662,6 @@ export const CreateAutomationRequestSchema = z.object({
 export const CompileAutomationRequestSchema = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null)
-});
-export const CreateWebMonitorRequestSchema = z.object({
-  url: z.string().url(),
-  intervalSeconds: z.number().int().min(300),
-  phrase: z.string().max(300).nullable().default(null),
-  scope: ScopeSchema
 });
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
