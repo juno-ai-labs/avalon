@@ -235,6 +235,61 @@ describe('Workspace settings', () => {
   });
 
   it.each(['healthy', 'reconnect_required'] as const)(
+    'disables duplicate Slack workspace authorization for an existing %s installation',
+    async (status) => {
+      api.getConnections.mockResolvedValue([{
+        id: '00000000-0000-7000-8000-000000000015',
+        connectorType: 'slack',
+        scope: 'workspace',
+        displayName: 'Slack · Avalon',
+        capabilities: ['slack.agent', 'slack.notifications.write'],
+        status,
+      }]);
+
+      renderSettings();
+      openSettingsSection('Connections');
+
+      const slackCard = (await screen.findByText('Slack')).closest('article');
+      expect(slackCard).not.toBeNull();
+      expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
+      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
+      await waitFor(() => expect(workspaceButton).toBeDisabled());
+      expect(workspaceButton).toHaveAttribute(
+        'title',
+        'A Slack workspace connection is already installed. Manage it below.',
+      );
+      fireEvent.click(workspaceButton);
+      expect(api.startProviderConnection).not.toHaveBeenCalled();
+    },
+  );
+
+  it('allows replacing a disabled Slack workspace installation', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000016',
+      connectorType: 'slack',
+      scope: 'workspace',
+      displayName: 'Slack · Avalon',
+      capabilities: ['slack.agent', 'slack.notifications.write'],
+      status: 'disabled',
+    }]);
+
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const slackCard = (await screen.findByText('Slack')).closest('article');
+    expect(slackCard).not.toBeNull();
+    const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
+    await waitFor(() => expect(workspaceButton).toBeEnabled());
+    fireEvent.click(workspaceButton);
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'slack',
+      'workspace',
+      ['slack.agent', 'slack.notifications.write'],
+    ));
+  });
+
+  it.each(['healthy', 'reconnect_required'] as const)(
     'disables duplicate workspace authorization for an existing %s Linear installation',
     async (status) => {
       api.getConnections.mockResolvedValue([{
