@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   LogOut,
   MailPlus,
+  MessageSquare,
   MonitorCog,
   Plug,
   RefreshCcw,
@@ -52,7 +53,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'general', label: 'General', searchTerms: 'region data residency organization', icon: SlidersHorizontal },
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
       { id: 'workspace', label: 'Workspace', searchTerms: 'organization members invitations invite roles', icon: Users },
-      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion integrations', icon: Plug },
+      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack integrations', icon: Plug },
     ],
   },
   {
@@ -118,6 +119,44 @@ const connectorProviders = [
     ],
   },
   {
+    id: 'slack-knowledge' as const,
+    provider: 'slack' as const,
+    name: 'Slack knowledge',
+    description: 'Connect personally to search and read Slack messages, files, and people through Slack MCP.',
+    icon: MessageSquare,
+    scopes: ['you'] as const,
+    capabilities: [
+      'slack.search',
+      'slack.messages.read',
+      'slack.files.read',
+      'slack.users.read',
+    ],
+  },
+  {
+    id: 'slack-actions' as const,
+    provider: 'slack' as const,
+    name: 'Slack actions',
+    description: 'Connect personally to send messages, create conversations, react, and work with canvases as you.',
+    icon: MessageSquare,
+    scopes: ['you'] as const,
+    capabilities: [
+      'slack.messages.write',
+      'slack.conversations.write',
+      'slack.reactions.write',
+      'slack.canvases.read',
+      'slack.canvases.write',
+    ],
+  },
+  {
+    id: 'slack-agent' as const,
+    provider: 'slack' as const,
+    name: 'Avalon Agent for Slack',
+    description: 'Install the workspace Agent for App Home, DMs, mentions, shortcuts, commands, and automation delivery.',
+    icon: MessageSquare,
+    scopes: ['workspace'] as const,
+    capabilities: ['slack.agent', 'slack.notifications.write'],
+  },
+  {
     id: 'notion' as const,
     provider: 'notion' as const,
     name: 'Notion',
@@ -141,9 +180,13 @@ function providerHasConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
+  const capabilities = [
+    ...provider.capabilities,
+    ...('personalCapabilities' in provider ? provider.personalCapabilities : []),
+  ];
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
-    provider.capabilities.some((capability) => connection.capabilities?.includes(capability)),
+    capabilities.some((capability) => connection.capabilities?.includes(capability)),
   );
 }
 
@@ -217,7 +260,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     staleTime: 5_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       const url = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
       await desktopBridge().openExternal(url);
     },
@@ -577,8 +620,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
                     const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
-                    const workspaceConnectTitle = hasActiveWorkspaceConnection
+                    const supportsMultipleWorkspaceInstalls = provider.provider === 'slack';
+                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || (hasActiveWorkspaceConnection && !supportsMultipleWorkspaceInstalls);
+                    const workspaceConnectTitle = hasActiveWorkspaceConnection && !supportsMultipleWorkspaceInstalls
                       ? `A ${provider.name} workspace connection is already installed. Manage it below.`
                       : connections.isLoading
                         ? 'Checking installed workspace connections…'
@@ -602,7 +646,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                               onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') })}
                               title={workspaceConnectTitle}
                             >
-                              Connect workspace
+                              {hasActiveWorkspaceConnection && supportsMultipleWorkspaceInstalls ? 'Connect another workspace' : 'Connect workspace'}
                             </Button>
                           )}
                         </div>
@@ -620,7 +664,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span>{connections.data?.length ?? 0}</span>
                   </div>
                   <div className="settings-connection-list settings-list-card">
-                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion'].includes(connection.connectorType)).map((connection) => (
+                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)).map((connection) => (
                       <div className="settings-connection-row" key={connection.id}>
                         <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>

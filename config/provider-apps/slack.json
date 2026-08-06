@@ -1,0 +1,151 @@
+{
+  "_metadata": {
+    "major_version": 2,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "Avalon",
+    "description": "A durable AI agent for cross-app work and personal automations.",
+    "long_description": "Avalon is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. Avalon keeps the task's own work history in Avalon, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Avalon Agent DM. Avalon does not scrape or mirror Slack workspaces. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
+    "background_color": "#111827"
+  },
+  "features": {
+    "agent_view": {
+      "agent_description": "Delegate cross-app work, continue durable tasks, and receive personal automation results.",
+      "suggested_prompts": [
+        {
+          "title": "Morning email briefing",
+          "message": "Check my Gmail every morning at 9 AM and send me the stack-ranked top 3 emails in Slack."
+        },
+        {
+          "title": "Summarize current context",
+          "message": "Summarize what I am viewing and recommend the next three actions."
+        },
+        {
+          "title": "Investigate an issue",
+          "message": "Investigate this issue across my connected tools and keep me updated here."
+        }
+      ]
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "Avalon",
+      "always_online": false
+    },
+    "shortcuts": [
+      {
+        "name": "Start an Avalon task",
+        "type": "global",
+        "callback_id": "avalon_start_task",
+        "description": "Delegate a new durable task to Avalon."
+      },
+      {
+        "name": "Work on this with Avalon",
+        "type": "message",
+        "callback_id": "avalon_work_on_message",
+        "description": "Start an Avalon task using this message as context."
+      }
+    ],
+    "slash_commands": [
+      {
+        "command": "/avalon",
+        "description": "Start or continue a task with Avalon.",
+        "usage_hint": "what you want Avalon to do",
+        "should_escape": true,
+        "url": "https://slack.with-avalon.com/slack/commands"
+      }
+    ],
+    "unfurl_domains": [
+      "with-avalon.com"
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://api.with-avalon.com/connections/slack/callback",
+      "https://eu.api.with-avalon.com/connections/slack/callback"
+    ],
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "chat:write",
+        "commands",
+        "im:history",
+        "im:write",
+        "links:read",
+        "links:write",
+        "search:read.files",
+        "search:read.public",
+        "search:read.users",
+        "team.billing:read"
+      ],
+      "user": [
+        "canvases:read",
+        "canvases:write",
+        "channels:history",
+        "channels:read",
+        "channels:write",
+        "files:read",
+        "groups:history",
+        "groups:read",
+        "groups:write",
+        "im:history",
+        "im:write",
+        "mpim:history",
+        "mpim:read",
+        "mpim:write",
+        "reactions:write",
+        "search:read.files",
+        "search:read.im",
+        "search:read.mpim",
+        "search:read.private",
+        "search:read.public",
+        "search:read.users",
+        "users:read",
+        "users:read.email",
+        "chat:write"
+      ]
+    },
+    "token_management_enabled": true
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://slack.with-avalon.com/slack/events",
+      "bot_events": [
+        "app_context_changed",
+        "app_home_opened",
+        "app_mention",
+        "app_uninstalled",
+        "link_shared",
+        "message.im",
+        "tokens_revoked"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://slack.with-avalon.com/slack/interactivity"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": true,
+    "is_mcp_enabled": true
+  },
+  "app_directory": {
+    "app_directory_categories": [
+      "productivity"
+    ],
+    "use_direct_install": false,
+    "installation_landing_page": "https://with-avalon.com/slack",
+    "privacy_policy_url": "https://with-avalon.com/privacy",
+    "support_url": "https://with-avalon.com/support",
+    "support_email": "support@with-avalon.com",
+    "supported_languages": [
+      "en-US"
+    ],
+    "pricing": "Paid Avalon and Slack plans."
+  }
+}
