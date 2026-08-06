@@ -201,6 +201,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
     enabled: Boolean(api),
+    refetchOnMount: 'always',
     staleTime: 30_000,
   });
   const invitations = useQuery({

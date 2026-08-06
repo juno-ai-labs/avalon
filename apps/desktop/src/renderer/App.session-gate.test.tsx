@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
 
 const sessionState = vi.hoisted(() => ({
   api: {
     getWorkspace: vi.fn(),
+    getWorkspaceMembers: vi.fn(),
   },
   activateWorkspace: vi.fn(),
   booting: false,
@@ -49,6 +50,10 @@ function renderGate(): void {
 }
 
 describe('SessionGate identity-first ordering', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.location.hash = '';
@@ -62,6 +67,7 @@ describe('SessionGate identity-first ordering', () => {
       region: 'global',
       currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
     });
+    sessionState.api.getWorkspaceMembers.mockResolvedValue([]);
   });
 
   it('requires sign-in before showing a deep-linked invitation', () => {
@@ -79,6 +85,30 @@ describe('SessionGate identity-first ordering', () => {
 
     expect(await screen.findByText('main workspace UI')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
+  });
+
+  it('refreshes workspace members every five minutes while the workspace is open', async () => {
+    vi.useFakeTimers();
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Avalon Studio', region: 'global', role: 'owner' },
+    };
+    renderGate();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1_000 - 1);
+    });
+    expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(sessionState.api.getWorkspaceMembers).toHaveBeenCalledTimes(2);
   });
 
   it('shows authenticated invitations before workspace setup', async () => {
