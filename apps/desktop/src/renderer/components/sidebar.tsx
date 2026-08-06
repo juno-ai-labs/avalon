@@ -1,14 +1,21 @@
+import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import {
+  Archive,
   ChevronDown,
   ChevronsLeft,
   Check,
   CirclePause,
+  EyeOff,
+  FileStack,
   GitBranch,
   LogOut,
   Menu,
   MessageSquarePlus,
+  Pencil,
+  Pin,
+  Play,
   Plus,
   Settings,
   Zap,
@@ -19,13 +26,16 @@ import { formatRelative, groupWorkstreams } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
-import { Avatar, Badge, IconButton, StatusDot } from './primitives';
+import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 
 interface SidebarProps {
   workspace: Workspace;
   automations: AutomationSummary[];
   workstreams: WorkstreamSummary[];
   loading?: boolean;
+  onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
+  onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
+  onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onSignOut: () => void;
 }
 
@@ -100,54 +110,158 @@ function OnboardingChecklist(): React.JSX.Element {
   );
 }
 
-function AutomationRow({ automation }: { automation: AutomationSummary }): React.JSX.Element {
+function AutomationRow({
+  automation,
+  onRunNow,
+}: {
+  automation: AutomationSummary;
+  onRunNow: (automation: AutomationSummary) => void;
+}): React.JSX.Element {
   return (
-    <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active')} to={`/automations/${automation.id}`}>
-      <span className="sidebar-row-icon" aria-hidden="true">
-        {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}
-      </span>
-      <span className="sidebar-row-main">
-        <span className="sidebar-row-title">{automation.name}</span>
-        {automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
-      </span>
-      <Badge className="scope-badge">{automation.scope === 'you' ? 'You' : 'Workspace'}</Badge>
-    </NavLink>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div className="sidebar-context-target">
+          <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active')} to={`/automations/${automation.id}`}>
+            <span className="sidebar-row-icon" aria-hidden="true">
+              {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}
+            </span>
+            <span className="sidebar-row-main">
+              <span className="sidebar-row-title">{automation.name}</span>
+              {automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+            </span>
+            <Badge className="scope-badge">{automation.scope === 'you' ? 'You' : 'Workspace'}</Badge>
+          </NavLink>
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+          <ContextMenu.Item
+            className="menu-item"
+            disabled={automation.status === 'draft'}
+            onSelect={() => onRunNow(automation)}
+          >
+            <Play aria-hidden="true" size={16} /> Run now
+          </ContextMenu.Item>
+          <ContextMenu.Item className="menu-item">
+            <FileStack aria-hidden="true" size={16} /> Turn into template
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="menu-separator" />
+          <ContextMenu.Item className="menu-item menu-item-danger">
+            <Archive aria-hidden="true" size={16} /> Archive
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
-function WorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
+function WorkstreamRow({
+  workstream,
+  onMarkUnread,
+  onRename,
+}: {
+  workstream: WorkstreamSummary;
+  onMarkUnread: (workstream: WorkstreamSummary) => void;
+  onRename: (workstream: WorkstreamSummary) => void;
+}): React.JSX.Element {
   const showAutomationMarker = workstream.origin === 'automation' && workstream.harnessStatus === 'completed';
   return (
-    <NavLink className={({ isActive }) => clsx('sidebar-row workstream-row', isActive && 'is-active')} to={`/workstreams/${workstream.id}`}>
-      <span className="sidebar-row-icon">
-        {showAutomationMarker ? (
-          <span aria-label="Automation-generated, latest run completed" className="sidebar-automation-marker" role="img">
-            <GitBranch aria-hidden="true" size={15} strokeWidth={1.8} />
-          </span>
-        ) : (
-          <StatusDot compact status={workstream.harnessStatus} />
-        )}
-      </span>
-      <span className="sidebar-row-main">
-        <span className="sidebar-row-title">{workstream.title}</span>
-        {(workstream.preview || workstream.automationName) && (
-          <span className="sidebar-row-hint">
-            {workstream.origin === 'automation' && <Zap aria-label="Automation-generated" size={10} />}
-            {workstream.preview ?? workstream.automationName}
-          </span>
-        )}
-      </span>
-    </NavLink>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div className="sidebar-context-target">
+          <NavLink
+            className={({ isActive }) => clsx('sidebar-row workstream-row', isActive && 'is-active', workstream.hasUnread && 'is-unread')}
+            to={`/workstreams/${workstream.id}`}
+          >
+            <span className="sidebar-row-icon">
+              {showAutomationMarker ? (
+                <span aria-label="Automation-generated, latest run completed" className="sidebar-automation-marker" role="img">
+                  <GitBranch aria-hidden="true" size={15} strokeWidth={1.8} />
+                </span>
+              ) : (
+                <StatusDot compact status={workstream.harnessStatus} />
+              )}
+            </span>
+            <span className="sidebar-row-main">
+              <span className="sidebar-row-title">{workstream.title}</span>
+              {(workstream.preview || workstream.automationName) && (
+                <span className="sidebar-row-hint">
+                  {workstream.origin === 'automation' && <Zap aria-label="Automation-generated" size={10} />}
+                  {workstream.preview ?? workstream.automationName}
+                </span>
+              )}
+            </span>
+          </NavLink>
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+          <ContextMenu.Item className="menu-item">
+            <Pin aria-hidden="true" size={16} /> Pin
+          </ContextMenu.Item>
+          <ContextMenu.Item className="menu-item" onSelect={() => onMarkUnread(workstream)}>
+            <EyeOff aria-hidden="true" size={16} /> Mark as unread
+          </ContextMenu.Item>
+          <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
+            <Pencil aria-hidden="true" size={16} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="menu-separator" />
+          <ContextMenu.Item className="menu-item menu-item-danger">
+            <Archive aria-hidden="true" size={16} /> Archive
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
-export function Sidebar({ workspace, automations, workstreams, loading, onSignOut }: SidebarProps): React.JSX.Element {
+export function Sidebar({
+  workspace,
+  automations,
+  workstreams,
+  loading,
+  onMarkWorkstreamUnread,
+  onRenameWorkstream,
+  onRunAutomation,
+  onSignOut,
+}: SidebarProps): React.JSX.Element {
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const [resizing, setResizing] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renaming, setRenaming] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const groups = groupWorkstreams(workstreams);
+
+  const openRename = (workstream: WorkstreamSummary): void => {
+    setRenameTarget(workstream);
+    setRenameTitle(workstream.title);
+    setRenameError(null);
+  };
+
+  const closeRename = (): void => {
+    if (renaming) return;
+    setRenameTarget(null);
+    setRenameError(null);
+  };
+
+  const submitRename = async (): Promise<void> => {
+    const title = renameTitle.trim();
+    if (!renameTarget || !title || title === renameTarget.title) return;
+    setRenaming(true);
+    setRenameError(null);
+    try {
+      await onRenameWorkstream(renameTarget, title);
+      setRenameTarget(null);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
+    } finally {
+      setRenaming(false);
+    }
+  };
 
   useEffect(() => {
     if (!resizing) return undefined;
@@ -197,7 +311,13 @@ export function Sidebar({ workspace, automations, workstreams, loading, onSignOu
               <p className="sidebar-empty">No active automations</p>
             ) : (
               <div className="sidebar-list">
-                {automations.map((automation) => <AutomationRow automation={automation} key={automation.id} />)}
+                {automations.map((automation) => (
+                  <AutomationRow
+                    automation={automation}
+                    key={automation.id}
+                    onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
+                  />
+                ))}
               </div>
             )}
           </section>
@@ -212,7 +332,14 @@ export function Sidebar({ workspace, automations, workstreams, loading, onSignOu
                 <div className="sidebar-group" key={group.label}>
                   <h3>{group.label}</h3>
                   <div className="sidebar-list">
-                    {group.streams.map((workstream) => <WorkstreamRow key={workstream.id} workstream={workstream} />)}
+                    {group.streams.map((workstream) => (
+                      <WorkstreamRow
+                        key={workstream.id}
+                        onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
+                        onRename={openRename}
+                        workstream={workstream}
+                      />
+                    ))}
                   </div>
                 </div>
               ))
@@ -270,6 +397,44 @@ export function Sidebar({ workspace, automations, workstreams, loading, onSignOu
           tabIndex={0}
         />
       </aside>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={renaming} onClick={closeRename}>Cancel</Button>
+            <Button
+              className="button-primary"
+              disabled={renaming || !renameTitle.trim() || renameTitle.trim() === renameTarget?.title}
+              onClick={() => void submitRename()}
+            >
+              Rename
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeRename();
+        }}
+        open={Boolean(renameTarget)}
+        title="Rename work stream"
+      >
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitRename();
+          }}
+        >
+          <label className="form-field rename-workstream-field">
+            <span>Name</span>
+            <input
+              aria-label="Work stream name"
+              autoFocus
+              maxLength={180}
+              onChange={(event) => setRenameTitle(event.currentTarget.value)}
+              value={renameTitle}
+            />
+          </label>
+        </form>
+        {renameError && <InlineError>{renameError}</InlineError>}
+      </Modal>
     </>
   );
 }

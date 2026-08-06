@@ -62,6 +62,7 @@ function parseJson<T>(value: unknown, fallback: T): T {
 }
 
 function toWorkstream(row: Record<string, unknown>): Workstream {
+  const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
   return {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
@@ -76,6 +77,12 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),
     plannedFor: row.planned_for == null ? null : String(row.planned_for),
     harnessStatus: String(row.harness_status) as HarnessStatus,
+    latestAttentionSequenceNumber,
+    readThroughSequenceNumber: latestAttentionSequenceNumber,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
     lastActivityAt: String(row.last_activity_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
@@ -196,8 +203,8 @@ export function createDatabase(db: D1DatabaseLike) {
           .prepare(
             `INSERT INTO workstreams
              (id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
-              next_sequence_number, last_activity_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, ?, ?, ?)`
+              next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?)`
           )
           .bind(
             workstreamId,
@@ -226,6 +233,14 @@ export function createDatabase(db: D1DatabaseLike) {
             input.openingMessage,
             at
           ),
+        db
+          .prepare(
+            `INSERT INTO workstream_read_states
+             (workspace_id, workstream_id, user_id, read_through_sequence_number,
+              manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+             VALUES (?, ?, ?, 1, NULL, 0, ?)`
+          )
+          .bind(input.workspaceId, workstreamId, input.creatorUserId, at),
         ...uniqueParticipants.map((userId) =>
           db
             .prepare(
@@ -369,6 +384,46 @@ export function createDatabase(db: D1DatabaseLike) {
         .bind(workspaceId, workstreamId, cursor, Math.min(limit, 250))
         .all<Record<string, unknown>>();
       return (result.results ?? []).reverse().map(toMessage);
+    },
+
+    async listMessagesAfter(
+      workspaceId: string,
+      workstreamId: string,
+      afterSequence: number,
+      limit = 100
+    ): Promise<Message[]> {
+      const result = await db
+        .prepare(
+          `SELECT m.*, u.email AS author_email, u.name AS author_name,
+             u.avatar_url AS author_avatar_url, u.timezone AS author_timezone, u.created_at AS author_created_at,
+             COALESCE((SELECT json_group_array(json_object(
+               'type', mm.mention_type,
+               'userId', mm.mentioned_user_id,
+               'connectorType', mm.connector_type,
+               'displayName', mentioned_person.name,
+               'avatarUrl', mentioned_person.avatar_url,
+               'startOffset', mm.start_offset,
+               'endOffset', mm.end_offset
+             )) FROM message_mentions mm
+               LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
+               WHERE mm.message_id = m.id), '[]') AS mentions_json,
+             COALESCE((SELECT json_group_array(json_object(
+               'id', attachment_resource.id,
+               'fileName', attachment_resource.title,
+               'mimeType', COALESCE(attachment_resource.mime_type, 'application/octet-stream'),
+               'sizeBytes', COALESCE(json_extract(attachment_resource.metadata_json, '$.size'), 0),
+               'contentAvailable', CASE WHEN attachment_resource.content_ref IS NULL THEN 0 ELSE 1 END,
+               'createdAt', attachment_resource.created_at
+             )) FROM message_attachments ma
+               JOIN resources attachment_resource ON attachment_resource.id = ma.resource_id
+               WHERE ma.message_id = m.id ORDER BY ma.position), '[]') AS attachments_json
+           FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
+           WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.sequence_number > ?
+           ORDER BY m.sequence_number ASC LIMIT ?`
+        )
+        .bind(workspaceId, workstreamId, afterSequence, Math.min(limit, 250))
+        .all<Record<string, unknown>>();
+      return (result.results ?? []).map(toMessage);
     }
   };
 

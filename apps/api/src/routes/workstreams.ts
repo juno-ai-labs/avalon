@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
+  AcknowledgeWorkstreamReadRequestSchema,
   AddParticipantRequestSchema,
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -21,7 +22,15 @@ const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
 const artifactParam = z.object({ id: IdSchema, artifactId: IdSchema });
 const listQuery = z.object({ limit: z.coerce.number().int().min(1).max(250).default(100), before: z.string().datetime({ offset: true }).optional() });
-const messageQuery = z.object({ limit: z.coerce.number().int().min(1).max(250).default(100), before: z.coerce.number().int().positive().optional() });
+const messageQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(250).default(100),
+  before: z.coerce.number().int().positive().optional(),
+  after: z.coerce.number().int().nonnegative().optional(),
+  around: z.coerce.number().int().positive().optional(),
+}).refine(
+  (query) => [query.before, query.after, query.around].filter((value) => value !== undefined).length <= 1,
+  "Use only one transcript cursor",
+);
 const resourceBody = z.object({ resourceId: IdSchema });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
@@ -43,9 +52,21 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))),
 );
+workstreamRoutes.patch("/:id/read-state", zValidator("param", idParam), zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) =>
+  c.json(await new WorkstreamService(c.env, getAuth(c)).acknowledgeRead(c.req.valid("param").id, c.req.valid("json"))),
+);
+workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam), async (c) =>
+  c.json(await new WorkstreamService(c.env, getAuth(c)).markUnread(c.req.valid("param").id)),
+);
 workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("query", messageQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).messages(c.req.valid("param").id, query.limit, query.before));
+  return c.json(await new WorkstreamService(c.env, getAuth(c)).messages(
+    c.req.valid("param").id,
+    query.limit,
+    query.before,
+    query.after,
+    query.around,
+  ));
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
   const defer = (promise: Promise<unknown>): void => {

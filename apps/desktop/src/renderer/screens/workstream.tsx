@@ -38,7 +38,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -301,6 +301,33 @@ export function JumpToLatestButton({ onJump }: { onJump: () => void }): React.JS
   );
 }
 
+export function initialTranscriptAnchorIndex(
+  transcript: Message[],
+  firstUnreadSequenceNumber: number | null,
+): number | null {
+  if (firstUnreadSequenceNumber === null) return null;
+  const firstUnreadIndex = transcript.findIndex((message) =>
+    message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
+  return firstUnreadIndex < 0 ? null : Math.max(0, firstUnreadIndex - 1);
+}
+
+export function highestVisibleAttentionSequence(
+  transcript: Message[],
+  visibleIndexes: number[],
+  latestAttentionSequenceNumber: number,
+): number {
+  return visibleIndexes.reduce((highest, index) => {
+    const message = transcript[index];
+    if (
+      !message
+      || message.realtimeOrder !== undefined
+      || message.messageType === 'tool_event'
+      || message.sequenceNumber > latestAttentionSequenceNumber
+    ) return highest;
+    return Math.max(highest, message.sequenceNumber);
+  }, 0);
+}
+
 export function RunFailureNotice({
   code,
   message,
@@ -355,6 +382,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderMessagesError, setOlderMessagesError] = useState<string | undefined>();
   const loadingOlderRef = useRef(false);
+  const loadingNewerRef = useRef(false);
+  const initialPositionedWorkstreamRef = useRef<string | null>(null);
+  const readAckTimerRef = useRef<number | null>(null);
+  const readAckInFlightRef = useRef<string | null>(null);
   const activeWorkstreamIdRef = useRef(id);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
@@ -371,6 +402,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   useEffect(() => {
     activeWorkstreamIdRef.current = id;
     loadingOlderRef.current = false;
+    loadingNewerRef.current = false;
+    initialPositionedWorkstreamRef.current = null;
+    readAckInFlightRef.current = null;
+    if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
+    readAckTimerRef.current = null;
     setLoadingOlder(false);
     setOlderMessagesError(undefined);
   }, [id]);
@@ -397,17 +433,27 @@ export function WorkstreamScreen(): React.JSX.Element {
     initialData: null,
     staleTime: Number.POSITIVE_INFINITY,
   });
+  const newerMessageCursor = useQuery<string | null>({
+    queryKey: ['messages-newer-cursor', id],
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   const messages = useQuery({
     queryKey: ['messages', id],
     queryFn: async ({ signal }) => {
-      const [page, detail] = await Promise.all([
-        api!.getMessagePage(id, undefined, signal),
-        queryClient.fetchQuery({
-          queryKey: ['workstream', id],
-          queryFn: ({ signal: detailSignal }) => api!.getWorkstream(id, detailSignal),
-          staleTime: 5_000,
-        }),
-      ]);
+      const detail = await queryClient.fetchQuery({
+        queryKey: ['workstream', id],
+        queryFn: ({ signal: detailSignal }) => api!.getWorkstream(id, detailSignal),
+        staleTime: 5_000,
+      });
+      const page = await api!.getMessagePage(id, {
+        ...(detail.firstUnreadSequenceNumber !== null
+          ? { around: detail.firstUnreadSequenceNumber }
+          : {}),
+        signal,
+      });
       const previous = queryClient.getQueryData<Message[]>(['messages', id]);
       const pageOldestSequence = page.items.reduce(
         (oldest, message) => Math.min(oldest, message.sequenceNumber),
@@ -418,6 +464,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (!alreadyHasOlderMessages) {
         queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
       }
+      queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
       return mergeCanonicalTranscript(previous, messagesWithTransientBlocks(page.items, detail));
     },
     enabled: Boolean(api && id),
@@ -468,7 +515,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
-      const page = await api.getMessagePage(id, before);
+      const page = await api.getMessagePage(id, { before });
       if (activeWorkstreamIdRef.current !== id) return;
       if (page.nextCursor === before) throw new Error('Avalon received a repeated transcript cursor.');
       queryClient.setQueryData<Message[]>(['messages', id], (current) =>
@@ -486,6 +533,52 @@ export function WorkstreamScreen(): React.JSX.Element {
       setLoadingOlder(false);
     }
   }, [api, id, queryClient]);
+
+  const loadNewerMessages = useCallback(async (): Promise<void> => {
+    const after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
+    if (!api || !after || loadingNewerRef.current) return;
+    loadingNewerRef.current = true;
+    setOlderMessagesError(undefined);
+    try {
+      const page = await api.getMessagePage(id, { after });
+      if (activeWorkstreamIdRef.current !== id) return;
+      if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
+      queryClient.setQueryData<Message[]>(['messages', id], (current) =>
+        page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+      queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
+    } catch (error) {
+      setOlderMessagesError(error instanceof Error ? error.message : 'Newer messages could not be loaded.');
+    } finally {
+      loadingNewerRef.current = false;
+    }
+  }, [api, id, queryClient]);
+
+  const jumpToLatest = useCallback(async (): Promise<void> => {
+    if (!api || loadingNewerRef.current) return;
+    loadingNewerRef.current = true;
+    setOlderMessagesError(undefined);
+    try {
+      let after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
+      while (after) {
+        const page = await api.getMessagePage(id, { after });
+        if (activeWorkstreamIdRef.current !== id) return;
+        if (page.newerCursor === after) throw new Error('Avalon received a repeated transcript cursor.');
+        queryClient.setQueryData<Message[]>(['messages', id], (current) =>
+          page.items.reduce((merged, message) => insertMessage(merged, message), current ?? []));
+        after = page.newerCursor;
+        queryClient.setQueryData(['messages-newer-cursor', id], after);
+      }
+      setAtBottom(true);
+      window.requestAnimationFrame(() => {
+        const current = queryClient.getQueryData<Message[]>(['messages', id]) ?? [];
+        transcriptVirtualizer.scrollToIndex(Math.max(0, current.length - 1), { align: 'end', behavior: 'smooth' });
+      });
+    } catch (error) {
+      setOlderMessagesError(error instanceof Error ? error.message : 'The latest messages could not be loaded.');
+    } finally {
+      loadingNewerRef.current = false;
+    }
+  }, [api, id, queryClient, transcriptVirtualizer]);
 
   const addParticipant = useMutation({
     mutationFn: (member: WorkspaceMember) => api!.addParticipant(id, member.id),
@@ -685,10 +778,90 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
 
   useEffect(() => {
-    if (!atBottom) return;
+    if (!workstream.data || messages.isLoading || initialPositionedWorkstreamRef.current === id) return;
+    initialPositionedWorkstreamRef.current = id;
+    const anchorSequence = workstream.data.firstUnreadSequenceNumber;
+    window.requestAnimationFrame(() => {
+      if (activeWorkstreamIdRef.current !== id || transcript.length === 0) return;
+      const anchorIndex = initialTranscriptAnchorIndex(transcript, anchorSequence);
+      if (anchorIndex !== null) {
+        setAtBottom(false);
+        transcriptVirtualizer.scrollToIndex(anchorIndex, { align: 'start' });
+        return;
+      }
+      setAtBottom(true);
+      transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' });
+    });
+  }, [id, messages.isLoading, transcript, transcriptVirtualizer, workstream.data]);
+
+  const acknowledgeVisibleMessages = useCallback((): void => {
+    const detail = queryClient.getQueryData<WorkstreamDetail>(['workstream', id]);
+    const element = transcriptRef.current;
+    if (!api || !detail || !element || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+    if (initialPositionedWorkstreamRef.current !== id) return;
+    const viewportTop = element.scrollTop;
+    const viewportBottom = viewportTop + element.clientHeight;
+    const visibleIndexes = transcriptVirtualizer.getVirtualItems()
+      .filter((item) => item.start < viewportBottom && item.end > viewportTop)
+      .map((item) => item.index);
+    const highestVisibleSequence = highestVisibleAttentionSequence(
+      transcript,
+      visibleIndexes,
+      detail.latestAttentionSequenceNumber,
+    );
+    if (highestVisibleSequence === 0) return;
+    if (
+      highestVisibleSequence <= detail.readThroughSequenceNumber
+      && detail.manualUnreadFromSequenceNumber === null
+    ) return;
+    const ackKey = `${id}:${highestVisibleSequence}:${detail.manualUnreadGeneration}`;
+    if (readAckInFlightRef.current === ackKey) return;
+    readAckInFlightRef.current = ackKey;
+    void api.acknowledgeWorkstreamRead(
+      id,
+      highestVisibleSequence,
+      detail.manualUnreadGeneration,
+    ).then((updated) => {
+      if (activeWorkstreamIdRef.current !== id) return;
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
+        current ? { ...current, ...updated } : current);
+      queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+        current?.map((item) => item.id === id ? { ...item, ...updated } : item));
+    }).catch(() => {
+      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+    }).finally(() => {
+      if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
+    });
+  }, [api, id, queryClient, transcript, transcriptVirtualizer]);
+
+  const scheduleReadAcknowledgement = useCallback((): void => {
+    if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
+    readAckTimerRef.current = window.setTimeout(() => {
+      readAckTimerRef.current = null;
+      acknowledgeVisibleMessages();
+    }, 250);
+  }, [acknowledgeVisibleMessages]);
+
+  useEffect(() => {
+    scheduleReadAcknowledgement();
+  }, [scheduleReadAcknowledgement, transcript.length]);
+
+  useEffect(() => {
+    const acknowledgeOnFocus = (): void => scheduleReadAcknowledgement();
+    window.addEventListener('focus', acknowledgeOnFocus);
+    document.addEventListener('visibilitychange', acknowledgeOnFocus);
+    return () => {
+      window.removeEventListener('focus', acknowledgeOnFocus);
+      document.removeEventListener('visibilitychange', acknowledgeOnFocus);
+      if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
+    };
+  }, [scheduleReadAcknowledgement]);
+
+  useEffect(() => {
+    if (initialPositionedWorkstreamRef.current !== id || !atBottom || newerMessageCursor.data) return;
     if (transcript.length === 0) return;
     requestAnimationFrame(() => transcriptVirtualizer.scrollToIndex(transcript.length - 1, { align: 'end' }));
-  }, [atBottom, transcript, transcriptVirtualizer]);
+  }, [atBottom, id, newerMessageCursor.data, transcript, transcriptVirtualizer]);
 
   if (workstream.isLoading || messages.isLoading) {
     return <OpeningState label="Opening work stream…" />;
@@ -709,6 +882,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   const detail = workstream.data;
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
   const visibleTranscript = transcript;
+  const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
+  const firstUnreadIndex = firstUnreadSequenceNumber === null
+    ? -1
+    : visibleTranscript.findIndex((message) =>
+      message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
   const liveBackgroundTasks = backgroundTasksFromMessages(transcript);
   const backgroundTasks = mergeBackgroundTasks(
     deferredContext.data?.backgroundTasks ?? detail.backgroundTasks,
@@ -755,10 +933,15 @@ export function WorkstreamScreen(): React.JSX.Element {
         onDrop={transcriptDrop.onDrop}
         onScroll={(event) => {
           const element = event.currentTarget;
-          setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 80);
+          const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+          setAtBottom(nearBottom && newerMessageCursor.data === null);
           if (element.scrollTop < 160 && messageCursor.data && !loadingOlderRef.current) {
             void loadOlderMessages();
           }
+          if (nearBottom && newerMessageCursor.data && !loadingNewerRef.current) {
+            void loadNewerMessages();
+          }
+          scheduleReadAcknowledgement();
         }}
         ref={transcriptRef}
       >
@@ -796,6 +979,9 @@ export function WorkstreamScreen(): React.JSX.Element {
                       width: '100%',
                     }}
                   >
+                    {virtualRow.index === firstUnreadIndex && (
+                      <div className="unread-divider" role="separator"><span>Unread messages</span></div>
+                    )}
                     <MessageBlock
                       currentUserId={session?.user.id}
                       loadAttachmentContent={loadAttachmentContent}
@@ -825,7 +1011,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <div className="composer-dock">
         {!atBottom && (
-          <JumpToLatestButton onJump={() => transcriptVirtualizer.scrollToIndex(Math.max(0, transcript.length - 1), { align: 'end', behavior: 'smooth' })} />
+          <JumpToLatestButton onJump={() => void jumpToLatest()} />
         )}
         <div className="composer-stack">
           <WorkstreamComposer

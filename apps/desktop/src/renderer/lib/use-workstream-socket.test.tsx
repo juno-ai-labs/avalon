@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonApi } from './api';
-import type { Message, WorkstreamDetail } from './types';
+import type { Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import {
   applyStreamingSocketEvent,
   insertMessage,
@@ -110,6 +110,84 @@ describe('useWorkstreamSocket', () => {
     };
 
     expect(nextTranscriptSequence([pendingHuman])).toBe(9);
+  });
+
+  it('advances cached read bounds when a canonical attention message arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workspaceId = '00000000-0000-7000-8000-000000000201';
+    const workstreamId = '00000000-0000-7000-8000-000000000202';
+    const messageId = '00000000-0000-7000-8000-000000000203';
+    const summary: WorkstreamSummary = {
+      id: workstreamId,
+      title: 'Watched activity',
+      origin: 'ad_hoc',
+      harnessStatus: 'completed',
+      latestAttentionSequenceNumber: 3,
+      readThroughSequenceNumber: 3,
+      manualUnreadFromSequenceNumber: null,
+      manualUnreadGeneration: 0,
+      hasUnread: false,
+      firstUnreadSequenceNumber: null,
+      lastActivityAt: '2026-07-31T19:20:00.000Z',
+    };
+    const detail: WorkstreamDetail = {
+      ...summary,
+      createdAt: '2026-07-31T19:00:00.000Z',
+      participants: [],
+      viewers: [],
+      resources: [],
+      connections: [],
+      artifacts: [],
+      backgroundTasks: [],
+      automationRuns: [],
+    };
+    queryClient.setQueryData(['workstream', workstreamId], detail);
+    queryClient.setQueryData(['workstreams'], [summary]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'message_created',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:21:00.000Z',
+      message: {
+        id: messageId,
+        clientMessageId: 'activity:provider-event-one',
+        workspaceId,
+        workstreamId,
+        author: { type: 'system' },
+        messageType: 'system',
+        textContent: 'A watched resource changed.',
+        structuredContent: { kind: 'connected_activity' },
+        mentions: [],
+        attachments: [],
+        sequenceNumber: 8,
+        createdAt: '2026-07-31T19:21:00.000Z',
+        editedAt: null,
+      },
+    }));
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])).toMatchObject({
+      latestAttentionSequenceNumber: 8,
+      readThroughSequenceNumber: 3,
+      hasUnread: true,
+      firstUnreadSequenceNumber: 4,
+      lastActivityAt: '2026-07-31T19:21:00.000Z',
+    });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])?.[0]).toMatchObject({
+      latestAttentionSequenceNumber: 8,
+      hasUnread: true,
+      firstUnreadSequenceNumber: 4,
+    });
   });
 
   it('reconciles the persisted realtime echo with its optimistic human message', () => {

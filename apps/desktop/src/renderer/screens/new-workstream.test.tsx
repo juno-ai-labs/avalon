@@ -38,6 +38,12 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
     origin: 'ad_hoc',
     harnessStatus,
     lastActivityAt: '2026-07-31T20:00:00.000Z',
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
     preview: `${title} preview`,
   };
 }

@@ -227,6 +227,13 @@ describe("durable harness attempt runtime", () => {
       text: "Done",
       createdAt: "2026-08-03T00:00:00.000Z",
     }, { status: "completed" });
+    expect(sqlite.database.prepare(
+      `SELECT latest_attention_sequence_number, last_activity_at
+       FROM workstreams WHERE id = ?`,
+    ).get(WORKSTREAM_ID)).toEqual({
+      latest_attention_sequence_number: 1,
+      last_activity_at: "2026-08-03T00:00:00.000Z",
+    });
 
     expect(await terminalizeHarnessAttempt(sqlite.binding, input(RUN_ONE), first.lease, {
       status: "completed",
