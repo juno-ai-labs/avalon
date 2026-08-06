@@ -240,24 +240,24 @@ const checksListSchema = repoIdentitySchema.extend({
 }).strict();
 
 export const githubTools: ToolDefinition[] = [
-  tool("github.repositories.list", "List repositories available through this GitHub connection.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
-  tool("github.repository.get", "Read bounded metadata for one accessible GitHub repository.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
-  tool("github.contents.get", "Read one text file from an accessible GitHub repository. Directory and binary responses are not returned.", GitHubCapabilities.contentsRead, "read", contentsGetSchema),
-  tool("github.commits.list", "List bounded commit metadata from an accessible GitHub repository.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
-  tool("github.issues.list", "List issues in an accessible GitHub repository.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
-  tool("github.issues.get", "Read one GitHub issue and its bounded body.", GitHubCapabilities.issuesRead, "read", issueIdentitySchema),
-  tool("github.issues.create", "Create an issue in an accessible GitHub repository.", GitHubCapabilities.issuesWrite, "write", issueCreateSchema),
-  tool("github.issues.update", "Update an issue's title, body, state, labels, or assignees.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
-  tool("github.issue_comments.create", "Create a comment on a GitHub issue or pull request.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
-  tool("github.pull_requests.list", "List pull requests in an accessible GitHub repository.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
-  tool("github.pull_requests.get", "Read one GitHub pull request and its bounded body.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
-  tool("github.pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
-  tool("github.pull_requests.list_reviews", "List reviews for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
-  tool("github.pull_requests.create", "Create a pull request from an existing branch.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestCreateSchema),
-  tool("github.pull_requests.create_review", "Submit an overall review on a GitHub pull request.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestReviewCreateSchema),
-  tool("github.actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
-  tool("github.actions.get_workflow_run", "Read one GitHub Actions workflow run.", GitHubCapabilities.actionsRead, "read", workflowRunGetSchema),
-  tool("github.checks.list_for_ref", "List check runs for a Git ref.", GitHubCapabilities.checksRead, "read", checksListSchema),
+  tool("repositories.list", "List repositories available through this GitHub connection.", GitHubCapabilities.metadataRead, "read", repositoriesListSchema),
+  tool("repository.get", "Read bounded metadata for one accessible GitHub repository.", GitHubCapabilities.metadataRead, "read", repositoryGetSchema),
+  tool("contents.get", "Read one text file from an accessible GitHub repository. Directory and binary responses are not returned.", GitHubCapabilities.contentsRead, "read", contentsGetSchema),
+  tool("commits.list", "List bounded commit metadata from an accessible GitHub repository.", GitHubCapabilities.contentsRead, "read", commitsListSchema),
+  tool("issues.list", "List issues in an accessible GitHub repository.", GitHubCapabilities.issuesRead, "read", issuesListSchema),
+  tool("issues.get", "Read one GitHub issue and its bounded body.", GitHubCapabilities.issuesRead, "read", issueIdentitySchema),
+  tool("issues.create", "Create an issue in an accessible GitHub repository.", GitHubCapabilities.issuesWrite, "write", issueCreateSchema),
+  tool("issues.update", "Update an issue's title, body, state, labels, or assignees.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
+  tool("issue_comments.create", "Create a comment on a GitHub issue or pull request.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
+  tool("pull_requests.list", "List pull requests in an accessible GitHub repository.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
+  tool("pull_requests.get", "Read one GitHub pull request and its bounded body.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
+  tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
+  tool("pull_requests.list_reviews", "List reviews for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
+  tool("pull_requests.create", "Create a pull request from an existing branch.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestCreateSchema),
+  tool("pull_requests.create_review", "Submit an overall review on a GitHub pull request.", GitHubCapabilities.pullRequestsWrite, "write", pullRequestReviewCreateSchema),
+  tool("actions.list_workflow_runs", "List GitHub Actions workflow runs in an accessible repository.", GitHubCapabilities.actionsRead, "read", workflowRunsListSchema),
+  tool("actions.get_workflow_run", "Read one GitHub Actions workflow run.", GitHubCapabilities.actionsRead, "read", workflowRunGetSchema),
+  tool("checks.list_for_ref", "List check runs for a Git ref.", GitHubCapabilities.checksRead, "read", checksListSchema),
 ];
 
 export const GitHubAgentPluginDescriptor = defineConnectorAgentPlugin({
@@ -864,7 +864,7 @@ async function executeGitHubTool(
 ): Promise<ConnectorToolResult> {
   const { connection, signal } = context;
 
-  if (name === "github.repositories.list") {
+  if (name === "repositories.list") {
     const args = repositoriesListSchema.parse(rawArgs);
     const installationId = connectionInstallationId(connection);
     const value = connection.scope === "workspace"
@@ -877,19 +877,19 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.repository.get") {
+  if (name === "repository.get") {
     const args = repositoryGetSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", repoPath(args));
     return { output: boundGitHubValue(value), summary: `Read GitHub repository ${args.owner}/${args.repo}` };
   }
 
-  if (name === "github.contents.get") {
+  if (name === "contents.get") {
     const args = contentsGetSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/contents/${encodePath(args.path)}`, { query: { ref: args.ref } });
     return { output: normalizeContentResponse(value), summary: `Read ${args.owner}/${args.repo}:${args.path}` };
   }
 
-  if (name === "github.commits.list") {
+  if (name === "commits.list") {
     const args = commitsListSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/commits`, {
       query: {
@@ -899,7 +899,7 @@ async function executeGitHubTool(
     return { output: boundedArray(value, args.perPage), summary: `Listed commits in ${args.owner}/${args.repo}` };
   }
 
-  if (name === "github.issues.list") {
+  if (name === "issues.list") {
     const args = issuesListSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/issues`, {
       query: {
@@ -914,13 +914,13 @@ async function executeGitHubTool(
     return { output: boundedArray(value, args.perPage), summary: `Listed issues in ${args.owner}/${args.repo}` };
   }
 
-  if (name === "github.issues.get") {
+  if (name === "issues.get") {
     const args = issueIdentitySchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/issues/${args.issueNumber}`);
     return { output: boundGitHubValue(value), summary: `Read ${args.owner}/${args.repo}#${args.issueNumber}` };
   }
 
-  if (name === "github.issues.create") {
+  if (name === "issues.create") {
     const args = issueCreateSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "POST", `${repoPath(args)}/issues`, {
       body: definedValues({ title: args.title, body: args.body, labels: args.labels, assignees: args.assignees }),
@@ -933,7 +933,7 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.issues.update") {
+  if (name === "issues.update") {
     const args = issueUpdateSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "PATCH", `${repoPath(args)}/issues/${args.issueNumber}`, {
       body: definedValues({
@@ -952,7 +952,7 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.issue_comments.create") {
+  if (name === "issue_comments.create") {
     const args = issueCommentCreateSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "POST", `${repoPath(args)}/issues/${args.issueNumber}/comments`, {
       body: { body: args.body },
@@ -964,7 +964,7 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.pull_requests.list") {
+  if (name === "pull_requests.list") {
     const args = pullRequestsListSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls`, {
       query: {
@@ -974,25 +974,25 @@ async function executeGitHubTool(
     return { output: boundedArray(value, args.perPage), summary: `Listed pull requests in ${args.owner}/${args.repo}` };
   }
 
-  if (name === "github.pull_requests.get") {
+  if (name === "pull_requests.get") {
     const args = pullRequestIdentitySchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}`);
     return { output: boundGitHubValue(value), summary: `Read ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
-  if (name === "github.pull_requests.list_files") {
+  if (name === "pull_requests.list_files") {
     const args = pullRequestPageSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: args.perPage } });
     return { output: boundedArray(value, args.perPage), summary: `Listed files on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
-  if (name === "github.pull_requests.list_reviews") {
+  if (name === "pull_requests.list_reviews") {
     const args = pullRequestPageSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: args.perPage } });
     return { output: boundedArray(value, args.perPage), summary: `Listed reviews on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
-  if (name === "github.pull_requests.create") {
+  if (name === "pull_requests.create") {
     const args = pullRequestCreateSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "POST", `${repoPath(args)}/pulls`, {
       body: definedValues({
@@ -1011,7 +1011,7 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.pull_requests.create_review") {
+  if (name === "pull_requests.create_review") {
     const args = pullRequestReviewCreateSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "POST", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, {
       body: definedValues({ body: args.body, event: args.event, commit_id: args.commitId }),
@@ -1023,7 +1023,7 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.actions.list_workflow_runs") {
+  if (name === "actions.list_workflow_runs") {
     const args = workflowRunsListSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "GET", `${repoPath(args)}/actions/runs`, {
       query: { branch: args.branch, event: args.event, status: args.status, per_page: args.perPage },
@@ -1037,13 +1037,13 @@ async function executeGitHubTool(
     };
   }
 
-  if (name === "github.actions.get_workflow_run") {
+  if (name === "actions.get_workflow_run") {
     const args = workflowRunGetSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/actions/runs/${args.runId}`);
     return { output: boundGitHubValue(value), summary: `Read workflow run ${args.runId} in ${args.owner}/${args.repo}` };
   }
 
-  if (name === "github.checks.list_for_ref") {
+  if (name === "checks.list_for_ref") {
     const args = checksListSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "GET", `${repoPath(args)}/commits/${encodeURIComponent(args.ref)}/check-runs`, {
       query: { check_name: args.checkName, status: args.status, filter: args.filter, per_page: args.perPage },

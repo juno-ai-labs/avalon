@@ -942,7 +942,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
   return [
     {
       definition: {
-        name: "avalon.memory_search",
+        name: "search",
         description: "Search every durable memory scope authorized by the host for this run using lexical and semantic retrieval. Scope selection is not accepted.",
         capability: "memory.search",
         mode: "read",
@@ -965,7 +965,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     },
     {
       definition: {
-        name: "avalon.memory_add",
+        name: "add",
         description: "Add one durable memory to the narrowest host-authorized scope of the requested kind.",
         capability: "memory.write",
         mode: "write",
@@ -986,7 +986,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     },
     {
       definition: {
-        name: "avalon.memory_update",
+        name: "update",
         description: "Replace an authorized durable memory when its current revision matches.",
         capability: "memory.write",
         mode: "write",
@@ -1008,7 +1008,7 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
     },
     {
       definition: {
-        name: "avalon.memory_invalidate",
+        name: "invalidate",
         description: "Reversibly invalidate an authorized durable memory when its current revision matches.",
         capability: "memory.write",
         mode: "write",

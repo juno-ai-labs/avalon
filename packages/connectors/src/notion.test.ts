@@ -86,7 +86,7 @@ describe("Notion connector", () => {
     };
     const adapter = notionAdapter(fetcher);
     const connection = notionConnection([NotionCapabilities.read]);
-    const result = await adapter.executeTool("notion.retrieve_page", { pageId: "page-1" }, {
+    const result = await adapter.executeTool("retrieve_page", { pageId: "page-1" }, {
       connection,
       principal: { type: "user", userId: AVALON_USER_ID },
       signal: AbortSignal.timeout(1_000),
@@ -114,7 +114,7 @@ describe("Notion connector", () => {
       return jsonResponse({ object: "page", id: "created-page", url: "https://notion.so/created-page" });
     };
     const adapter = notionAdapter(fetcher);
-    const result = await adapter.executeTool("notion.create_page", {
+    const result = await adapter.executeTool("create_page", {
       parentPageId: "parent-page",
       title: "Launch plan",
       markdown: "## Checklist\n\n- [ ] Ship",

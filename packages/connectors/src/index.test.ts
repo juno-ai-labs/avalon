@@ -7,9 +7,7 @@ import {
   ConnectorRegistry,
   createGenericWebhookConnector,
   createGoogleConnector,
-  createWebMonitorConnector,
   CredentialCipher,
-  pollWebMonitor,
   verifyGenericWebhook,
   type ConnectorConnectionContext
 } from "./index";
@@ -107,139 +105,6 @@ describe("connectors", () => {
       refreshToken: "private"
     });
     await expect(cipher.decrypt(encrypted.ciphertext, encrypted.iv, "connection-2")).rejects.toThrow();
-  });
-
-  it("detects deterministic web changes", async () => {
-    const fetcher = async () =>
-      new Response("<main><h1>Release</h1><p>Avalon is ready.</p></main>", {
-        headers: { "content-type": "text/html", etag: '"v2"' }
-      });
-    const result = await pollWebMonitor({
-      url: "https://example.com/release",
-      previous: { contentHash: "old" },
-      phrase: "Avalon",
-      fetch: fetcher
-    });
-    expect(result.changed).toBe(true);
-    expect(result.snapshot?.phraseMatched).toBe(true);
-    expect(result.snapshot?.readableText).toContain("Avalon is ready");
-  });
-
-  it("rejects private redirect targets before following them", async () => {
-    const requested: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      requested.push(input.toString());
-      return new Response(null, {
-        status: 302,
-        headers: { location: "http://169.254.169.254/latest/meta-data" }
-      });
-    };
-    await expect(
-      pollWebMonitor({ url: "https://example.com/redirect", previous: {}, fetch: fetcher })
-    ).rejects.toThrow(/private and local network/i);
-    expect(requested).toHaveLength(1);
-  });
-
-  it.each([
-    "http://[::1]/secret",
-    "http://[fd00::1]/secret",
-    "http://metadata.google.internal/computeMetadata/v1"
-  ])("rejects non-public monitor URL %s", async (url) => {
-    await expect(pollWebMonitor({ url, previous: {} })).rejects.toThrow(/not allowed/i);
-  });
-
-  it("executes the web-monitor tool against the connection's configured URL", async () => {
-    const requested: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
-      requested.push(input.toString());
-      return new Response("Configured monitor content", {
-        headers: { "content-type": "text/plain" }
-      });
-    };
-    const adapter = createWebMonitorConnector(fetcher);
-
-    const result = await adapter.executeTool(
-      "web_monitor.fetch",
-      {},
-      {
-        connection: webMonitorConnection("https://example.com/configured"),
-        principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
-      }
-    );
-
-    expect(requested).toEqual(["https://example.com/configured"]);
-    expect(result).toMatchObject({
-      summary: "Fetched example.com",
-      output: {
-        url: "https://example.com/configured",
-        readableText: "Configured monitor content"
-      }
-    });
-  });
-
-  it("rejects a model-supplied web-monitor URL that differs from the configured target", async () => {
-    let fetchCalls = 0;
-    const adapter = createWebMonitorConnector(async () => {
-      fetchCalls += 1;
-      return new Response("must not be fetched", { headers: { "content-type": "text/plain" } });
-    });
-
-    await expect(adapter.executeTool(
-      "web_monitor.fetch",
-      { url: "https://attacker.example/exfiltrate" },
-      {
-        connection: webMonitorConnection("https://example.com/configured"),
-        principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
-      }
-    )).rejects.toMatchObject({
-      code: "unsafe_url",
-      message: expect.stringMatching(/configured for this connection/i)
-    });
-    expect(fetchCalls).toBe(0);
-  });
-
-  it("propagates tool cancellation to an in-flight web-monitor fetch", async () => {
-    const cancellation = new Error("cancelled by test");
-    const controller = new AbortController();
-    let fetchSignal: AbortSignal | null | undefined;
-    let markFetchStarted: (() => void) | undefined;
-    const fetchStarted = new Promise<void>((resolve) => {
-      markFetchStarted = resolve;
-    });
-    const fetcher: typeof fetch = async (_input, init) => {
-      fetchSignal = init?.signal;
-      markFetchStarted?.();
-      return await new Promise<Response>((_resolve, reject) => {
-        const fallback = setTimeout(() => reject(new Error("web-monitor fetch did not observe cancellation")), 250);
-        const rejectForAbort = () => {
-          clearTimeout(fallback);
-          reject(fetchSignal?.reason ?? new DOMException("Aborted", "AbortError"));
-        };
-        if (fetchSignal?.aborted) {
-          rejectForAbort();
-          return;
-        }
-        fetchSignal?.addEventListener("abort", rejectForAbort, { once: true });
-      });
-    };
-    const adapter = createWebMonitorConnector(fetcher);
-
-    const execution = adapter.executeTool(
-      "web_monitor.fetch",
-      {},
-      {
-        connection: webMonitorConnection("https://example.com/configured"),
-        principal: { type: "user", userId: TEST_USER_ID },
-        signal: controller.signal
-      }
-    );
-    await fetchStarted;
-    controller.abort(cancellation);
-
-    await expect(execution).rejects.toBe(cancellation);
-    expect(fetchSignal?.aborted).toBe(true);
   });
 
   it("baselines Gmail without flooding old mail, then advances history with normalized metadata", async () => {
@@ -626,10 +491,10 @@ describe("connectors", () => {
     };
     const adapter = googleAdapter(fetcher);
     expect(adapter.manifest.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      "google.gmail.read_message",
-      "google.calendar.read_event",
-      "google.drive.get_metadata",
-      "google.drive.download"
+      "gmail.read_message",
+      "calendar.read_event",
+      "drive.get_metadata",
+      "drive.download"
     ]));
     const connection = googleConnection(["gmail.read", "drive.read"]);
     const context = {
@@ -637,7 +502,7 @@ describe("connectors", () => {
       principal: { type: "user" as const, userId: TEST_USER_ID },
       signal: AbortSignal.timeout(1_000)
     };
-    const message = await adapter.executeTool("google.gmail.read_message", { messageId: "message-1" }, context);
+    const message = await adapter.executeTool("gmail.read_message", { messageId: "message-1" }, context);
     expect(message.output).toMatchObject({
       id: "message-1",
       textContent: "Useful message body",
@@ -647,7 +512,7 @@ describe("connectors", () => {
 
     const callsBeforePdf = requested.length;
     const pdf = await adapter.executeTool(
-      "google.drive.export",
+      "drive.export",
       { fileId: "file-1", mimeType: "application/pdf" },
       context
     );
@@ -690,7 +555,7 @@ describe("connectors", () => {
       signal: AbortSignal.timeout(1_000)
     };
 
-    const calendars = await adapter.executeTool("google.calendar.list_calendars", {}, {
+    const calendars = await adapter.executeTool("calendar.list_calendars", {}, {
       ...context,
       connection: googleConnection(["calendar.read"])
     });
@@ -698,7 +563,7 @@ describe("connectors", () => {
       calendars: [{ id: "primary", primary: true }, { id: "team@example.com", accessRole: "writer" }]
     });
 
-    const created = await adapter.executeTool("google.calendar.create_event", {
+    const created = await adapter.executeTool("calendar.create_event", {
       calendarId: "team@example.com",
       summary: "Design review",
       start: "2026-08-03T10:00:00-07:00",
@@ -718,7 +583,7 @@ describe("connectors", () => {
       attendees: [{ email: "reviewer@example.com" }]
     });
 
-    const updated = await adapter.executeTool("google.calendar.update_event", {
+    const updated = await adapter.executeTool("calendar.update_event", {
       eventId: "event-existing",
       summary: "Updated design review",
       location: "Meet"
@@ -742,14 +607,14 @@ describe("connectors", () => {
       principal: { type: "user" as const, userId: TEST_USER_ID },
       signal: AbortSignal.timeout(1_000)
     };
-    await expect(adapter.executeTool("google.gmail.create_draft", {
+    await expect(adapter.executeTool("gmail.create_draft", {
       to: ["recipient@example.com"],
       subject: "Re: Design review",
       body: "Looks good.",
       threadId: "thread-1"
     }, context)).rejects.toThrow(/RFC Message-ID/u);
 
-    const result = await adapter.executeTool("google.gmail.create_draft", {
+    const result = await adapter.executeTool("gmail.create_draft", {
       to: ["recipient@example.com"],
       subject: "Re: Design review",
       body: "Looks good.",
@@ -826,7 +691,7 @@ describe("connectors", () => {
       signal: AbortSignal.timeout(1_000)
     };
 
-    const document = await adapter.executeTool("google.docs.read_document", { documentId: "doc-1" }, context);
+    const document = await adapter.executeTool("docs.read_document", { documentId: "doc-1" }, context);
     expect(document.output).toMatchObject({
       resourceType: "google_doc",
       documentId: "doc-1",
@@ -834,42 +699,42 @@ describe("connectors", () => {
       textContent: "Launch plan\n",
       tabs: [{ tabId: "tab-1", title: "Overview" }]
     });
-    const createdDocument = await adapter.executeTool("google.docs.create_document", {
+    const createdDocument = await adapter.executeTool("docs.create_document", {
       title: "Decision log",
       text: "First decision\n"
     }, context);
     expect(createdDocument.providerOperationId).toBe("doc-created");
-    const replaced = await adapter.executeTool("google.docs.replace_text", {
+    const replaced = await adapter.executeTool("docs.replace_text", {
       documentId: "doc-1",
       find: "draft",
       replace: "final"
     }, context);
     expect(replaced.output).toMatchObject({ documentId: "doc-1", occurrencesChanged: 2 });
 
-    const spreadsheet = await adapter.executeTool("google.sheets.read_spreadsheet", { spreadsheetId: "sheet-1" }, context);
+    const spreadsheet = await adapter.executeTool("sheets.read_spreadsheet", { spreadsheetId: "sheet-1" }, context);
     expect(spreadsheet.output).toMatchObject({
       resourceType: "google_sheet",
       spreadsheetId: "sheet-1",
       title: "Metrics",
       sheets: [{ title: "Summary", rowCount: 100, columnCount: 10 }]
     });
-    const values = await adapter.executeTool("google.sheets.read_values", {
+    const values = await adapter.executeTool("sheets.read_values", {
       spreadsheetId: "sheet-1",
       range: "Summary!A1:B2"
     }, context);
     expect(values.output).toMatchObject({ values: [["Metric", "Value"], ["Users", 42]], cellCount: 4, truncated: false });
-    const createdSheet = await adapter.executeTool("google.sheets.create_spreadsheet", {
+    const createdSheet = await adapter.executeTool("sheets.create_spreadsheet", {
       title: "Metrics",
       sheetTitles: ["Weekly"]
     }, context);
     expect(createdSheet.providerOperationId).toBe("sheet-created");
-    const updated = await adapter.executeTool("google.sheets.update_values", {
+    const updated = await adapter.executeTool("sheets.update_values", {
       spreadsheetId: "sheet-1",
       range: "Summary!A1:B2",
       values: [["Metric", "Value"], ["Users", 43]]
     }, context);
     expect(updated.output).toMatchObject({ updatedRange: "Summary!A1:B2", updatedCells: 4 });
-    const appended = await adapter.executeTool("google.sheets.append_values", {
+    const appended = await adapter.executeTool("sheets.append_values", {
       spreadsheetId: "sheet-1",
       range: "Summary!A:B",
       values: [["Revenue", 100]]
@@ -901,7 +766,7 @@ describe("connectors", () => {
       credentials: { accessToken: "access-old", refreshToken: "refresh-token" }
     };
     const result = await adapter.executeTool(
-      "google.gmail.search",
+      "gmail.search",
       { query: "is:unread" },
       {
         connection,
@@ -951,7 +816,7 @@ describe("connectors", () => {
     };
     await expect(
       adapter.executeTool(
-        "google.gmail.search",
+        "gmail.search",
         { query: "is:unread" },
         {
           connection,
@@ -1010,19 +875,6 @@ function googleConnection(
     credentials: { accessToken: "google-access-token" },
     cursor,
     config: { region: "global", pollIntervalSeconds: 300 }
-  };
-}
-
-function webMonitorConnection(url: string): ConnectorConnectionContext {
-  return {
-    id: TEST_CONNECTION_ID,
-    workspaceId: TEST_WORKSPACE_ID,
-    scope: "personal",
-    ownerUserId: TEST_USER_ID,
-    grantedScopes: ["web.read"],
-    credentials: {},
-    cursor: {},
-    config: { url, region: "global", intervalSeconds: 3600 }
   };
 }
 

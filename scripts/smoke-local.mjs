@@ -174,13 +174,6 @@ assert(replayedMessage.response.status === 201, "Message idempotency replay fail
 assert(replayedMessage.body?.message?.id === "00000000-0000-7000-8000-000000000032", "Message replay created a duplicate");
 assert(replayedMessage.body?.agentInvoked === false, "Message replay launched duplicate agent work");
 
-const unsafeMonitor = await jsonRequest("/connections/web-monitor", {
-  method: "POST",
-  headers: authHeaders,
-  body: JSON.stringify({ url: "http://127.0.0.1/private", intervalSeconds: 300, phrase: null, scope: "personal" }),
-});
-assert(unsafeMonitor.response.status === 422, "Unsafe web-monitor URL was not rejected");
-
 const ticket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
 assert(ticket.response.ok && ticket.body?.url, "Realtime ticket creation failed");
 const firstSocket = await openSocket(ticket.body.url, { expectOpen: true });
@@ -196,7 +189,6 @@ console.log(JSON.stringify({
   crossRegionSession: otherBaseUrl ? "rejected" : "not checked",
   sidebarFixtures: "ok",
   messageIdempotency: "ok",
-  unsafeMonitor: unsafeMonitor.response.status,
   firstSocket: "snapshot",
   replaySocket: "rejected",
 }));

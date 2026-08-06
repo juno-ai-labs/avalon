@@ -13,7 +13,7 @@ Connectors are typed adapters behind a registry. A manifest declares OAuth needs
 
 Each installed credential has two deliberately separate plugin identities. The opaque canonical ID, `connection:<uuid>`, is the only identity used for authorization, durable activation, receipts, and credential access. A database-backed workspace-local ID is the model-facing name: the first active credential of a provider receives `plugin_<provider>`, and simultaneous additional credentials receive the lowest numeric suffix (`plugin_google_2`, `plugin_google_3`, and so on). Disabled connections do not reserve names, so removing and later re-adding a provider reclaims the clean base instead of accumulating random characters. A partial unique database index enforces uniqueness across the active connection list.
 
-The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `avalon_load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals.
+The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
 
 ## Google
 
@@ -26,11 +26,11 @@ Google identity and connector authorization are separate. Connector authorizatio
 
 The capability check is enforced for every tool invocation. The current Google tools are:
 
-- Gmail: `google.gmail.search`, `google.gmail.read_thread`, `google.gmail.read_message`, `google.gmail.create_draft`, and `google.gmail.send`.
-- Calendar: `google.calendar.list_calendars`, `google.calendar.list_events`, `google.calendar.read_event`, `google.calendar.create_event`, and `google.calendar.update_event`. Event tools accept an explicit calendar ID and otherwise use the primary calendar; scheduled activity polling currently follows the configured calendar, which defaults to primary.
-- Drive: `google.drive.search`, `google.drive.get_metadata`, `google.drive.download`, and `google.drive.export`.
-- Docs: `google.docs.read_document`, `google.docs.create_document`, `google.docs.append_text`, and `google.docs.replace_text`.
-- Sheets: `google.sheets.read_spreadsheet`, `google.sheets.read_values`, `google.sheets.create_spreadsheet`, `google.sheets.update_values`, and `google.sheets.append_values`.
+- Gmail: `google_gmail_search`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`.
+- Calendar: `google_calendar_list_calendars`, `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event`. Event tools accept an explicit calendar ID and otherwise use the primary calendar; scheduled activity polling currently follows the configured calendar, which defaults to primary.
+- Drive: `google_drive_search`, `google_drive_get_metadata`, `google_drive_download`, and `google_drive_export`.
+- Docs: `google_docs_read_document`, `google_docs_create_document`, `google_docs_append_text`, and `google_docs_replace_text`.
+- Sheets: `google_sheets_read_spreadsheet`, `google_sheets_read_values`, `google_sheets_create_spreadsheet`, `google_sheets_update_values`, and `google_sheets_append_values`.
 
 Docs and Sheets operations use their native provider APIs. Docs reads return bounded document structure and text; writes create a document, append plain text, or replace exact text. Sheets reads return bounded spreadsheet metadata or formatted values from an explicit A1 range; writes create a spreadsheet or update/append bounded row values. Drive download/export remains available for file-oriented retrieval, but it does not replace the native Docs and Sheets operations.
 
@@ -64,7 +64,7 @@ Notion's one-time webhook verification token is accepted through a guarded regio
 
 ## Web discovery
 
-`avalon.web_search` and `avalon.web_fetch` use Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The tools are omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
+The loadable `avalon:web` plugin exposes `web_search` and `web_fetch` through Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The plugin is omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
 
 ## Generic webhook
 
@@ -75,12 +75,6 @@ X-Avalon-Signature: t=<seconds>,v1=<hex HMAC-SHA256 of "<seconds>.<raw body>">
 ```
 
 Avalon validates time, signature, replay receipt, body schema, scope, and dedupe key before normalizing an activity. Transcript providers can use this connector, but the product must not label it a native Granola integration.
-
-## Web monitor
-
-The web monitor stores URL, polling interval, optional phrase condition, ETag, Last-Modified, last hash, and R2 snapshot reference. Conditional HTTP metadata and a normalized readable-text hash run before any semantic model. Only actual changes produce activities.
-
-Outbound fetches enforce protocol, network, redirect, byte, timeout, and content-type rules. Polling is scheduled through the workspace Durable Object rather than per-monitor Cron deployments.
 
 ## Activity ingestion
 

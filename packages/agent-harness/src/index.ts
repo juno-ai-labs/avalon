@@ -740,7 +740,7 @@ export async function classifyAddressing(input: {
   });
 }
 
-const automationJsonSchema = {
+const automationDraftSubmissionJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
@@ -842,36 +842,9 @@ const automationJsonSchema = {
       }
     },
     suggestedScope: { type: "string", enum: ["personal", "workspace"] },
-    elicitation: {
-      anyOf: [
-        { type: "null" },
-        {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            responseType: { type: "string", enum: ["free_text", "single_select", "multi_select"] },
-            prompt: { type: "string" },
-            placeholder: { type: ["string", "null"] },
-            options: {
-              type: "array",
-              items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  value: { type: "string" },
-                  label: { type: "string" },
-                  description: { type: ["string", "null"] }
-                },
-                required: ["value", "label", "description"]
-              }
-            },
-            minimumSelections: { type: "integer", minimum: 0 },
-            maximumSelections: { type: ["integer", "null"], minimum: 1 },
-            allowOther: { type: "boolean" }
-          },
-          required: ["responseType", "prompt", "placeholder", "options", "minimumSelections", "maximumSelections", "allowOther"]
-        }
-      ]
+    ready: {
+      type: "boolean",
+      description: "True only when no blocking human input remains; false means request_elicitation must be called after this draft is submitted."
     }
   },
   required: [
@@ -885,7 +858,7 @@ const automationJsonSchema = {
     "recommendedPlugins",
     "memoryTables",
     "suggestedScope",
-    "elicitation"
+    "ready"
   ]
 };
 
@@ -950,6 +923,14 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   started: string;
   completed: string;
 }> = {
+  web_search: {
+    started: "Searching the public web…",
+    completed: "Web search completed",
+  },
+  web_fetch: {
+    started: "Reading a public web page…",
+    completed: "Web page ready",
+  },
   automation_plugins_list: {
     started: "Checking available plugin capabilities…",
     completed: "Plugin capabilities are ready",
@@ -962,15 +943,15 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
     started: "Reviewing what this plugin can do…",
     completed: "Plugin details are ready",
   },
-  list_connector_plugins: {
+  list_plugins: {
     started: "Checking available plugin capabilities…",
     completed: "Plugin capabilities are ready",
   },
-  search_connector_plugins: {
+  search_plugins: {
     started: "Finding the plugins relevant to this automation…",
     completed: "Relevant plugins are ready",
   },
-  avalon_load_plugin: {
+  load_plugin: {
     started: "Loading the selected plugin…",
     completed: "Plugin guidance and tools are ready",
   },
@@ -994,7 +975,7 @@ function automationDiscoveryPluginsFromInput(
   input: unknown,
   catalog: AutomationCreatorPluginCatalogEntry[],
 ): AutomationPluginActivity[] {
-  if (toolName !== "automation_plugin_inspect" && toolName !== "avalon_load_plugin") {
+  if (toolName !== "automation_plugin_inspect" && toolName !== "load_plugin") {
     return automationPluginActivities(catalog);
   }
   const pluginId = String(asRecord(input).pluginId ?? "");
@@ -1008,7 +989,7 @@ function automationDiscoveryPluginsFromResult(
   fallback: AutomationPluginActivity[],
 ): AutomationPluginActivity[] {
   const record = asRecord(output);
-  if (toolName === "avalon_load_plugin") {
+  if (toolName === "load_plugin") {
     const pluginId = String(record.loaded ?? "");
     return pluginId ? automationPluginActivities(catalog, new Set([pluginId])) : fallback;
   }
@@ -1038,12 +1019,18 @@ function automationDiscoveryActivityName(
   status: "started" | "completed" | "failed",
   plugins: AutomationPluginActivity[],
 ): string {
+  if (toolName === "web_search") {
+    return status === "completed" ? "Searched the public web" : "Searching the public web";
+  }
+  if (toolName === "web_fetch") {
+    return status === "completed" ? "Read a public web page" : "Reading a public web page";
+  }
   const names = automationPluginNames(plugins);
   if (toolName === "automation_plugins_search") {
     if (status === "completed") return plugins.length ? `Found ${names}` : "Searched connected plugins";
     return `Searching ${names}`;
   }
-  if (toolName === "avalon_load_plugin") {
+  if (toolName === "load_plugin") {
     return status === "completed" ? `Loaded ${names}` : `Loading ${names}`;
   }
   if (toolName === "automation_plugin_inspect") return `Reading ${names}`;
@@ -1060,7 +1047,10 @@ export async function compileAutomation(input: {
   currentDraft?: AutomationDraft | null;
   defaultTimezones?: { personal: string; workspace: string };
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
+  /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
+  additionalPlugins?: HarnessPlugin[];
   maxResearchIterations?: number;
+  maxWebResults?: number;
   onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
@@ -1099,15 +1089,16 @@ export async function compileAutomation(input: {
     preload: false,
     explicit: false,
   }));
-  let submittedDraft: AutomationDraft | null = null;
+  const draftState: { submitted: AutomationDraft | null } = { submitted: null };
   let submissionReminderSent = false;
+  let elicitationReminderSent = false;
   let modelTimeMs = 0;
   const toolStartedAt = new Map<string, number>();
   const toolPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
     {
       definition: {
-        name: "automation_plugins_list",
+        name: "plugins_list",
         description: "List every connector plugin authorized for this automation creator, with compact trusted metadata.",
         capability: "avalon.automation.plugins.list",
         mode: "read",
@@ -1115,13 +1106,13 @@ export async function compileAutomation(input: {
         inputSchema: { type: "object", additionalProperties: false, properties: {} },
       },
       execute: async () => ({
-        output: executeAutomationCreatorDiscoveryTool("automation_plugins_list", {}, catalog),
+        output: executeAutomationCreatorDiscoveryTool("plugins_list", {}, catalog),
         summary: "Listed authorized automation plugins",
       }),
     },
     {
       definition: {
-        name: "automation_plugins_search",
+        name: "plugins_search",
         description: "Search authorized connector plugins and their tools by capability, provider, action, or keyword.",
         capability: "avalon.automation.plugins.search",
         mode: "read",
@@ -1134,13 +1125,13 @@ export async function compileAutomation(input: {
         },
       },
       execute: async (raw) => ({
-        output: executeAutomationCreatorDiscoveryTool("automation_plugins_search", asRecord(raw), catalog),
+        output: executeAutomationCreatorDiscoveryTool("plugins_search", asRecord(raw), catalog),
         summary: "Searched authorized automation plugins",
       }),
     },
     {
       definition: {
-        name: "automation_plugin_inspect",
+        name: "plugin_inspect",
         description: "Inspect one authorized plugin's trusted system guidance and exact tool schemas before recommending it.",
         capability: "avalon.automation.plugins.inspect",
         mode: "read",
@@ -1153,18 +1144,18 @@ export async function compileAutomation(input: {
         },
       },
       execute: async (raw) => ({
-        output: executeAutomationCreatorDiscoveryTool("automation_plugin_inspect", asRecord(raw), catalog),
+        output: executeAutomationCreatorDiscoveryTool("plugin_inspect", asRecord(raw), catalog),
         summary: "Inspected an authorized automation plugin",
       }),
     },
     {
       definition: {
-        name: "submit_automation_draft",
-        description: "Submit the best current automation draft, including one elicitation only when a blocking detail remains. Avalon derives readiness from elicitation.",
+        name: "submit_draft",
+        description: "Save the best current automation draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question.",
         capability: "avalon.automation.submit",
         mode: "read",
         idempotency: "safe",
-        inputSchema: automationJsonSchema,
+        inputSchema: automationDraftSubmissionJsonSchema,
       },
       execute: async (raw) => {
         await input.onDiagnostic?.({
@@ -1194,7 +1185,7 @@ export async function compileAutomation(input: {
             : {}),
         });
         if (!parsed.success) throw parsed.error;
-        submittedDraft = parsed.data;
+        draftState.submitted = parsed.data;
         await input.onDiagnostic?.({
           stage: "complete",
           schemaName: "automation_draft",
@@ -1205,21 +1196,50 @@ export async function compileAutomation(input: {
         });
         return {
           output: { accepted: true },
-          summary: submittedDraft.ready ? "Submitted automation draft" : "Submitted automation elicitation",
-          halt: "needs_input",
+          summary: draftState.submitted.ready ? "Submitted ready automation draft" : "Submitted partial automation draft",
+          ...(draftState.submitted.ready ? { halt: "completed" as const } : {}),
         };
       },
+      serial: true,
     },
   ];
   const timeTool = automationCurrentTimeTool(input.defaultTimezones);
+  const requestElicitationTool: HarnessTool = {
+    definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+    execute: async (raw) => {
+      const args = RequestElicitationInputSchema.parse(raw);
+      if (!draftState.submitted) {
+        throw new Error("Submit the best current draft with automation_submit_draft before requesting input");
+      }
+      draftState.submitted = {
+        ...draftState.submitted,
+        followUpQuestion: args.prompt,
+        elicitation: {
+          responseType: args.responseType === "text" ? "free_text" : args.responseType === "multi_select" ? "multi_select" : "single_select",
+          prompt: args.prompt,
+          placeholder: null,
+          options: args.options,
+          minimumSelections: args.minimumSelections,
+          maximumSelections: args.maximumSelections,
+          allowOther: args.responseType !== "text",
+        },
+        ready: false,
+      };
+      return {
+        output: { accepted: true },
+        summary: "Requested automation input",
+        halt: "needs_input",
+      };
+    },
+  };
   const corePlugins: HarnessPlugin[] = [
     {
-      canonicalId: AVALON_TIME_PLUGIN_ID,
-      modelId: "avalon_time",
-      shortWireName: "avalon",
+      canonicalId: AVALON_CORE_PLUGIN_ID,
+      modelId: "avalon_core",
+      shortWireName: "core",
       description: "Read the exact current time and applicable timezones.",
-      systemMessage: "Use avalon.current_time when exact current time or timezone matters; never infer it from transcript timestamps.",
-      tools: [timeTool],
+      systemMessage: "Use core_current_time when exact current time or timezone matters; never infer it from transcript timestamps. Use core_request_elicitation only after saving the best current draft when a blocking human choice remains.",
+      tools: [timeTool, requestElicitationTool],
       preload: true,
       explicit: true,
     },
@@ -1252,7 +1272,7 @@ export async function compileAutomation(input: {
       maxToolCalls: 80,
       maxWallClockMs: 180_000,
       toolTimeoutMs: 10_000,
-      maxWebResults: 0,
+      maxWebResults: Math.max(1, Math.min(20, input.maxWebResults ?? 8)),
       maxCostCents: 1_000,
       maxCatalogTokens: 2_500,
       reasoningEffort: "high",
@@ -1270,12 +1290,12 @@ export async function compileAutomation(input: {
       {
         role: "user",
         content: [
-          "The arguments to submit_automation_draft are the expected structured output and must match this rendered schema exactly:",
-          renderExpectedJsonSchema("automation_draft", automationJsonSchema),
+          "The arguments to automation_submit_draft are the expected structured output and must match this rendered schema exactly:",
+          renderExpectedJsonSchema("automation_draft", automationDraftSubmissionJsonSchema),
         ].join("\n\n"),
       },
     ],
-    plugins: executablePlugins,
+    plugins: [...(input.additionalPlugins ?? []), ...executablePlugins],
     compaction: {
       ...(input.contextWindowTokensByModel
         ? { contextWindowTokensByModel: input.contextWindowTokensByModel }
@@ -1403,22 +1423,31 @@ export async function compileAutomation(input: {
         ...(attempt.failureKind === undefined ? {} : { failureKind: attempt.failureKind }),
       });
     },
-    onTurnWouldEnd: ({ assistantContent }) => {
-      if (submittedDraft || submissionReminderSent || assistantContent !== "") return null;
-      submissionReminderSent = true;
-      return [
-        "You ended the previous turn without successfully calling submit_automation_draft, so no automation draft has been submitted.",
-        "Call submit_automation_draft now with the best current draft. If an essential detail is still missing, include exactly one focused elicitation. Otherwise set elicitation to null.",
-        "The tool arguments must match this rendered JSON Schema exactly:",
-        renderExpectedJsonSchema("automation_draft", automationJsonSchema),
-        "Call submit_automation_draft without assistant text in the same turn. Do not print the JSON as Markdown.",
-      ].join("\n\n");
+    onTurnWouldEnd: () => {
+      if (!draftState.submitted && !submissionReminderSent) {
+        submissionReminderSent = true;
+        return [
+          "You ended the previous turn without successfully calling automation_submit_draft, so no automation draft has been submitted.",
+          "Call automation_submit_draft now with the best current draft and set ready=false only when an essential blocking detail remains.",
+          "The tool arguments must match this rendered JSON Schema exactly:",
+          renderExpectedJsonSchema("automation_draft", automationDraftSubmissionJsonSchema),
+          "Call automation_submit_draft without assistant text in the same turn. Do not print the JSON as Markdown.",
+        ].join("\n\n");
+      }
+      if (draftState.submitted && !draftState.submitted.ready && !draftState.submitted.elicitation && !elicitationReminderSent) {
+        elicitationReminderSent = true;
+        return [
+          "The saved automation draft still needs blocking input.",
+          "Call core_request_elicitation now with exactly one focused structured question. Do not ask the question in assistant text.",
+        ].join("\n\n");
+      }
+      return null;
     },
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  if (submittedDraft) {
+  if (draftState.submitted && (draftState.submitted.ready || draftState.submitted.elicitation)) {
     await input.onStreamEvent?.({ type: "completed" });
-    return submittedDraft;
+    return draftState.submitted;
   }
   if (outcome.failure) {
     throw new AutomationCompilerError(
@@ -1441,7 +1470,7 @@ function executeAutomationCreatorDiscoveryTool(
   args: Record<string, unknown>,
   catalog: AutomationCreatorPluginCatalogEntry[],
 ): unknown {
-  if (toolName === "automation_plugins_list") {
+  if (toolName === "plugins_list") {
     return {
       plugins: catalog.map((plugin) => ({
         pluginId: plugin.pluginId,
@@ -1453,7 +1482,7 @@ function executeAutomationCreatorDiscoveryTool(
       })),
     };
   }
-  if (toolName === "automation_plugins_search") {
+  if (toolName === "plugins_search") {
     const query = String(args.query ?? "").trim().toLocaleLowerCase();
     const matches = catalog.filter((plugin) => JSON.stringify({
       pluginId: plugin.pluginId,
@@ -1479,7 +1508,7 @@ function executeAutomationCreatorDiscoveryTool(
       })),
     };
   }
-  if (toolName === "automation_plugin_inspect") {
+  if (toolName === "plugin_inspect") {
     const pluginId = String(args.pluginId ?? "");
     const plugin = catalog.find((entry) => entry.pluginId === pluginId);
     return plugin ? {
@@ -1571,8 +1600,7 @@ function normalizeAutomationDraft(
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger, defaultTimezone))
     : draft.triggers;
-  const elicitation = draft.elicitation ?? null;
-  const ready = elicitation === null;
+  const ready = draft.ready !== false;
   return {
     ...draft,
     triggers,
@@ -1580,9 +1608,8 @@ function normalizeAutomationDraft(
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
     memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
     ready,
-    followUpQuestion: ready
-      ? null
-      : (elicitation as { prompt?: unknown }).prompt ?? null,
+    followUpQuestion: null,
+    elicitation: null,
   };
 }
 
@@ -1663,7 +1690,7 @@ export interface HarnessToolResult {
   output: unknown;
   summary: string;
   providerOperationId?: string;
-  halt?: "needs_input";
+  halt?: "needs_input" | "completed";
   /** Bind control signal used only by Avalon's discovery plugin loader. */
   loadedPluginName?: string;
 }
@@ -1683,14 +1710,15 @@ export interface HarnessToolPolicyIdentity {
 
 /** Bind-owned catalog policies mirrored and verified by the durable host. */
 export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
-export const AVALON_TIME_PLUGIN_ID = "avalon:time";
+export const AVALON_CORE_PLUGIN_ID = "avalon:core";
 export const AVALON_MEMORY_PLUGIN_ID = "avalon:memory";
 export const AVALON_TABLES_PLUGIN_ID = "avalon:tables";
+export const AVALON_WEB_PLUGIN_ID = "avalon:web";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "avalon:workstream";
 export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "avalon:automation_architect";
 
 export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
-  name: "avalon.current_time",
+  name: "current_time",
   description: "Return the current local time, local IANA timezone, workspace IANA timezone, local date, and UTC ISO-8601 timestamp. Local time defaults to the current user's timezone for user runs and the workspace timezone for workspace runs; optionally accepts another valid IANA timezone.",
   capability: "time.read",
   mode: "read",
@@ -1709,18 +1737,56 @@ export const AVALON_CURRENT_TIME_TOOL_DEFINITION = {
   },
 } as const satisfies ToolDefinition;
 
+export const RequestElicitationInputSchema = z.object({
+  prompt: z.string().min(1).max(4_000),
+  responseType: z.enum(["text", "radio", "single_select", "multi_select"]),
+  options: z.array(z.object({
+    value: z.string().min(1).max(200),
+    label: z.string().min(1).max(300),
+    description: z.string().max(800).nullable().default(null),
+  }).strict()).max(30).default([]),
+  minimumSelections: z.number().int().nonnegative().default(0),
+  maximumSelections: z.number().int().positive().nullable().default(null),
+}).strict().superRefine((input, context) => {
+  if (input.responseType !== "text" && input.options.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["options"],
+      message: "Selection questions require options",
+    });
+  }
+  if (input.maximumSelections !== null && input.maximumSelections < input.minimumSelections) {
+    context.addIssue({
+      code: "custom",
+      path: ["maximumSelections"],
+      message: "Maximum selections must be at least the minimum selections",
+    });
+  }
+});
+
+export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSchema>;
+
+export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
+  name: "request_elicitation",
+  description: "Ask a structured blocking question and pause this harness run for human input.",
+  capability: "elicitation.write",
+  mode: "write",
+  idempotency: "provider_key",
+  inputSchema: z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
+} as const satisfies ToolDefinition;
+
 export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   {
-    name: "list_connector_plugins",
-    description: "List authorized connector plugins available to this frozen run scope.",
+    name: "list_plugins",
+    description: "List plugins available to this frozen run scope.",
     capability: "avalon.plugins.list",
     mode: "read",
     idempotency: "safe",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
-    name: "search_connector_plugins",
-    description: "Search authorized connector plugins available to this frozen run scope.",
+    name: "search_plugins",
+    description: "Search plugins available to this frozen run scope.",
     capability: "avalon.plugins.search",
     mode: "read",
     idempotency: "safe",
@@ -1733,7 +1799,7 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
   },
   {
     name: "load_plugin",
-    description: "Load one authorized connector plugin from the catalog for this run.",
+    description: "Load one available plugin from the catalog for this run.",
     capability: "avalon.plugins.load",
     // Activation changes only Avalon's durable run surface. It does not write
     // to an external provider and is safe to resume from the same receipt.
@@ -1751,13 +1817,15 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /** Execute in model-declared order before concurrent tools in the same batch. */
+  serial?: boolean;
 }
 
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
 export interface HarnessPlugin {
   /** Stable host authorization/persistence identity (`avalon:*` or `connection:<uuid>`). */
   canonicalId: string;
-  /** Stable identifier exposed to the model (`avalon_time` or `plugin_google`). */
+  /** Stable identifier exposed to the model (`avalon_core` or `plugin_google`). */
   modelId: string;
   shortWireName: string;
   /** Static, code-authored label used only for catalog display and discovery. */
@@ -2005,6 +2073,6 @@ export async function canonicalToolInputHash(value: unknown): Promise<string> {
 export const __testing = {
   canonicalJson,
   addressingJsonSchema,
-  automationJsonSchema,
+  automationJsonSchema: automationDraftSubmissionJsonSchema,
   normalizeAutomationDraft
 };

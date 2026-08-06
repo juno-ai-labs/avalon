@@ -167,6 +167,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   let terminalCompactionInputTokens = 0;
   let terminalCompactionOutputTokens = 0;
   let terminalCompactionModelTimeMs = 0;
+  let completedByTool = false;
   const toolCallPositions = new Map<string, { turn: number; index: number }>();
   const emit = async (event: HarnessEvent): Promise<void> => {
     try {
@@ -475,7 +476,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           }),
         );
         if (completed) {
-          return harnessResultOutcome(toolCall.id, completed);
+          return harnessResultOutcome(toolCall.id, completed, () => { completedByTool = true; });
         }
         const executionPlanHash = await canonicalToolInputHash({
           pluginId: dispatched.pluginId,
@@ -600,7 +601,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           ...(toolResult.providerOperationId ? { providerOperationId: toolResult.providerOperationId } : {}),
         }));
         await requiredPort("Run liveness renewal failed", () => input.onLiveness?.("after_tool"));
-        return harnessResultOutcome(toolCall.id, persistedResult);
+        return harnessResultOutcome(toolCall.id, persistedResult, () => { completedByTool = true; });
       },
       onAssistantMessage: (message) => {
         content += message;
@@ -642,6 +643,14 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             : null,
         };
 
+    if (result.stopReason === "resuming_later" && completedByTool) {
+      await emit({
+        type: "stream_completed",
+        content: content || streamedContent,
+        usage: usageRecord(state),
+      });
+      return outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats);
+    }
     if (result.stopReason === "waiting_for_reply" || result.stopReason === "resuming_later") {
       if (state.suspended?.toolCallId) {
         await emit({ type: "needs_input", toolCallId: state.suspended.toolCallId });
@@ -992,32 +1001,35 @@ async function createPluginRuntime(
   const discovery = buildPlugin({
     canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
     modelId: "avalon_discovery",
-    shortWireName: "avalon",
-    description: "Discover and activate connector plugins authorized for this run.",
-    systemMessage: "Connector plugins are groups of tools backed by credentials already authorized for this run. When a request needs an external service, load the relevant available connector plugin before answering. Before claiming that a service or its data is unavailable, inspect the compact catalog and, when needed, use list_connector_plugins or search_connector_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
+    // Discovery controls intentionally keep their globally unique public
+    // names (`list_plugins`, `search_plugins`, and `load_plugin`). Every
+    // ordinary plugin receives its short name through stableWireToolName.
+    shortWireName: "",
+    description: "Discover and activate plugins available to this run.",
+    systemMessage: "Plugins are groups of related tools available to this run. When a request needs an inactive capability, load the relevant available plugin before answering. Before claiming that a capability or its data is unavailable, inspect the compact catalog and, when needed, use list_plugins or search_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
     preload: true,
     explicit: true,
     tools: AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
       definition,
       execute: async (raw) => {
         const activeRegistry = requireRegistry();
-        if (definition.name === "list_connector_plugins") {
+        if (definition.name === "list_plugins") {
           return {
-            output: { plugins: connectorCatalog(activeRegistry) },
-            summary: "Listed authorized connector plugins",
+            output: { plugins: availablePluginCatalog(activeRegistry) },
+            summary: "Listed available plugins",
           };
         }
-        if (definition.name === "search_connector_plugins") {
+        if (definition.name === "search_plugins") {
           const query = typeof raw === "object" && raw !== null && "query" in raw
             ? String(raw.query).trim().toLowerCase()
             : "";
-          const matches = connectorCatalog(activeRegistry).filter((plugin) =>
+          const matches = availablePluginCatalog(activeRegistry).filter((plugin) =>
             `${plugin.id} ${plugin.displayName ?? ""} ${plugin.searchAliases.join(" ")} ${plugin.description}`
               .toLowerCase()
               .includes(query));
           return {
             output: { plugins: matches },
-            summary: `Found ${matches.length} authorized connector plugins`,
+            summary: `Found ${matches.length} available plugins`,
           };
         }
         const modelId = typeof raw === "object" && raw !== null && "pluginId" in raw
@@ -1113,7 +1125,7 @@ async function createPluginRuntime(
   const resolveTool = (wireName: string) => {
     // Prefer the exact name Avalon advertised. Some OpenRouter routes have
     // nevertheless returned a namespaced/canonical alias (for example,
-    // `avalon_core.web_monitor_fetch`) after a plugin was loaded. Bind has
+    // `avalon_core.linear_search_issues`) after a plugin was loaded. Bind has
     // already rebuilt the next-turn tool surface at that point; rejecting the
     // alias would make a successfully activated tool appear unavailable.
     for (const id of [...active].sort()) {
@@ -1136,6 +1148,12 @@ async function createPluginRuntime(
         const identities = [
           normalizeToolIdentity(advertisedWireName),
           normalizeToolIdentity(tool.definition.name),
+          ...(plugin.modelId.startsWith("plugin_")
+            ? [normalizeToolIdentity(stableWireToolName(
+                plugin.modelId.replace(/^plugin_/u, "").replace(/_[2-9][0-9]*$/u, ""),
+                tool.definition.name,
+              ))]
+            : []),
         ];
         if (identities.some((identity) => identity && aliases.has(identity))) {
           matches.push({ pluginId: id, tool });
@@ -1164,7 +1182,10 @@ async function createPluginRuntime(
     },
     activate,
     reauthorizeActive,
-    runsSerially: (wireName) => wireName === "avalon_load_plugin" || resolveTool(wireName)?.tool.definition.mode === "write",
+    runsSerially: (wireName) => {
+      const resolved = resolveTool(wireName);
+      return wireName === "load_plugin" || resolved?.tool.serial === true || resolved?.tool.definition.mode === "write";
+    },
     resolveTool,
   };
 }
@@ -1178,11 +1199,7 @@ function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
   const modeByWireName = new Map<string, "read" | "write">();
   const defined: Array<DefinedTool<HarnessToolContext>> = [];
   for (const harnessTool of plugin.tools) {
-    const wireName = isCore
-      ? harnessTool.definition.name === "load_plugin"
-        ? "avalon_load_plugin"
-        : harnessTool.definition.name
-      : stableWireToolName(plugin.shortWireName, harnessTool.definition.name);
+    const wireName = stableWireToolName(plugin.shortWireName, harnessTool.definition.name);
     toolByWireName.set(wireName, harnessTool);
     modeByWireName.set(wireName, harnessTool.definition.mode);
     defined.push(defineTool({
@@ -1224,11 +1241,7 @@ function buildPlugin(plugin: HarnessPlugin, isCore: boolean): BindPlugin {
 
 function stableWireToolName(prefix: string, toolName: string): string {
   const normalized = normalizeToolIdentity(toolName);
-  const providerPrefix = prefix.replace(/_[2-9][0-9]*$/u, "");
-  const instanceSuffix = prefix.slice(providerPrefix.length);
-  if (normalized === providerPrefix || normalized.startsWith(`${providerPrefix}_`)) {
-    return `${providerPrefix}${instanceSuffix}${normalized.slice(providerPrefix.length)}`.slice(0, 64);
-  }
+  if (!prefix) return normalized.slice(0, 64);
   return `${prefix}_${normalized}`.slice(0, 64);
 }
 
@@ -1258,7 +1271,7 @@ function providerToolAliasCandidates(value: string): ReadonlySet<string> {
   return candidates;
 }
 
-function connectorCatalog(registry: ToolRegistry<BindPlugin>): Array<{
+function availablePluginCatalog(registry: ToolRegistry<BindPlugin>): Array<{
   id: string;
   displayName?: string;
   searchAliases: readonly string[];
@@ -1313,7 +1326,7 @@ function renderStableSystemPrompt(
     maxCatalogTokens: catalogTokens,
   });
   const pluginSection = pluginCatalog
-    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available connector plugin, call avalon_load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority.\n\n${pluginCatalog}`
+    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available plugin, call load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority.\n\n${pluginCatalog}`
     : "";
   const activeInstructions = activeSections.length
     ? `# Active Plugin Instructions\n${activeSections.join("\n\n")}`
@@ -1479,11 +1492,18 @@ function modelMessagesContainFile(messages: RunHarnessInput["messages"]): boolea
     && message.content.some((part) => part.type === "file"));
 }
 
-function harnessResultOutcome(toolCallId: string, result: HarnessToolResult) {
+function harnessResultOutcome(
+  toolCallId: string,
+  result: HarnessToolResult,
+  markCompleted: () => void,
+) {
+  if (result.halt === "completed") markCompleted();
   return {
     toolMessage: toolResultMessage(toolCallId, { success: true, data: result.output }),
     ...(result.halt === "needs_input"
       ? { suspend: { toolCallId, reason: "needs_input", resumeKind: "answer" as const } }
+      : result.halt === "completed"
+        ? { suspend: { toolCallId, reason: "completed", resumeKind: "wake" as const } }
       : {}),
     ...((result as HarnessToolResult & { loadedPluginName?: string }).loadedPluginName
       ? { loadedPluginName: (result as HarnessToolResult & { loadedPluginName: string }).loadedPluginName }

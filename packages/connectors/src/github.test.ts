@@ -31,9 +31,9 @@ describe("GitHub connector", () => {
     });
     expect(new Set(adapter.manifest.tools.map((tool) => tool.name)).size).toBe(adapter.manifest.tools.length);
     expect(adapter.manifest.tools).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "github.contents.get", capability: GitHubCapabilities.contentsRead, mode: "read" }),
-      expect.objectContaining({ name: "github.issues.create", capability: GitHubCapabilities.issuesWrite, mode: "write" }),
-      expect.objectContaining({ name: "github.pull_requests.create_review", capability: GitHubCapabilities.pullRequestsWrite }),
+      expect.objectContaining({ name: "contents.get", capability: GitHubCapabilities.contentsRead, mode: "read" }),
+      expect.objectContaining({ name: "issues.create", capability: GitHubCapabilities.issuesWrite, mode: "write" }),
+      expect.objectContaining({ name: "pull_requests.create_review", capability: GitHubCapabilities.pullRequestsWrite }),
     ]));
 
     const install = await adapter.beginAuthorization!({
@@ -193,14 +193,14 @@ describe("GitHub connector", () => {
       principal: { type: "user" as const, userId: "user-1" },
       signal: AbortSignal.timeout(1_000),
     };
-    const content = await adapter.executeTool("github.contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
+    const content = await adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
     expect(content.output).toMatchObject({ content: "x".repeat(40_000), truncated: true, totalChars: 45_000 });
-    const files = await adapter.executeTool("github.pull_requests.list_files", { owner: "acme", repo: "widget", pullNumber: 5 }, context);
+    const files = await adapter.executeTool("pull_requests.list_files", { owner: "acme", repo: "widget", pullNumber: 5 }, context);
     expect((files.output as Array<{ patch: string }>)[0]?.patch).toHaveLength(12_000);
 
-    await expect(adapter.executeTool("github.issues.get", { owner: "acme", repo: "widget", issueNumber: 1 }, context))
+    await expect(adapter.executeTool("issues.get", { owner: "acme", repo: "widget", issueNumber: 1 }, context))
       .rejects.toMatchObject({ code: "unsupported_capability" });
-    await expect(adapter.executeTool("github.contents.get", { owner: "acme", repo: "widget", path: "README.md" }, {
+    await expect(adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, {
       ...context,
       principal: { type: "user", userId: "user-2" },
     })).rejects.toMatchObject({ code: "unauthorized" });
@@ -228,7 +228,7 @@ describe("GitHub connector", () => {
     };
     const adapter = githubAdapter(fetcher);
     const connection = personalConnection([GitHubCapabilities.metadataRead]);
-    const result = await adapter.executeTool("github.repositories.list", {}, {
+    const result = await adapter.executeTool("repositories.list", {}, {
       connection,
       principal: { type: "user", userId: "user-1" },
       signal: AbortSignal.timeout(1_000),

@@ -88,6 +88,8 @@ function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof 
     APP_ENV: "test",
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "google-client",
+    GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "google-secret",
     GITHUB_APP_ID: "12345",
     GITHUB_APP_CLIENT_ID: "github-client",
     GITHUB_APP_CLIENT_SECRET: "github-secret",
@@ -122,7 +124,7 @@ describe("resource watch scheduling modes", () => {
   it("preserves an immediate poll deadline for polling connectors", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-01T12:00:00.000Z"));
-    const database = new WatchDatabase("web_monitor");
+    const database = new WatchDatabase("google");
     const schedulerFetch = vi.fn(async () => new Response(null, { status: 204 }));
 
     await new ResourceService(environment(database, schedulerFetch), auth).watch(resourceId, workstreamId);

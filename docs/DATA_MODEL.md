@@ -36,7 +36,7 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 - `connector_connections` owns scope, encrypted provider credentials, capabilities, cursors, and health.
 - `activities` stores normalized metadata and an optional R2 payload reference. Provider identity and dedupe constraints make at-least-once delivery safe.
 - `resource_watches` records explicit direct relationships.
-- `webhook_receipts` prevents replay; `web_monitor_snapshots` deduplicates deterministic page content.
+- `webhook_receipts` prevents replay of signed generic-webhook deliveries.
 - `audit_events` records security- and side-effect-relevant actions without copying sensitive bodies.
 
 ## Invariants

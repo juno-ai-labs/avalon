@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS workspace_invitations (
 CREATE TABLE IF NOT EXISTS connector_connections (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  connector_type TEXT NOT NULL CHECK (connector_type IN ('google', 'generic_webhook', 'web_monitor', 'github', 'linear', 'notion')),
+  connector_type TEXT NOT NULL CHECK (connector_type IN ('google', 'generic_webhook', 'github', 'linear', 'notion')),
   scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
   owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   provider_account_id TEXT,
@@ -418,18 +418,6 @@ CREATE TABLE IF NOT EXISTS webhook_receipts (
   received_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   UNIQUE (connection_id, signature_hash)
-);
-
-CREATE TABLE IF NOT EXISTS web_monitor_snapshots (
-  id TEXT PRIMARY KEY,
-  connection_id TEXT NOT NULL REFERENCES connector_connections(id) ON DELETE CASCADE,
-  content_hash TEXT NOT NULL,
-  etag TEXT,
-  last_modified TEXT,
-  content_ref TEXT,
-  fetched_at TEXT NOT NULL,
-  changed_at TEXT,
-  UNIQUE (connection_id, content_hash)
 );
 
 CREATE INDEX IF NOT EXISTS workspace_members_user_idx ON workspace_members(user_id, status);

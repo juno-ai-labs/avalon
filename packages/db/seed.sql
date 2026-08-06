@@ -52,25 +52,12 @@ VALUES
   ('00000000-0000-7000-8000-000000000020', '00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000001', 'explicit', '2026-07-31T19:30:00.000Z'),
   ('00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000001', 'creator', '2026-07-31T19:20:00.000Z');
 
-INSERT OR IGNORE INTO connector_connections
-  (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-   granted_scopes_json, model_plugin_id, status, cursor_json, config_json, last_sync_at, next_poll_at, created_at, updated_at)
-VALUES
-  ('00000000-0000-7000-8000-000000000040', '00000000-0000-7000-8000-000000000002', 'web_monitor', 'personal', '00000000-0000-7000-8000-000000000001', 'Invoice status monitor',
-   '["web.read"]', 'plugin_web_monitor', 'healthy', '{}', '{"url":"https://example.com/","intervalSeconds":900}', '2026-07-31T19:39:00.000Z', NULL, '2026-07-31T19:15:00.000Z', '2026-07-31T19:39:00.000Z')
-ON CONFLICT(id) DO UPDATE SET
-  config_json = excluded.config_json,
-  granted_scopes_json = excluded.granted_scopes_json,
-  model_plugin_id = excluded.model_plugin_id,
-  status = excluded.status,
-  updated_at = excluded.updated_at;
-
 INSERT OR IGNORE INTO resources
   (id, workspace_id, connection_id, resource_type, provider, provider_resource_id, title,
    mime_type, canonical_url, metadata_json, last_hydrated_at, created_at, updated_at)
 VALUES
-  ('00000000-0000-7000-8000-000000000041', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000040', 'web_page', 'web_monitor', 'eng-142-status', 'ENG-142 incident status',
-   'text/html', 'https://example.com/', '{}', '2026-07-31T19:39:00.000Z', '2026-07-31T19:15:00.000Z', '2026-07-31T19:39:00.000Z')
+  ('00000000-0000-7000-8000-000000000041', '00000000-0000-7000-8000-000000000002', NULL, 'text', 'fixture', 'eng-142-status', 'ENG-142 incident status',
+   'text/plain', NULL, '{}', '2026-07-31T19:39:00.000Z', '2026-07-31T19:15:00.000Z', '2026-07-31T19:39:00.000Z')
 ON CONFLICT(id) DO UPDATE SET
   canonical_url = excluded.canonical_url,
   updated_at = excluded.updated_at;
@@ -78,33 +65,7 @@ ON CONFLICT(id) DO UPDATE SET
 INSERT OR IGNORE INTO workstream_resources
   (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
 VALUES
-  ('00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000041', '00000000-0000-7000-8000-000000000001', 1, 'reference', '2026-07-31T19:20:00.000Z');
-
-INSERT OR IGNORE INTO resource_watches
-  (id, workspace_id, workstream_id, resource_id, connection_id, watch_type,
-   cursor_json, next_poll_at, enabled, created_at, updated_at)
-VALUES
-  ('00000000-0000-7000-8000-000000000045', '00000000-0000-7000-8000-000000000002',
-   '00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000041',
-   '00000000-0000-7000-8000-000000000040', 'incremental', '{}',
-   '2026-08-01T08:00:00.000Z', 1, '2026-07-31T19:20:00.000Z', '2026-07-31T19:20:00.000Z')
-ON CONFLICT(id) DO UPDATE SET
-  connection_id = excluded.connection_id,
-  next_poll_at = excluded.next_poll_at,
-  enabled = excluded.enabled,
-  updated_at = excluded.updated_at;
-
-UPDATE workstream_resources
-SET watch_enabled = 1
-WHERE workstream_id = '00000000-0000-7000-8000-000000000021'
-  AND resource_id = '00000000-0000-7000-8000-000000000041'
-  AND EXISTS (
-    SELECT 1 FROM resource_watches
-    WHERE workstream_id = '00000000-0000-7000-8000-000000000021'
-      AND resource_id = '00000000-0000-7000-8000-000000000041'
-      AND enabled = 1
-      AND next_poll_at IS NOT NULL
-  );
+  ('00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000041', '00000000-0000-7000-8000-000000000001', 0, 'reference', '2026-07-31T19:20:00.000Z');
 
 INSERT OR IGNORE INTO harness_runs
   (id, workspace_id, workstream_id, origin, execution_principal_json, status, started_at, model, usage_json, created_at)
@@ -116,7 +77,7 @@ INSERT OR IGNORE INTO tool_invocations
   (id, workspace_id, workstream_id, harness_run_id, tool_call_id, tool_name, connection_id,
    input_hash, input_json, output_summary, status, started_at, completed_at)
 VALUES
-  ('00000000-0000-7000-8000-000000000052', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000051', 'seed-tool-1', 'Search invoice error events', '00000000-0000-7000-8000-000000000040',
+  ('00000000-0000-7000-8000-000000000052', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000051', 'seed-tool-1', 'Search invoice error events', NULL,
    'seed-search-invoice-errors', '{"query":"invoice retry failures"}', 'Found 18 related events across three deploys.', 'completed', '2026-07-31T19:35:00.000Z', '2026-07-31T19:35:42.000Z'),
   ('00000000-0000-7000-8000-000000000053', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000051', 'seed-tool-2', 'Inspect retry policy', NULL,
    'seed-inspect-retry-policy', '{"ticket":"ENG-142"}', 'The third retry overlaps the downstream timeout window.', 'completed', '2026-07-31T19:36:00.000Z', '2026-07-31T19:37:18.000Z'),
@@ -136,7 +97,7 @@ INSERT OR IGNORE INTO messages
    text_content, structured_content_json, sequence_number, created_at)
 VALUES
   ('00000000-0000-7000-8000-000000000042', NULL, '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000021', 'agent', NULL, 'tool', '',
-   '{"invocation":{"id":"00000000-0000-7000-8000-000000000052","harnessRunId":"00000000-0000-7000-8000-000000000051","toolCallId":"seed-tool-1","toolName":"Search invoice error events","connectionId":"00000000-0000-7000-8000-000000000040","status":"completed","inputSummary":"Search recent invoice retry failures","outputSummary":"Found 18 related events across three deploys.","startedAt":"2026-07-31T19:35:00.000Z","completedAt":"2026-07-31T19:35:42.000Z","error":null}}', 3, '2026-07-31T19:35:42.000Z'),
+   '{"invocation":{"id":"00000000-0000-7000-8000-000000000052","harnessRunId":"00000000-0000-7000-8000-000000000051","toolCallId":"seed-tool-1","toolName":"Search invoice error events","connectionId":null,"status":"completed","inputSummary":"Search recent invoice retry failures","outputSummary":"Found 18 related events across three deploys.","startedAt":"2026-07-31T19:35:00.000Z","completedAt":"2026-07-31T19:35:42.000Z","error":null}}', 3, '2026-07-31T19:35:42.000Z'),
   ('00000000-0000-7000-8000-000000000043', NULL, '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000021', 'agent', NULL, 'tool', '',
    '{"invocation":{"id":"00000000-0000-7000-8000-000000000053","harnessRunId":"00000000-0000-7000-8000-000000000051","toolCallId":"seed-tool-2","toolName":"Inspect retry policy","connectionId":null,"status":"completed","inputSummary":"Compare retry settings with failure timestamps","outputSummary":"The third retry overlaps the downstream timeout window.","startedAt":"2026-07-31T19:36:00.000Z","completedAt":"2026-07-31T19:37:18.000Z","error":null}}', 4, '2026-07-31T19:37:18.000Z'),
   ('00000000-0000-7000-8000-000000000044', NULL, '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000021', 'agent', NULL, 'tool', '',

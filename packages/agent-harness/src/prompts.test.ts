@@ -69,7 +69,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "e92f5360fc940cfa9cf52c49531cdb32de1678e332b2c0e33dbfda11014190fa",
+        hash: "8bee7b9b207736e2a7085d24f0293f400831d7eba683a16af806b98adbf02402",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -80,14 +80,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "2211f33f9028342495a7a76852fb5540c3f9795c7c542e19a4c7e46a2af96af7",
+        hash: "091897ea9c0c968f4999851227e0e270fdc2bb1b2cac7b6a76510fcb25bfd571",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "f29ee17e5920ec4c79c90c9c2346dfa2411cd01a5383c8dfb2d424bdb5daae96",
+        hash: "fb5b981dac33d3d5d9a0e8f6859d4a14c0143a6a8407c2f33bb0f9cfd11569bd",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -95,7 +95,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "c32f7c6c30fa54aaa0825ed9b316a81d8af575d01137e4697a0d45440b323f2b",
+        hash: "1f263d304684f742f3992c69481413e1ee7e73f3f53a3373b15eeaea51e42965",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -305,17 +305,17 @@ describe("prompt renderers", () => {
     expect(policy).toContain("# Plan");
     expect(policy).toContain("# Submission");
     expect(policy).toContain("Use these phases flexibly rather than as a fixed sequence");
-    expect(policy).toContain("Once the automation is well defined, call submit_automation_draft");
+    expect(policy).toContain("Once the automation is well defined, call automation_submit_draft");
     expect(policy).toContain("Default suggestedScope to personal");
-    expect(policy).toContain("Avalon derives readiness and the follow-up question from elicitation");
+    expect(policy).toContain("Then call core_request_elicitation");
     expect(policy).toContain("Tool-call turns must contain no assistant text");
     expect(policy).toContain("Do not emit a separate confirmation or question");
     expect(policy).toContain("medium-sized model");
     expect(policy).toContain("automation_plugins_list");
-    expect(policy).toContain("single_select or multi_select");
+    expect(policy).toContain("radio, single_select, or multi_select");
     expect(policy).toContain("3–4 short Markdown lines");
     expect(policy).toContain("Declare a durable memory table for each genuine collection");
-    expect(policy).toContain("when to look it up with avalon.table_query");
+    expect(policy).toContain("when to look it up with table_query");
     expect(policy).toContain("Put the same schema and operating rules in memoryTables");
     expect(policy).toContain("All declared tables are private to the installed automation");
   });
