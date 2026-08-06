@@ -1,10 +1,11 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
-import { ArrowUp, AtSign, LoaderCircle, Paperclip, Square, UserPlus } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, LoaderCircle, Mic, Paperclip, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
-import type { MentionIdentity } from '../lib/api';
+import type { AvalonApi, MentionIdentity } from '../lib/api';
+import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
-import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal } from './primitives';
@@ -19,9 +20,9 @@ interface MentionCandidate {
 }
 
 interface WorkstreamComposerProps {
+  api?: Pick<AvalonApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
   members: WorkspaceMember[];
-  socketState: SocketState;
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
   uploading: boolean;
@@ -53,18 +54,10 @@ const BASE_COMMANDS: ComposerCommand[] = [
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
 
-function socketLabel(state: SocketState): string {
-  if (state === 'connected') return 'Live';
-  if (state === 'connecting') return 'Connecting';
-  if (state === 'reconnecting') return 'Reconnecting';
-  if (state === 'unavailable') return 'Live updates unavailable';
-  return 'Loading';
-}
-
 export function WorkstreamComposer({
+  api,
   workstream,
   members,
-  socketState,
   fileInputRef,
   sending,
   uploading,
@@ -85,6 +78,8 @@ export function WorkstreamComposer({
   const [selectedMentions, setSelectedMentions] = useState<MentionIdentity[]>([]);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const dictationBaseRef = useRef('');
+  const microphonePressRef = useRef<{ startedAt: number; startedRecording: boolean } | undefined>(undefined);
   const drop = useFileDrop(onAttach);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
@@ -120,6 +115,7 @@ export function WorkstreamComposer({
     ? []
     : commands.filter((command) => command.label.includes(commandQuery));
   const updateText = (value: string): void => {
+    if (dictation.state === 'transcribing') void dictation.stop();
     draftRevisionRef.current += 1;
     setText(value);
     setSlashDismissed(false);
@@ -127,6 +123,29 @@ export function WorkstreamComposer({
     const beforeCaret = value.slice(0, textareaRef.current?.selectionStart ?? value.length);
     const match = beforeCaret.match(/(?:^|\s)@([^\s@]*)$/);
     setMentionQuery(match?.[1] ?? null);
+  };
+  const dictation = useRealtimeDictation(api, (transcript) => {
+    const nextText = appendDictationTranscript(dictationBaseRef.current, transcript);
+    draftRevisionRef.current += 1;
+    setText(nextText);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+    });
+  });
+  const dictationActive = !['idle', 'error'].includes(dictation.state);
+  const dictationBlocking = ['requesting', 'connecting', 'listening'].includes(dictation.state);
+
+  const startDictation = (): void => {
+    dictationBaseRef.current = text;
+    void dictation.start();
+  };
+
+  const toggleDictation = (): void => {
+    if (dictationActive) void dictation.stop();
+    else startDictation();
   };
 
   const resetDraft = (): void => {
@@ -151,6 +170,7 @@ export function WorkstreamComposer({
   };
 
   const beginMention = (): void => {
+    if (dictation.state === 'transcribing') void dictation.stop();
     draftRevisionRef.current += 1;
     setText((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
     setMentionQuery('');
@@ -201,6 +221,8 @@ export function WorkstreamComposer({
   };
 
   const send = async (): Promise<void> => {
+    if (dictationBlocking) return;
+    if (dictation.state === 'transcribing') await dictation.stop();
     const trimmed = text.trim();
     if ((!trimmed && readyAttachmentCount === 0) || uploading) return;
     const selectedPersonIds = new Set(selectedMentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
@@ -320,33 +342,109 @@ export function WorkstreamComposer({
             }
           }}
           placeholder="Message the work stream…"
+          readOnly={dictationBlocking}
           ref={textareaRef}
           rows={1}
           value={text}
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <IconButton label="Mention a participant or connection" onClick={beginMention}>
+            <IconButton disabled={dictationBlocking} label="Mention a participant or connection" onClick={beginMention}>
               <AtSign size={15} />
             </IconButton>
             <IconButton label="Attach a file" onClick={() => fileInputRef.current?.click()}>
               {uploading ? <LoaderCircle className="spin" size={15} /> : <Paperclip size={15} />}
             </IconButton>
-            <span aria-label={socketLabel(socketState)} className={clsx('socket-state', `socket-${socketState}`)} role="status" title={socketLabel(socketState)}>
-              <span aria-hidden="true" /><span className="sr-only">{socketLabel(socketState)}</span>
-            </span>
+            <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
+              <IconButton
+                aria-pressed={dictationActive}
+                className="dictation-button"
+                disabled={!api}
+                label={dictation.state === 'transcribing'
+                  ? 'Cancel dictation'
+                  : dictationActive ? 'Stop dictation' : 'Click or hold to dictate'}
+                onClick={(event) => {
+                  if (event.detail === 0) toggleDictation();
+                }}
+                onPointerCancel={() => {
+                  const press = microphonePressRef.current;
+                  microphonePressRef.current = undefined;
+                  if (press?.startedRecording) void dictation.stop();
+                }}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  microphonePressRef.current = {
+                    startedAt: performance.now(),
+                    startedRecording: !dictationActive,
+                  };
+                  toggleDictation();
+                }}
+                onPointerUp={() => {
+                  const press = microphonePressRef.current;
+                  microphonePressRef.current = undefined;
+                  if (press?.startedRecording && performance.now() - press.startedAt >= 350) {
+                    void dictation.stop();
+                  }
+                }}
+              >
+                {dictation.state === 'requesting' || dictation.state === 'connecting' || dictation.state === 'transcribing'
+                  ? <LoaderCircle className="spin" size={15} />
+                  : <Mic size={15} />}
+              </IconButton>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton
+                    className="microphone-menu-trigger"
+                    disabled={dictationBlocking}
+                    label="Choose microphone"
+                  >
+                    <ChevronDown size={14} />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content align="start" className="menu-content microphone-menu" sideOffset={8}>
+                    <DropdownMenu.Label className="menu-label">Microphone</DropdownMenu.Label>
+                    {dictation.devices.length === 0 ? (
+                      <DropdownMenu.Item className="menu-item" disabled>No microphones found</DropdownMenu.Item>
+                    ) : (
+                      <DropdownMenu.RadioGroup
+                        onValueChange={dictation.setSelectedDeviceId}
+                        value={dictation.selectedDeviceId}
+                      >
+                        {dictation.devices.map((device) => (
+                          <DropdownMenu.RadioItem
+                            className="menu-item microphone-menu-item"
+                            key={device.deviceId}
+                            value={device.deviceId}
+                          >
+                            <span>{device.label}</span>
+                            <DropdownMenu.ItemIndicator asChild>
+                              <Check aria-hidden="true" size={15} />
+                            </DropdownMenu.ItemIndicator>
+                          </DropdownMenu.RadioItem>
+                        ))}
+                      </DropdownMenu.RadioGroup>
+                    )}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            </div>
           </div>
           <div className="composer-submit-area">
             {workstream.harnessStatus === 'running' && (
               <Button className="stop-button" onClick={() => void onStop()}><Square fill="currentColor" size={9} /> Stop</Button>
             )}
-            <button aria-label="Send message" className="composer-send" disabled={uploading || (!text.trim() && readyAttachmentCount === 0)} onClick={() => void send()} type="button">
+            <button aria-label="Send message" className="composer-send" disabled={dictationBlocking || uploading || (!text.trim() && readyAttachmentCount === 0)} onClick={() => void send()} type="button">
               {sending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
             </button>
           </div>
         </div>
       </div>
-      {error && <div className="composer-error-slot"><InlineError>{error}</InlineError></div>}
+      {(error || dictation.error) && (
+        <div className="composer-error-slot"><InlineError>{error || dictation.error}</InlineError></div>
+      )}
       <input
         className="sr-only"
         multiple

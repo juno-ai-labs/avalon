@@ -1131,6 +1131,10 @@ export class AvalonApi {
     return this.request(`/workstreams/${encodeURIComponent(id)}/socket`, { schema: socketTicketSchema });
   }
 
+  getTranscriptionSocketTicket(): Promise<SocketTicket> {
+    return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
+  }
+
   async compileAutomation(
     input: { message: string; draftId?: string; templateId?: string },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,

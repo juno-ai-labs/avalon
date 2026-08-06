@@ -52,6 +52,7 @@ This is a logical and storage boundary for the prototype, not a claim that all s
 - Desktop refresh material is stored through Electron `safeStorage`; access tokens remain in memory where practical.
 - Connector refresh tokens are AES-GCM encrypted with a regional Worker secret.
 - OpenRouter, Google, session-signing, webhook, and encryption keys are server-only values loaded from local `.env.local` during development and Cloudflare secrets in hosted environments.
+- Azure OpenAI realtime dictation also keeps its endpoint and API key in the regional Worker. The desktop receives a one-minute, single-use Avalon socket ticket; Cloudflare consumes its JTI, reserves a bounded regional session, opens the authenticated Azure WebSocket, and admits only rate- and size-limited audio-buffer events from the client. Connections are capped at five minutes and raw microphone audio and transcripts are not persisted by this bridge.
 - Every API operation resolves a session, workspace, role, execution principal, connection scope, and requested capability server-side.
 
 ## Work streams and live updates

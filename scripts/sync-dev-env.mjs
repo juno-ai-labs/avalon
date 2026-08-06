@@ -23,6 +23,9 @@ const workerKeys = [
   "OPENROUTER_FALLBACK_MODELS",
   "OPENROUTER_CLASSIFIER_MODEL",
   "OPENROUTER_STRUCTURED_MODEL",
+  "AZURE_OPENAI_ENDPOINT",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_REALTIME_DEPLOYMENT",
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
@@ -72,6 +75,9 @@ const workerKeys = [
 // use one identity in both Workers because each operates one public App behind
 // a smart, account-aware ingress.
 const regionalizableKeys = [
+  "AZURE_OPENAI_ENDPOINT",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_REALTIME_DEPLOYMENT",
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
