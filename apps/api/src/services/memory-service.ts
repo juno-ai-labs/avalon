@@ -7,14 +7,14 @@ import type { HarnessTool, HarnessToolResult } from "@avalon/agent-harness";
 
 export const MEMORY_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b" as const;
 
-const MEMORY_SCOPE_KINDS = ["workstream", "automation", "user", "workspace"] as const;
+export const MEMORY_SCOPE_KINDS = ["workstream", "automation", "user", "workspace"] as const;
 const SEARCH_CANDIDATES_PER_LEG = 20;
 const SEARCH_RESULTS = 10;
 const RRF_OFFSET = 60;
 
 export type MemoryScopeKind = typeof MEMORY_SCOPE_KINDS[number];
 
-interface MemoryScope {
+export interface MemoryScope {
   memoryScopeId: string;
   workspaceId: string;
   kind: MemoryScopeKind;

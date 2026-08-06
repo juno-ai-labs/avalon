@@ -810,6 +810,37 @@ const automationJsonSchema = {
         required: ["pluginId", "recommendedTools", "reason"]
       }
     },
+    memoryTables: {
+      type: "array",
+      description: "Automation-scoped durable structured collections required across runs; use [] when none are needed.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          description: { type: "string" },
+          usageInstructions: { type: "string" },
+          columns: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                name: { type: "string" },
+                description: { type: "string" },
+                type: { type: "string", enum: ["string", "url", "number", "integer", "boolean", "datetime", "date"] },
+                required: { type: "boolean" },
+                searchable: { type: "boolean" }
+              },
+              required: ["name", "description", "type", "required", "searchable"]
+            }
+          },
+          keyColumns: { type: "array", minItems: 1, items: { type: "string" } }
+        },
+        required: ["name", "description", "usageInstructions", "columns", "keyColumns"]
+      }
+    },
     suggestedScope: { type: "string", enum: ["personal", "workspace"] },
     elicitation: {
       anyOf: [
@@ -852,6 +883,7 @@ const automationJsonSchema = {
     "expectedOutputs",
     "defaultBehavior",
     "recommendedPlugins",
+    "memoryTables",
     "suggestedScope",
     "elicitation"
   ]
@@ -1546,6 +1578,7 @@ function normalizeAutomationDraft(
     triggers,
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),
+    memoryTables: Array.isArray(draft.memoryTables) ? draft.memoryTables : [],
     ready,
     followUpQuestion: ready
       ? null
@@ -1652,6 +1685,7 @@ export interface HarnessToolPolicyIdentity {
 export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
 export const AVALON_TIME_PLUGIN_ID = "avalon:time";
 export const AVALON_MEMORY_PLUGIN_ID = "avalon:memory";
+export const AVALON_TABLES_PLUGIN_ID = "avalon:tables";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "avalon:workstream";
 export const AVALON_AUTOMATION_ARCHITECT_PLUGIN_ID = "avalon:automation_architect";
 

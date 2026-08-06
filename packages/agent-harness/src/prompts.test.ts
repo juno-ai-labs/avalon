@@ -25,6 +25,7 @@ const currentDraft: AutomationDraft = {
   }],
   requiredCapabilities: ["github.pull_requests.read"],
   recommendedPlugins: [],
+  memoryTables: [],
   expectedOutputs: ["Engineering brief"],
   defaultBehavior: { noChanges: "Record a concise no-change result" },
   suggestedScope: "workspace",
@@ -40,6 +41,7 @@ const workstreamAutomation = {
   expectedOutputs: currentDraft.expectedOutputs,
   defaultBehavior: currentDraft.defaultBehavior,
   overrides: { tone: "concise" },
+  durableTables: [],
 };
 
 function digest(value: unknown): string {
@@ -67,7 +69,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "53817217a637506e960508719d09470c7ab48688342197bd50e0a0fa6fd59b9b",
+        hash: "e92f5360fc940cfa9cf52c49531cdb32de1678e332b2c0e33dbfda11014190fa",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -78,14 +80,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "7130302ce3d761ac45eb65403cfd359dba89f450cadcfc84db0232c84d91e010",
+        hash: "2211f33f9028342495a7a76852fb5540c3f9795c7c542e19a4c7e46a2af96af7",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "98cb98e6e78a1d74a0c5da46bc1c08f645f0264ef66e95d45dc0ead3edf068a8",
+        hash: "f29ee17e5920ec4c79c90c9c2346dfa2411cd01a5383c8dfb2d424bdb5daae96",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -93,7 +95,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "8046f9bf4234f5fa11c925ca2cd84b4c6bc97f52b8ba4dc457e91a58620e73ce",
+        hash: "c32f7c6c30fa54aaa0825ed9b316a81d8af575d01137e4697a0d45440b323f2b",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -312,6 +314,41 @@ describe("prompt renderers", () => {
     expect(policy).toContain("automation_plugins_list");
     expect(policy).toContain("single_select or multi_select");
     expect(policy).toContain("3–4 short Markdown lines");
+    expect(policy).toContain("Declare a durable memory table for each genuine collection");
+    expect(policy).toContain("when to look it up with avalon.table_query");
+    expect(policy).toContain("Put the same schema and operating rules in memoryTables");
+    expect(policy).toContain("All declared tables are private to the installed automation");
+  });
+
+  it("records materialized durable-table IDs, schema, and update rules in automation run context", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Daily blog watch",
+      objective: "Report only newly discovered entries.",
+      automation: {
+        ...workstreamAutomation,
+        durableTables: [{
+          memoryTableId: "table-seen-entries",
+          memoryScopeId: "scope-automation",
+          scopeKind: "automation",
+          name: "Seen entries",
+          description: "One row per discovered blog entry.",
+          usageInstructions: "Query candidate URLs, insert by canonical URL, and report only newly inserted rows.",
+          keyColumns: ["url"],
+          columns: [{
+            memoryTableColumnId: "column-url",
+            name: "url",
+            description: "Canonical entry URL",
+            type: "url",
+            required: true,
+            searchable: false,
+          }],
+        }],
+      },
+    });
+    expect(prompt).toContain('"memoryTableId": "table-seen-entries"');
+    expect(prompt).toContain('"keyColumns"');
+    expect(prompt).toContain("insert by canonical URL");
+    expect(prompt).toContain('"memoryTableColumnId": "column-url"');
   });
 
   it("defines conservative confidence semantics for both activity classifiers", () => {
