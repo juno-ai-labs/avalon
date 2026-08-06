@@ -21,6 +21,11 @@ vi.mock('../components/inspector-rail', () => ({ InspectorRail: () => null }));
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({ copyText }),
 }));
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
+    <span data-size={size} data-state={state} data-testid="thinking-orb" />
+  ),
+}));
 
 const automationId = '00000000-0000-7000-8000-000000000008';
 const nextVersionId = '00000000-0000-7000-8000-000000000011';
@@ -92,6 +97,15 @@ describe('Automation template updates', () => {
       scheduleSummary: 'Every Monday',
       templateUpdate: undefined,
     });
+  });
+
+  it('uses the shared connecting state while the automation opens', () => {
+    api.getAutomation.mockImplementation(() => new Promise(() => undefined));
+    renderScreen();
+
+    expect(screen.getByRole('status')).toHaveTextContent('Opening automation…');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'connecting');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '64');
   });
 
   it('keeps the pinned version until the user reviews and explicitly adopts the update', async () => {

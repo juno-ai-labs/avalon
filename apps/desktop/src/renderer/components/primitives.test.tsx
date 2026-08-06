@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
-import { AvalonMark, DropdownSelect, LoadingState, StatusDot } from './primitives';
+import { AvalonMark, DropdownSelect, OpeningState, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -41,11 +41,11 @@ describe('StatusDot', () => {
   });
 });
 
-describe('LoadingState', () => {
-  it('renders the large connecting orb for the work-stream opening state', () => {
-    render(<LoadingState label="Opening work stream…" orbSize={64} orbState="connecting" />);
+describe('OpeningState', () => {
+  it('centralizes the large connecting orb used while screens open', () => {
+    render(<OpeningState label="Opening automation…" />);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Opening work stream…');
+    expect(screen.getByRole('status')).toHaveTextContent('Opening automation…');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'connecting');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '64');
   });

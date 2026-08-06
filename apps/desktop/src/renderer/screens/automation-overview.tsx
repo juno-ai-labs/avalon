@@ -32,7 +32,7 @@ import { desktopBridge } from '../lib/platform';
 import type { AutomationRunSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from '../components/inspector-rail';
-import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
+import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
 
@@ -124,7 +124,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     },
   });
 
-  if (automation.isLoading) return <LoadingState label="Opening automation…" />;
+  if (automation.isLoading) return <OpeningState label="Opening automation…" />;
   if (automation.error || !automation.data) {
     return (
       <div className="screen-error-state screen-with-titlebar">

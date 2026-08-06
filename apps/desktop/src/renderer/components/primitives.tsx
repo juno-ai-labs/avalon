@@ -212,6 +212,10 @@ export function LoadingState({
   );
 }
 
+export function OpeningState({ label }: { label: string }): React.JSX.Element {
+  return <LoadingState label={label} orbSize={64} orbState="connecting" />;
+}
+
 export function InlineError({ children }: PropsWithChildren): React.JSX.Element {
   return (
     <p className="inline-error" role="alert">

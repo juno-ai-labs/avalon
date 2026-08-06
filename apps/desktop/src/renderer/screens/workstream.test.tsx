@@ -47,6 +47,13 @@ describe('workstreamRunTiming', () => {
       completedAt: '2026-08-05T12:01:23.000Z',
     })).toEqual({ active: false, durationMs: 83_000 });
   });
+
+  it('does not describe a run awaiting input as completed work', () => {
+    expect(workstreamRunTiming('needs_input', {
+      ...harnessRun,
+      status: 'needs_input',
+    })).toBeNull();
+  });
 });
 
 describe('manualElicitationResponse', () => {
