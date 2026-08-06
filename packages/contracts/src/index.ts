@@ -211,7 +211,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion", "slack"]),
+  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),

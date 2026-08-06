@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  createXConnection: vi.fn(),
   startProviderConnection: vi.fn(),
   reconnectConnection: vi.fn(),
   testConnection: vi.fn(),
@@ -232,6 +233,21 @@ describe('Workspace settings', () => {
       'workspace',
       ['slack.agent', 'slack.notifications.write'],
     ));
+  });
+
+  it('offers the read-only X connector for personal and workspace use', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const xCard = (await screen.findByText('X')).closest('article');
+    expect(xCard).not.toBeNull();
+    fireEvent.click(within(xCard!).getByRole('button', { name: 'Connect for me' }));
+    await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith('you', ['x.read']));
+
+    await waitFor(() => expect(within(xCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(xCard!).getByRole('button', { name: 'Connect workspace' }));
+    await waitFor(() => expect(api.createXConnection).toHaveBeenLastCalledWith('workspace', ['x.read']));
+    expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
   });
 
   it.each(['healthy', 'reconnect_required'] as const)(

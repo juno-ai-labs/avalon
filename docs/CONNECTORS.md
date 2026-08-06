@@ -62,6 +62,10 @@ Notion uses public connections with an `Any workspace` installation scope and th
 
 Notion's one-time webhook verification token is accepted through a guarded regional setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing.
 
+## X
+
+X is a read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
+
 ## Web discovery
 
 The loadable `avalon:web` plugin exposes `web_search` and `web_fetch` through Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The plugin is omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
