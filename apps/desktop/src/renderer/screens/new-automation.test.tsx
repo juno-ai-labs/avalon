@@ -88,7 +88,7 @@ describe('New automation composer', () => {
     await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({ message: example }, expect.any(Function)));
     const humanMessage = (await screen.findByText(example)).closest('article');
     expect(humanMessage).toHaveClass('message-block', 'human-message', 'own-human-message');
-    expect(screen.getByText(/working for \d+ms/u)).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
 
     act(() => {
@@ -99,7 +99,7 @@ describe('New automation composer', () => {
         durationMs: 0,
       });
     });
-    expect(screen.getByText(/working for \d+ms/u)).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
     expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
 
     act(() => {
@@ -310,7 +310,7 @@ describe('New automation composer', () => {
     expect(screen.queryByRole('heading', { name: 'Where should Avalon send it?' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Email');
     expect(screen.queryByText('email')).not.toBeInTheDocument();
-    expect(screen.getByText(/working for \d+ms/u)).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
   });
 
   it('reapplies the elicitation answer when a failed follow-up is retried', async () => {
