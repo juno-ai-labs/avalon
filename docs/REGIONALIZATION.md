@@ -32,6 +32,7 @@ Queues and Workflows carry region plus opaque record IDs, never sensitive payloa
 - The EU regional identity bridge is a named service entrypoint, not a public HTTP route.
 - The GitHub smart ingress is host-gated at `github.with-avalon.com`; it verifies GitHub's signature before parsing or routing and never exposes its EU bridge as HTTP.
 - GitHub OAuth callbacks, connector credentials, raw payload persistence, resources, activities, and automation processing stay in the connected workspace region. The shared ingress necessarily receives webhook bytes transiently before regional routing.
+- Slack's shared ingress verifies signed bytes in Global, consults only the opaque team route, and hands the parsed delivery directly to the owning regional service, which persists and queues the ingress job before acknowledgement. Tokens, ingress jobs, user links, Agent sessions, workstreams, and outputs stay regional.
 - Resend Receiving terminates at the Global ingress because a receiving domain has one catch-all webhook. Global retains only the friendly-address route and delivery receipt. EU message bodies are retrieved with the EU Worker and persisted only in EU R2/D1.
 - Work-stream email names have one Global reservation registry for all regions. Global reserves locally; every non-Global Worker must call the named Global router and fails closed without it. Regional D1 is never an allocation fallback, and disabled/deleted names remain Global tombstones forever.
 - A bootstrap session has no workspace ID and cannot authorize workspace data access.

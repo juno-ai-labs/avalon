@@ -18,6 +18,7 @@ import {
   isSharedLinearIngress,
   LinearRoutingService,
 } from "../services/linear-routing-service";
+import { SlackAgentService } from "../services/slack-agent-service";
 
 const idParam = z.object({ id: IdSchema });
 const googleStart = z.object({
@@ -62,6 +63,20 @@ const githubStart = z.object({
     "github.checks.read",
   ])).min(1),
 });
+const slackStart = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("workspace"),
+    capabilities: z.array(z.enum(["slack.agent", "slack.notifications.write"])).min(1),
+  }),
+  z.object({
+    scope: z.literal("personal"),
+    capabilities: z.array(z.enum([
+      "slack.search", "slack.messages.read", "slack.files.read", "slack.messages.write",
+      "slack.conversations.write", "slack.reactions.write", "slack.canvases.read",
+      "slack.canvases.write", "slack.users.read",
+    ])).min(1),
+  }),
+]);
 const githubSetup = z.object({
   installation_id: z.string().regex(/^\d{1,32}$/u),
   state: z.string().min(20).max(200),
@@ -72,6 +87,7 @@ const googleCallback = z.object({
   state: z.string().min(20),
   error: z.string().min(1).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
+const slackLink = z.object({ token: z.string().min(20).max(500) });
 
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
@@ -87,6 +103,15 @@ connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c
 );
 connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("notion", c.req.valid("json"))),
+);
+connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json"))),
+);
+connectionRoutes.post("/slack/link/preview", zValidator("json", slackLink), async (c) =>
+  c.json(await new SlackAgentService(c.env).previewLink(getAuth(c), c.req.valid("json").token)),
+);
+connectionRoutes.post("/slack/link", zValidator("json", slackLink), async (c) =>
+  c.json(await new SlackAgentService(c.env).linkUser(getAuth(c), c.req.valid("json").token)),
 );
 connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).reconnect(c.req.valid("param").id)),
@@ -133,6 +158,11 @@ connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallb
   const query = c.req.valid("query");
   if (query.error) return c.text("Notion connection was not authorized", 401);
   return c.redirect(await new ConnectionService(c.env).completeProvider("notion", query.code!, query.state), 302);
+});
+connectionCallbackRoutes.get("/slack/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  if (query.error) return c.text("Slack connection was not authorized", 401);
+  return c.redirect(await new ConnectionService(c.env).completeProvider("slack", query.code!, query.state), 302);
 });
 
 export const webhookIngestionRoutes = new Hono<HonoAppEnv>();

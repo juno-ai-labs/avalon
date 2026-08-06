@@ -245,14 +245,18 @@ function DraftSummary({
   creating,
   connections,
   defaultPluginIds,
+  slackDeliveryConnectionId,
   onDefaultPluginsChange,
+  onSlackDeliveryChange,
   onCreate,
 }: {
   draft: AutomationDraftResponse;
   creating: boolean;
   connections: WorkstreamConnection[];
   defaultPluginIds: string[];
+  slackDeliveryConnectionId: string;
   onDefaultPluginsChange: (pluginIds: string[]) => void;
+  onSlackDeliveryChange: (connectionId: string) => void;
   onCreate: () => void;
 }): React.JSX.Element | null {
   if (!draft.summary) return null;
@@ -277,6 +281,18 @@ function DraftSummary({
         scope={summary.scope}
         selected={defaultPluginIds}
       />
+      {summary.scope === 'you' && (
+        <div className="automation-delivery-target">
+          <label htmlFor="automation-slack-delivery"><strong>Deliver results</strong><small>{summary.requiresSlackDelivery ? 'This draft mentions Slack delivery. ' : ''}Choose a destination explicitly; it is frozen when this automation is saved.</small></label>
+          <select id="automation-slack-delivery" onChange={(event) => onSlackDeliveryChange(event.target.value)} value={slackDeliveryConnectionId}>
+            <option value="">Keep results in Avalon</option>
+            {connections.filter((connection) => connection.connectorType === 'slack' && connection.scope === 'workspace' && connection.status === 'healthy').map((connection) => (
+              <option key={connection.id} value={connection.id}>Avalon Agent DM · {connection.displayName}</option>
+            ))}
+          </select>
+          <span>Slack delivery requires linking your Avalon account from the app’s Home tab.</span>
+        </div>
+      )}
       <footer>
         <span>Plugin defaults improve startup speed but never widen runtime authority.</span>
         <Button className="button-primary" disabled={creating} onClick={onCreate}>
@@ -301,6 +317,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
+  const [slackDeliveryConnectionId, setSlackDeliveryConnectionId] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
 
@@ -328,6 +345,21 @@ export function NewAutomationScreen(): React.JSX.Element {
     setDefaultPluginIds(recommendations.map((item) => item.pluginId).filter((pluginId) => eligible.has(pluginId)));
     setInitializedRecommendations(key);
   }, [connections.data, draft, initializedRecommendations]);
+
+  const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
+  useEffect(() => {
+    setSlackDeliveryConnectionId('');
+  }, [deliveryDraftKey]);
+
+  useEffect(() => {
+    if (!slackDeliveryConnectionId) return;
+    const stillAvailable = (connections.data ?? []).some((connection) =>
+      connection.id === slackDeliveryConnectionId
+      && connection.connectorType === 'slack'
+      && connection.scope === 'workspace'
+      && connection.status === 'healthy');
+    if (!stillAvailable || draft?.summary?.scope !== 'you') setSlackDeliveryConnectionId('');
+  }, [connections.data, draft?.summary?.scope, slackDeliveryConnectionId]);
 
   const compile = useMutation({
     mutationFn: (payload: AutomationCompilePayload) =>
@@ -429,7 +461,9 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
 
   const create = useMutation({
-    mutationFn: () => api!.createAutomation(draft!.draftId, defaultPluginIds),
+    mutationFn: () => slackDeliveryConnectionId
+      ? api!.createAutomation(draft!.draftId, defaultPluginIds, slackDeliveryConnectionId)
+      : api!.createAutomation(draft!.draftId, defaultPluginIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -538,9 +572,11 @@ export function NewAutomationScreen(): React.JSX.Element {
                     connections={connections.data ?? []}
                     creating={create.isPending}
                     defaultPluginIds={defaultPluginIds}
+                    slackDeliveryConnectionId={slackDeliveryConnectionId}
                     draft={draft}
                     onCreate={() => create.mutate()}
                     onDefaultPluginsChange={setDefaultPluginIds}
+                    onSlackDeliveryChange={setSlackDeliveryConnectionId}
                   />
                 )}
               </div>
