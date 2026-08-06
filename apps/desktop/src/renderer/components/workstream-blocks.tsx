@@ -11,7 +11,6 @@ import {
   type TablerIcon,
 } from '@tabler/icons-react';
 import type { AutomationPluginActivity, AutomationPluginIcon } from '@avalon/contracts';
-import { ThinkingOrb } from 'thinking-orbs';
 import {
   ArrowRight,
   Check,
@@ -34,6 +33,7 @@ import remarkGfm from 'remark-gfm';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
+import { AgentWorkTiming } from './agent-work-timing';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Badge, Button, InlineError } from './primitives';
 
@@ -306,37 +306,13 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
 
 function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | null {
   const thought = message.thoughtEvent;
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!thought || thought.status !== 'started' || thought.startedAt === undefined) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, [thought]);
-
   if (!thought) return null;
-  const activeDuration = thought.status === 'started' && thought.startedAt !== undefined
-    ? Math.max(0, now - thought.startedAt)
-    : 0;
-  const verb = thought.status === 'started' ? 'working' : 'worked';
-  const label = `${verb} for ${formatDuration(thought.durationMs + activeDuration) ?? '0ms'}`;
   return (
-    <div
-      aria-label={label}
-      aria-live={thought.status === 'started' ? 'off' : 'polite'}
-      className={clsx('thought-block', thought.status === 'started' && 'thought-active')}
-    >
-      <ThinkingOrb
-        aria-hidden="true"
-        className="thought-orb"
-        paused={thought.status !== 'started'}
-        size={20}
-        state="solving"
-        theme="dark"
-      />
-      <span className="thought-label">{label}</span>
-    </div>
+    <AgentWorkTiming
+      active={thought.status === 'started'}
+      durationMs={thought.durationMs}
+      {...(thought.startedAt === undefined ? {} : { startedAt: thought.startedAt })}
+    />
   );
 }
 

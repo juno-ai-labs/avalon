@@ -38,10 +38,11 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
-import type { BackgroundTask, ElicitationData, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
-import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, StatusDot } from '../components/primitives';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, StatusDot } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
@@ -60,6 +61,20 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
 export function mergeBackgroundTasks(persisted: BackgroundTask[], live: BackgroundTask[]): BackgroundTask[] {
   return [...new Map([...persisted, ...live].map((task) => [task.id, task])).values()]
     .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+}
+
+export function workstreamRunTiming(
+  status: HarnessStatus,
+  run: HarnessRunMetadata | undefined,
+  now = Date.now(),
+): AgentWorkTimingProps | null {
+  if (!run || status === 'scheduled' || status === 'needs_input') return null;
+  const startedAt = Date.parse(run.startedAt ?? run.createdAt);
+  if (!Number.isFinite(startedAt)) return null;
+  if (status === 'running') return { active: true, durationMs: 0, startedAt };
+  const canonicalCompletedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+  const completedAt = Number.isFinite(canonicalCompletedAt) ? canonicalCompletedAt : now;
+  return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
 }
 
 export function manualElicitationResponse(
@@ -676,7 +691,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   }, [atBottom, transcript, transcriptVirtualizer]);
 
   if (workstream.isLoading || messages.isLoading) {
-    return <LoadingState label="Opening work stream…" orbSize={64} orbState="connecting" />;
+    return <OpeningState label="Opening work stream…" />;
   }
   if (workstream.error || messages.error || !workstream.data) {
     return (
@@ -692,6 +707,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   }
 
   const detail = workstream.data;
+  const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
   const visibleTranscript = transcript;
   const liveBackgroundTasks = backgroundTasksFromMessages(transcript);
   const backgroundTasks = mergeBackgroundTasks(
@@ -793,9 +809,7 @@ export function WorkstreamScreen(): React.JSX.Element {
               })}
             </div>
           )}
-          {detail.harnessStatus === 'running' && !activeElicitation && !transcript.some((message) => message.streaming) && (
-            <div aria-live="polite" className="agent-thinking" role="status"><span className="thinking-mark" /><span>Avalon is working</span><span className="thinking-dots">…</span></div>
-          )}
+          {runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}

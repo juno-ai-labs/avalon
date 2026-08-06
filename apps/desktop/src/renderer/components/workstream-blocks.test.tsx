@@ -47,7 +47,7 @@ describe('MessageBlock model timing', () => {
     const { container, rerender } = render(<MessageBlock {...actions} message={activeMessage} />);
 
     expect(screen.getByText('working for 1m 22s')).toBeInTheDocument();
-    expect(container.querySelector('.thought-block')).toHaveClass('thought-active');
+    expect(container.querySelector('.agent-work-timing')).toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'solving');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '20');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'false');
@@ -65,7 +65,7 @@ describe('MessageBlock model timing', () => {
       />,
     );
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
-    expect(container.querySelector('.thought-block')).not.toHaveClass('thought-active');
+    expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
   });
 });
