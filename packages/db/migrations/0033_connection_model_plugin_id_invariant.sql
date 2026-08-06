@@ -6,7 +6,6 @@ UPDATE connector_connections
 SET model_plugin_id = 'plugin_' ||
   CASE connector_type
     WHEN 'generic_webhook' THEN 'webhook'
-    WHEN 'web_monitor' THEN 'web_monitor'
     WHEN 'github' THEN 'github'
     WHEN 'linear' THEN 'linear'
     WHEN 'notion' THEN 'notion'

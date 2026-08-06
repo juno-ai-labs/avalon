@@ -1,6 +1,6 @@
 -- Connector credentials retain their opaque connection:<uuid> authorization
 -- identity. This separate, workspace-local identifier is the stable name that
--- can safely be shown to a model (for example plugin_web_monitor).
+-- can safely be shown to a model (for example plugin_google).
 ALTER TABLE connector_connections ADD COLUMN model_plugin_id TEXT;
 
 -- Backfill active prototype connections deterministically. The oldest active

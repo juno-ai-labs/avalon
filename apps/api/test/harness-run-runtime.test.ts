@@ -815,6 +815,101 @@ describe("durable harness attempt runtime", () => {
     ]);
   });
 
+  it("accepts exact legacy receipt plans without weakening read and write replay fences", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-compatible-plans",
+      owner: "owner-compatible-plans",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed attempt");
+
+    const legacyReadPlan = {
+      pluginId: "connection:connection-linear",
+      canonicalToolName: "linear.search_issues",
+      capability: "linear.issue.read",
+      connectionId: "connection-linear",
+      mode: "read",
+      idempotency: "safe",
+      toolSurfaceHash: "linear-surface-prefixed",
+    };
+    const currentReadPlan = {
+      ...legacyReadPlan,
+      canonicalToolName: "search_issues",
+      toolSurfaceHash: "linear-surface-prefix-free",
+    };
+    const readCoordinates = {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-compatible-read",
+      toolName: "linear_search_issues",
+      inputHash: "compatible-read-input",
+      input: { query: "receipts" },
+      mode: "read" as const,
+    };
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...readCoordinates,
+      invocationId: "invocation-compatible-read",
+      plan: legacyReadPlan,
+    })).toMatchObject({ state: "created" });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...readCoordinates,
+      plan: currentReadPlan,
+      compatiblePriorPlans: [legacyReadPlan],
+    })).toMatchObject({ state: "resume_read" });
+    expect(await completeToolInvocation(sqlite.binding, claim.lease, {
+      harnessRunId: RUN_ONE,
+      invocationId: "invocation-compatible-read",
+      checkpointIndex: 1,
+      outputRef: "payloads/runtime/compatible-read.json",
+      outputSummary: "Found issues",
+    })).toBe("persisted");
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...readCoordinates,
+      plan: currentReadPlan,
+      compatiblePriorPlans: [legacyReadPlan],
+    })).toMatchObject({ state: "replay_completed" });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...readCoordinates,
+      plan: currentReadPlan,
+      compatiblePriorPlans: [{ ...legacyReadPlan, toolSurfaceHash: "wrong-legacy-surface" }],
+    })).toMatchObject({ state: "ambiguous_external_write" });
+
+    const legacyWritePlan = {
+      ...legacyReadPlan,
+      canonicalToolName: "linear.create_comment",
+      capability: "linear.comment.write",
+      mode: "write",
+      idempotency: "provider_key",
+    };
+    const currentWritePlan = {
+      ...legacyWritePlan,
+      canonicalToolName: "create_comment",
+      toolSurfaceHash: "linear-surface-prefix-free",
+    };
+    const writeCoordinates = {
+      harnessRunId: RUN_ONE,
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      toolCallId: "call-compatible-write",
+      toolName: "linear_create_comment",
+      inputHash: "compatible-write-input",
+      input: { issueId: "AVA-1", body: "Reviewed" },
+      mode: "write" as const,
+    };
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...writeCoordinates,
+      invocationId: "invocation-compatible-write",
+      plan: legacyWritePlan,
+    })).toMatchObject({ state: "created" });
+    expect(await persistToolExecutionPlan(sqlite.binding, claim.lease, {
+      ...writeCoordinates,
+      plan: currentWritePlan,
+      compatiblePriorPlans: [legacyWritePlan],
+    })).toMatchObject({ state: "ambiguous_external_write" });
+  });
+
   it("routes plan conflicts, repeated writes, definitive failures, and timeouts through terminal receipt fencing", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);

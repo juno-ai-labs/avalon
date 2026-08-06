@@ -174,15 +174,35 @@ describe("Avalon Firecrawl harness tools", () => {
   it("omits both web tools unless Firecrawl is configured", () => {
     const absent = __integrationTesting
       .createAvalonTools(envWithFirecrawl(undefined), workflowInput)
+      .filter((tool) => tool.definition.capability.startsWith("web."))
       .map((tool) => tool.definition.name);
     const present = __integrationTesting
       .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
+      .filter((tool) => tool.definition.capability.startsWith("web."))
       .map((tool) => tool.definition.name);
 
-    expect(absent).not.toContain("avalon.web_search");
-    expect(absent).not.toContain("avalon.web_fetch");
-    expect(present).toContain("avalon.web_search");
-    expect(present).toContain("avalon.web_fetch");
+    expect(absent).not.toContain("search");
+    expect(absent).not.toContain("fetch");
+    expect(present).toContain("search");
+    expect(present).toContain("fetch");
+  });
+
+  it("packages public-web tools as one loadable Avalon plugin", () => {
+    const tools = __integrationTesting
+      .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput);
+    const plugin = __integrationTesting.createAvalonWebPlugin(tools);
+
+    expect(plugin).toMatchObject({
+      canonicalId: "avalon:web",
+      modelId: "avalon_web",
+      shortWireName: "web",
+      preload: false,
+      explicit: false,
+    });
+    expect(plugin?.tools.map((tool) => tool.definition)).toEqual([
+      expect.objectContaining({ name: "search", capability: "web.search", mode: "read", idempotency: "safe" }),
+      expect.objectContaining({ name: "fetch", capability: "web.fetch", mode: "read", idempotency: "safe" }),
+    ]);
   });
 
   it("removes outbound web tools from untrusted inbound-email runs", () => {
@@ -191,12 +211,15 @@ describe("Avalon Firecrawl harness tools", () => {
         ...workflowInput,
         reason: "inbound_email",
       })
+      .filter((tool) => tool.definition.capability.startsWith("web.")
+        || tool.definition.capability.startsWith("workstream.")
+        || tool.definition.capability.startsWith("resource."))
       .map((tool) => tool.definition.name);
 
-    expect(tools).not.toContain("avalon.web_search");
-    expect(tools).not.toContain("avalon.web_fetch");
-    expect(tools).toContain("avalon.read_workstream");
-    expect(tools).toContain("avalon.read_resource");
+    expect(tools).not.toContain("search");
+    expect(tools).not.toContain("fetch");
+    expect(tools).toContain("read");
+    expect(tools).toContain("read_resource");
   });
 
   it("returns link-only search output without exposing Firecrawl credit telemetry", async () => {
@@ -210,7 +233,7 @@ describe("Avalon Firecrawl harness tools", () => {
     vi.stubGlobal("fetch", fetcher);
     const tool = __integrationTesting
       .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
-      .find((candidate) => candidate.definition.name === "avalon.web_search");
+      .find((candidate) => candidate.definition.name === "search");
     expect(tool).toBeDefined();
 
     const result = await tool!.execute(
@@ -252,7 +275,7 @@ describe("Avalon Firecrawl harness tools", () => {
       .createAvalonTools(envWithFirecrawl("fc-test-key", {
         WEB_FETCH_MAX_BYTES: "12",
       }), workflowInput)
-      .find((candidate) => candidate.definition.name === "avalon.web_fetch");
+      .find((candidate) => candidate.definition.name === "fetch");
     expect(tool).toBeDefined();
 
     const result = await tool!.execute(
@@ -288,7 +311,7 @@ describe("Avalon Firecrawl harness tools", () => {
     vi.stubGlobal("fetch", fetcher);
     const tool = __integrationTesting
       .createAvalonTools(envWithFirecrawl("fc-test-key"), workflowInput)
-      .find((candidate) => candidate.definition.name === "avalon.web_fetch");
+      .find((candidate) => candidate.definition.name === "fetch");
 
     await tool!.execute(
       { url: "https://example.com" },
