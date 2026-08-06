@@ -2,9 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, Message, WorkstreamResource } from '../lib/types';
 import {
   AddResourceDialog,
+  highestVisibleAttentionSequence,
+  initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
   mergeBackgroundTasks,
@@ -12,6 +14,52 @@ import {
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
+
+const transcript: Message[] = [
+  {
+    id: 'message-one',
+    workstreamId: 'workstream-one',
+    sequenceNumber: 1,
+    authorType: 'human',
+    messageType: 'text',
+    text: 'Start',
+    createdAt: '2026-08-01T00:00:00.000Z',
+  },
+  {
+    id: 'message-two',
+    workstreamId: 'workstream-one',
+    sequenceNumber: 2,
+    authorType: 'agent',
+    messageType: 'tool_event',
+    createdAt: '2026-08-01T00:00:01.000Z',
+  },
+  {
+    id: 'message-three',
+    workstreamId: 'workstream-one',
+    sequenceNumber: 3,
+    authorType: 'agent',
+    messageType: 'text',
+    text: 'Done',
+    createdAt: '2026-08-01T00:00:02.000Z',
+  },
+];
+
+describe('transcript read positioning', () => {
+  it('opens one message before the first unread sequence to preserve context', () => {
+    expect(initialTranscriptAnchorIndex(transcript, 3)).toBe(1);
+    expect(initialTranscriptAnchorIndex(transcript, 1)).toBe(0);
+    expect(initialTranscriptAnchorIndex(transcript, null)).toBeNull();
+  });
+
+  it('acknowledges visible attention messages but ignores tool and transient rows', () => {
+    expect(highestVisibleAttentionSequence(transcript, [0, 1], 3)).toBe(1);
+    expect(highestVisibleAttentionSequence(transcript, [1, 2], 3)).toBe(3);
+    expect(highestVisibleAttentionSequence([
+      ...transcript,
+      { ...transcript[2]!, id: 'transient', sequenceNumber: 4 },
+    ], [3], 3)).toBe(0);
+  });
+});
 
 const openElicitation: ElicitationData = {
   id: 'elicitation-one',

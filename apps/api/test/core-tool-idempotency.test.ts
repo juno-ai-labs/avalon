@@ -234,7 +234,26 @@ describe("Avalon core write-tool idempotency", () => {
 
   it("converges elicitation retries on one durable question", async () => {
     const { database, env } = fixture();
-    const tool = __integrationTesting.createAvalonTools(env, workflowInput())
+    const databaseBinding = env.DB;
+    let staleExistenceChecks = 0;
+    const staleExistenceEnv = {
+      ...env,
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("SELECT id FROM elicitations")) {
+            staleExistenceChecks += 1;
+            const statement = {
+              bind: () => statement,
+              first: async () => null,
+            };
+            return statement as unknown as D1PreparedStatement;
+          }
+          return databaseBinding.prepare(sql);
+        },
+        batch: databaseBinding.batch.bind(databaseBinding),
+      } as D1Database,
+    } as Env;
+    const tool = __integrationTesting.createAvalonTools(staleExistenceEnv, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
     expect(tool?.definition.inputSchema).not.toHaveProperty("properties.targetUserId");
@@ -252,12 +271,22 @@ describe("Avalon core write-tool idempotency", () => {
     const first = await tool!.execute(args, context("run:turn:2:tool:0"));
     const second = await tool!.execute(args, context("run:turn:2:tool:0"));
 
+    expect(staleExistenceChecks).toBe(2);
     expect(second).toEqual(first);
     expect(first).toMatchObject({ halt: "needs_input" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM elicitations").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT target_user_id FROM elicitations").get()).toEqual({ target_user_id: null });
-    expect(database.prepare("SELECT harness_status FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
-      .toEqual({ harness_status: "needs_input" });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM messages WHERE message_type = 'elicitation'",
+    ).get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      `SELECT harness_status, next_sequence_number, latest_attention_sequence_number
+       FROM workstreams WHERE id = ?`,
+    ).get(WORKSTREAM_ID)).toEqual({
+      harness_status: "needs_input",
+      next_sequence_number: 2,
+      latest_attention_sequence_number: 1,
+    });
   });
 
   it("refuses to execute provider-key writes without the receipt-derived key", async () => {

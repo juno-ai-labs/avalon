@@ -621,9 +621,9 @@ export class AutomationService {
           `INSERT INTO workstreams
            (id, workspace_id, title, objective, email_address, email_route_status, origin_type, automation_subscription_id,
             automation_run_id, planned_for, harness_status, next_sequence_number,
-           last_activity_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, at, at, at),
+            latest_attention_sequence_number, last_activity_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, openingInput ? 1 : 0, at, at, at),
         this.env.DB.prepare(
           `INSERT INTO automation_runs
            (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
@@ -922,5 +922,15 @@ function toAutomationRun(row: Record<string, unknown>) {
   return { id: String(row.id), automationSubscriptionId: String(row.automation_subscription_id), workstreamId: String(row.workstream_id), triggerType: String(row.trigger_type), plannedFor: row.planned_for == null ? null : String(row.planned_for), startedAt: row.started_at == null ? null : String(row.started_at), completedAt: row.completed_at == null ? null : String(row.completed_at), status: String(row.status), resultSummary: row.result_summary == null ? null : String(row.result_summary), createdAt: String(row.created_at) };
 }
 function toWorkstream(row: Record<string, unknown>) {
-  return { id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""), emailAddress: row.email_address == null ? null : String(row.email_address), originType: String(row.origin_type), originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id), automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id), plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status), lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at) };
+  const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
+  return {
+    id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""), emailAddress: row.email_address == null ? null : String(row.email_address), originType: String(row.origin_type), originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id), automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id), plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status),
+    latestAttentionSequenceNumber,
+    readThroughSequenceNumber: latestAttentionSequenceNumber,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
+  };
 }

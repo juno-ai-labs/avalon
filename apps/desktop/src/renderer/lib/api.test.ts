@@ -40,6 +40,12 @@ const detail = {
   plannedFor: null,
   harnessStatus: 'idle' as const,
   lastActivityAt: timestamp,
+  latestAttentionSequenceNumber: 4,
+  readThroughSequenceNumber: 3,
+  manualUnreadFromSequenceNumber: null,
+  manualUnreadGeneration: 0,
+  hasUnread: true,
+  firstUnreadSequenceNumber: 4,
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: null,
@@ -614,6 +620,64 @@ describe('Avalon API wire adapter', () => {
     expect(secondHeaders.get('Idempotency-Key')).toBe(firstHeaders.get('Idempotency-Key'));
   });
 
+  it('renames a work stream through the typed update endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, title: 'Launch planning' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.renameWorkstream(workstreamId, 'Launch planning')).resolves.toMatchObject({
+      id: workstreamId,
+      title: 'Launch planning',
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}`);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ title: 'Launch planning' });
+  });
+
+  it('acknowledges visible messages and marks a work stream unread through durable read-state endpoints', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({
+        ...detail,
+        readThroughSequenceNumber: 4,
+        hasUnread: false,
+        firstUnreadSequenceNumber: null,
+      }))
+      .mockResolvedValueOnce(json({
+        ...detail,
+        readThroughSequenceNumber: 4,
+        manualUnreadFromSequenceNumber: 4,
+        manualUnreadGeneration: 1,
+        hasUnread: true,
+        firstUnreadSequenceNumber: 4,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.acknowledgeWorkstreamRead(workstreamId, 4, 0)).resolves.toMatchObject({
+      readThroughSequenceNumber: 4,
+      hasUnread: false,
+    });
+    await expect(api.markWorkstreamUnread(workstreamId)).resolves.toMatchObject({
+      manualUnreadFromSequenceNumber: 4,
+      manualUnreadGeneration: 1,
+      hasUnread: true,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      `https://api.avalon.test/workstreams/${workstreamId}/read-state`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      readThroughSequenceNumber: 4,
+      observedManualUnreadGeneration: 0,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `https://api.avalon.test/workstreams/${workstreamId}/read-state/mark-unread`,
+    );
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
+  });
+
   it('uses the template, watch, and detach service contracts without inventing response fields', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ templateId: '00000000-0000-7000-8000-000000000007' }, { status: 201 }))
@@ -726,7 +790,7 @@ describe('Avalon API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ versionId: nextVersionId });
   });
 
-  it('loads one transcript page at a time and exposes the earlier-page cursor', async () => {
+  it('loads transcript pages before, after, and around a sequence cursor', async () => {
     const older = {
       ...message,
       id: '00000000-0000-7000-8000-000000000009',
@@ -736,6 +800,12 @@ describe('Avalon API wire adapter', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes('/messages?') && url.includes('before=4')) return json({ items: [older], nextCursor: null });
+      if (url.includes('/messages?') && url.includes('around=4')) {
+        return json({ items: [older, message], nextCursor: '3', newerCursor: '4' });
+      }
+      if (url.includes('/messages?') && url.includes('after=4')) {
+        return json({ items: [], nextCursor: null, newerCursor: null });
+      }
       if (url.includes('/messages?')) return json({ items: [message], nextCursor: '4' });
       return json({ error: { message: 'Unexpected request' } }, { status: 500 });
     });
@@ -743,13 +813,21 @@ describe('Avalon API wire adapter', () => {
     const api = new AvalonApi('https://api.avalon.test', session);
 
     const newest = await api.getMessagePage(workstreamId);
-    const earlier = await api.getMessagePage(workstreamId, newest.nextCursor ?? undefined);
+    const earlier = await api.getMessagePage(workstreamId, { before: newest.nextCursor ?? undefined });
+    const anchored = await api.getMessagePage(workstreamId, { around: 4 });
+    const newer = await api.getMessagePage(workstreamId, { after: anchored.newerCursor ?? undefined });
 
     expect(newest.items.map((item) => item.sequenceNumber)).toEqual([4]);
     expect(newest.nextCursor).toBe('4');
     expect(earlier.items.map((item) => item.sequenceNumber)).toEqual([3]);
     expect(earlier.nextCursor).toBeNull();
+    expect(anchored.items.map((item) => item.sequenceNumber)).toEqual([3, 4]);
+    expect(anchored.newerCursor).toBe('4');
+    expect(newer.items).toEqual([]);
+    expect(newer.newerCursor).toBeNull();
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('before=4'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('around=4'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('after=4'))).toBe(true);
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/workstreams/${workstreamId}`))).toBe(false);
   });
 });

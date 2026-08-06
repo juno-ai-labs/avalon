@@ -22,6 +22,90 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("establishes a rollout baseline and stores independent per-user read cursors", () => {
+    const database = migrateDatabaseThrough("0038_remove_web_monitor.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-read-one', 'google-read-one', 'read-one@example.com', 'Reader One', '2026-01-01', '2026-01-01'),
+        ('user-read-two', 'google-read-two', 'read-two@example.com', 'Reader Two', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-read', 'Read State', 'read-state', 'global',
+              'user-read-one', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-legacy', 'workspace-read', 'Legacy', 'Read state', 'ad_hoc',
+              'user-read-one', 'completed', 4, '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO messages
+        (id, workspace_id, workstream_id, author_type, author_user_id, message_type,
+         text_content, sequence_number, created_at)
+      VALUES
+        ('message-human', 'workspace-read', 'workstream-legacy', 'human', 'user-read-one',
+         'text', 'Start', 1, '2026-01-01'),
+        ('message-tool', 'workspace-read', 'workstream-legacy', 'agent', NULL,
+         'tool', '', 2, '2026-01-01'),
+        ('message-agent', 'workspace-read', 'workstream-legacy', 'agent', NULL,
+         'text', 'Done', 3, '2026-01-01');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0039_workstream_read_state.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      `SELECT latest_attention_sequence_number, unread_tracking_start_sequence_number
+       FROM workstreams WHERE id = 'workstream-legacy'`,
+    ).get()).toEqual({
+      latest_attention_sequence_number: 3,
+      unread_tracking_start_sequence_number: 3,
+    });
+
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-new', 'workspace-read', 'New', 'Read state', 'ad_hoc',
+              'user-read-one', 'idle', '2026-02-01', '2026-02-01', '2026-02-01');
+      INSERT INTO workstream_read_states
+        (workspace_id, workstream_id, user_id, read_through_sequence_number,
+         manual_unread_from_sequence_number, manual_unread_generation, updated_at)
+      VALUES
+        ('workspace-read', 'workstream-legacy', 'user-read-one', 3, NULL, 0, '2026-02-01'),
+        ('workspace-read', 'workstream-legacy', 'user-read-two', 1, 3, 2, '2026-02-01');
+    `);
+
+    expect(database.prepare(
+      `SELECT latest_attention_sequence_number, unread_tracking_start_sequence_number
+       FROM workstreams WHERE id = 'workstream-new'`,
+    ).get()).toEqual({
+      latest_attention_sequence_number: 0,
+      unread_tracking_start_sequence_number: 0,
+    });
+    expect(database.prepare(
+      `SELECT user_id, read_through_sequence_number, manual_unread_from_sequence_number,
+              manual_unread_generation
+       FROM workstream_read_states ORDER BY user_id`,
+    ).all()).toEqual([
+      {
+        user_id: 'user-read-one',
+        read_through_sequence_number: 3,
+        manual_unread_from_sequence_number: null,
+        manual_unread_generation: 0,
+      },
+      {
+        user_id: 'user-read-two',
+        read_through_sequence_number: 1,
+        manual_unread_from_sequence_number: 3,
+        manual_unread_generation: 2,
+      },
+    ]);
+    database.close();
+  });
+
   it("creates scoped memory, hybrid-search projections, and immutable run snapshots", () => {
     const database = migrateFreshDatabase();
     const scopeColumns = database.prepare("PRAGMA table_info(memory_scopes)").all();

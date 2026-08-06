@@ -26,6 +26,7 @@
   "dependencies": {
     "@avalon/contracts": "workspace:*",
     "@radix-ui/react-avatar": "latest",
+    "@radix-ui/react-context-menu": "latest",
     "@radix-ui/react-dialog": "latest",
     "@radix-ui/react-dropdown-menu": "latest",
     "@radix-ui/react-scroll-area": "latest",

@@ -135,6 +135,12 @@ export const WorkstreamSchema = z.object({
   automationRunId: IdSchema.nullable(),
   plannedFor: TimestampSchema.nullable(),
   harnessStatus: HarnessStatusSchema,
+  latestAttentionSequenceNumber: z.number().int().nonnegative(),
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+  manualUnreadFromSequenceNumber: z.number().int().nonnegative().nullable(),
+  manualUnreadGeneration: z.number().int().nonnegative(),
+  hasUnread: z.boolean(),
+  firstUnreadSequenceNumber: z.number().int().nonnegative().nullable(),
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -627,6 +633,11 @@ export const UpdateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(4000).optional(),
   archived: z.boolean().optional()
+});
+
+export const AcknowledgeWorkstreamReadRequestSchema = z.object({
+  readThroughSequenceNumber: z.number().int().nonnegative(),
+  observedManualUnreadGeneration: z.number().int().nonnegative(),
 });
 
 export const CreateMessageRequestSchema = z.object({
