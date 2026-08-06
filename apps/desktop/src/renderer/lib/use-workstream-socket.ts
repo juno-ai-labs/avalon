@@ -429,7 +429,8 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
         );
         void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
         if (
-          event.status === 'needs_input'
+          event.status === 'running'
+          || event.status === 'needs_input'
           || event.status === 'completed'
           || event.status === 'failed'
           || event.status === 'idle'

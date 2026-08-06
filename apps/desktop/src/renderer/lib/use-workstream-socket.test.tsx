@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonApi } from './api';
-import type { Message } from './types';
+import type { Message, WorkstreamDetail } from './types';
 import {
   applyStreamingSocketEvent,
   insertMessage,
@@ -649,6 +649,55 @@ describe('useWorkstreamSocket', () => {
 
     expect(api.getMessages).toHaveBeenCalledOnce();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
+  });
+
+  it('refreshes run metadata when a new run starts in another client', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000099';
+    const canonicalWorkstream = {
+      id: workstreamId,
+      harnessStatus: 'running',
+      latestHarnessRunId: 'run-new',
+      latestHarnessRun: {
+        id: 'run-new',
+        origin: 'message',
+        status: 'running',
+        startedAt: '2026-08-06T05:00:00.000Z',
+        createdAt: '2026-08-06T05:00:00.000Z',
+      },
+    } as WorkstreamDetail;
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      harnessStatus: 'completed',
+      latestHarnessRunId: 'run-old',
+    });
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async () => canonicalWorkstream),
+      getMessages: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => []),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 1,
+      occurredAt: '2026-08-06T05:00:00.000Z',
+      status: 'running',
+    }));
+    await flushPromises();
+
+    expect(api.getWorkstream).toHaveBeenCalledWith(workstreamId);
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.latestHarnessRun).toEqual(
+      canonicalWorkstream.latestHarnessRun,
+    );
   });
 
   it('does not lose socket messages that arrive while terminal reconciliation is in flight', async () => {
