@@ -24,10 +24,10 @@ mac:
     - from: .native-build/AvalonDockTilePlugin.docktileplugin
       to: PlugIns/AvalonDockTilePlugin.docktileplugin
   extraResources:
-    - from: resources/app-icons
+    - from: .native-build/app-icons
       to: app-icons
       filter:
-        - "*.png"
+        - "*.icns"
     - from: native/set-application-icon.js
       to: native/set-application-icon.js
   category: public.app-category.productivity

@@ -35,6 +35,7 @@ import type {
   RuntimeConfig,
 } from '../common/desktop';
 import {
+  applicationIconArtworkFileName,
   automaticApplicationIcon,
   type ApplicationIconId,
   type DesktopApplicationIconState,
@@ -1107,8 +1108,11 @@ function broadcastApplicationIconChanged(): void {
   }
 }
 
-function loadApplicationIcon(iconId: ApplicationIconId): Electron.NativeImage {
-  const iconPath = applicationIconPath(applicationIconResourceDirectory(), iconId);
+function loadDevelopmentApplicationIcon(iconId: ApplicationIconId): Electron.NativeImage {
+  const iconPath = join(
+    applicationIconResourceDirectory(),
+    applicationIconArtworkFileName(iconId),
+  );
   const icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) throw new Error(`Application icon could not be loaded: ${iconPath}`);
   const size = icon.getSize();
@@ -1123,11 +1127,10 @@ async function applyApplicationIcon(iconId: ApplicationIconId): Promise<void> {
     throw new Error('Custom application icons are available only on macOS');
   }
   const iconPath = applicationIconPath(applicationIconResourceDirectory(), iconId);
-  const icon = loadApplicationIcon(iconId);
   if (!app.isPackaged) {
     // Development runs have no containing signed Avalon bundle or Dock tile
     // plugin. Keep the picker testable without changing Electron.app in place.
-    app.dock.setIcon(icon);
+    app.dock.setIcon(loadDevelopmentApplicationIcon(iconId));
     developmentDockIconUsesAppearancePreview = true;
     return;
   }
@@ -1145,7 +1148,7 @@ async function resetNativeApplicationIcon(): Promise<void> {
     await runNativeApplicationIconScript('--reset', packagedApplicationBundlePath());
     return;
   }
-  app.dock.setIcon(loadApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)));
+  app.dock.setIcon(loadDevelopmentApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)));
   developmentDockIconUsesAppearancePreview = true;
 }
 
@@ -1153,7 +1156,12 @@ const applicationIconController = new ApplicationIconController({
   supported: process.platform === 'darwin',
   automaticIcon: () => automaticApplicationIcon(nativeTheme.shouldUseDarkColors),
   validateIcon: (iconId) => {
-    loadApplicationIcon(iconId);
+    if (app.isPackaged) {
+      const iconPath = applicationIconPath(applicationIconResourceDirectory(), iconId);
+      if (!existsSync(iconPath)) throw new Error(`Application icon could not be loaded: ${iconPath}`);
+    } else {
+      loadDevelopmentApplicationIcon(iconId);
+    }
   },
   readStoredIcon: () => readStoredApplicationIcon(applicationIconPreferenceDirectory()),
   writeStoredIcon: (iconId) => writeStoredApplicationIcon(applicationIconPreferenceDirectory(), iconId),

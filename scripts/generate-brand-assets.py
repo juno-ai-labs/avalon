@@ -153,8 +153,9 @@ def main() -> None:
     save(transparent, ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "avalon-mark.png")
     save(transparent, ROOT / "apps" / "site" / "public" / "brand" / "avalon-mark.png")
     save(generic_icon, ROOT / "apps" / "desktop" / "resources" / "icon.png")
-    # User-selectable Dock artwork stays full-bleed. macOS owns the icon
-    # enclosure, masking, and platform effects when it renders the Dock tile.
+    # User-selectable artwork stays full-bleed. The native build stages these
+    # sources in a .icon package so Apple's actool owns the enclosure, masking,
+    # and platform effects in the shipped ICNS renditions.
     save(app_icon(1024, LIGHT_CANVAS, DARK_CANVAS), APPLICATION_ICON_DIRECTORY / "light.png")
     save(app_icon(1024, DARK_CANVAS, PRIMARY), APPLICATION_ICON_DIRECTORY / "dark.png")
     # Icon Composer recolors this transparent mark for each appearance and
