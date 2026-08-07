@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -66,6 +67,18 @@ function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Regi
   return runtime.api.eu === session.apiBaseUrl ? 'eu' : 'global';
 }
 
+function sessionsShareCacheScope(
+  previousSession: DesktopSession | null,
+  nextSession: DesktopSession | null,
+): boolean {
+  if (!previousSession || !nextSession) return previousSession === nextSession;
+  return previousSession.apiBaseUrl === nextSession.apiBaseUrl
+    && previousSession.user.id === nextSession.user.id
+    && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null)
+    && (previousSession.workspace?.region ?? null) === (nextSession.workspace?.region ?? null)
+    && (previousSession.workspace?.role ?? null) === (nextSession.workspace?.role ?? null);
+}
+
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [runtime, setRuntime] = useState<RuntimeConfig | null>(null);
   const [region, setRegion] = useState<Region | null>(() => readDevicePreferences().selectedRegion ?? null);
@@ -124,7 +137,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [bridge]);
 
   useEffect(() => bridge.onSessionChanged((nextSession) => {
-    queryClient.clear();
+    const previousSession = sessionRef.current;
+    sessionRef.current = nextSession;
+    if (!sessionsShareCacheScope(previousSession, nextSession)) queryClient.clear();
     setSession(nextSession);
     if (nextSession) {
       const nextRegion = nextSession.workspace?.region
@@ -143,11 +158,22 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     }
   }), [bridge, queryClient, runtime]);
 
-  const api = useMemo(() => {
-    if (session) return new AvalonApi(session.apiBaseUrl, session);
-    if (!runtime) return null;
-    return new AvalonApi(runtime.api.global, null);
-  }, [runtime, session]);
+  const apiBaseUrl = session?.apiBaseUrl ?? runtime?.api.global ?? null;
+  const api = useMemo(() => (
+    apiBaseUrl ? new AvalonApi(apiBaseUrl, session) : null
+  ), [
+    apiBaseUrl,
+    session?.user.id,
+    session?.workspace?.id,
+    session?.workspace?.region,
+    session?.workspace?.role,
+  ]);
+  useLayoutEffect(() => {
+    // Access-token rotation must not replace the API client: it owns transient
+    // draft state that should survive a routine credential refresh. Synchronize
+    // its credential only after React commits the matching session state.
+    api?.setSession(session);
+  }, [api, session]);
 
   // Invitation preview and OAuth must always use the invite's regional
   // service, even when an existing session belongs to the other region.
