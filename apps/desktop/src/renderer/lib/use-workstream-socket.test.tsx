@@ -8,6 +8,7 @@ import {
   applyStreamingSocketEvent,
   insertMessage,
   mergeCanonicalTranscript,
+  mergeCanonicalTranscriptAfterConcurrentEvent,
   nextTranscriptSequence,
   replaceWithCanonicalTranscript,
   SOCKET_STABLE_CONNECTION_MS,
@@ -214,6 +215,33 @@ describe('useWorkstreamSocket', () => {
     expect(insertMessage([pendingHuman], persistedHuman)).toEqual([persistedHuman]);
     expect(insertMessage([pendingHuman, persistedHuman], persistedHuman)).toEqual([persistedHuman]);
     expect(mergeCanonicalTranscript([pendingHuman], [persistedHuman])).toEqual([persistedHuman]);
+  });
+
+  it('does not let stale transcript data reopen an answered elicitation', () => {
+    const open: Message = {
+      id: 'elicitation-question-one',
+      workstreamId: 'workstream-one',
+      sequenceNumber: 4,
+      authorType: 'agent',
+      messageType: 'elicitation',
+      createdAt: '2026-07-31T19:20:00.000Z',
+      elicitation: {
+        id: 'question-one',
+        prompt: 'Choose one',
+        responseType: 'single_select',
+        status: 'open',
+      },
+    };
+    const answered: Message = {
+      ...open,
+      sequenceNumber: 5,
+      authorType: 'human',
+      elicitation: { ...open.elicitation!, status: 'answered', answer: 'foo' },
+    };
+
+    expect(insertMessage([answered], open)).toEqual([answered]);
+    expect(insertMessage([open], answered)).toEqual([answered]);
+    expect(mergeCanonicalTranscriptAfterConcurrentEvent([open], [answered])).toEqual([answered]);
   });
 
   it('retains an unmatched optimistic human message during a canonical refresh', () => {
