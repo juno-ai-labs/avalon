@@ -948,6 +948,28 @@ describe("agent harness", () => {
     expect(stopped.failure).toBeUndefined();
   });
 
+  it("supports model-only loops without any plugin or discovery tools", async () => {
+    let body: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "Concise live notes" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      pluginDiscovery: false,
+      plugins: [],
+    })).resolves.toMatchObject({ status: "completed", content: "Concise live notes" });
+
+    expect(body).toBeDefined();
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("plugins");
+    expect(String((body!.messages as Array<{ content: string }>)[0]!.content))
+      .not.toContain("Discover and activate plugins");
+  });
+
   it("returns distinct member-safe codes for each active hard run ceiling", async () => {
     const terminalWithUsage = (usage: Record<string, number>) => streamResponse([{
       choices: [{ delta: { content: "complete" }, finish_reason: "stop" }],

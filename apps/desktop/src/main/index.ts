@@ -115,9 +115,15 @@ const customProtocol = 'avalon';
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
+}
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+const meetingWindows = new Set<BrowserWindow>();
 let rendererReady = false;
 let inMemoryAuth: StoredAuth | null = null;
 let inMemorySession: WireSession | null = null;
@@ -132,6 +138,16 @@ let developmentDockIconUsesAppearancePreview = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
+
+function avalonWindows(): BrowserWindow[] {
+  return [mainWindow, settingsWindow, ...meetingWindows]
+    .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
+}
+
+function isMeetingWindowContents(contents: WebContents | null): boolean {
+  if (!contents) return false;
+  return [...meetingWindows].some((window) => !window.isDestroyed() && window.webContents === contents);
+}
 
 protocol.registerSchemesAsPrivileged([{
   scheme: rendererProtocol,
@@ -188,9 +204,7 @@ function publicSession(value: WireSession): DesktopSession {
 
 function broadcastSessionChanged(value: WireSession | null): void {
   const exposed = value ? publicSession(value) : null;
-  for (const window of [mainWindow, settingsWindow]) {
-    if (window && !window.isDestroyed()) window.webContents.send('session:changed', exposed);
-  }
+  for (const window of avalonWindows()) window.webContents.send('session:changed', exposed);
 }
 
 async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -236,11 +250,7 @@ function decryptStoredSessionValue(value: Uint8Array): string {
 }
 
 function broadcastApplicationSettingsChanged(settings: DesktopApplicationSettings): void {
-  for (const window of [mainWindow, settingsWindow]) {
-    if (window && !window.isDestroyed()) {
-      window.webContents.send('application-settings:changed', settings);
-    }
-  }
+  for (const window of avalonWindows()) window.webContents.send('application-settings:changed', settings);
 }
 
 function storedSessionEncryptionValues() {
@@ -866,6 +876,7 @@ async function logout(): Promise<void> {
       failures.push(error);
     }
     settingsWindow?.close();
+    for (const window of meetingWindows) window.close();
     if (stored) {
       try {
         const apiBaseUrl = apiBaseForAuth(stored);
@@ -1015,7 +1026,9 @@ function emitDeepLink(rawUrl: string): void {
 
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
-  const belongsToAvalonWindow = sender === mainWindow?.webContents || sender === settingsWindow?.webContents;
+  const belongsToAvalonWindow = sender === mainWindow?.webContents
+    || sender === settingsWindow?.webContents
+    || isMeetingWindowContents(sender);
   if (!belongsToAvalonWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
   }
@@ -1149,6 +1162,13 @@ function registerIpc(): void {
     if (rawSection !== undefined && !section) throw new Error('Invalid settings section');
     await createSettingsWindow(section ?? undefined);
   });
+  ipcMain.handle('system:open-meeting-notes', async (event, rawNoteId: unknown) => {
+    assertTrustedIpcSender(event);
+    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
+      throw new Error('Invalid note ID');
+    }
+    await createMeetingWindow(rawNoteId as string | undefined);
+  });
 }
 
 function rendererNavigationAllowed(rawUrl: string): boolean {
@@ -1243,9 +1263,7 @@ function desktopApplicationIconState(): DesktopApplicationIconState {
 
 function broadcastApplicationIconChanged(): void {
   const state = desktopApplicationIconState();
-  for (const window of [mainWindow, settingsWindow]) {
-    if (window && !window.isDestroyed()) window.webContents.send('application-icon:changed', state);
-  }
+  for (const window of avalonWindows()) window.webContents.send('application-icon:changed', state);
 }
 
 function loadDevelopmentApplicationIcon(iconId: ApplicationIconId): Electron.NativeImage {
@@ -1342,7 +1360,7 @@ function preloadPath(): string {
   return path;
 }
 
-function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings'): void {
+function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings' | 'meeting'): void {
   window.webContents.on(
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
@@ -1373,7 +1391,7 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
   }
 }
 
-async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' | 'settings'): Promise<void> {
+async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' | 'settings' | 'meeting'): Promise<void> {
   try {
     await window.loadURL(url);
   } catch (error) {
@@ -1383,13 +1401,17 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
   }
 }
 
-function rendererUrl(surface?: 'settings', settingsSection?: DesktopSettingsSection): string {
+function rendererUrl(surface?: 'settings' | 'meeting', settingsSection?: DesktopSettingsSection, noteId?: string): string {
   const target = rendererDevelopmentUrl
     ? new URL(rendererDevelopmentUrl)
     : new URL(`${rendererProtocol}://${rendererHost}/index.html`);
   if (surface) target.searchParams.set('surface', surface);
   if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
+  if (surface === 'meeting') {
+    if (noteId) target.searchParams.set('noteId', noteId);
+    target.hash = '/meeting';
+  }
   return target.toString();
 }
 
@@ -1438,6 +1460,46 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     settingsWindow = null;
   });
   await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
+}
+
+async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promise<void> {
+  const meetingWindow = new BrowserWindow({
+    width: 1120,
+    height: 820,
+    minWidth: 760,
+    minHeight: 600,
+    show: false,
+    backgroundColor: '#f5f4ef',
+    title: 'Meeting notes — Avalon',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 17 },
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  meetingWindows.add(meetingWindow);
+  installWindowDiagnostics(meetingWindow, 'meeting');
+  meetingWindow.setMenuBarVisibility(false);
+  meetingWindow.once('ready-to-show', () => meetingWindow.show());
+  meetingWindow.on('closed', () => meetingWindows.delete(meetingWindow));
+  try {
+    await loadRenderer(
+      meetingWindow,
+      rendererUrl('meeting', undefined, noteId),
+      'meeting',
+    );
+  } catch (error) {
+    meetingWindow.close();
+    throw error;
+  }
 }
 
 function installApplicationMenu(): void {
@@ -1537,7 +1599,7 @@ function installContentSecurityPolicy(): void {
 
   electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     callback(allowsTrustedAudioCapture({
-      isMainWindow: webContents === mainWindow?.webContents,
+      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
       trustedRenderer: rendererNavigationAllowed(details.requestingUrl),
@@ -1545,7 +1607,7 @@ function installContentSecurityPolicy(): void {
   });
   electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
     allowsTrustedAudioCapture({
-      isMainWindow: webContents === mainWindow?.webContents,
+      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
       trustedRenderer: rendererNavigationAllowed(requestingOrigin),

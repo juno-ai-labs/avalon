@@ -8,6 +8,7 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError } from './lib/api';
 import { AppSessionProvider, useAppSession } from './lib/app-session';
 import { AutomationOverviewScreen } from './screens/automation-overview';
+import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NewAutomationScreen } from './screens/new-automation';
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
@@ -137,6 +138,18 @@ function WorkspaceApp(): React.JSX.Element {
         <Routes>
           <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
           <Route element={<Navigate replace to="/settings" />} path="*" />
+        </Routes>
+      </HashRouter>
+    );
+  }
+
+  const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
+  if (meetingSurface) {
+    return (
+      <HashRouter>
+        <Routes>
+          <Route element={<MeetingNotesScreen />} path="/meeting" />
+          <Route element={<Navigate replace to="/meeting" />} path="*" />
         </Routes>
       </HashRouter>
     );

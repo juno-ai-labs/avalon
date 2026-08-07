@@ -1,10 +1,10 @@
 export function allowsTrustedAudioCapture(input: {
-  isMainWindow: boolean;
+  isAudioCaptureWindow: boolean;
   mediaTypes: readonly string[];
   permission: string;
   trustedRenderer: boolean;
 }): boolean {
-  return input.isMainWindow
+  return input.isAudioCaptureWindow
     && input.trustedRenderer
     && input.permission === 'media'
     && input.mediaTypes.length > 0
