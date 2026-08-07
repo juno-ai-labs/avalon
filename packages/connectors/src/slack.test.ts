@@ -11,7 +11,7 @@ import {
   verifySlackRequest,
 } from "./slack";
 import type { FetchLike } from "./provider-utils";
-import { connectorCapabilitySupportsScope } from "./types";
+import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
 
 describe("Slack connector", () => {
   it("verifies exact signed bytes and rejects replayed timestamps", async () => {
@@ -47,6 +47,7 @@ describe("Slack connector", () => {
       if (url.pathname.endsWith("oauth.v2.access")) return json({
         ok: true,
         access_token: "xoxb-bot",
+        scope: SlackWorkspaceBotScopes.join(","),
         bot_user_id: "UBOT",
         app_id: "AAVALON",
         team: { id: "TACME", name: "Acme" },
@@ -54,7 +55,7 @@ describe("Slack connector", () => {
       if (url.pathname.endsWith("oauth.v2.user.access")) return json({
         ok: true,
         access_token: "xoxp-user",
-        authed_user: { id: "UADA" },
+        authed_user: { id: "UADA", scope: "search:read.public,chat:write" },
         team: { id: "TACME", name: "Acme" },
       });
       if (url.pathname.endsWith("team.billing.info")) return json({ ok: true, plan: "plus" });
@@ -98,6 +99,7 @@ describe("Slack connector", () => {
       providerAccountId: "TACME:UADA",
       userAccessToken: "xoxp-user",
       slackUserId: "UADA",
+      oauthScopes: ["chat:write", "search:read.public"],
     });
 
     expect(adapter.manifest).toMatchObject({
@@ -116,12 +118,183 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).toContain("groups:read");
   });
 
+  it("uses Slack's query transport for conversations.info", async () => {
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).has("content-type")).toBe(false);
+      expect(url.searchParams.get("channel")).toBe("CPUBLIC");
+      return json({
+        ok: true,
+        channel: { id: "CPUBLIC", is_private: false, is_im: false, is_mpim: false },
+      });
+    });
+
+    await expect(slackApi("xoxb", "conversations.info", {
+      channel: "CPUBLIC",
+    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+      channel: { id: "CPUBLIC", is_private: false },
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("marks a workspace authorization unhealthy when required bot scopes are missing", async () => {
+    const missingScope = "channels:read";
+    const grantedScopes = SlackWorkspaceBotScopes.filter((scope) => scope !== missingScope).join(",");
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: vi.fn(async () => json({ ok: true }, { "x-oauth-scopes": grantedScopes })),
+    });
+
+    await expect(adapter.healthCheck(slackWorkspaceConnection())).resolves.toEqual({
+      ok: false,
+      message: `Slack authorization is missing required permissions: ${missingScope}`,
+      reconnectRequired: true,
+    });
+  });
+
+  it("rejects and revokes an OAuth grant that omits a required workspace scope", async () => {
+    const missingScope = "channels:join";
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("oauth.v2.access")) return json({
+        ok: true,
+        access_token: "xoxb-partial",
+        scope: SlackWorkspaceBotScopes.filter((scope) => scope !== missingScope).join(","),
+        team: { id: "TACME", name: "Acme" },
+      });
+      if (url.pathname.endsWith("auth.revoke")) {
+        expect(init?.method).toBe("GET");
+        expect(init?.body).toBeUndefined();
+        return json({ ok: true, revoked: true });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+
+    await expect(adapter.handleAuthorizationCallback!({
+      code: "partial-code",
+      connectionScope: "workspace",
+    })).rejects.toThrow(`missing required permissions: ${missingScope}`);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("verifies every required bot scope during workspace health checks", async () => {
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: vi.fn(async () => json({ ok: true }, {
+        "x-oauth-scopes": SlackWorkspaceBotScopes.join(","),
+      })),
+    });
+
+    await expect(adapter.healthCheck(slackWorkspaceConnection())).resolves.toEqual({
+      ok: true,
+      message: "Slack authorization is healthy",
+    });
+  });
+
+  it("refreshes workspace credentials and recovers granted scopes from auth.test", async () => {
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("oauth.v2.access")) {
+        expect(String(init?.body)).toContain("grant_type=refresh_token");
+        return json({
+          ok: true,
+          access_token: "xoxe.xoxb-new",
+          refresh_token: "xoxe-next",
+          expires_in: 43_200,
+        });
+      }
+      if (url.pathname.endsWith("auth.test")) {
+        return json({ ok: true }, { "x-oauth-scopes": SlackWorkspaceBotScopes.join(",") });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+      now: () => 1_786_032_000_000,
+    });
+
+    await expect(adapter.refreshCredentials!({
+      ...slackWorkspaceConnection(),
+      credentials: { botAccessToken: "xoxe.xoxb-old", refreshToken: "xoxe-current" },
+    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+      botAccessToken: "xoxe.xoxb-new",
+      refreshToken: "xoxe-next",
+      expiresAt: "2026-08-07T04:00:00.000Z",
+      oauthScopes: [...SlackWorkspaceBotScopes].sort(),
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a refreshed workspace token that is still missing a required scope", async () => {
+    const missingScope = "search:read.users";
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: vi.fn(async () => json({
+        ok: true,
+        access_token: "xoxe.xoxb-new",
+        refresh_token: "xoxe-next",
+        expires_in: 43_200,
+        scope: SlackWorkspaceBotScopes.filter((scope) => scope !== missingScope).join(","),
+      })),
+    });
+
+    await expect(adapter.refreshCredentials!({
+      ...slackWorkspaceConnection(),
+      credentials: { botAccessToken: "xoxe.xoxb-old", refreshToken: "xoxe-current" },
+    }, AbortSignal.timeout(1_000))).rejects.toMatchObject({
+      code: "unauthorized",
+      details: { missingScopes: [missingScope] },
+    });
+  });
+
+  it("classifies an invalid Slack refresh token as reconnect-required authorization failure", async () => {
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: vi.fn(async () => json({ ok: false, error: "invalid_refresh_token" })),
+    });
+
+    await expect(adapter.refreshCredentials!({
+      ...slackWorkspaceConnection(),
+      credentials: { botAccessToken: "xoxe.xoxb-old", refreshToken: "xoxe-invalid" },
+    }, AbortSignal.timeout(1_000))).rejects.toMatchObject({
+      code: "unauthorized",
+      message: "invalid_refresh_token",
+    });
+  });
+
   it("paginates through and joins all active public Slack channels idempotently", async () => {
     const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       const method = url.pathname.split("/").at(-1)!;
-      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      const body = method === "conversations.list"
+        ? Object.fromEntries(url.searchParams)
+        : JSON.parse(String(init?.body)) as Record<string, unknown>;
       requests.push({ method, body });
       if (method === "conversations.list" && !body.cursor) return json({
         ok: true,
@@ -156,8 +329,8 @@ describe("Slack connector", () => {
       fetcher,
     )).resolves.toEqual({ joined: 1, alreadyMember: 2, skipped: 2, complete: true });
     expect(requests.filter(({ method }) => method === "conversations.list")).toEqual([
-      { method: "conversations.list", body: { exclude_archived: true, limit: 200, types: "public_channel" } },
-      { method: "conversations.list", body: { exclude_archived: true, limit: 200, types: "public_channel", cursor: "next-page" } },
+      { method: "conversations.list", body: { exclude_archived: "true", limit: "200", types: "public_channel" } },
+      { method: "conversations.list", body: { exclude_archived: "true", limit: "200", types: "public_channel", cursor: "next-page" } },
     ]);
     expect(requests.filter(({ method }) => method === "conversations.join").map(({ body }) => body.channel))
       .toEqual(["CJOIN", "CFULL", "CALREADY"]);
@@ -196,16 +369,22 @@ describe("Slack connector", () => {
     )).resolves.toMatchObject({ complete: false, retryAfterMs: 60_000 });
   });
 
-  it("quietly skips channels until older installations grant the join scope", async () => {
-    for (const error of ["missing_scope", "restricted_action"]) {
-      const fetcher: FetchLike = vi.fn(async () => json({ ok: false, error }));
-      await expect(joinSlackPublicChannel(
-        "xoxb-test",
-        "CNEW",
-        AbortSignal.timeout(1_000),
-        fetcher,
-      )).resolves.toBe("skipped");
-    }
+  it("distinguishes a missing app scope from an unjoinable channel", async () => {
+    const missingScope: FetchLike = vi.fn(async () => json({ ok: false, error: "missing_scope" }));
+    await expect(joinSlackPublicChannel(
+      "xoxb-test",
+      "CNEW",
+      AbortSignal.timeout(1_000),
+      missingScope,
+    )).rejects.toMatchObject({ code: "provider_error", message: "missing_scope" });
+
+    const restricted: FetchLike = vi.fn(async () => json({ ok: false, error: "restricted_action" }));
+    await expect(joinSlackPublicChannel(
+      "xoxb-test",
+      "CNEW",
+      AbortSignal.timeout(1_000),
+      restricted,
+    )).resolves.toBe("skipped");
   });
 
   it("propagates transient join failures to the ingress retry loop", async () => {
@@ -272,7 +451,7 @@ describe("Slack connector", () => {
     const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       calls.push(url);
-      if (url.pathname.endsWith("oauth.v2.access")) return json({ ok: true, access_token: "xoxb-bot", team: { id: "TFREE", name: "Free" } });
+      if (url.pathname.endsWith("oauth.v2.access")) return json({ ok: true, access_token: "xoxb-bot", scope: SlackWorkspaceBotScopes.join(","), team: { id: "TFREE", name: "Free" } });
       if (url.pathname.endsWith("team.billing.info")) return json({ ok: true, plan: "free" });
       if (url.pathname.endsWith("auth.revoke")) return json({ ok: true, revoked: true });
       if (url.pathname.endsWith("oauth.v2.user.access")) {
@@ -353,7 +532,7 @@ describe("Slack connector", () => {
   });
 
   it("runtime-checks Slack Web API requests and success responses", async () => {
-    const fetcher: FetchLike = vi.fn(async (input) => {
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith("assistant.search.context")) return json({
         ok: true,
@@ -369,7 +548,10 @@ describe("Slack connector", () => {
         },
         response_metadata: { next_cursor: "" },
       });
-      if (url.pathname.endsWith("users.lookupByEmail")) return json({
+      if (url.pathname.endsWith("users.lookupByEmail")) {
+        expect(init?.method).toBe("GET");
+        expect(url.searchParams.get("email")).toBe("ada@example.com");
+        return json({
         ok: true,
         user: {
           id: "UADA",
@@ -378,8 +560,12 @@ describe("Slack connector", () => {
           is_bot: false,
           profile: { email: "ada@example.com" },
         },
-      });
-      if (url.pathname.endsWith("users.info")) return json({
+        });
+      }
+      if (url.pathname.endsWith("users.info")) {
+        expect(init?.method).toBe("GET");
+        expect(url.searchParams.get("user")).toBe("UADA");
+        return json({
         ok: true,
         user: {
           id: "UADA",
@@ -388,7 +574,8 @@ describe("Slack connector", () => {
           is_bot: false,
           profile: { display_name: "Ada", email: "ada@example.com" },
         },
-      });
+        });
+      }
       if (url.pathname.endsWith("conversations.info")) return json({
         ok: true,
         channel: {
@@ -444,4 +631,17 @@ async function slackSignature(secret: string, timestamp: string, body: string): 
 
 function json(value: unknown, headers: HeadersInit = {}, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) } });
+}
+
+function slackWorkspaceConnection(): ConnectorConnectionContext {
+  return {
+    id: "connection-slack",
+    workspaceId: "workspace-avalon",
+    scope: "workspace",
+    ownerUserId: null,
+    grantedScopes: [SlackCapabilities.agent],
+    credentials: { botAccessToken: "xoxb-test" },
+    cursor: {},
+    config: {},
+  };
 }

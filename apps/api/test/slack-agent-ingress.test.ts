@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConnectorError } from "@avalon/connectors";
 import type { Env } from "../src/env";
+import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 
 afterEach(() => {
@@ -55,6 +57,36 @@ class IngressDatabase {
 }
 
 describe("Slack Agent durable ingress", () => {
+  it("bounds untrusted Slack context and classifies deterministic failures as terminal", () => {
+    const augmented = __slackAgentTesting.appendSlackContext(
+      "Summarize this channel",
+      "assistant.search.context",
+      { messages: [{ content: "x".repeat(100_000) }] },
+    );
+    expect(augmented.length).toBeLessThanOrEqual(50_000);
+    expect(augmented).toContain("[context truncated]");
+    expect(__slackAgentTesting.slackContextChannelId({
+      entities: [{
+        type: "slack#/types/message_context",
+        value: { message_ts: "1.2", channel_id: "CACTIVE" },
+      }],
+    })).toBe("CACTIVE");
+    expect(__slackAgentTesting.slackIngressRetryable(
+      new ConnectorError("provider_error", "missing_scope", { error: "missing_scope" }),
+    )).toBe(false);
+    expect(__slackAgentTesting.slackIngressRetryable(
+      new ConnectorError("provider_error", "internal_error", { error: "internal_error" }),
+    )).toBe(true);
+    const expired = new ConnectorError("unauthorized", "token_expired", { error: "token_expired" });
+    expect(__slackAgentTesting.slackReconnectRequired(expired)).toBe(false);
+    expect(__slackAgentTesting.slackIngressRetryable(expired)).toBe(true);
+    expect(__slackAgentTesting.slackReconnectRequired(
+      new ConnectorError("unauthorized", "invalid_refresh_token", { error: "invalid_refresh_token" }),
+    )).toBe(true);
+    expect(__slackAgentTesting.slackIngressRetryable(new ApiError(422, "invalid", "invalid"))).toBe(false);
+    expect(__slackAgentTesting.slackIngressRetryable(new ApiError(503, "unavailable", "unavailable"))).toBe(true);
+  });
+
   it("resolves modern private channels from conversations.info instead of ID prefixes", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       ok: true,
@@ -66,7 +98,7 @@ describe("Slack Agent durable ingress", () => {
       "xoxb-test",
       "CPRIVATE",
       "channel",
-    )).resolves.toBe("private");
+    )).resolves.toEqual({ channelType: "private", failure: null });
     expect(fetcher).toHaveBeenCalledOnce();
     expect(__slackAgentTesting.slackChannelType("CPRIVATE")).toBe("unknown");
   });
@@ -82,7 +114,15 @@ describe("Slack Agent durable ingress", () => {
       "xoxb-test",
       "CUNKNOWN",
       "channel",
-    )).resolves.toBe("unknown");
+    )).resolves.toEqual({ channelType: "unknown", failure: "missing_scope" });
+    expect(__slackAgentTesting.slackChannelResolutionDenial("missing_scope")).toMatchObject({
+      reconnectRequired: true,
+      text: expect.stringContaining("reconnect the Slack workspace"),
+    });
+    expect(__slackAgentTesting.slackChannelResolutionDenial("lookup_failed")).toMatchObject({
+      reconnectRequired: false,
+      text: expect.stringContaining("couldn’t verify whether this Slack channel is public or private"),
+    });
     expect(__slackAgentTesting.modalPromptSource(undefined)).toBeNull();
     expect(__slackAgentTesting.modalPromptSource("not-json")).toBeNull();
   });
