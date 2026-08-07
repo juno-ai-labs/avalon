@@ -105,7 +105,7 @@ describe('Sidebar work-stream markers', () => {
     expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
   });
 
-  it('uses the compact status-dot pattern and an origin glyph for completed automation work', () => {
+  it('uses the compact status-dot pattern for every work stream', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
@@ -130,8 +130,9 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.status-completed .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Monday review/u }).querySelector('.status-scheduled .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.sidebar-automation-marker')).not.toBeNull();
-    expect(screen.getByRole('img', { name: 'Automation-generated, latest run completed' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.status-completed .status-dot')).not.toBeNull();
+    expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
+    expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });

@@ -9,7 +9,6 @@ import {
   CirclePause,
   EyeOff,
   FileStack,
-  GitBranch,
   LogOut,
   Menu,
   MessageSquarePlus,
@@ -18,7 +17,6 @@ import {
   Play,
   Plus,
   Settings,
-  Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
@@ -164,7 +162,6 @@ function WorkstreamRow({
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
 }): React.JSX.Element {
-  const showAutomationMarker = workstream.origin === 'automation' && workstream.harnessStatus === 'completed';
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -174,19 +171,12 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              {showAutomationMarker ? (
-                <span aria-label="Automation-generated, latest run completed" className="sidebar-automation-marker" role="img">
-                  <GitBranch aria-hidden="true" size={15} strokeWidth={1.8} />
-                </span>
-              ) : (
-                <StatusDot compact status={workstream.harnessStatus} />
-              )}
+              <StatusDot compact status={workstream.harnessStatus} />
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{workstream.title}</span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">
-                  {workstream.origin === 'automation' && <Zap aria-label="Automation-generated" size={10} />}
                   {workstream.preview ?? workstream.automationName}
                 </span>
               )}
