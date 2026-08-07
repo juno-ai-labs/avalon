@@ -23,7 +23,7 @@ import type { AuthContext, Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
-import { connectorRegistryForEnv, githubConnectorConfig } from "../lib/connector-registry";
+import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { decryptString, encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
@@ -968,6 +968,76 @@ export class ConnectionService {
       signingSecret: secret,
       signatureFormat: "t=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>",
     };
+  }
+
+  async createX(input: { scope: Scope; capabilities: string[] }) {
+    const auth = this.requireAuth();
+    this.assertScopeAllowed(input.scope);
+    const adapter = xConnectorConfig(this.env) ? this.registry().get("x") : null;
+    if (!adapter) throw new ApiError(503, "x_connector_unavailable", "X access is not configured");
+    const capabilities = [...new Set(input.capabilities)];
+    const supported = new Set(adapter.manifest.capabilities.map((capability) => capability.id));
+    if (
+      capabilities.length === 0
+      || capabilities.some((capability) =>
+        !supported.has(capability)
+        || !connectorCapabilitySupportsScope(adapter, capability, input.scope))
+    ) {
+      throw new ApiError(422, "invalid_connector_capabilities", "Choose supported X capabilities");
+    }
+
+    const existing = input.scope === "workspace"
+      ? await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'workspace'
+             AND status <> 'disabled' LIMIT 1`,
+        ).bind(auth.workspaceId).first<{ id: string }>()
+      : await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'personal'
+             AND owner_user_id = ? AND status <> 'disabled' LIMIT 1`,
+        ).bind(auth.workspaceId, auth.userId).first<{ id: string }>();
+    if (existing) {
+      throw new ApiError(
+        409,
+        "x_connection_exists",
+        input.scope === "workspace"
+          ? "An active workspace X connection already exists"
+          : "You already have an active X connection",
+      );
+    }
+
+    const id = newId();
+    const encrypted = await encryptString("{}", this.env.CONNECTOR_CREDENTIALS_KEY, id);
+    const at = nowIso();
+    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "x");
+    await this.env.DB.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
+        model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+       VALUES (?, ?, 'x', ?, ?, 'X', ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
+    ).bind(
+      id,
+      auth.workspaceId,
+      input.scope,
+      input.scope === "personal" ? auth.userId : null,
+      encrypted.ciphertext,
+      encrypted.iv,
+      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      JSON.stringify(capabilities),
+      modelPluginId,
+      at,
+      at,
+    ).run();
+    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
+      provider: "x",
+      scope: input.scope,
+      capabilities,
+    });
+    const connection = (await this.list()).find((item) => item.id === id);
+    if (!connection) throw new ApiError(500, "connection_write_failed", "The X connection could not be loaded");
+    return { connection };
   }
 
   async ingestWebhook(connectionId: string, rawBody: string, signatureHeader: string | null) {

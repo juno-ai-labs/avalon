@@ -4,6 +4,7 @@ import {
   type LinearConnectorConfig,
   type NotionConnectorConfig,
   type SlackConnectorConfig,
+  type XConnectorConfig,
 } from "@avalon/connectors";
 import type { Env } from "../env";
 
@@ -65,17 +66,25 @@ export function slackConnectorConfig(env: Env): SlackConnectorConfig | null {
   };
 }
 
+export function xConnectorConfig(env: Env): XConnectorConfig | null {
+  const apiKey = env.X_API_KEY?.trim();
+  if (!apiKey) return null;
+  return { apiKey };
+}
+
 export function connectorRegistryForEnv(env: Env) {
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
   const notion = notionConnectorConfig(env);
   const google = googleConnectorConfig(env);
   const slack = slackConnectorConfig(env);
+  const x = xConnectorConfig(env);
   return createConnectorRegistry({
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),
     ...(linear ? { linear } : {}),
     ...(notion ? { notion } : {}),
     ...(slack ? { slack } : {}),
+    ...(x ? { x } : {}),
   });
 }

@@ -22,6 +22,68 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("accepts X connections after the connector constraint migration", () => {
+    const database = migrateDatabaseThrough("0040_realtime_transcription_admission.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-x', 'google-x', 'x@example.com', 'X User', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-x', 'X Workspace', 'x-workspace', 'global',
+              'user-x', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-before-x', 'workspace-x', 'slack', 'personal', 'user-x', 'Slack',
+              '[]', 'plugin_slack', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_agent_contexts
+        (connection_id, slack_user_id, context_json, updated_at)
+      VALUES ('connection-before-x', 'slack-user-x', '{"retained":true}', '2026-01-01');
+    `);
+
+    database.exec("BEGIN");
+    database.exec(readFileSync(new URL("../migrations/0041_x_connector.sql", import.meta.url), "utf8"));
+    database.exec("COMMIT");
+
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x', 'workspace-x', 'x', 'personal', 'user-x', 'X',
+              '["x.read"]', 'plugin_x', '2026-01-01', '2026-01-01');
+    `);
+    expect(database.prepare(
+      "SELECT connector_type, model_plugin_id FROM connector_connections WHERE id = 'connection-x'",
+    ).get()).toEqual({ connector_type: "x", model_plugin_id: "plugin_x" });
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-personal-duplicate', 'workspace-x', 'x', 'personal', 'user-x', 'X',
+              '["x.read"]', 'plugin_x_personal_duplicate', '2026-01-01', '2026-01-01');
+    `)).toThrow(/UNIQUE constraint failed/);
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-workspace', 'workspace-x', 'x', 'workspace', NULL, 'X',
+              '["x.read"]', 'plugin_x_workspace', '2026-01-01', '2026-01-01');
+    `);
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-workspace-duplicate', 'workspace-x', 'x', 'workspace', NULL, 'X',
+              '["x.read"]', 'plugin_x_workspace_duplicate', '2026-01-01', '2026-01-01');
+    `)).toThrow(/UNIQUE constraint failed/);
+    expect(database.prepare(
+      "SELECT context_json FROM slack_agent_contexts WHERE connection_id = 'connection-before-x'",
+    ).get()).toEqual({ context_json: '{"retained":true}' });
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("establishes a rollout baseline and stores independent per-user read cursors", () => {
     const database = migrateDatabaseThrough("0038_remove_web_monitor.sql");
     database.exec(`

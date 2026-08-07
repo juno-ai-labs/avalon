@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AtSign,
   Building2,
   Bug,
   CalendarDays,
@@ -54,7 +55,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'general', label: 'General', searchTerms: 'region data residency organization', icon: SlidersHorizontal },
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
       { id: 'workspace', label: 'Workspace', searchTerms: 'organization members invitations invite roles', icon: Users },
-      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack integrations', icon: Plug },
+      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack x integrations', icon: Plug },
     ],
   },
   {
@@ -148,6 +149,15 @@ const connectorProviders = [
     scopes: ['you'] as const,
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
   },
+  {
+    id: 'x' as const,
+    provider: 'x' as const,
+    name: 'X',
+    description: 'User timelines, threads, replies, and List timelines.',
+    icon: AtSign,
+    scopes: ['you', 'workspace'] as const,
+    capabilities: ['x.read'],
+  },
 ] as const;
 
 function invitationStatusLabel(status: WorkspaceInvitation['status']): string {
@@ -180,6 +190,17 @@ function providerHasActiveWorkspaceConnection(
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'workspace' &&
+    connection.status !== 'disabled',
+  );
+}
+
+function providerHasActivePersonalConnection(
+  provider: (typeof connectorProviders)[number],
+  connections: WorkstreamConnection[],
+): boolean {
+  return provider.provider === 'x' && connections.some((connection) =>
+    connection.connectorType === provider.provider &&
+    connection.scope === 'you' &&
     connection.status !== 'disabled',
   );
 }
@@ -244,10 +265,15 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     staleTime: 5_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+      if (input.provider === 'x') {
+        await api!.createXConnection(input.scope, input.capabilities);
+        return;
+      }
       const url = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
       await desktopBridge().openExternal(url);
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
   });
   const testConnection = useMutation({
     mutationFn: (id: string) => api!.testConnection(id),
@@ -603,7 +629,17 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   {visibleProviders.map((provider) => {
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
+                    const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
                     const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                    const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
+                    const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || hasActivePersonalConnection;
+                    const personalConnectTitle = hasActivePersonalConnection
+                      ? `An ${provider.name} personal connection is already installed. Manage it below.`
+                      : provider.provider === 'x' && connections.isLoading
+                        ? 'Checking installed personal connections…'
+                        : provider.provider === 'x' && connections.isError
+                          ? 'Installed personal connections could not be loaded.'
+                          : undefined;
                     const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
                     const workspaceConnectTitle = hasActiveWorkspaceConnection
                       ? `A ${provider.name} workspace connection is already installed. Manage it below.`
@@ -621,7 +657,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <p>{provider.description}</p>
                         <div className="provider-actions">
                           {provider.scopes.includes('you' as never) && (
-                            <Button disabled={connectProvider.isPending} onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}>Connect for me</Button>
+                            <Button
+                              disabled={personalConnectDisabled}
+                              onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
+                              title={personalConnectTitle}
+                            >Connect for me</Button>
                           )}
                           {provider.scopes.includes('workspace' as never) && isAdmin && (
                             <Button
@@ -647,7 +687,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span>{connections.data?.length ?? 0}</span>
                   </div>
                   <div className="settings-connection-list settings-list-card">
-                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack'].includes(connection.connectorType)).map((connection) => (
+                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack', 'x'].includes(connection.connectorType)).map((connection) => (
                       <div className="settings-connection-row" key={connection.id}>
                         <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
