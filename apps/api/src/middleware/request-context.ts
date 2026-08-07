@@ -49,7 +49,7 @@ export function securityMiddleware(): MiddlewareHandler<HonoAppEnv>[] {
         "x-request-id",
       ],
       exposeHeaders: ["x-request-id"],
-      allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       credentials: false,
       maxAge: 600,
     }),
