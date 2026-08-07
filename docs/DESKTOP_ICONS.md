@@ -8,11 +8,12 @@ Avalon has a native adaptive default icon and eight user-selectable static icons
 | --- | --- |
 | `apps/desktop/resources/icon.icon` | Icon Composer source for the default icon. It provides Default, Dark, and generated Mono appearances. |
 | `apps/desktop/resources/app-icons/*.png` | Full-bleed 1024×1024 sources for the two current treatments and six custom choices. |
+| `apps/desktop/src/renderer/assets/app-icons/*.png` | Generated 128×128 Retina previews; Vite never bundles the 1024px Dock sources. |
 | `apps/desktop/.native-build/AvalonDockTilePlugin.docktileplugin` | Generated, signed `NSDockTilePlugIn` that keeps the selected icon in the Dock when Avalon is not running. |
 | `apps/desktop/native/set-application-icon.js` | AppKit bridge that updates Finder and refreshes the Dock icon cache. |
 | `apps/desktop/resources/icon.icns` | Legacy, pre-masked DMG volume icon. It is not the app icon source. |
 
-With no saved choice, macOS renders `icon.icon`, selects its appearance, and applies the current enclosure and platform effects. Selecting an icon in Settings writes only an allowlisted identifier to `~/Library/Application Support/Avalon/application-icon.json`.
+With no saved choice, macOS renders `icon.icon`, selects its appearance, and applies the current enclosure and platform effects. Selecting an icon in Settings writes only an allowlisted identifier to `~/Library/Application Support/Avalon/application-icon.json`. Packaged launches intentionally keep this app-level preference in the canonical directory even when Chromium is started with `--user-data-dir`, because the out-of-process Dock plugin cannot see that switch. Package smoke tests retain an isolated override.
 
 The packaged app then performs the native macOS flow:
 
@@ -33,7 +34,7 @@ Keep both native and selectable source artwork unmasked:
 - Keep the transparent Icon Composer mark source at 1024×1024. Default, Dark, and Mono remain appearance treatments within the one `.icon` asset.
 - The legacy `icon.icns` is the only asset that deliberately contains a baked silhouette, because it is used for the DMG volume.
 
-The renderer preview uses CSS rounding only to represent the macOS tile. That rounding is not written into the source files.
+The renderer preview uses generated 128×128 copies and CSS rounding only to represent the macOS tile. That rounding is not written into the 1024px source files.
 
 ## Change the current Avalon icon
 
@@ -47,14 +48,14 @@ The renderer preview uses CSS rounding only to represent the macOS tile. That ro
 3. Open `apps/desktop/resources/icon.icon` in Icon Composer and inspect Default, Dark, and Mono.
 4. Build the signed app and inspect the Dock, Finder, Spotlight, and Launchpad in light and dark system appearances.
 
-Do not hand-edit generated light/dark copies. A later generator run must reproduce them without unrelated diffs.
+Do not hand-edit the generated light/dark copies or renderer previews. A later generator run must reproduce them without unrelated diffs. The six custom 1024px PNGs are committed artwork sources rather than output synthesized by this script.
 
 ## Add a selectable icon
 
 1. Add an opaque, full-bleed 1024×1024 PNG under `apps/desktop/resources/app-icons`.
 2. Add its identifier, label, and filename to `applicationIconChoices` in `apps/desktop/src/common/application-icons.ts`. This allowlist is shared by renderer and main; IPC never accepts a filesystem path.
 3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/AvalonDockTilePlugin.m`.
-4. Import the PNG in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
+4. Run `python3 scripts/generate-brand-assets.py` to produce the 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
 5. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
 
 The Dock plugin is compiled for arm64 during guarded packaging by `apps/desktop/scripts/build-macos-icon-components.mjs`. Do not commit `.native-build` output.
@@ -63,7 +64,7 @@ The Dock plugin is compiled for arm64 during guarded packaging by `apps/desktop/
 
 electron-builder compiles `icon.icon` into `Assets.car`, embeds the ICNS fallback, copies the selectable PNGs and AppKit bridge into `Contents/Resources`, and copies the Dock tile plugin into `Contents/PlugIns`. The plugin is nested executable code and must be signed with the same Developer ID identity as the app.
 
-Never rewrite files inside the signed application bundle. `NSWorkspace.setIcon` stores Finder's custom-icon metadata through the supported file-icon API rather than changing signed bundle contents.
+Never manually rewrite signed files under `Contents`. The Finder API does add the standard `Icon\r` file and `com.apple.FinderInfo` metadata at the application-bundle root, just as pasting an icon in Finder’s Get Info window does. On current macOS this leaves non-strict code-signature verification valid, while `codesign --strict` rejects the Finder metadata until the icon is reset. Treat a notarized Gatekeeper assessment and a complete auto-update cycle with a selected icon as release sign-off requirements; do not claim the custom metadata is absent from the bundle.
 
 ## Verification
 
@@ -72,6 +73,7 @@ Run focused checks while iterating:
 ```text
 pnpm --filter @avalon/desktop test
 pnpm --filter @avalon/desktop typecheck
+# arm64 macOS only:
 pnpm --filter @avalon/desktop build:macos-icons
 pnpm exec eslint apps/desktop/src/main/application-icon.ts apps/desktop/src/main/index.ts apps/desktop/src/renderer/components/application-icon-picker.tsx
 ```
@@ -89,7 +91,11 @@ The package verifier checks:
 - all eight 1024×1024 selectable PNGs; and
 - the AppKit bridge used for Finder and cache updates.
 
+The plugin build also compiles and executes a smoke harness that invokes `setDockTile:nil`. This catches recursive implementations of the protocol setter before packaging.
+
 Launch the packaged app with `pnpm start:desktop:packaged`, select several icons, quit Avalon, and confirm the choice remains in the Dock. Check Finder, Spotlight, and Launchpad, then choose “Use the system icon” and confirm the adaptive icon returns.
+
+For a notarized release candidate, repeat the selected-icon test from an installed copy, run `spctl -a -vvv --type execute /Applications/Avalon.app`, and complete one auto-update before release approval. `codesign --verify --deep` should continue to pass with a selected icon; `codesign --verify --deep --strict` is expected to reject Finder's custom-icon attributes until reset.
 
 ## Troubleshooting
 
