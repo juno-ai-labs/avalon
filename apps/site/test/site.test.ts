@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import {
@@ -29,7 +29,85 @@ describe('public Avalon site', () => {
     expect(page).toContain('not a browser version');
     expect(page).not.toMatch(/<form\b/i);
     expect(page).not.toMatch(/sign[ -]?in/i);
-    expect(page).not.toMatch(/<script\b/i);
+    expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
+  });
+
+  it('shuffles four complete landing designs while keeping each landscape paired to its theme', () => {
+    const page = readProjectFile('index.html');
+    const initializer = readProjectFile('public/landing-init.js');
+    const script = readProjectFile('src/landing.ts');
+    const styles = readProjectFile('src/styles.css');
+    const themes = ['runway', 'valley', 'proof', 'afterlight'];
+    const names = ['Warp', 'Mesh', 'Trace', 'Orbit'];
+    const initializerPosition = page.indexOf('<script src="/landing-init.js"></script>');
+    const stylesheetPosition = page.indexOf('<link rel="stylesheet" href="/src/styles.css" />');
+
+    for (const theme of themes) {
+      expect(page).toContain(`data-theme-panel="${theme}"`);
+      expect(page).toContain(`data-theme-select="${theme}"`);
+      expect(script).toContain(`"${theme}"`);
+      expect(styles).toContain(`html[data-theme='${theme}']`);
+    }
+    expect(page).toContain('data-theme-panel="runway" data-active aria-hidden="false"');
+    expect(page).toContain('data-theme-select="runway" aria-label="Use Warp design" aria-pressed="true"');
+    expect(initializer).toContain("root.dataset.themeReady = ''");
+    expect(initializerPosition).toBeGreaterThan(-1);
+    expect(stylesheetPosition).toBeGreaterThan(-1);
+    expect(initializerPosition).toBeLessThan(stylesheetPosition);
+    expect(styles).toContain("url('/concepts/biomes/high-desert.webp')");
+    expect(styles).toContain("url('/concepts/biomes/boreal-wetland.webp')");
+    expect(styles).toContain("url('/concepts/biomes/volcanic-coast.webp')");
+    expect(styles).toContain("url('/concepts/biomes/alpine-tundra.webp')");
+    for (const name of names) expect(page).toContain(name);
+  });
+
+  it('keeps content visible without scripts and hides the decorative workspace mock', () => {
+    const page = readProjectFile('index.html');
+    const styles = readProjectFile('src/styles.css');
+
+    expect(styles).toContain('.reveal { opacity: 1; transform: none; }');
+    expect(styles).toContain('html.js .reveal { opacity: 0;');
+    expect(styles).toContain('html.js .reveal.is-visible { opacity: 1;');
+    expect(page).toContain('<div class="workspace-grid" aria-hidden="true" inert>');
+  });
+
+  it('defines responsive behavior for every public surface and a readable mobile comparison', () => {
+    const publicPages = [
+      'index.html',
+      'concepts/index.html',
+      'concepts/horizon/index.html',
+      'invite/index.html',
+      'slack/link/index.html',
+      'open/index.html',
+      'slack/index.html',
+      'terms/index.html',
+      'privacy/index.html',
+      'acceptable-use/index.html',
+      'dpa/index.html',
+      'subprocessors/index.html',
+      'cookies/index.html',
+      'security/index.html',
+      'support/index.html',
+      'auth/desktop/index.html',
+      '404.html',
+    ];
+    const page = readProjectFile('index.html');
+    const styles = readProjectFile('src/styles.css');
+
+    for (const path of publicPages) {
+      expect(readProjectFile(path), path).toContain(
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+      );
+    }
+    expect(page.match(/data-label="Avalon"/gu)).toHaveLength(5);
+    expect(page.match(/data-label="Chat-only AI"/gu)).toHaveLength(5);
+    expect(page.match(/data-label="Task automation"/gu)).toHaveLength(5);
+    expect(styles).toContain('@media(max-width:820px)');
+    expect(styles).toContain('@media(max-width:720px)');
+    expect(styles).toContain('.comparison-row.comparison-head{display:none}');
+    expect(styles).toContain('content:attr(data-label)');
+    expect(styles).toContain('.header-download{min-height:44px}');
+    expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
   });
 
   it('keeps Avalon inherent instead of presenting it as a removable participant', () => {
@@ -48,7 +126,13 @@ describe('public Avalon site', () => {
       readProjectFile('slack/link/index.html'),
       readProjectFile('open/index.html'),
       readProjectFile('slack/index.html'),
+      readProjectFile('terms/index.html'),
       readProjectFile('privacy/index.html'),
+      readProjectFile('acceptable-use/index.html'),
+      readProjectFile('dpa/index.html'),
+      readProjectFile('subprocessors/index.html'),
+      readProjectFile('cookies/index.html'),
+      readProjectFile('security/index.html'),
       readProjectFile('support/index.html'),
       readProjectFile('auth/desktop/index.html'),
       readProjectFile('404.html'),
@@ -76,6 +160,47 @@ describe('public Avalon site', () => {
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/og.png', import.meta.url))).toBe(true);
+    const socialCard = new URL('../public/og-2026.jpg', import.meta.url);
+    expect(existsSync(socialCard)).toBe(true);
+    expect(statSync(socialCard).size).toBeLessThan(200_000);
+
+    for (const path of [
+      'public/concepts/biomes/alpine-tundra.webp',
+      'public/concepts/biomes/boreal-wetland.webp',
+      'public/concepts/biomes/high-desert.webp',
+      'public/concepts/biomes/volcanic-coast.webp',
+      'public/concepts/horizon-organic-panorama.webp',
+    ]) {
+      const landscape = new URL(`../${path}`, import.meta.url);
+      expect(existsSync(landscape), `${path} should exist`).toBe(true);
+      expect(statSync(landscape).size, `${path} should stay below 350 KB`).toBeLessThan(350_000);
+    }
+  });
+
+  it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {
+    const styles = readProjectFile('src/styles.css');
+
+    for (const selector of [
+      '.button-arrow',
+      '.not-found',
+      '.invite-page',
+      '.invite-shell',
+      '.invite-card',
+      '.invite-brand',
+      '.invite-open',
+      '.invite-help',
+      '.invite-error',
+    ]) {
+      expect(styles).toContain(selector);
+    }
+    expect(styles).toContain(".invite-open[aria-disabled='true']");
+    expect(styles).toContain('pointer-events: none');
+  });
+
+  it('keeps internal landing-page studies out of search indexes', () => {
+    for (const path of ['concepts/index.html', 'concepts/horizon/index.html']) {
+      expect(readProjectFile(path)).toContain('<meta name="robots" content="noindex, nofollow" />');
+    }
   });
 
   it('uses the same recency-only work-stream heading as the desktop sidebar', () => {
@@ -281,6 +406,44 @@ describe('public Avalon site', () => {
     expect(handoff).toContain('window.location.hash');
     expect(handoff).toContain('window.history.replaceState');
     expect(handoff).not.toContain('window.location.search');
+  });
+
+  it('publishes a complete, cross-linked trust center from every landing design', () => {
+    const landing = readProjectFile('index.html');
+    const sitemap = readProjectFile('public/sitemap.xml');
+    const policies = [
+      ['terms/index.html', '/terms', 'Terms of Service'],
+      ['privacy/index.html', '/privacy', 'Privacy Policy'],
+      ['acceptable-use/index.html', '/acceptable-use', 'Acceptable Use Policy'],
+      ['dpa/index.html', '/dpa', 'Data Processing Addendum'],
+      ['subprocessors/index.html', '/subprocessors', 'Sub-processors'],
+      ['cookies/index.html', '/cookies', 'Cookie &amp; Tracking Notice'],
+      ['security/index.html', '/security', 'Security Policy'],
+    ] as const;
+
+    for (const [, route] of policies) {
+      expect(landing).toContain(`href="${route}/"`);
+      expect(sitemap).toContain(`https://with-avalon.com${route}`);
+    }
+
+    for (const [path, route, title] of policies) {
+      const page = readProjectFile(path);
+      expect(page).toContain('<body class="legal-page">');
+      expect(page).toContain(title);
+      expect(page).toContain('Juno AI Labs');
+      expect(page).toContain(`rel="canonical" href="https://with-avalon.com${route}"`);
+      for (const [, linkedRoute] of policies) {
+        expect(page).toContain(`href="${linkedRoute}/"`);
+      }
+    }
+
+    expect(readProjectFile('privacy/index.html')).toContain('does not scrape, mirror');
+    expect(readProjectFile('privacy/index.html')).toContain('do not sell personal information');
+    expect(readProjectFile('dpa/index.html')).toContain('without undue delay');
+    expect(readProjectFile('dpa/index.html')).toContain('Annex B · Technical and organizational measures');
+    expect(readProjectFile('subprocessors/index.html')).toContain('Cloudflare, Inc.');
+    expect(readProjectFile('cookies/index.html')).toContain('does not currently set non-essential cookies');
+    expect(readProjectFile('security/index.html')).toContain('context isolation');
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {
