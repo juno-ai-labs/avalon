@@ -193,6 +193,17 @@ function providerHasActiveWorkspaceConnection(
   );
 }
 
+function providerHasActivePersonalConnection(
+  provider: (typeof connectorProviders)[number],
+  connections: WorkstreamConnection[],
+): boolean {
+  return provider.provider === 'x' && connections.some((connection) =>
+    connection.connectorType === provider.provider &&
+    connection.scope === 'you' &&
+    connection.status !== 'disabled',
+  );
+}
+
 function providerCapabilitiesForScope(
   provider: (typeof connectorProviders)[number],
   scope: 'you' | 'workspace',
@@ -616,7 +627,17 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   {visibleProviders.map((provider) => {
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
+                    const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
                     const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                    const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
+                    const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || hasActivePersonalConnection;
+                    const personalConnectTitle = hasActivePersonalConnection
+                      ? `An ${provider.name} personal connection is already installed. Manage it below.`
+                      : provider.provider === 'x' && connections.isLoading
+                        ? 'Checking installed personal connections…'
+                        : provider.provider === 'x' && connections.isError
+                          ? 'Installed personal connections could not be loaded.'
+                          : undefined;
                     const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
                     const workspaceConnectTitle = hasActiveWorkspaceConnection
                       ? `A ${provider.name} workspace connection is already installed. Manage it below.`
@@ -634,7 +655,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <p>{provider.description}</p>
                         <div className="provider-actions">
                           {provider.scopes.includes('you' as never) && (
-                            <Button disabled={connectProvider.isPending} onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}>Connect for me</Button>
+                            <Button
+                              disabled={personalConnectDisabled}
+                              onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
+                              title={personalConnectTitle}
+                            >Connect for me</Button>
                           )}
                           {provider.scopes.includes('workspace' as never) && isAdmin && (
                             <Button

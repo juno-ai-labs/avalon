@@ -975,6 +975,27 @@ export class ConnectionService {
       throw new ApiError(422, "invalid_connector_capabilities", "Choose supported X capabilities");
     }
 
+    const existing = input.scope === "workspace"
+      ? await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'workspace'
+             AND status <> 'disabled' LIMIT 1`,
+        ).bind(auth.workspaceId).first<{ id: string }>()
+      : await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'personal'
+             AND owner_user_id = ? AND status <> 'disabled' LIMIT 1`,
+        ).bind(auth.workspaceId, auth.userId).first<{ id: string }>();
+    if (existing) {
+      throw new ApiError(
+        409,
+        "x_connection_exists",
+        input.scope === "workspace"
+          ? "An active workspace X connection already exists"
+          : "You already have an active X connection",
+      );
+    }
+
     const id = newId();
     const encrypted = await encryptString("{}", this.env.CONNECTOR_CREDENTIALS_KEY, id);
     const at = nowIso();

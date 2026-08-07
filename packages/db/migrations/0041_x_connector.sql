@@ -79,6 +79,12 @@ CREATE UNIQUE INDEX connector_connections_slack_workspace_active_team_uq
 CREATE UNIQUE INDEX connector_connections_slack_personal_active_user_uq
   ON connector_connections(workspace_id, owner_user_id, provider_account_id)
   WHERE connector_type = 'slack' AND scope = 'personal' AND status <> 'disabled';
+CREATE UNIQUE INDEX connector_connections_x_workspace_active_uq
+  ON connector_connections(workspace_id, connector_type)
+  WHERE connector_type = 'x' AND scope = 'workspace' AND status <> 'disabled';
+CREATE UNIQUE INDEX connector_connections_x_personal_active_user_uq
+  ON connector_connections(workspace_id, connector_type, owner_user_id)
+  WHERE connector_type = 'x' AND scope = 'personal' AND status <> 'disabled';
 
 CREATE TRIGGER connector_connections_model_plugin_id_required_insert
 BEFORE INSERT ON connector_connections
