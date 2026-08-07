@@ -71,6 +71,45 @@ describe('public Avalon site', () => {
     expect(page).toContain('<div class="workspace-grid" aria-hidden="true" inert>');
   });
 
+  it('defines responsive behavior for every public surface and a readable mobile comparison', () => {
+    const publicPages = [
+      'index.html',
+      'concepts/index.html',
+      'concepts/horizon/index.html',
+      'invite/index.html',
+      'slack/link/index.html',
+      'open/index.html',
+      'slack/index.html',
+      'terms/index.html',
+      'privacy/index.html',
+      'acceptable-use/index.html',
+      'dpa/index.html',
+      'subprocessors/index.html',
+      'cookies/index.html',
+      'security/index.html',
+      'support/index.html',
+      'auth/desktop/index.html',
+      '404.html',
+    ];
+    const page = readProjectFile('index.html');
+    const styles = readProjectFile('src/styles.css');
+
+    for (const path of publicPages) {
+      expect(readProjectFile(path), path).toContain(
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+      );
+    }
+    expect(page.match(/data-label="Avalon"/gu)).toHaveLength(5);
+    expect(page.match(/data-label="Chat-only AI"/gu)).toHaveLength(5);
+    expect(page.match(/data-label="Task automation"/gu)).toHaveLength(5);
+    expect(styles).toContain('@media(max-width:820px)');
+    expect(styles).toContain('@media(max-width:720px)');
+    expect(styles).toContain('.comparison-row.comparison-head{display:none}');
+    expect(styles).toContain('content:attr(data-label)');
+    expect(styles).toContain('.header-download{min-height:44px}');
+    expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
+  });
+
   it('keeps Avalon inherent instead of presenting it as a removable participant', () => {
     const page = readProjectFile('index.html');
 
