@@ -21,6 +21,9 @@
 /site.webmanifest
   Cache-Control: public, max-age=86400
 
+/landing-init.js
+  Cache-Control: public, max-age=86400
+
 /og.png
   Cache-Control: public, max-age=86400
 
