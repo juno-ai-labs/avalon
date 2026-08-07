@@ -14,6 +14,7 @@ const databases: DatabaseSync[] = [];
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   for (const database of databases.splice(0)) database.close();
 });
 
@@ -290,7 +291,8 @@ describe("Slack public channel membership", () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
-    const send = vi.fn(async () => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const send = vi.fn(async () => { throw new Error("queue unavailable"); });
     const env = slackMembershipEnvironment(database, credentialsKey, send);
 
     await new SlackAgentService(env).schedulePublicChannelSync("11111111-1111-4111-8111-111111111111");
@@ -311,6 +313,42 @@ describe("Slack public channel membership", () => {
       workspaceId: "22222222-2222-4222-8222-222222222222",
       jobId: job.id,
     }));
+  });
+
+  it("continues a rate-limited full sync with Slack's requested queue delay", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(slackMembershipEnvironment(database, credentialsKey, send));
+    await service.schedulePublicChannelSync("11111111-1111-4111-8111-111111111111");
+    const initial = database.prepare("SELECT id FROM slack_ingress_jobs").get() as { id: string };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("conversations.list")) return new Response(JSON.stringify({
+        ok: true,
+        channels: [{ id: "CNEW", is_private: false, is_archived: false, is_member: false }],
+        response_metadata: { next_cursor: "" },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ error: "ratelimited" }), {
+        status: 429,
+        headers: { "content-type": "application/json", "retry-after": "9" },
+      });
+    }));
+
+    await service.processQueuedIngress(initial.id);
+
+    const jobs = database.prepare(
+      "SELECT id, status FROM slack_ingress_jobs ORDER BY received_at, id",
+    ).all() as Array<{ id: string; status: string }>;
+    expect(jobs).toHaveLength(2);
+    expect(jobs).toContainEqual({ id: initial.id, status: "completed" });
+    const continuation = jobs.find((job) => job.id !== initial.id)!;
+    expect(continuation.status).toBe("queued");
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({
+      jobId: continuation.id,
+    }), { delaySeconds: 9 });
   });
 
   it("joins a newly created public channel from its durable Slack event", async () => {

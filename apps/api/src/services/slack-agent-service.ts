@@ -125,7 +125,7 @@ export class SlackAgentService {
   constructor(private readonly env: Env) {}
 
   /** Durably schedule a full public-channel join after install or reconnect. */
-  async schedulePublicChannelSync(connectionId: string): Promise<void> {
+  async schedulePublicChannelSync(connectionId: string, retryAfterMs = 0): Promise<void> {
     const connection = await this.connectionById(connectionId);
     const eventId = `avalon-channel-sync:${crypto.randomUUID()}`;
     const envelope: SlackIngressEnvelope = {
@@ -141,6 +141,10 @@ export class SlackAgentService {
       bodyHash: await sha256(JSON.stringify(envelope)),
       kind: "event",
       payload: envelope,
+      ...(retryAfterMs > 0 ? {
+        queueDelaySeconds: Math.min(43_200, Math.max(1, Math.ceil(retryAfterMs / 1_000))),
+      } : {}),
+      recoverQueueSendFailure: true,
     });
   }
 
@@ -418,6 +422,8 @@ export class SlackAgentService {
     bodyHash: string;
     kind: "event" | "interaction" | "command";
     payload: unknown;
+    queueDelaySeconds?: number;
+    recoverQueueSendFailure?: boolean;
   }): Promise<{ ok: true; duplicate?: boolean }> {
     const connection = await this.connectionForTeam(input.teamId);
     const at = nowIso();
@@ -436,12 +442,25 @@ export class SlackAgentService {
       if (!prior || prior.body_hash !== input.bodyHash) throw new ApiError(409, "slack_ingress_conflict", "Slack reused an ingress identity with different content");
       if (prior.status === "completed") return { ok: true, duplicate: true };
     }
-    await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+    const message = SlackIngressQueueMessageSchema.parse({
       kind: "slack_ingress",
       region: this.env.AVALON_REGION,
       workspaceId: connection.workspace_id,
       jobId: input.id,
-    }));
+    });
+    try {
+      if (input.queueDelaySeconds != null) {
+        await this.env.ACTIVITY_QUEUE.send(message, { delaySeconds: input.queueDelaySeconds });
+      } else {
+        await this.env.ACTIVITY_QUEUE.send(message);
+      }
+    } catch (error) {
+      if (!input.recoverQueueSendFailure) throw error;
+      console.warn("Slack ingress queue publish deferred to recovery", {
+        job_id: input.id,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
     return { ok: true, ...(duplicate ? { duplicate: true } : {}) };
   }
 
@@ -886,8 +905,17 @@ export class SlackAgentService {
       const connection = await this.connectionForTeam(teamId);
       const summary = await joinAllSlackPublicChannels(
         await this.botToken(connection),
-        AbortSignal.timeout(4 * 60_000),
+        AbortSignal.timeout(3 * 60_000),
       );
+      if (!summary.complete) {
+        await this.schedulePublicChannelSync(connection.id, summary.retryAfterMs);
+        console.info("Slack public-channel sync continuation scheduled", {
+          connection_id: connection.id,
+          team_id: teamId,
+          ...summary,
+        });
+        return;
+      }
       console.info("Slack public-channel sync completed", {
         connection_id: connection.id,
         team_id: teamId,
