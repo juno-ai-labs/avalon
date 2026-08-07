@@ -7,9 +7,11 @@ import {
   WorkspaceOnboardingStateSchema,
   type Session as WireSession,
 } from '@avalon/contracts';
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import {
   app,
   BrowserWindow,
@@ -18,6 +20,8 @@ import {
   ipcMain,
   Menu,
   net,
+  nativeImage,
+  nativeTheme,
   protocol,
   safeStorage,
   session as electronSession,
@@ -30,12 +34,25 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
+import {
+  automaticApplicationIcon,
+  type ApplicationIconId,
+  type DesktopApplicationIconState,
+} from '../common/application-icons';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import {
   definitivelyInvalidatesStoredCredential,
   responseError,
 } from './api-response-error';
+import {
+  applicationIconPath,
+  applicationIconPreferenceDirectoryForLaunch,
+  clearStoredApplicationIcon,
+  readStoredApplicationIcon,
+  writeStoredApplicationIcon,
+} from './application-icon';
+import { ApplicationIconController } from './application-icon-controller';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { allowsTrustedAudioCapture } from './media-permission';
@@ -72,6 +89,7 @@ import {
 } from './user-data-path';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
+const executeFile = promisify(execFile);
 // Never let inherited development environment variables choose the renderer
 // or API origins of an installed app. The preload bridge is privileged, so a
 // packaged build must remain pinned to its embedded renderer and Avalon hosts.
@@ -94,6 +112,7 @@ let loggingOut = false;
 let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
+let developmentDockIconUsesAppearancePreview = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
@@ -865,6 +884,18 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
+  ipcMain.handle('application-icon:get', (event) => {
+    assertTrustedIpcSender(event);
+    return desktopApplicationIconState();
+  });
+  ipcMain.handle('application-icon:set', (event, rawIconId: unknown) => {
+    assertTrustedIpcSender(event);
+    return enqueueApplicationIconChange(rawIconId);
+  });
+  ipcMain.handle('application-icon:reset', (event) => {
+    assertTrustedIpcSender(event);
+    return enqueueApplicationIconReset();
+  });
   ipcMain.handle('session:get', async (event) => {
     assertTrustedIpcSender(event);
     const stored = await loadStoredSession();
@@ -1022,6 +1053,130 @@ function applicationWindowIconPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
     : resolve(currentDirectory, '../../resources/icon.png');
+}
+
+function applicationIconResourceDirectory(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'app-icons')
+    : resolve(currentDirectory, '../../resources/app-icons');
+}
+
+function applicationIconPreferenceDirectory(): string {
+  return applicationIconPreferenceDirectoryForLaunch(
+    appDataDirectory,
+    userDataDirectory(),
+    app.isPackaged,
+    process.argv.some((argument) => argument.startsWith('--avalon-package-smoke=')),
+  );
+}
+
+function packagedApplicationBundlePath(): string {
+  return resolve(dirname(process.execPath), '../..');
+}
+
+function nativeApplicationIconScriptPath(): string {
+  return join(process.resourcesPath, 'native', 'set-application-icon.js');
+}
+
+async function runNativeApplicationIconScript(...arguments_: string[]): Promise<void> {
+  await executeFile('/usr/bin/osascript', [
+    '-l',
+    'JavaScript',
+    nativeApplicationIconScriptPath(),
+    ...arguments_,
+  ], { timeout: 10_000 });
+}
+
+function desktopApplicationIconState(): DesktopApplicationIconState {
+  return applicationIconController.state();
+}
+
+function broadcastApplicationIconChanged(): void {
+  const state = desktopApplicationIconState();
+  for (const window of [mainWindow, settingsWindow]) {
+    if (window && !window.isDestroyed()) window.webContents.send('application-icon:changed', state);
+  }
+}
+
+function loadApplicationIcon(iconId: ApplicationIconId): Electron.NativeImage {
+  const iconPath = applicationIconPath(applicationIconResourceDirectory(), iconId);
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) throw new Error(`Application icon could not be loaded: ${iconPath}`);
+  const size = icon.getSize();
+  if (size.width !== 1024 || size.height !== 1024) {
+    throw new Error(`Application icon must be 1024×1024: ${iconPath}`);
+  }
+  return icon;
+}
+
+async function applyApplicationIcon(iconId: ApplicationIconId): Promise<void> {
+  if (process.platform !== 'darwin' || !app.dock) {
+    throw new Error('Custom application icons are available only on macOS');
+  }
+  const iconPath = applicationIconPath(applicationIconResourceDirectory(), iconId);
+  const icon = loadApplicationIcon(iconId);
+  if (!app.isPackaged) {
+    // Development runs have no containing signed Avalon bundle or Dock tile
+    // plugin. Keep the picker testable without changing Electron.app in place.
+    app.dock.setIcon(icon);
+    developmentDockIconUsesAppearancePreview = true;
+    return;
+  }
+  await runNativeApplicationIconScript(
+    iconPath,
+    packagedApplicationBundlePath(),
+  );
+}
+
+async function resetNativeApplicationIcon(): Promise<void> {
+  if (process.platform !== 'darwin' || !app.dock) {
+    throw new Error('Custom application icons are available only on macOS');
+  }
+  if (app.isPackaged) {
+    await runNativeApplicationIconScript('--reset', packagedApplicationBundlePath());
+    return;
+  }
+  app.dock.setIcon(loadApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)));
+  developmentDockIconUsesAppearancePreview = true;
+}
+
+const applicationIconController = new ApplicationIconController({
+  supported: process.platform === 'darwin',
+  automaticIcon: () => automaticApplicationIcon(nativeTheme.shouldUseDarkColors),
+  validateIcon: (iconId) => {
+    loadApplicationIcon(iconId);
+  },
+  readStoredIcon: () => readStoredApplicationIcon(applicationIconPreferenceDirectory()),
+  writeStoredIcon: (iconId) => writeStoredApplicationIcon(applicationIconPreferenceDirectory(), iconId),
+  clearStoredIcon: () => clearStoredApplicationIcon(applicationIconPreferenceDirectory()),
+  applyIcon: applyApplicationIcon,
+  resetNativeIcon: resetNativeApplicationIcon,
+  onStateChange: broadcastApplicationIconChanged,
+});
+
+function enqueueApplicationIconChange(rawIconId: unknown): Promise<DesktopApplicationIconState> {
+  return applicationIconController.change(rawIconId);
+}
+
+function enqueueApplicationIconReset(): Promise<DesktopApplicationIconState> {
+  return applicationIconController.reset();
+}
+
+async function initializeApplicationIcon(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  nativeTheme.on('updated', () => {
+    if (applicationIconController.state().isAutomatic && developmentDockIconUsesAppearancePreview) {
+      void applyApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)).catch((error: unknown) => {
+        console.warn('[avalon] could not refresh the development application icon', error);
+      });
+    }
+    applicationIconController.appearanceChanged();
+  });
+  try {
+    await applicationIconController.restore();
+  } catch (error) {
+    console.warn('[avalon] could not restore the selected application icon', error);
+  }
 }
 
 function preloadPath(): string {
@@ -1297,6 +1452,7 @@ if (!singleInstanceLock) {
     });
     installApplicationMenu();
     await createMainWindow();
+    void initializeApplicationIcon();
 
     const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));
     if (initialDeepLink) emitDeepLink(initialDeepLink);

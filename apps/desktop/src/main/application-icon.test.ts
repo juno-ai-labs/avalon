@@ -1,0 +1,92 @@
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+import { applicationIconChoices } from '../common/application-icons';
+import {
+  applicationIconPath,
+  applicationIconPreferenceDirectoryForLaunch,
+  clearStoredApplicationIcon,
+  parseStoredApplicationIcon,
+  readStoredApplicationIcon,
+  writeStoredApplicationIcon,
+} from './application-icon';
+
+const temporaryDirectories: string[] = [];
+const resourceDirectory = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../resources/app-icons',
+);
+const previewDirectory = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../renderer/assets/app-icons',
+);
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) =>
+    rm(directory, { recursive: true, force: true })));
+});
+
+describe('application icon persistence', () => {
+  it('uses the Dock plugin directory for packaged launches but isolates smoke tests', () => {
+    expect(applicationIconPreferenceDirectoryForLaunch(
+      '/Users/test/Library/Application Support',
+      '/tmp/avalon-profile',
+      true,
+      false,
+    )).toBe('/Users/test/Library/Application Support/Avalon');
+    expect(applicationIconPreferenceDirectoryForLaunch(
+      '/Users/test/Library/Application Support',
+      '/tmp/avalon-profile',
+      true,
+      true,
+    )).toBe('/tmp/avalon-profile');
+    expect(applicationIconPreferenceDirectoryForLaunch(
+      '/Users/test/Library/Application Support',
+      '/tmp/avalon-development',
+      false,
+      false,
+    )).toBe('/tmp/avalon-development');
+  });
+
+  it('accepts only the versioned allowlisted preference shape', () => {
+    expect(parseStoredApplicationIcon({ version: 1, icon: 'blueprint' })).toBe('blueprint');
+    expect(parseStoredApplicationIcon({ version: 2, icon: 'blueprint' })).toBeNull();
+    expect(parseStoredApplicationIcon({ version: 1, icon: '../../private' })).toBeNull();
+    expect(parseStoredApplicationIcon(null)).toBeNull();
+  });
+
+  it('writes, replaces, and clears the device preference atomically', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'avalon-application-icon-'));
+    temporaryDirectories.push(directory);
+
+    expect(await readStoredApplicationIcon(directory)).toBeNull();
+    await writeStoredApplicationIcon(directory, 'ruby');
+    expect(await readStoredApplicationIcon(directory)).toBe('ruby');
+    await writeStoredApplicationIcon(directory, 'leather');
+    expect(await readStoredApplicationIcon(directory)).toBe('leather');
+    expect((await stat(resolve(directory, 'application-icon.json'))).mode & 0o777).toBe(0o600);
+    await clearStoredApplicationIcon(directory);
+    expect(await readStoredApplicationIcon(directory)).toBeNull();
+  });
+
+  it('ships every allowlisted Dock source as a full-size PNG', async () => {
+    for (const choice of applicationIconChoices) {
+      const encoded = await readFile(applicationIconPath(resourceDirectory, choice.id));
+      expect(encoded.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(encoded.toString('ascii', 12, 16)).toBe('IHDR');
+      expect(encoded.readUInt32BE(16)).toBe(1024);
+      expect(encoded.readUInt32BE(20)).toBe(1024);
+    }
+  });
+
+  it('provides compact Retina previews for every selectable icon', async () => {
+    for (const choice of applicationIconChoices) {
+      const encoded = await readFile(applicationIconPath(previewDirectory, choice.id));
+      expect(encoded.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(encoded.readUInt32BE(16)).toBe(128);
+      expect(encoded.readUInt32BE(20)).toBe(128);
+    }
+  });
+});
