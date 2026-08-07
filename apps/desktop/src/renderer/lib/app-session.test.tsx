@@ -271,6 +271,31 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('Linear authorization was cancelled');
   });
 
+  it('rejects malformed connector UUIDs in legacy and server-owned completion links', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      expiresAt: futureExpiry,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    act(() => deepLinkListener?.(
+      'avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
+    ));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+
+    act(() => deepLinkListener?.(
+      `avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+    ));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+  });
+
   it('rejects a connector result from a different regional server', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...euSession,

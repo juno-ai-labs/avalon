@@ -987,4 +987,26 @@ describe('Avalon API wire adapter', () => {
       `https://api.avalon.test/connections/oauth-attempts/${attemptId}`,
     );
   });
+
+  it('cancels durable connector OAuth polling through its abort signal', async () => {
+    const attemptId = 'b'.repeat(43);
+    const fetchMock = vi.fn().mockResolvedValue(json({
+      attemptId,
+      provider: 'linear',
+      status: 'pending',
+      connectionId: null,
+      errorCode: null,
+      expiresAt: timestamp,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const controller = new AbortController();
+
+    const polling = api.waitForConnectorOAuthAttempt(attemptId, controller.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(polling).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 });

@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { IdSchema } from '@avalon/contracts';
 import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
 import { AvalonApi } from './api';
 import {
@@ -341,7 +342,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const legacyEntries = [...deepLink.searchParams.entries()];
         if (
           !activeSession?.workspace
-          || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(connectionId)
+          || !IdSchema.safeParse(connectionId).success
           || legacyEntries.length !== 2
           || legacyEntries.some(([name]) => name !== 'connection' && name !== 'status')
           || deepLink.searchParams.getAll('connection').length !== 1
@@ -375,7 +376,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           && ['connection', 'status', 'region', 'provider'].every(hasSingleValue)
           && connectorStatus === 'connected'
           && connectionId !== null
-          && /^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(connectionId)
+          && IdSchema.safeParse(connectionId).success
           && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)))
           && connectorError === null;
         const validFailure =

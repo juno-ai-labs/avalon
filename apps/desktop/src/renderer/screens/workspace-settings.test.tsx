@@ -241,6 +241,41 @@ describe('Workspace settings', () => {
     expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
   });
 
+  it('uses the server-owned attempt provider for reconnect status messaging', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Imported connection label',
+      capabilities: ['drive.read'],
+      status: 'reconnect_required',
+    }]);
+    api.getConnectorOAuthAttempt
+      .mockResolvedValueOnce({
+        attemptId: 'b'.repeat(43),
+        provider: 'notion',
+        status: 'pending',
+        connectionId: null,
+        errorCode: null,
+        expiresAt: '2026-08-08T00:00:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        attemptId: 'b'.repeat(43),
+        provider: 'notion',
+        status: 'denied',
+        connectionId: null,
+        errorCode: 'oauth_denied',
+        expiresAt: '2026-08-08T00:00:00.000Z',
+      });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+
+    expect(await screen.findByText('Notion authorization was cancelled.')).toBeVisible();
+    expect(api.getConnectorOAuthAttempt).toHaveBeenNthCalledWith(1, 'b'.repeat(43));
+  });
+
   it('offers personal and workspace Linear authorization without granting agent identity personally', async () => {
     renderSettings();
     openSettingsSection('Connections');

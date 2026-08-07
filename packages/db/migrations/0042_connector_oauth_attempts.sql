@@ -13,8 +13,5 @@ CREATE TABLE IF NOT EXISTS connector_oauth_attempts (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS connector_oauth_attempts_principal_idx
-  ON connector_oauth_attempts(workspace_id, user_id, id);
-
 CREATE INDEX IF NOT EXISTS connector_oauth_attempts_expiry_idx
   ON connector_oauth_attempts(status, expires_at);
