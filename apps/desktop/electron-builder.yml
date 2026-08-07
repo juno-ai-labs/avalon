@@ -3,6 +3,7 @@ productName: Avalon
 copyright: Copyright © 2026 Avalon
 asar: true
 artifactName: Avalon-${version}-${os}-${arch}.${ext}
+afterPack: ./scripts/sign-macos-dock-plugin.mjs
 afterAllArtifactBuild: ./scripts/finalize-macos-release.mjs
 directories:
   output: release
@@ -19,9 +20,20 @@ publish:
     url: https://downloads.with-avalon.com/stable/darwin/arm64
 mac:
   icon: resources/icon.icon
+  extraFiles:
+    - from: .native-build/AvalonDockTilePlugin.docktileplugin
+      to: PlugIns/AvalonDockTilePlugin.docktileplugin
+  extraResources:
+    - from: resources/app-icons
+      to: app-icons
+      filter:
+        - "*.png"
+    - from: native/set-application-icon.js
+      to: native/set-application-icon.js
   category: public.app-category.productivity
   extendInfo:
     NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation.
+    NSDockTilePlugIn: AvalonDockTilePlugin.docktileplugin
   hardenedRuntime: true
   forceCodeSigning: true
   gatekeeperAssess: false

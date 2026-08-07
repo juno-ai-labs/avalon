@@ -7,6 +7,7 @@ node_modules/
 dist/
 dist-*/
 out/
+apps/desktop/.native-build/
 release/
 .playwright-cli/
 output/
