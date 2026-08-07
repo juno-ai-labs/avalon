@@ -1287,6 +1287,14 @@ pre {
 .provider-card > p { color: var(--muted); flex: 1; font-size: 10px; line-height: 1.45; margin: 10px 0 12px; }
 .provider-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .provider-actions .button { flex: 1 1 auto; font-size: 10px; min-height: 30px; }
+.settings-oauth-status {
+  align-items: center;
+  color: var(--green);
+  display: flex;
+  font-size: 11px;
+  gap: 6px;
+  margin: 9px 0 0;
+}
 
 .settings-connection-list { display: grid; }
 .settings-connection-row {

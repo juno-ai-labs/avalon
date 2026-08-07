@@ -27,7 +27,7 @@ Register these exact hosted authorized redirect URIs:
 | Avalon Google Connectors | `https://api.with-avalon.com/connections/google/callback` |
 | Avalon Google Connectors | `https://eu.api.with-avalon.com/connections/google/callback` |
 
-`https://with-avalon.com/auth/desktop/` is Avalon's post-callback browser handoff, and `avalon://auth/complete` is its allowlisted desktop return URI. Neither is a Google OAuth redirect URI. Add the corresponding `http://127.0.0.1:<port>` API callbacks only to a development client used for local provider testing.
+`https://with-avalon.com/auth/desktop/` is Avalon's post-callback browser handoff for login and every connector, and `avalon://auth/complete` is its allowlisted desktop return URI. Provider codes always terminate at the owning API callback first; neither handoff URI is a Google OAuth redirect URI. Add the corresponding `http://127.0.0.1:<port>` API callbacks only to a development client used for local provider testing.
 
 Configure the consent screen for the exact scopes Avalon requests:
 
