@@ -95,6 +95,10 @@ function attachmentDatabase(): DatabaseSync {
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, workstream_id TEXT NOT NULL,
       resource_id TEXT NOT NULL, enabled INTEGER NOT NULL
     );
+    CREATE TABLE notes (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+      scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
+    );
   `);
   return database;
 }
