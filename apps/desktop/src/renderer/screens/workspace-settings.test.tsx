@@ -73,10 +73,13 @@ const invitation: WorkspaceInvitation = {
 };
 const inviteUrl = 'https://with-avalon.com/invite/#region=eu&token=private-token-value-long-enough';
 
-function renderSettings(nextWorkspace: Workspace = workspace): void {
-  const client = new QueryClient({
+function createTestQueryClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+}
+
+function renderSettings(nextWorkspace: Workspace = workspace, client = createTestQueryClient()): void {
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={client}>
@@ -129,6 +132,18 @@ describe('Workspace settings', () => {
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
     expect(within(navigation).getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
+    expect(await screen.findByText('Sam')).toBeVisible();
+  });
+
+  it('refreshes members whenever settings opens even when the cached list is fresh', async () => {
+    const client = createTestQueryClient();
+    client.setQueryData(['workspace-members'], [owner]);
+
+    renderSettings(workspace, client);
+    openSettingsSection('Workspace');
+
+    expect(screen.getByText('Adam')).toBeVisible();
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Sam')).toBeVisible();
   });
 
