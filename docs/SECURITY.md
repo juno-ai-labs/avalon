@@ -11,7 +11,7 @@ The renderer, inbound internet, connector providers, monitored URLs, model outpu
 - Every IPC argument is parsed before use.
 - Navigation and popup creation are denied by default; OAuth opens in the system browser.
 - A strict Content Security Policy allows bundled content and the configured regional API only.
-- Refresh material uses `safeStorage` in the main process. The renderer receives short-lived access only through the narrow session bridge.
+- Refresh material is encrypted in the main process. By default the desktop uses an application-wide embedded key so a saved session survives signing-identity and keystore changes. Application → **Lockdown mode** replaces that with Electron `safeStorage`, binding the saved authentication state to the operating-system keystore. Switching the setting re-encrypts every durable session component before committing the new preference. The renderer receives short-lived access only through the narrow session bridge.
 - The custom `avalon://` callback carries only an opaque, expiring, single-use login ticket or a non-secret connector result—never provider codes or tokens.
 - The native Settings window uses the same sandbox, preload, CSP, navigation denial, and regional session bridge as the main window. **Command-,** opens a singleton window rather than a privileged remote page.
 

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   AvalonDesktopBridge,
+  DesktopApplicationSettings,
   DesktopAuthAttempt,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
@@ -43,6 +44,14 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
 
 const bridge: AvalonDesktopBridge = {
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
+  getApplicationSettings: () => ipcRenderer.invoke('application-settings:get') as Promise<DesktopApplicationSettings>,
+  setLockdownMode: (enabled) =>
+    ipcRenderer.invoke('application-settings:set-lockdown-mode', enabled) as Promise<DesktopApplicationSettings>,
+  onApplicationSettingsChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, settings: DesktopApplicationSettings): void => listener(settings);
+    ipcRenderer.on('application-settings:changed', handler);
+    return () => ipcRenderer.removeListener('application-settings:changed', handler);
+  },
   getApplicationIcon: () => ipcRenderer.invoke('application-icon:get') as Promise<DesktopApplicationIconState>,
   setApplicationIcon: (iconId: ApplicationIconId) =>
     ipcRenderer.invoke('application-icon:set', iconId) as Promise<DesktopApplicationIconState>,

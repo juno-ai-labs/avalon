@@ -24,6 +24,8 @@ const openExternal = vi.hoisted(() => vi.fn());
 const getApplicationIcon = vi.hoisted(() => vi.fn());
 const setApplicationIcon = vi.hoisted(() => vi.fn());
 const resetApplicationIcon = vi.hoisted(() => vi.fn());
+const getApplicationSettings = vi.hoisted(() => vi.fn());
+const setLockdownMode = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
@@ -46,6 +48,9 @@ vi.mock('../lib/app-session', () => ({
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
+    getApplicationSettings,
+    setLockdownMode,
+    onApplicationSettingsChanged: () => () => undefined,
     getApplicationIcon,
     setApplicationIcon,
     resetApplicationIcon,
@@ -136,6 +141,11 @@ describe('Workspace settings', () => {
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+    getApplicationSettings.mockResolvedValue({ lockdownMode: false, lockdownAvailable: true });
+    setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
+      lockdownMode,
+      lockdownAvailable: true,
+    }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
       isAutomatic: false,
@@ -621,5 +631,21 @@ describe('Workspace settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
     await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
+  });
+
+  it('toggles Lockdown mode for the saved authentication session', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setLockdownMode).toHaveBeenCalledWith(true));
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setLockdownMode).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
   });
 });
