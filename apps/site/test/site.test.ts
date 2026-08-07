@@ -87,7 +87,13 @@ describe('public Avalon site', () => {
       readProjectFile('slack/link/index.html'),
       readProjectFile('open/index.html'),
       readProjectFile('slack/index.html'),
+      readProjectFile('terms/index.html'),
       readProjectFile('privacy/index.html'),
+      readProjectFile('acceptable-use/index.html'),
+      readProjectFile('dpa/index.html'),
+      readProjectFile('subprocessors/index.html'),
+      readProjectFile('cookies/index.html'),
+      readProjectFile('security/index.html'),
       readProjectFile('support/index.html'),
       readProjectFile('auth/desktop/index.html'),
       readProjectFile('404.html'),
@@ -361,6 +367,44 @@ describe('public Avalon site', () => {
     expect(handoff).toContain('window.location.hash');
     expect(handoff).toContain('window.history.replaceState');
     expect(handoff).not.toContain('window.location.search');
+  });
+
+  it('publishes a complete, cross-linked trust center from every landing design', () => {
+    const landing = readProjectFile('index.html');
+    const sitemap = readProjectFile('public/sitemap.xml');
+    const policies = [
+      ['terms/index.html', '/terms', 'Terms of Service'],
+      ['privacy/index.html', '/privacy', 'Privacy Policy'],
+      ['acceptable-use/index.html', '/acceptable-use', 'Acceptable Use Policy'],
+      ['dpa/index.html', '/dpa', 'Data Processing Addendum'],
+      ['subprocessors/index.html', '/subprocessors', 'Sub-processors'],
+      ['cookies/index.html', '/cookies', 'Cookie &amp; Tracking Notice'],
+      ['security/index.html', '/security', 'Security Policy'],
+    ] as const;
+
+    for (const [, route] of policies) {
+      expect(landing).toContain(`href="${route}/"`);
+      expect(sitemap).toContain(`https://with-avalon.com${route}`);
+    }
+
+    for (const [path, route, title] of policies) {
+      const page = readProjectFile(path);
+      expect(page).toContain('<body class="legal-page">');
+      expect(page).toContain(title);
+      expect(page).toContain('Juno AI Labs');
+      expect(page).toContain(`rel="canonical" href="https://with-avalon.com${route}"`);
+      for (const [, linkedRoute] of policies) {
+        expect(page).toContain(`href="${linkedRoute}/"`);
+      }
+    }
+
+    expect(readProjectFile('privacy/index.html')).toContain('does not scrape, mirror');
+    expect(readProjectFile('privacy/index.html')).toContain('do not sell personal information');
+    expect(readProjectFile('dpa/index.html')).toContain('without undue delay');
+    expect(readProjectFile('dpa/index.html')).toContain('Annex B · Technical and organizational measures');
+    expect(readProjectFile('subprocessors/index.html')).toContain('Cloudflare, Inc.');
+    expect(readProjectFile('cookies/index.html')).toContain('does not currently set non-essential cookies');
+    expect(readProjectFile('security/index.html')).toContain('context isolation');
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {
