@@ -71,9 +71,9 @@ describe('application icon persistence', () => {
     expect(await readStoredApplicationIcon(directory)).toBeNull();
   });
 
-  it('ships every allowlisted Dock source as a full-size PNG', async () => {
+  it('ships every allowlisted Icon Composer artwork source as a full-size PNG', async () => {
     for (const choice of applicationIconChoices) {
-      const encoded = await readFile(applicationIconPath(resourceDirectory, choice.id));
+      const encoded = await readFile(resolve(resourceDirectory, choice.artworkFileName));
       expect(encoded.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
       expect(encoded.toString('ascii', 12, 16)).toBe('IHDR');
       expect(encoded.readUInt32BE(16)).toBe(1024);
@@ -81,9 +81,14 @@ describe('application icon persistence', () => {
     }
   });
 
+  it('resolves packaged selectable icons to system-compiled ICNS resources', () => {
+    expect(applicationIconPath('/Applications/Avalon.app/Contents/Resources/app-icons', 'ruby'))
+      .toBe('/Applications/Avalon.app/Contents/Resources/app-icons/ruby.icns');
+  });
+
   it('provides compact Retina previews for every selectable icon', async () => {
     for (const choice of applicationIconChoices) {
-      const encoded = await readFile(applicationIconPath(previewDirectory, choice.id));
+      const encoded = await readFile(resolve(previewDirectory, choice.artworkFileName));
       expect(encoded.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
       expect(encoded.readUInt32BE(16)).toBe(128);
       expect(encoded.readUInt32BE(20)).toBe(128);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applicationIconChoices,
+  applicationIconArtworkFileName,
   applicationIconFileName,
   automaticApplicationIcon,
   parseApplicationIconId,
@@ -24,7 +25,8 @@ describe('application icon choices', () => {
     expect(parseApplicationIconId('ruby')).toBe('ruby');
     expect(parseApplicationIconId('../icon.png')).toBeNull();
     expect(parseApplicationIconId({ id: 'ruby' })).toBeNull();
-    expect(applicationIconFileName('holographic')).toBe('holographic.png');
+    expect(applicationIconFileName('holographic')).toBe('holographic.icns');
+    expect(applicationIconArtworkFileName('holographic')).toBe('holographic.png');
   });
 
   it('uses the current icon that matches the system appearance by default', () => {
