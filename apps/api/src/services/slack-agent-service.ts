@@ -227,6 +227,12 @@ export class SlackAgentService {
       if (view.callback_id === "avalon_start_task_submit") {
         const prompt = modalPrompt(view.state);
         if (!prompt) return { response_action: "errors", errors: { prompt: "Describe what Avalon should do." } };
+        if (!modalPromptSource(view.private_metadata)) {
+          return {
+            response_action: "errors",
+            errors: { prompt: "This Slack task context expired. Close this window and start the task again." },
+          };
+        }
         await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
         return { response_action: "clear" };
       }
@@ -256,6 +262,19 @@ export class SlackAgentService {
       ? payload.actions[0] as Record<string, unknown>
       : null;
     const callbackId = String(payload.callback_id ?? action?.action_id ?? "");
+    if (type === "block_actions" && callbackId === "avalon_claim_workstream") {
+      if (typeof action?.value !== "string" || !action.value) {
+        throw new ApiError(422, "slack_claim_invalid", "The Slack task claim is invalid");
+      }
+      await this.enqueueIngressJob({
+        id: `interaction:${bodyHash}`,
+        teamId,
+        bodyHash,
+        kind: "interaction",
+        payload,
+      });
+      return {};
+    }
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
       if (callbackId.startsWith("avalon_open_") || callbackId === "avalon_connect" || callbackId === "avalon_create_automation") return {};
       if (callbackId === "avalon_preferences") {
@@ -282,11 +301,14 @@ export class SlackAgentService {
       const shortcutThreadTs = type === "message_action"
         ? String(asRecord(payload.message).thread_ts ?? asRecord(payload.message).ts ?? "") || null
         : null;
+      const shortcutChannelType = shortcutChannelId
+        ? await resolveSlackChannelType(token, shortcutChannelId, nestedString(payload, "channel", "type"))
+        : "unknown";
       await slackApi(token, "views.open", {
         trigger_id: triggerId,
         view: startTaskModal(sourceText, {
           kind: "shortcut",
-          channelType: slackChannelType(nestedString(payload, "channel", "type") || shortcutChannelId),
+          channelType: shortcutChannelType,
           channelId: shortcutChannelId || null,
           threadTs: shortcutThreadTs,
         }),
@@ -396,15 +418,25 @@ export class SlackAgentService {
   }
 
   private async dispatchQueuedInteraction(payload: Record<string, unknown>, jobId: string): Promise<void> {
-    if (payload.type !== "view_submission") return;
     const teamId = nestedString(payload, "team", "id");
     const slackUserId = nestedString(payload, "user", "id");
-    const view = asRecord(payload.view);
     if (!teamId || !slackUserId) throw new ApiError(422, "slack_interaction_invalid", "Slack interaction identity is missing");
+    if (payload.type === "block_actions") {
+      const action = Array.isArray(payload.actions) && payload.actions[0] && typeof payload.actions[0] === "object"
+        ? payload.actions[0] as Record<string, unknown>
+        : null;
+      if (action?.action_id === "avalon_claim_workstream" && typeof action.value === "string") {
+        await this.handleWorkspaceClaim(teamId, slackUserId, action.value);
+      }
+      return;
+    }
+    if (payload.type !== "view_submission") return;
+    const view = asRecord(payload.view);
     if (view.callback_id === "avalon_start_task_submit") {
       const prompt = modalPrompt(view.state);
       if (!prompt) throw new ApiError(422, "slack_prompt_missing", "The Slack task prompt is missing");
       const source = modalPromptSource(view.private_metadata);
+      if (!source) throw new ApiError(422, "slack_modal_context_invalid", "The Slack task context is invalid");
       await this.startFromPrompt(
         teamId,
         slackUserId,
@@ -725,8 +757,9 @@ export class SlackAgentService {
             thread_ts: session.slack_thread_ts,
             client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:claim-notice`),
             text: openElicitation?.target_user_id
-              ? "This task needs input from a specific Avalon workspace member. I sent the initiating Slack member a private connection link; the targeted member must connect and reply here to continue it."
-              : "This task needs personal Avalon authority. I sent the initiating member a private connection link; any connected Avalon workspace member can reply here to claim and continue it.",
+              ? "This task needs input from a specific Avalon workspace member. The targeted member must connect, explicitly claim the task, and then reply here."
+              : "This task needs personal Avalon authority. A connected Avalon workspace member can explicitly claim it, then reply here to continue.",
+            blocks: workspaceClaimBlocks(session.id, false),
           }, AbortSignal.timeout(10_000));
         }
       }
@@ -891,7 +924,11 @@ export class SlackAgentService {
     const activeContext = event.app_context ?? event.context;
     if (activeContext) await this.storeActiveContext(teamId, slackUserId, activeContext);
     const effectivePrompt = await this.augmentPromptWithSlackContext(teamId, slackUserId, event, prompt);
-    const channelType = slackChannelType(event.channel_type ?? channelId);
+    const channelType = await resolveSlackChannelType(
+      await this.botToken(await this.connectionForTeam(teamId)),
+      channelId,
+      event.channel_type,
+    );
     await this.startFromPrompt(
       teamId,
       slackUserId,
@@ -996,8 +1033,10 @@ export class SlackAgentService {
     if (session && session.workstream_id) {
       const justCreated = session.opening_client_message_id === openingClientMessageId;
       if (justCreated && !sessionCreatedThisCall) return;
+      const openElicitation = justCreated
+        ? null
+        : await this.openElicitationTarget(session.workstream_id);
       if (!justCreated) {
-        const openElicitation = await this.openElicitationTarget(session.workstream_id);
         if (openElicitation?.targetUserId
           && openElicitation.targetUserId !== identity?.auth.userId) {
           if (!identity) await this.sendPrivateClaimLink(connection, slackUserId, token);
@@ -1011,7 +1050,32 @@ export class SlackAgentService {
           return;
         }
       }
-      if (!justCreated && identity) {
+      if (!justCreated && session.execution_scope === "workspace") {
+        if (openElicitation?.targetUserId) {
+          await slackApi(token, "chat.postMessage", {
+            channel,
+            thread_ts: thread,
+            text: identity
+              ? "This question requires the targeted Avalon member’s personal authority. Use the claim button before replying."
+              : "This question requires the targeted Avalon member’s personal authority. Connect your Avalon account, then use the claim button before replying.",
+            blocks: workspaceClaimBlocks(session.id, identity === null),
+          }, AbortSignal.timeout(5_000));
+          if (!identity) await this.sendPrivateClaimLink(connection, slackUserId, token);
+          return;
+        }
+        const externalIdentity = actor
+          ? { actor }
+          : await this.externalSlackActor(token, connection.workspace_id, teamId, slackUserId);
+        const workspaceService = new SlackWorkspaceWorkstreamService(this.env, connection.workspace_id);
+        const externalInput = {
+          actor: externalIdentity.actor,
+          text: prompt,
+          clientMessageId: clientMessageId.slice(0, 120),
+        };
+        if (!await workspaceService.answerOpenElicitation(session.workstream_id, externalInput)) {
+          await workspaceService.createMessage(session.workstream_id, externalInput);
+        }
+      } else if (!justCreated && identity) {
         if (session.execution_scope === "user" && session.linked_user_id !== identity.auth.userId) {
           await slackApi(token, "chat.postMessage", {
             channel,
@@ -1019,33 +1083,6 @@ export class SlackAgentService {
             text: "This thread is already running with another Avalon member’s personal authority. Start a new Avalon task to keep identities and connected accounts separate.",
           }, AbortSignal.timeout(5_000));
           return;
-        }
-        if (session.execution_scope === "workspace") {
-          const at = nowIso();
-          await this.env.DB.batch([
-            this.env.DB.prepare(
-              `UPDATE slack_agent_sessions SET execution_scope = 'user', linked_user_id = ?,
-                 assigned_user_id = ?, assigned_at = ?, assignment_method = 'explicit_link',
-                 claimed_by_slack_user_id = ?, claimed_at = ?, updated_at = ? WHERE id = ?`,
-            ).bind(identity.auth.userId, identity.auth.userId, at, slackUserId, at, at, session.id),
-            this.env.DB.prepare(
-              `INSERT INTO audit_events
-               (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
-                target_type, target_id, metadata_json, created_at)
-               VALUES (?, ?, 'user', ?, ?, 'slack.workspace_workstream.claimed',
-                       'slack_agent_session', ?, ?, ?)`,
-            ).bind(
-              newId(),
-              identity.auth.workspaceId,
-              identity.auth.userId,
-              session.workstream_id,
-              session.id,
-              JSON.stringify({ slackTeamId: teamId, slackUserId }),
-              at,
-            ),
-          ]);
-          session.execution_scope = "user";
-          session.linked_user_id = identity.auth.userId;
         }
         const service = new WorkstreamService(this.env, identity.auth);
         if (!await this.answerOpenElicitationAsUser(
@@ -1071,15 +1108,7 @@ export class SlackAgentService {
           }, AbortSignal.timeout(5_000));
           return;
         }
-        const workspaceService = new SlackWorkspaceWorkstreamService(this.env, connection.workspace_id);
-        const externalInput = {
-          actor: ExternalActorSchema.parse(actor),
-          text: prompt,
-          clientMessageId: clientMessageId.slice(0, 120),
-        };
-        if (!await workspaceService.answerOpenElicitation(session.workstream_id, externalInput)) {
-          await workspaceService.createMessage(session.workstream_id, externalInput);
-        }
+        throw new ApiError(500, "slack_workspace_actor_missing", "The Slack workspace actor is missing");
       }
     }
     if (session && !session.slack_stream_ts) {
@@ -1215,6 +1244,51 @@ export class SlackAgentService {
     return true;
   }
 
+  private async handleWorkspaceClaim(
+    teamId: string,
+    slackUserId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const connection = await this.connectionForTeam(teamId);
+    const token = await this.botToken(connection);
+    const session = await this.env.DB.prepare(
+      `SELECT * FROM slack_agent_sessions
+       WHERE id = ? AND connection_id = ? AND workspace_id = ? AND slack_team_id = ?`,
+    ).bind(sessionId, connection.id, connection.workspace_id, teamId).first<SlackSessionRow>();
+    if (!session) throw new ApiError(404, "slack_session_not_found", "This Slack task is no longer available");
+    const identity = await this.linkedIdentity(teamId, slackUserId);
+    if (!identity) {
+      await this.sendPrivateClaimLink(connection, slackUserId, token);
+      return;
+    }
+    let status: "claimed" | "already_claimed";
+    try {
+      status = await claimWorkspaceSession(this.env, identity, session);
+    } catch (error) {
+      if (!(error instanceof ApiError)
+        || (error.code !== "slack_claim_target_mismatch" && error.code !== "slack_claim_conflict")) {
+        throw error;
+      }
+      await slackApi(token, "chat.postMessage", {
+        channel: session.slack_channel_id,
+        thread_ts: session.slack_thread_ts,
+        client_msg_id: await stableUuid(`${session.id}:${identity.auth.userId}:claim-denied`),
+        text: error.code === "slack_claim_target_mismatch"
+          ? "This question is targeted to another Avalon workspace member, so only that member can claim it."
+          : "Another Avalon member already claimed this task.",
+      }, AbortSignal.timeout(5_000));
+      return;
+    }
+    await slackApi(token, "chat.postMessage", {
+      channel: session.slack_channel_id,
+      thread_ts: session.slack_thread_ts,
+      client_msg_id: await stableUuid(`${session.id}:${identity.auth.userId}:claimed`),
+      text: status === "claimed"
+        ? "This task is now using your Avalon authority for future work. Reply with the requested input to continue."
+        : "You already claimed this task. Reply with the requested input to continue.",
+    }, AbortSignal.timeout(5_000));
+  }
+
   private async openElicitationTarget(
     workstreamId: string,
   ): Promise<{ id: string; targetUserId: string | null } | null> {
@@ -1260,7 +1334,9 @@ export class SlackAgentService {
       if (policy.private_channel_mode === "disabled") return false;
       return this.channelAllowlisted(connectionId, source.channelId, "private");
     }
-    return source.kind === "shortcut" ? policy.allow_shortcuts === 1 : false;
+    return source.kind === "shortcut" && source.channelId === null
+      ? policy.allow_shortcuts === 1
+      : false;
   }
 
   private async channelAllowlisted(
@@ -1601,6 +1677,93 @@ export class SlackAgentService {
 
 }
 
+async function claimWorkspaceSession(
+  env: Env,
+  identity: SlackIdentity,
+  session: SlackSessionRow,
+): Promise<"claimed" | "already_claimed"> {
+  if (session.workspace_id !== identity.auth.workspaceId
+    || session.connection_id !== identity.connection.id
+    || session.slack_team_id !== identity.teamId) {
+    throw new ApiError(403, "slack_claim_workspace_mismatch", "This Slack task belongs to another Avalon workspace");
+  }
+  if (session.execution_scope === "user") {
+    if (session.linked_user_id === identity.auth.userId) return "already_claimed";
+    throw new ApiError(409, "slack_claim_conflict", "Another Avalon member already claimed this task");
+  }
+  const at = nowIso();
+  const auditId = await stableUuid(`slack-claim:${session.id}:${identity.auth.userId}`);
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE slack_agent_sessions
+       SET execution_scope = 'user', linked_user_id = ?, assigned_user_id = ?,
+           assigned_at = ?, assignment_method = 'explicit_link',
+           claimed_by_slack_user_id = ?, claimed_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND connection_id = ? AND execution_scope = 'workspace'
+         AND NOT EXISTS (
+           SELECT 1 FROM elicitations e
+           WHERE e.workstream_id = slack_agent_sessions.workstream_id
+             AND e.status = 'open' AND e.target_user_id IS NOT NULL
+             AND e.target_user_id <> ?
+         )`,
+    ).bind(
+      identity.auth.userId,
+      identity.auth.userId,
+      at,
+      identity.slackUserId,
+      at,
+      at,
+      session.id,
+      identity.auth.workspaceId,
+      identity.connection.id,
+      identity.auth.userId,
+    ),
+    env.DB.prepare(
+      `INSERT INTO workstream_participants
+       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+       SELECT workstream_id, ?, ?, 'explicit', ?, NULL
+       FROM slack_agent_sessions
+       WHERE id = ? AND linked_user_id = ? AND claimed_at = ?
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         removed_at = NULL,
+         joined_at = COALESCE(workstream_participants.joined_at, excluded.joined_at)`,
+    ).bind(identity.auth.userId, identity.auth.userId, at, session.id, identity.auth.userId, at),
+    env.DB.prepare(
+      `INSERT INTO audit_events
+       (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
+        target_type, target_id, metadata_json, created_at)
+       SELECT ?, workspace_id, 'user', ?, workstream_id,
+              'slack.workspace_workstream.claimed', 'slack_agent_session', id, ?, ?
+       FROM slack_agent_sessions
+       WHERE id = ? AND linked_user_id = ? AND claimed_at = ?
+       ON CONFLICT(id) DO NOTHING`,
+    ).bind(
+      auditId,
+      identity.auth.userId,
+      JSON.stringify({
+        slackTeamId: identity.teamId,
+        slackUserId: identity.slackUserId,
+        explicit: true,
+      }),
+      at,
+      session.id,
+      identity.auth.userId,
+      at,
+    ),
+  ]);
+  if (Number(results[0]?.meta.changes ?? 0) === 1) return "claimed";
+  const current = await env.DB.prepare(
+    "SELECT execution_scope, linked_user_id FROM slack_agent_sessions WHERE id = ?",
+  ).bind(session.id).first<{ execution_scope: "workspace" | "user"; linked_user_id: string | null }>();
+  if (current?.execution_scope === "user" && current.linked_user_id === identity.auth.userId) {
+    return "already_claimed";
+  }
+  if (current?.execution_scope === "workspace") {
+    throw new ApiError(403, "slack_claim_target_mismatch", "This question is targeted to another Avalon member");
+  }
+  throw new ApiError(409, "slack_claim_conflict", "Another Avalon member already claimed this task");
+}
+
 const SlackResponseMessageSchema = z.object({
   response_type: z.enum(["ephemeral", "in_channel"]),
   replace_original: z.boolean(),
@@ -1663,21 +1826,44 @@ function splitSlackText(value: string, maximum: number): string[] {
 
 function slackChannelType(value: unknown): SlackPromptSource["channelType"] {
   if (typeof value !== "string") return "unknown";
-  if (value === "channel" || value === "public_channel" || value === "public" || value.startsWith("C")) return "public";
-  if (value === "group" || value === "private_channel" || value === "private" || value === "privategroup" || value === "mpim" || value.startsWith("G")) return "private";
+  if (value === "channel" || value === "public_channel" || value === "public") return "public";
+  if (value === "group" || value === "private_channel" || value === "private" || value === "privategroup" || value === "mpim") return "private";
   if (value === "im" || value === "directmessage" || value.startsWith("D")) return "im";
   return "unknown";
 }
 
-function modalPromptSource(value: unknown): SlackPromptSource {
+async function resolveSlackChannelType(
+  token: string,
+  channelId: string,
+  hint: unknown,
+): Promise<SlackPromptSource["channelType"]> {
+  const hinted = slackChannelType(hint);
+  if (hinted === "im" || channelId.startsWith("D")) return "im";
+  try {
+    const result = await slackApi(token, "conversations.info", {
+      channel: channelId,
+    }, AbortSignal.timeout(5_000));
+    if (result.channel.is_im === true) return "im";
+    if (result.channel.is_mpim === true || result.channel.is_private) return "private";
+    return "public";
+  } catch (error) {
+    console.warn("Slack conversation privacy lookup failed closed", {
+      channel_id: channelId,
+      reason: slackErrorReason(error),
+    });
+    return "unknown";
+  }
+}
+
+function modalPromptSource(value: unknown): SlackPromptSource | null {
   if (typeof value === "string" && value) {
     try {
       return SlackModalContextSchema.parse(JSON.parse(value));
     } catch {
-      // Older modals did not include source metadata and safely fall back to DM.
+      return null;
     }
   }
-  return { kind: "shortcut", channelType: "unknown", channelId: null, threadTs: null };
+  return null;
 }
 
 function slackTaskTitle(prompt: string): string {
@@ -1833,6 +2019,24 @@ function responseActionBlocks(workstreamId: string, webBase: string, linked: boo
   ] }];
 }
 
+function workspaceClaimBlocks(sessionId: string, includeConnectHint: boolean): Record<string, unknown>[] {
+  return [
+    ...(includeConnectHint
+      ? [{ type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account before claiming this task." } }]
+      : []),
+    {
+      type: "actions",
+      elements: [{
+        type: "button",
+        style: "primary",
+        text: { type: "plain_text", text: "Claim with my Avalon account" },
+        action_id: "avalon_claim_workstream",
+        value: sessionId,
+      }],
+    },
+  ];
+}
+
 function automationActionBlocks(title: string, workstreamId: string, webBase: string): Record<string, unknown>[] {
   return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_automation_result" }] }];
 }
@@ -1902,3 +2106,10 @@ function safeJson(value: unknown): string {
 function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
+
+export const __slackAgentTesting = {
+  claimWorkspaceSession,
+  modalPromptSource,
+  resolveSlackChannelType,
+  slackChannelType,
+};
