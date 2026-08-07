@@ -138,7 +138,7 @@ The **Avalon Google Connectors** client owns the Gmail, Calendar, Drive, Docs, a
 - Global connector: `https://api.with-avalon.com/connections/google/callback`
 - EU connector: `https://eu.api.with-avalon.com/connections/google/callback`
 
-`https://with-avalon.com/auth/desktop/` is Avalon's browser handoff and `avalon://auth/complete` is the allowlisted desktop return URI; neither belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
+`https://with-avalon.com/auth/desktop/` is Avalon's browser handoff for login and connector outcomes, and `avalon://auth/complete` is the allowlisted desktop return URI. Provider codes always terminate at a regional API callback first; neither handoff URI belongs in Google's authorized redirect URI list. Identity login requests only `openid`, `email`, and `profile`.
 
 Store the Login client as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the Global Worker. Store the connector client as `GOOGLE_CONNECTOR_OAUTH_CLIENT_ID` / `GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET` on both regional Workers. The connector runtime deliberately has no fallback to the login credentials.
 
@@ -151,7 +151,7 @@ The exact Google scope URLs are listed in `docs/PROVIDER_APPS.md`. Google may re
 
 Google connector ingestion currently polls Gmail history, Calendar sync/completion cursors, and Drive changes. Drive change-token polling is also the change source for Docs and Sheets. Do not configure or claim Gmail Pub/Sub watch delivery, Calendar notification channels, Drive push notifications, or any Google webhook; none is implemented.
 
-The hosted Global identity callback must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so it can redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
+Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://with-avalon.com` so identity and connector callbacks redirect through `/auth/desktop/` before opening the custom protocol. The Global Worker must bind `EU_IDENTITY_BRIDGE` to the EU Worker's named `RegionalIdentityBridge` entrypoint and set `EU_PUBLIC_API_BASE_URL=https://eu.api.with-avalon.com`; do not expose an equivalent public route. Keep `ALLOWED_ORIGINS` exact: hosted Electron uses `app://avalon`; local Vite development uses its explicit `http://localhost:<port>` origin. Do not add wildcard, prefix, or suffix patterns.
 
 ## Realtime operations and cost controls
 

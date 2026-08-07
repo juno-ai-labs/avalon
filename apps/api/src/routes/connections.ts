@@ -1,13 +1,17 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   CreateWebhookConnectionRequestSchema,
   IdSchema,
   ScopeSchema,
 } from "@avalon/contracts";
+import type { ConnectorOAuthProvider } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
+import { ApiError } from "../lib/api-error";
+import { desktopHandoffUrl } from "../lib/desktop-handoff";
+import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
 import {
   GitHubRoutingService,
@@ -21,6 +25,7 @@ import {
 import { SlackAgentService } from "../services/slack-agent-service";
 
 const idParam = z.object({ id: IdSchema });
+const oauthAttemptParam = z.object({ attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u) });
 const googleStart = z.object({
   scope: ScopeSchema,
   capabilities: z.array(z.enum([
@@ -120,6 +125,9 @@ connectionRoutes.post("/slack/link/preview", zValidator("json", slackLink), asyn
 connectionRoutes.post("/slack/link", zValidator("json", slackLink), async (c) =>
   c.json(await new SlackAgentService(c.env).linkUser(getAuth(c), c.req.valid("json").token)),
 );
+connectionRoutes.get("/oauth-attempts/:attemptId", zValidator("param", oauthAttemptParam), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).getOAuthAttempt(c.req.valid("param").attemptId)),
+);
 connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).reconnect(c.req.valid("param").id)),
 );
@@ -135,41 +143,76 @@ connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequ
 );
 
 export const connectionCallbackRoutes = new Hono<HonoAppEnv>();
+
+type CallbackContext = Context<HonoAppEnv>;
+
+async function connectorCallback(
+  c: CallbackContext,
+  provider: ConnectorOAuthProvider,
+  query: z.infer<typeof googleCallback>,
+  complete: (service: ConnectionService, code: string, state: string) => Promise<string>,
+): Promise<Response> {
+  const service = new ConnectionService(c.env);
+  c.header("Cache-Control", "no-store");
+  try {
+    const target = query.error
+      ? await service.completeProviderDenial(provider, query.state)
+      : await complete(service, query.code!, query.state);
+    return c.redirect(desktopHandoffUrl(c.env, target), 302);
+  } catch (error) {
+    const errorCode = error instanceof ApiError ? error.code : "connector_oauth_failed";
+    logEvent(c, error instanceof ApiError ? "warn" : "error", "connector_oauth_callback_failed", {
+      provider,
+      code: errorCode,
+    });
+    const target = await service.failProviderAttempt(provider, query.state, errorCode);
+    return c.redirect(desktopHandoffUrl(c.env, target), 302);
+  }
+}
+
 connectionCallbackRoutes.get("/github/setup", zValidator("query", githubSetup), async (c) => {
   const query = c.req.valid("query");
-  if (isSharedGitHubIngress(c.env, c.req.url)) {
-    return c.redirect(
-      await new GitHubRoutingService(c.env).setupGitHub(query.installation_id, query.state),
-      302,
-    );
+  const sharedIngress = isSharedGitHubIngress(c.env, c.req.url);
+  c.header("Cache-Control", "no-store");
+  try {
+    if (sharedIngress) {
+      return c.redirect(
+        await new GitHubRoutingService(c.env).setupGitHub(query.installation_id, query.state),
+        302,
+      );
+    }
+    const setup = await new ConnectionService(c.env).setupGitHub(query.installation_id, query.state);
+    return c.redirect(setup.url, 302);
+  } catch (error) {
+    const errorCode = error instanceof ApiError ? error.code : "github_setup_failed";
+    logEvent(c, error instanceof ApiError ? "warn" : "error", "github_oauth_setup_failed", {
+      code: errorCode,
+    });
+    const target = sharedIngress
+      ? await new GitHubRoutingService(c.env).failGitHubSetup(query.state, errorCode)
+      : await new ConnectionService(c.env).failProviderAttempt("github", query.state, errorCode);
+    return c.redirect(desktopHandoffUrl(c.env, target), 302);
   }
-  const setup = await new ConnectionService(c.env).setupGitHub(query.installation_id, query.state);
-  return c.redirect(setup.url, 302);
 });
 connectionCallbackRoutes.get("/github/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  if (query.error) return c.text("GitHub connection was not authorized", 401);
-  return c.redirect(await new ConnectionService(c.env).completeGitHub(query.code!, query.state), 302);
+  return connectorCallback(c, "github", query, (service, code, state) => service.completeGitHub(code, state));
 });
 connectionCallbackRoutes.get("/google/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  if (query.error) return c.text("Google connection was not authorized", 401);
-  return c.redirect(await new ConnectionService(c.env).completeGoogle(query.code!, query.state), 302);
+  return connectorCallback(c, "google", query, (service, code, state) => service.completeGoogle(code, state));
 });
 connectionCallbackRoutes.get("/linear/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  if (query.error) return c.text("Linear connection was not authorized", 401);
-  return c.redirect(await new ConnectionService(c.env).completeProvider("linear", query.code!, query.state), 302);
+  return connectorCallback(c, "linear", query, (service, code, state) => service.completeProvider("linear", code, state));
 });
 connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  if (query.error) return c.text("Notion connection was not authorized", 401);
-  return c.redirect(await new ConnectionService(c.env).completeProvider("notion", query.code!, query.state), 302);
+  return connectorCallback(c, "notion", query, (service, code, state) => service.completeProvider("notion", code, state));
 });
 connectionCallbackRoutes.get("/slack/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  if (query.error) return c.text("Slack connection was not authorized", 401);
-  return c.redirect(await new ConnectionService(c.env).completeProvider("slack", query.code!, query.state), 302);
+  return connectorCallback(c, "slack", query, (service, code, state) => service.completeProvider("slack", code, state));
 });
 
 export const webhookIngestionRoutes = new Hono<HonoAppEnv>();
