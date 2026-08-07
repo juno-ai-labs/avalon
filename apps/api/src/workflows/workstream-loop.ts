@@ -16,6 +16,11 @@ import {
   type AttemptLease,
 } from "../runtime/harness-run-runtime";
 import { runWorkstreamHarness } from "../services/integrations";
+import {
+  hyperSightBlockRunFromRow,
+  publishHyperSightRun,
+  type HyperSightBlockRunRow,
+} from "../services/hypersight-service";
 import { SlackAgentService } from "../services/slack-agent-service";
 
 const HarnessWorkflowOutcomeSchema = z.object({
@@ -62,6 +67,41 @@ function terminalSlackText(outcome: HarnessWorkflowOutcome): string {
   return "Avalon completed the task without a text response.";
 }
 
+async function updateHyperSightRun(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  status: HyperSightBlockRunRow["status"],
+  error?: { code: string; message: string },
+): Promise<void> {
+  const at = new Date().toISOString();
+  await env.DB.prepare(
+    `UPDATE hypersight_block_runs
+        SET status = ?,
+            started_at = CASE WHEN ? = 'running' THEN COALESCE(started_at, ?) ELSE started_at END,
+            completed_at = CASE WHEN ? IN ('completed', 'failed', 'stopped') THEN COALESCE(completed_at, ?) ELSE completed_at END,
+            error_json = CASE WHEN ? IS NULL THEN error_json ELSE ? END
+      WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?
+        AND status NOT IN ('completed', 'failed', 'stopped')`,
+  ).bind(
+    status,
+    status,
+    at,
+    status,
+    at,
+    error ? JSON.stringify(error) : null,
+    error ? JSON.stringify(error) : null,
+    input.harnessRunId,
+    input.workspaceId,
+    input.workstreamId,
+  ).run();
+  const row = await env.DB.prepare(
+    `SELECT id, block_id, configuration_version_id, status, markdown, error_json, created_at, started_at, completed_at
+       FROM hypersight_block_runs
+      WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
+  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<HyperSightBlockRunRow>();
+  if (row) await publishHyperSightRun(env, input.workspaceId, input.workstreamId, hyperSightBlockRunFromRow(row));
+}
+
 /** Static workflow definition used by every ad-hoc and automated harness run. */
 export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWorkflowInput> {
   override async run(
@@ -70,6 +110,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
   ): Promise<HarnessWorkflowOutcome> {
     const input = WorkstreamWorkflowInputSchema.parse(event.payload);
     if (input.region !== this.env.AVALON_REGION) throw new Error("workflow_region_mismatch");
+    const hyperSightRun = input.reason === "hypersight_block";
 
     const identity = await step.do("create-durable-attempt-identity", async (): Promise<AttemptIdentity> => {
       const attemptId = crypto.randomUUID();
@@ -103,6 +144,12 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
             "stopped",
           );
         });
+        if (hyperSightRun) {
+          await step.do("publish-hypersight-cancelled-before-start", async () => {
+            await updateHyperSightRun(this.env, input, "stopped");
+          });
+          return outcome;
+        }
         await step.do("deliver-slack-cancelled-before-start", SlackDeliveryRetryConfig, async () => {
           await this.deliverSlackDurably(input, outcome);
         });
@@ -122,13 +169,25 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       await step.do("terminalize-queued-admission-timeout", async () => {
         await terminalizeQueuedHarnessRun(this.env.DB, input, identity, outcome.error!);
       });
+      if (hyperSightRun) {
+        await step.do("publish-hypersight-admission-timeout", async () => {
+          await updateHyperSightRun(this.env, input, "failed", outcome.error);
+        });
+        return outcome;
+      }
       await step.do("deliver-slack-admission-timeout", SlackDeliveryRetryConfig, async () => {
         await this.deliverSlackDurably(input, outcome);
       });
       return outcome;
     }
 
-    await this.publishBestEffort(input, { type: "harness_status_changed", status: "running" });
+    if (hyperSightRun) {
+      await step.do("publish-hypersight-running", async () => {
+        await updateHyperSightRun(this.env, input, "running");
+      });
+    } else {
+      await this.publishBestEffort(input, { type: "harness_status_changed", status: "running" });
+    }
 
     let outcome: HarnessWorkflowOutcome;
     try {
@@ -167,8 +226,22 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           ? { code: effectiveOutcome.error.code }
           : {},
       });
-      await this.finalizeAutomation(input, effectiveOutcome, lease!);
+      if (!hyperSightRun) await this.finalizeAutomation(input, effectiveOutcome, lease!);
     });
+
+    if (hyperSightRun) {
+      await step.do("publish-hypersight-terminal", async () => {
+        await updateHyperSightRun(
+          this.env,
+          input,
+          effectiveOutcome.status === "completed"
+            ? "completed"
+            : effectiveOutcome.status === "stopped" ? "stopped" : "failed",
+          effectiveOutcome.error,
+        );
+      });
+      return effectiveOutcome;
+    }
 
     if (effectiveOutcome.messageId) {
       await this.publishPersistedFinalBestEffort(input, effectiveOutcome.messageId);

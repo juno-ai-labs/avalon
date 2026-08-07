@@ -23,7 +23,7 @@ import {
   removeTranscriptMessage,
   upsertTranscriptMessage,
 } from './transcript';
-import type { Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -334,7 +334,12 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   };
 }
 
-export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string, enabled: boolean): SocketState {
+export function useWorkstreamSocket(
+  api: AvalonApi | null,
+  workstreamId: string,
+  enabled: boolean,
+  currentUserId?: string,
+): SocketState {
   const queryClient = useQueryClient();
   const [state, setState] = useState<SocketState>('idle');
   const lastSequence = useRef(0);
@@ -552,6 +557,25 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           createdAt: event.suggestion.createdAt,
           activitySuggestion: mapSuggestion(event.suggestion),
         }));
+      } else if (event.type === 'hypersight_preference_updated') {
+        if (event.userId === currentUserId) {
+          queryClient.setQueryData<HyperSightPreference>(
+            ['hypersight-preference', workstreamId],
+            event.preference,
+          );
+        }
+      } else if (event.type === 'hypersight_configuration_updated') {
+        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);
+      } else if (event.type === 'hypersight_block_run_updated') {
+        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
+          if (!current || current.versionId !== event.run.configurationVersionId) return current;
+          return {
+            ...current,
+            blocks: current.blocks.map((block) => block.id === event.run.blockId
+              ? { ...block, latestRun: event.run }
+              : block),
+          };
+        });
       }
     };
 
@@ -743,7 +767,7 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
       clearStabilityTimer();
       socket?.close();
     };
-  }, [api, enabled, queryClient, workstreamId]);
+  }, [api, currentUserId, enabled, queryClient, workstreamId]);
 
   return state;
 }

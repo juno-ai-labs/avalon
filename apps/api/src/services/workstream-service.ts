@@ -80,6 +80,7 @@ const WORKSTREAM_HARNESS_TASKS_SQL = `SELECT hr.*,
     ON m.workstream_id = hr.workstream_id
    AND m.client_message_id = ('harness:' || hr.id)
   WHERE hr.workspace_id = ? AND hr.workstream_id = ?
+    AND hr.origin != 'hypersight_block'
   ORDER BY COALESCE(hr.started_at, hr.created_at) DESC
   LIMIT 250`;
 
@@ -87,6 +88,7 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   FROM tool_invocations ti
   JOIN harness_runs hr ON hr.id = ti.harness_run_id
   WHERE ti.workspace_id = ? AND ti.workstream_id = ?
+    AND hr.origin != 'hypersight_block'
   ORDER BY COALESCE(ti.started_at, hr.created_at) DESC
   LIMIT 500`;
 
@@ -302,6 +304,7 @@ export class WorkstreamService {
          FROM harness_runs
          WHERE workspace_id = ? AND workstream_id = ?
            AND parent_tool_call_id IS NULL
+           AND origin != 'hypersight_block'
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
     ]);
@@ -784,6 +787,7 @@ export class WorkstreamService {
       `SELECT status FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
+         AND origin != 'hypersight_block'
        ORDER BY created_at DESC LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<{ status: string }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {

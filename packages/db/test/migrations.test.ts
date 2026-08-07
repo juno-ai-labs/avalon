@@ -22,6 +22,81 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("stores HyperSight configuration as immutable append-only versions", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-hypersight', 'google-hypersight', 'hypersight@example.com',
+         'HyperSight Owner', '2026-01-01', '2026-01-01'),
+        ('user-hypersight-two', 'google-hypersight-two', 'hypersight-two@example.com',
+         'HyperSight Member', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-hypersight', 'HyperSight', 'hypersight', 'global',
+              'user-hypersight', '2026-01-01', '2026-01-01');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-hypersight', 'workspace-hypersight', 'Shared dashboard',
+              'Test append-only configuration', 'ad_hoc', 'user-hypersight', 'idle',
+              '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO hypersight_configuration_versions
+        (id, workspace_id, workstream_id, version_number, blocks_json,
+         created_by_user_id, created_at)
+      VALUES
+        ('hypersight-version-1', 'workspace-hypersight', 'workstream-hypersight', 1,
+         '[{"id":"block-1","prompt":"Summarize"}]', 'user-hypersight', '2026-01-01'),
+        ('hypersight-version-2', 'workspace-hypersight', 'workstream-hypersight', 2,
+         '[{"id":"block-1","prompt":"List five tasks"}]', 'user-hypersight', '2026-01-02');
+      INSERT INTO hypersight_user_preferences
+        (workspace_id, workstream_id, user_id, visible, updated_at)
+      VALUES
+        ('workspace-hypersight', 'workstream-hypersight', 'user-hypersight', 1, '2026-01-02'),
+        ('workspace-hypersight', 'workstream-hypersight', 'user-hypersight-two', 0, '2026-01-02');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json,
+         status, model, created_at)
+      VALUES ('hypersight-harness-1', 'workspace-hypersight', 'workstream-hypersight',
+              'hypersight_block', '{"type":"workspace","workspaceId":"workspace-hypersight"}',
+              'scheduled', 'x-ai/grok-4.3', '2026-01-02');
+      INSERT INTO hypersight_block_runs
+        (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
+         trigger_sequence, harness_run_id, status, created_at)
+      VALUES ('hypersight-run-1', 'workspace-hypersight', 'workstream-hypersight',
+              'hypersight-version-2', 'block-1', 'List five tasks', 7,
+              'hypersight-harness-1', 'queued', '2026-01-02');
+    `);
+
+    expect(database.prepare(
+      `SELECT version_number, blocks_json FROM hypersight_configuration_versions
+       WHERE workstream_id = 'workstream-hypersight' ORDER BY version_number`,
+    ).all()).toEqual([
+      { version_number: 1, blocks_json: '[{"id":"block-1","prompt":"Summarize"}]' },
+      { version_number: 2, blocks_json: '[{"id":"block-1","prompt":"List five tasks"}]' },
+    ]);
+    expect(() => database.exec(
+      "UPDATE hypersight_configuration_versions SET blocks_json = '[]' WHERE id = 'hypersight-version-1'",
+    )).toThrow(/hypersight_configuration_version_immutable/u);
+    expect(() => database.exec(`
+      INSERT INTO hypersight_configuration_versions
+        (id, workspace_id, workstream_id, version_number, blocks_json,
+         created_by_user_id, created_at)
+      VALUES ('hypersight-version-duplicate', 'workspace-hypersight', 'workstream-hypersight',
+              2, '[]', 'user-hypersight', '2026-01-03');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    expect(database.prepare(
+      `SELECT user_id, visible FROM hypersight_user_preferences
+       WHERE workstream_id = 'workstream-hypersight' ORDER BY user_id`,
+    ).all()).toEqual([
+      { user_id: 'user-hypersight', visible: 1 },
+      { user_id: 'user-hypersight-two', visible: 0 },
+    ]);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("accepts X connections after the connector constraint migration", () => {
     const database = migrateDatabaseThrough("0040_realtime_transcription_admission.sql");
     database.exec(`
