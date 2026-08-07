@@ -6,6 +6,7 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
+import type { ApplicationIconId, DesktopApplicationIconState } from '../common/application-icons';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 
@@ -42,6 +43,15 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
 
 const bridge: AvalonDesktopBridge = {
   getRuntimeConfig: () => ipcRenderer.invoke('runtime:get-config') as Promise<RuntimeConfig>,
+  getApplicationIcon: () => ipcRenderer.invoke('application-icon:get') as Promise<DesktopApplicationIconState>,
+  setApplicationIcon: (iconId: ApplicationIconId) =>
+    ipcRenderer.invoke('application-icon:set', iconId) as Promise<DesktopApplicationIconState>,
+  resetApplicationIcon: () => ipcRenderer.invoke('application-icon:reset') as Promise<DesktopApplicationIconState>,
+  onApplicationIconChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: DesktopApplicationIconState): void => listener(state);
+    ipcRenderer.on('application-icon:changed', handler);
+    return () => ipcRenderer.removeListener('application-icon:changed', handler);
+  },
   getSession: () => ipcRenderer.invoke('session:get') as Promise<DesktopSession | null>,
   createDesktopAuthAttempt: (input) => ipcRenderer.invoke('auth:create-desktop-attempt', input) as Promise<DesktopAuthAttempt>,
   cancelDesktopAuthAttempt: (attemptId) => ipcRenderer.invoke('auth:cancel-desktop-attempt', attemptId) as Promise<void>,
