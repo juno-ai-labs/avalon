@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "assets" / "brand" / "avalon-mark-source.png"
+APPLICATION_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "app-icons"
 PRIMARY = (206, 220, 0, 255)  # #CEDC00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
@@ -141,6 +142,10 @@ def main() -> None:
     save(transparent, ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "avalon-mark.png")
     save(transparent, ROOT / "apps" / "site" / "public" / "brand" / "avalon-mark.png")
     save(generic_icon, ROOT / "apps" / "desktop" / "resources" / "icon.png")
+    # User-selectable Dock artwork stays full-bleed. macOS owns the icon
+    # enclosure, masking, and platform effects when it renders the Dock tile.
+    save(app_icon(1024, LIGHT_CANVAS, DARK_CANVAS), APPLICATION_ICON_DIRECTORY / "light.png")
+    save(app_icon(1024, DARK_CANVAS, PRIMARY), APPLICATION_ICON_DIRECTORY / "dark.png")
     # Icon Composer recolors this transparent mark for each appearance and
     # lets macOS own the enclosure. The separate ICNS is only the DMG volume
     # icon, whose legacy format still requires a baked silhouette.
