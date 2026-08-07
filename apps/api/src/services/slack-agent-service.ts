@@ -1,4 +1,12 @@
-import { ConnectorError, parseSlackAgentInvocation, parseSlackEventEnvelope, slackApi, type SlackIngressEnvelope } from "@avalon/connectors";
+import {
+  ConnectorError,
+  joinAllSlackPublicChannels,
+  joinSlackPublicChannel,
+  parseSlackAgentInvocation,
+  parseSlackEventEnvelope,
+  slackApi,
+  type SlackIngressEnvelope,
+} from "@avalon/connectors";
 import { ExternalActorSchema, SlackIngressQueueMessageSchema, type ExternalActor } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
@@ -115,6 +123,26 @@ const SlackAutomationTargetSchema = z.object({
 
 export class SlackAgentService {
   constructor(private readonly env: Env) {}
+
+  /** Durably schedule a full public-channel join after install or reconnect. */
+  async schedulePublicChannelSync(connectionId: string): Promise<void> {
+    const connection = await this.connectionById(connectionId);
+    const eventId = `avalon-channel-sync:${crypto.randomUUID()}`;
+    const envelope: SlackIngressEnvelope = {
+      type: "event_callback",
+      team_id: connection.provider_account_id,
+      ...(this.env.SLACK_APP_ID ? { api_app_id: this.env.SLACK_APP_ID } : {}),
+      event_id: eventId,
+      event: { type: "avalon_public_channel_sync" },
+    };
+    await this.enqueueIngressJob({
+      id: `event:${eventId}`,
+      teamId: connection.provider_account_id,
+      bodyHash: await sha256(JSON.stringify(envelope)),
+      kind: "event",
+      payload: envelope,
+    });
+  }
 
   async maintainIngress(limit = 100): Promise<void> {
     await this.prewarmWorkspaceCredentials();
@@ -854,6 +882,37 @@ export class SlackAgentService {
   private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope): Promise<void> {
     const event = envelope.event!;
     const type = String(event.type ?? "");
+    if (type === "avalon_public_channel_sync") {
+      const connection = await this.connectionForTeam(teamId);
+      const summary = await joinAllSlackPublicChannels(
+        await this.botToken(connection),
+        AbortSignal.timeout(4 * 60_000),
+      );
+      console.info("Slack public-channel sync completed", {
+        connection_id: connection.id,
+        team_id: teamId,
+        ...summary,
+      });
+      return;
+    }
+    if (type === "channel_created") {
+      const channelId = asRecord(event.channel).id;
+      if (typeof channelId !== "string" || !channelId) return;
+      const connection = await this.connectionForTeam(teamId);
+      const result = await joinSlackPublicChannel(
+        await this.botToken(connection),
+        channelId,
+        AbortSignal.timeout(10_000),
+      );
+      if (result === "skipped") {
+        console.warn("Slack public channel could not be auto-joined", {
+          connection_id: connection.id,
+          team_id: teamId,
+          channel_id: channelId,
+        });
+      }
+      return;
+    }
     if (type === "app_home_opened") {
       const userId = String(event.user ?? "");
       if (userId && event.context) await this.storeActiveContext(teamId, userId, event.context);
