@@ -138,15 +138,19 @@ for (const name of applicationIconNames) {
 const nativeIconScriptPath = join(resourcesDirectory, 'native/set-application-icon.js');
 if (!existsSync(nativeIconScriptPath)) throw new Error('Packaged app is missing its native application-icon bridge');
 
-function inspectEntitlementKeys(componentPath, label) {
+function inspectEntitlementKeys(componentPath, label, { allowEmpty = false } = {}) {
   const entitlementResult = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', componentPath], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (entitlementResult.status !== 0 || !entitlementResult.stdout?.trim()) {
+  if (entitlementResult.status !== 0) {
     throw new Error(
       `Could not inspect ${label} entitlements.\n${entitlementResult.stderr || entitlementResult.stdout}`.trim(),
     );
+  }
+  if (!entitlementResult.stdout?.trim()) {
+    if (allowEmpty) return [];
+    throw new Error(`${label} is missing its required entitlements`);
   }
   const plistResult = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', '-'], {
     encoding: 'utf8',
@@ -177,6 +181,11 @@ function verifyNestedComponent(componentPath, executablePath, label, { expectEnt
   assertDeveloperIdDetails(componentDetails, AVALON_APPLE_TEAM_ID, label);
   if (expectEntitlements) {
     assertExactNestedEntitlements(inspectEntitlementKeys(componentPath, label), label);
+  } else {
+    const entitlementKeys = inspectEntitlementKeys(componentPath, label, { allowEmpty: true });
+    if (entitlementKeys.length > 0) {
+      throw new Error(`${label} must not carry entitlements; found ${entitlementKeys.join(', ')}`);
+    }
   }
   verifyArm64(executablePath, label);
 }

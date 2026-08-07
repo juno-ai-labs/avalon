@@ -1174,7 +1174,8 @@ pre {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 70%, transparent);
 }
 
-.settings-app-icon-shelf > button:disabled { cursor: default; opacity: 1; }
+.settings-app-icon-shelf > button:disabled { cursor: not-allowed; opacity: .48; }
+.settings-app-icon-shelf[aria-busy='true'] > button:disabled { cursor: wait; opacity: 1; }
 .settings-app-icon-artwork { display: block; height: 60px; transform-origin: 50% 100%; width: 60px; }
 .settings-app-icon-artwork img {
   border-radius: 13px;

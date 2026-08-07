@@ -16,6 +16,7 @@ const contentsDirectory = join(outputBundle, 'Contents');
 const executableDirectory = join(contentsDirectory, 'MacOS');
 const resourcesDirectory = join(contentsDirectory, 'Resources');
 const executablePath = join(executableDirectory, 'AvalonDockTilePlugin');
+const smokeExecutablePath = join(desktopDirectory, '.native-build', 'AvalonDockTilePluginSmoke');
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {
   throw new Error('The Avalon Dock tile plugin must be built on arm64 macOS.');
@@ -47,5 +48,34 @@ await run('/usr/bin/xcrun', [
 ]);
 await run('/usr/bin/plutil', ['-lint', join(contentsDirectory, 'Info.plist')]);
 await run('/usr/bin/lipo', [executablePath, '-verify_arch', 'arm64']);
+
+try {
+  await run('/usr/bin/xcrun', [
+    '--sdk',
+    'macosx',
+    'clang',
+    '-arch',
+    'arm64',
+    '-fobjc-arc',
+    '-fblocks',
+    '-fmodules',
+    '-Wall',
+    '-Wextra',
+    '-Werror',
+    '-Winfinite-recursion',
+    '-mmacosx-version-min=13.0',
+    '-framework',
+    'AppKit',
+    '-framework',
+    'Foundation',
+    join(sourceDirectory, 'AvalonDockTilePlugin.m'),
+    join(sourceDirectory, 'AvalonDockTilePluginSmoke.m'),
+    '-o',
+    smokeExecutablePath,
+  ]);
+  await run(smokeExecutablePath, []);
+} finally {
+  await rm(smokeExecutablePath, { force: true });
+}
 
 console.log(`Built ${outputBundle}`);

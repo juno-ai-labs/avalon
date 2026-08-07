@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { applicationIconChoices } from '../common/application-icons';
 import {
   applicationIconPath,
+  applicationIconPreferenceDirectoryForLaunch,
   clearStoredApplicationIcon,
   parseStoredApplicationIcon,
   readStoredApplicationIcon,
@@ -17,6 +18,10 @@ const resourceDirectory = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '../../resources/app-icons',
 );
+const previewDirectory = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../renderer/assets/app-icons',
+);
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) =>
@@ -24,6 +29,27 @@ afterEach(async () => {
 });
 
 describe('application icon persistence', () => {
+  it('uses the Dock plugin directory for packaged launches but isolates smoke tests', () => {
+    expect(applicationIconPreferenceDirectoryForLaunch(
+      '/Users/test/Library/Application Support',
+      '/tmp/avalon-profile',
+      true,
+      false,
+    )).toBe('/Users/test/Library/Application Support/Avalon');
+    expect(applicationIconPreferenceDirectoryForLaunch(
+      '/Users/test/Library/Application Support',
+      '/tmp/avalon-profile',
+      true,
+      true,
+    )).toBe('/tmp/avalon-profile');
+    expect(applicationIconPreferenceDirectoryForLaunch(
+      '/Users/test/Library/Application Support',
+      '/tmp/avalon-development',
+      false,
+      false,
+    )).toBe('/tmp/avalon-development');
+  });
+
   it('accepts only the versioned allowlisted preference shape', () => {
     expect(parseStoredApplicationIcon({ version: 1, icon: 'blueprint' })).toBe('blueprint');
     expect(parseStoredApplicationIcon({ version: 2, icon: 'blueprint' })).toBeNull();
@@ -52,6 +78,15 @@ describe('application icon persistence', () => {
       expect(encoded.toString('ascii', 12, 16)).toBe('IHDR');
       expect(encoded.readUInt32BE(16)).toBe(1024);
       expect(encoded.readUInt32BE(20)).toBe(1024);
+    }
+  });
+
+  it('provides compact Retina previews for every selectable icon', async () => {
+    for (const choice of applicationIconChoices) {
+      const encoded = await readFile(applicationIconPath(previewDirectory, choice.id));
+      expect(encoded.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(encoded.readUInt32BE(16)).toBe(128);
+      expect(encoded.readUInt32BE(20)).toBe(128);
     }
   });
 });
