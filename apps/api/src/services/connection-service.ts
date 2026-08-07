@@ -1225,7 +1225,7 @@ export class ConnectionService {
     };
   }
 
-  async createX(input: { scope: Scope; capabilities: string[] }) {
+  async createX(input: { scope: "workspace"; capabilities: string[] }) {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
     const adapter = xConnectorConfig(this.env) ? this.registry().get("x") : null;
@@ -1241,24 +1241,16 @@ export class ConnectionService {
       throw new ApiError(422, "invalid_connector_capabilities", "Choose supported X capabilities");
     }
 
-    const existing = input.scope === "workspace"
-      ? await this.env.DB.prepare(
-          `SELECT id FROM connector_connections
-           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'workspace'
-             AND status <> 'disabled' LIMIT 1`,
-        ).bind(auth.workspaceId).first<{ id: string }>()
-      : await this.env.DB.prepare(
-          `SELECT id FROM connector_connections
-           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'personal'
-             AND owner_user_id = ? AND status <> 'disabled' LIMIT 1`,
-        ).bind(auth.workspaceId, auth.userId).first<{ id: string }>();
+    const existing = await this.env.DB.prepare(
+      `SELECT id FROM connector_connections
+       WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'workspace'
+         AND status <> 'disabled' LIMIT 1`,
+    ).bind(auth.workspaceId).first<{ id: string }>();
     if (existing) {
       throw new ApiError(
         409,
         "x_connection_exists",
-        input.scope === "workspace"
-          ? "An active workspace X connection already exists"
-          : "You already have an active X connection",
+        "An active workspace X connection already exists",
       );
     }
 
@@ -1276,7 +1268,7 @@ export class ConnectionService {
       id,
       auth.workspaceId,
       input.scope,
-      input.scope === "personal" ? auth.userId : null,
+      null,
       encrypted.ciphertext,
       encrypted.iv,
       Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),

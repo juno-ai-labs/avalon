@@ -512,28 +512,25 @@ describe('Workspace settings', () => {
     ));
   });
 
-  it('offers the read-only X connector for personal and workspace use', async () => {
+  it('offers the read-only X connector only at workspace scope', async () => {
     renderSettings();
     openSettingsSection('Connections');
 
     const xCard = (await screen.findByText('X')).closest('article');
     expect(xCard).not.toBeNull();
-    const personalButton = within(xCard!).getByRole('button', { name: 'Connect for me' });
-    await waitFor(() => expect(personalButton).toBeEnabled());
-    fireEvent.click(personalButton);
-    await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith('you', ['x.read']));
+    expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
 
     await waitFor(() => expect(within(xCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
     fireEvent.click(within(xCard!).getByRole('button', { name: 'Connect workspace' }));
-    await waitFor(() => expect(api.createXConnection).toHaveBeenLastCalledWith('workspace', ['x.read']));
+    await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith(['x.read']));
     expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
   });
 
-  it('disables duplicate personal X connections while preserving workspace setup', async () => {
+  it('disables duplicate workspace X connections', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000017',
       connectorType: 'x',
-      scope: 'you',
+      scope: 'workspace',
       displayName: 'X',
       capabilities: ['x.read'],
       status: 'healthy',
@@ -544,16 +541,16 @@ describe('Workspace settings', () => {
 
     const xCard = (await screen.findByText('X')).closest('article');
     expect(xCard).not.toBeNull();
-    const personalButton = within(xCard!).getByRole('button', { name: 'Connect for me' });
+    expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
+    const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect workspace' });
     await waitFor(() => {
-      expect(personalButton).toBeDisabled();
-      expect(personalButton).toHaveAttribute(
+      expect(workspaceButton).toBeDisabled();
+      expect(workspaceButton).toHaveAttribute(
         'title',
-        'An X personal connection is already installed. Manage it above.',
+        'An X workspace connection is already installed. Manage it above.',
       );
     });
     expect(screen.queryByRole('button', { name: 'Reconnect X' })).not.toBeInTheDocument();
-    expect(within(xCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled();
   });
 
   it.each(['healthy', 'reconnect_required'] as const)(

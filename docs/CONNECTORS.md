@@ -64,7 +64,7 @@ Notion's one-time webhook verification token is accepted through a guarded regio
 
 ## X
 
-X is a read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
+X is a workspace-only, read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
 
 ## Web discovery
 
