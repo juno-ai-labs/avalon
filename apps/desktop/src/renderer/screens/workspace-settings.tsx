@@ -35,7 +35,7 @@ import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contra
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
-import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
+import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -57,6 +57,19 @@ const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
   notion: 'Notion',
   slack: 'Slack',
 };
+
+const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
+  'google',
+  'github',
+  'linear',
+  'notion',
+  'slack',
+]);
+
+const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
+  ...reconnectableConnectorTypes,
+  'x',
+]);
 
 interface SettingsNavItem {
   id: SettingsSection;
@@ -259,6 +272,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
+  const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
   const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const timezoneOptions = useMemo(
@@ -390,7 +404,10 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     () => new Set(filteredNavigation.flatMap((group) => group.items.map((item) => item.id))),
     [filteredNavigation],
   );
-  const healthyConnections = (connections.data ?? []).filter((connection) => connection.status === 'healthy');
+  const installedConnections = (connections.data ?? []).filter((connection) =>
+    installedConnectorTypes.has(connection.connectorType),
+  );
+  const healthyConnections = installedConnections.filter((connection) => connection.status === 'healthy');
   const visibleProviders = connectorProviders.filter((provider) => {
     const connected = providerHasConnection(provider, connections.data ?? []);
     if (connectionFilter === 'connected') return connected;
@@ -746,100 +763,106 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
 
             {activeSection === 'connections' && (
               <section aria-labelledby="settings-title" className="settings-pane settings-connections-pane">
-                <div className="settings-connection-toolbar">
-                  <div className="settings-segmented" role="group" aria-label="Filter connections">
-                    {([
-                      ['all', 'All'],
-                      ['connected', 'Connected'],
-                      ['not_connected', 'Not connected'],
-                    ] as const).map(([value, label]) => (
-                      <button aria-pressed={connectionFilter === value} key={value} onClick={() => setConnectionFilter(value)} type="button">{label}</button>
-                    ))}
-                  </div>
-                  <span>{healthyConnections.length} connected</span>
+                <div className="settings-pane-heading settings-pane-heading-count">
+                  <div><h2>Installed connections</h2><p>Credentials currently available to you or this workspace.</p></div>
+                  <span>{installedConnections.length}</span>
                 </div>
-                <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member and workspace automation.</p>
-                <div className="provider-grid">
-                  {visibleProviders.map((provider) => {
-                    const Icon = provider.icon;
-                    const connected = providerHasConnection(provider, connections.data ?? []);
-                    const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
-                    const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
-                    const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                    const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
-                    const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
-                    const personalConnectTitle = hasActivePersonalConnection
-                      ? `An ${provider.name} personal connection is already installed. Manage it below.`
-                      : provider.provider === 'x' && connections.isLoading
-                        ? 'Checking installed personal connections…'
-                        : provider.provider === 'x' && connections.isError
-                          ? 'Installed personal connections could not be loaded.'
-                          : undefined;
-                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
-                    const workspaceConnectTitle = hasActiveWorkspaceConnection
-                      ? `A ${provider.name} workspace connection is already installed. Manage it below.`
-                      : connections.isLoading
-                        ? 'Checking installed workspace connections…'
-                        : connections.isError
-                          ? 'Installed workspace connections could not be loaded.'
-                          : undefined;
-                    return (
-                      <article className="provider-card" key={provider.id}>
-                        <div className="provider-card-heading">
-                          <div className="provider-icon"><Icon aria-hidden="true" size={18} /></div>
-                          <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : 'Available'}</span></div>
-                        </div>
-                        <p>{provider.description}</p>
-                          <div className="provider-actions">
-                            {provider.scopes.includes('you' as never) && (
+                <div className="settings-connection-list settings-list-card">
+                  {installedConnections.map((connection) => (
+                    <div className="settings-connection-row" key={connection.id}>
+                      <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
+                      <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
+                      <Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge>
+                      <Button disabled={testConnection.isPending} onClick={() => testConnection.mutate(connection.id)}>Test</Button>
+                      {reconnectableConnectorTypes.has(connection.connectorType) && (
+                        <button
+                          aria-label={`Reconnect ${connection.displayName}`}
+                          className="settings-icon-action"
+                          disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)}
+                          onClick={() => setReconnectTarget(connection)}
+                          type="button"
+                        >
+                          <RefreshCcw aria-hidden="true" size={14} />
+                        </button>
+                      )}
+                      <button aria-label={`Disconnect ${connection.displayName}`} className="settings-icon-action" disabled={disconnectConnection.isPending} onClick={() => disconnectConnection.mutate(connection.id)} type="button"><Trash2 aria-hidden="true" size={14} /></button>
+                    </div>
+                  ))}
+                  {!connections.isLoading && installedConnections.length === 0 && <EmptyState title="No connections yet" description="Connect a provider below to make its tools available to Avalon." />}
+                </div>
+                <div className="settings-subsection">
+                  <div className="settings-connection-toolbar">
+                    <div className="settings-segmented" role="group" aria-label="Filter connections">
+                      {([
+                        ['all', 'All'],
+                        ['connected', 'Connected'],
+                        ['not_connected', 'Not connected'],
+                      ] as const).map(([value, label]) => (
+                        <button aria-pressed={connectionFilter === value} key={value} onClick={() => setConnectionFilter(value)} type="button">{label}</button>
+                      ))}
+                    </div>
+                    <span>{healthyConnections.length} connected</span>
+                  </div>
+                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member and workspace automation.</p>
+                  <div className="provider-grid">
+                    {visibleProviders.map((provider) => {
+                      const Icon = provider.icon;
+                      const connected = providerHasConnection(provider, connections.data ?? []);
+                      const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
+                      const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
+                      const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                      const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
+                      const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectTitle = hasActivePersonalConnection
+                        ? `An ${provider.name} personal connection is already installed. Manage it above.`
+                        : provider.provider === 'x' && connections.isLoading
+                          ? 'Checking installed personal connections…'
+                          : provider.provider === 'x' && connections.isError
+                            ? 'Installed personal connections could not be loaded.'
+                            : undefined;
+                      const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectTitle = hasActiveWorkspaceConnection
+                        ? `A ${provider.name} workspace connection is already installed. Manage it above.`
+                        : connections.isLoading
+                          ? 'Checking installed workspace connections…'
+                          : connections.isError
+                            ? 'Installed workspace connections could not be loaded.'
+                            : undefined;
+                      return (
+                        <article className="provider-card" key={provider.id}>
+                          <div className="provider-card-heading">
+                            <div className="provider-icon"><Icon aria-hidden="true" size={18} /></div>
+                            <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : 'Available'}</span></div>
+                          </div>
+                          <p>{provider.description}</p>
+                            <div className="provider-actions">
+                              {provider.scopes.includes('you' as never) && (
+                                <Button
+                                  disabled={personalConnectDisabled}
+                                  onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
+                                  title={personalConnectTitle}
+                                >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</Button>
+                              )}
+                            {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <Button
-                                disabled={personalConnectDisabled}
-                                onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
-                                title={personalConnectTitle}
-                              >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</Button>
+                                disabled={workspaceConnectDisabled}
+                                onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') })}
+                                title={workspaceConnectTitle}
+                              >
+                                Connect workspace
+                              </Button>
                             )}
-                          {provider.scopes.includes('workspace' as never) && isAdmin && (
-                            <Button
-                              disabled={workspaceConnectDisabled}
-                              onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') })}
-                              title={workspaceConnectTitle}
-                            >
-                              Connect workspace
-                            </Button>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  })}
-                  {visibleProviders.length === 0 && <EmptyState title="No connectors here" description="Change the filter to see other available providers." />}
+                          </div>
+                        </article>
+                      );
+                    })}
+                    {visibleProviders.length === 0 && <EmptyState title="No connectors here" description="Change the filter to see other available providers." />}
+                  </div>
                 </div>
                 {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
                 {(connectorOAuthError || connections.error || connectProvider.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
                   <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectProvider.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
                 )}
-                <div className="settings-subsection">
-                  <div className="settings-pane-heading settings-pane-heading-count">
-                    <div><h2>Installed connections</h2><p>Credentials currently available to you or this workspace.</p></div>
-                    <span>{connections.data?.length ?? 0}</span>
-                  </div>
-                  <div className="settings-connection-list settings-list-card">
-                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack', 'x'].includes(connection.connectorType)).map((connection) => (
-                      <div className="settings-connection-row" key={connection.id}>
-                        <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
-                        <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
-                        <Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge>
-                        {connection.status === 'reconnect_required' && (
-                          <Button disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)} onClick={() => reconnectConnection.mutate(connection)}>
-                            <RefreshCcw aria-hidden="true" size={13} /> Reconnect
-                          </Button>
-                        )}
-                        <Button disabled={testConnection.isPending} onClick={() => testConnection.mutate(connection.id)}>Test</Button>
-                        <button aria-label={`Disconnect ${connection.displayName}`} className="settings-icon-action" disabled={disconnectConnection.isPending} onClick={() => disconnectConnection.mutate(connection.id)} type="button"><Trash2 aria-hidden="true" size={14} /></button>
-                      </div>
-                    ))}
-                    {!connections.isLoading && (connections.data ?? []).length === 0 && <EmptyState title="No connections yet" description="Connect a provider above to make its tools available to Avalon." />}
-                  </div>
-                </div>
               </section>
             )}
 
@@ -893,6 +916,29 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
             )}
           </div>
         </main>
+        <Modal
+          description="You’ll be sent to the provider to authorize this connection again."
+          footer={(
+            <>
+              <Button onClick={() => setReconnectTarget(null)}>Cancel</Button>
+              <Button
+                className="button-primary"
+                onClick={() => {
+                  if (!reconnectTarget) return;
+                  reconnectConnection.mutate(reconnectTarget);
+                  setReconnectTarget(null);
+                }}
+              >
+                <RefreshCcw aria-hidden="true" size={14} /> Re-connect
+              </Button>
+            </>
+          )}
+          onOpenChange={(open) => {
+            if (!open) setReconnectTarget(null);
+          }}
+          open={Boolean(reconnectTarget)}
+          title={`Do you want to re-connect ${reconnectTarget?.displayName ?? 'this app'}?`}
+        />
       </div>
     </div>
   );

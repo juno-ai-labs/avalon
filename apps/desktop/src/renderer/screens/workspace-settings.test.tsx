@@ -111,6 +111,11 @@ function openSettingsSection(name: 'General' | 'Account' | 'Workspace' | 'Connec
 describe('Workspace settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
     window.history.replaceState({}, '', '/');
     settingsSectionRequest.listener = null;
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
@@ -280,10 +285,91 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect Imported connection label' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Do you want to re-connect Imported connection label?' });
+    expect(dialog).toHaveAccessibleDescription('You’ll be sent to the provider to authorize this connection again.');
+    expect(api.reconnectConnection).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Re-connect' }));
 
     expect(await screen.findByText('Notion authorization was cancelled.')).toBeVisible();
+    expect(api.reconnectConnection).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000010');
     expect(api.getConnectorOAuthAttempt).toHaveBeenNthCalledWith(1, 'b'.repeat(43));
+  });
+
+  it('lets a healthy installed connection start reconnect after confirmation', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Google · adam@example.com',
+      capabilities: ['drive.read'],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect Google · adam@example.com' }));
+    const dialog = screen.getByRole('dialog', { name: 'Do you want to re-connect Google · adam@example.com?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Re-connect' }));
+
+    await waitFor(() => expect(api.reconnectConnection).toHaveBeenCalledWith('00000000-0000-7000-8000-000000000010'));
+    expect(openExternal).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+  });
+
+  it('disables reconnect actions while a reconnect request is pending', async () => {
+    let resolveReconnect!: (value: { url: string; attemptId: string }) => void;
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Google · adam@example.com',
+      capabilities: ['drive.read'],
+      status: 'healthy',
+    }]);
+    api.reconnectConnection.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveReconnect = resolve;
+    }));
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const reconnectButton = await screen.findByRole('button', { name: 'Reconnect Google · adam@example.com' });
+    fireEvent.click(reconnectButton);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Re-connect' }));
+
+    await waitFor(() => expect(reconnectButton).toBeDisabled());
+    await act(async () => resolveReconnect({
+      url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
+      attemptId: 'b'.repeat(43),
+    }));
+    await waitFor(() => expect(openExternal).toHaveBeenCalled());
+  });
+
+  it('disables reconnect actions while another provider authorization is pending', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Google · adam@example.com',
+      capabilities: ['drive.read'],
+      status: 'healthy',
+    }]);
+    api.getConnectorOAuthAttempt.mockResolvedValue({
+      attemptId: 'a'.repeat(43),
+      provider: 'google',
+      status: 'pending',
+      connectionId: null,
+      errorCode: null,
+      expiresAt: '2026-08-08T00:00:00.000Z',
+    });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
+    fireEvent.click(within(mailCard!).getByRole('button', { name: 'Connect for me' }));
+
+    expect(await within(mailCard!).findByText('Waiting…')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Reconnect Google · adam@example.com' })).toBeDisabled();
   });
 
   it('offers personal and workspace Linear authorization without granting agent identity personally', async () => {
@@ -381,9 +467,10 @@ describe('Workspace settings', () => {
       expect(personalButton).toBeDisabled();
       expect(personalButton).toHaveAttribute(
         'title',
-        'An X personal connection is already installed. Manage it below.',
+        'An X personal connection is already installed. Manage it above.',
       );
     });
+    expect(screen.queryByRole('button', { name: 'Reconnect X' })).not.toBeInTheDocument();
     expect(within(xCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled();
   });
 
@@ -410,7 +497,7 @@ describe('Workspace settings', () => {
       await waitFor(() => expect(workspaceButton).toBeDisabled());
       expect(workspaceButton).toHaveAttribute(
         'title',
-        'A Slack workspace connection is already installed. Manage it below.',
+        'A Slack workspace connection is already installed. Manage it above.',
       );
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
@@ -464,7 +551,7 @@ describe('Workspace settings', () => {
       await waitFor(() => expect(workspaceButton).toBeDisabled());
       expect(workspaceButton).toHaveAttribute(
         'title',
-        'A Linear workspace connection is already installed. Manage it below.',
+        'A Linear workspace connection is already installed. Manage it above.',
       );
       fireEvent.click(workspaceButton);
       expect(api.startProviderConnection).not.toHaveBeenCalled();
@@ -554,11 +641,44 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    expect(await screen.findByText('Google · adam@example.com')).toBeVisible();
+    const connectionName = await screen.findByText('Google · adam@example.com');
+    expect(connectionName).toBeVisible();
     expect(screen.getByText('Personal · 2 capabilities')).toBeVisible();
+    const installedHeading = screen.getByRole('heading', { level: 2, name: 'Installed connections' });
+    const mailCard = screen.getByText('Google Mail + Calendar').closest('article');
+    expect(installedHeading.compareDocumentPosition(mailCard!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    const reconnectButton = screen.getByRole('button', { name: 'Reconnect Google · adam@example.com' });
+    const disconnectButton = screen.getByRole('button', { name: 'Disconnect Google · adam@example.com' });
+    expect(reconnectButton.nextElementSibling).toBe(disconnectButton);
+    fireEvent.click(reconnectButton);
+    const dialog = screen.getByRole('dialog', { name: 'Do you want to re-connect Google · adam@example.com?' });
+    expect(api.reconnectConnection).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: 'Connected' }));
     expect(screen.getByText('Google Mail + Calendar')).toBeVisible();
     expect(screen.queryByText('Google Drive + Docs + Sheets')).not.toBeInTheDocument();
+  });
+
+  it('counts only connections rendered in the installed list', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000099',
+      connectorType: 'generic_webhook',
+      scope: 'workspace',
+      displayName: 'Inbound webhook',
+      capabilities: [],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const installedHeading = await screen.findByRole('heading', { level: 2, name: 'Installed connections' });
+    const headingGroup = installedHeading.closest<HTMLElement>('.settings-pane-heading');
+    expect(within(headingGroup!).getByText('0')).toBeVisible();
+    expect(screen.getByText('No connections yet')).toBeVisible();
+    expect(screen.queryByText('Inbound webhook')).not.toBeInTheDocument();
   });
 
   it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
