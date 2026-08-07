@@ -34,10 +34,13 @@ describe('public Avalon site', () => {
 
   it('shuffles four complete landing designs while keeping each landscape paired to its theme', () => {
     const page = readProjectFile('index.html');
+    const initializer = readProjectFile('public/landing-init.js');
     const script = readProjectFile('src/landing.ts');
     const styles = readProjectFile('src/styles.css');
     const themes = ['runway', 'valley', 'proof', 'afterlight'];
     const names = ['Warp', 'Mesh', 'Trace', 'Orbit'];
+    const initializerPosition = page.indexOf('<script src="/landing-init.js"></script>');
+    const stylesheetPosition = page.indexOf('<link rel="stylesheet" href="/src/styles.css" />');
 
     for (const theme of themes) {
       expect(page).toContain(`data-theme-panel="${theme}"`);
@@ -47,12 +50,25 @@ describe('public Avalon site', () => {
     }
     expect(page).toContain('data-theme-panel="runway" data-active aria-hidden="false"');
     expect(page).toContain('data-theme-select="runway" aria-label="Use Warp design" aria-pressed="true"');
-    expect(script).toContain('root.dataset.themeReady = ""');
+    expect(initializer).toContain("root.dataset.themeReady = ''");
+    expect(initializerPosition).toBeGreaterThan(-1);
+    expect(stylesheetPosition).toBeGreaterThan(-1);
+    expect(initializerPosition).toBeLessThan(stylesheetPosition);
     expect(styles).toContain("url('/concepts/biomes/high-desert.webp')");
     expect(styles).toContain("url('/concepts/biomes/boreal-wetland.webp')");
     expect(styles).toContain("url('/concepts/biomes/volcanic-coast.webp')");
     expect(styles).toContain("url('/concepts/biomes/alpine-tundra.webp')");
     for (const name of names) expect(page).toContain(name);
+  });
+
+  it('keeps content visible without scripts and hides the decorative workspace mock', () => {
+    const page = readProjectFile('index.html');
+    const styles = readProjectFile('src/styles.css');
+
+    expect(styles).toContain('.reveal { opacity: 1; transform: none; }');
+    expect(styles).toContain('html.js .reveal { opacity: 0;');
+    expect(styles).toContain('html.js .reveal.is-visible { opacity: 1;');
+    expect(page).toContain('<div class="workspace-grid" aria-hidden="true" inert>');
   });
 
   it('keeps Avalon inherent instead of presenting it as a removable participant', () => {
@@ -102,6 +118,18 @@ describe('public Avalon site', () => {
     const socialCard = new URL('../public/og-2026.jpg', import.meta.url);
     expect(existsSync(socialCard)).toBe(true);
     expect(statSync(socialCard).size).toBeLessThan(200_000);
+
+    for (const path of [
+      'public/concepts/biomes/alpine-tundra.webp',
+      'public/concepts/biomes/boreal-wetland.webp',
+      'public/concepts/biomes/high-desert.webp',
+      'public/concepts/biomes/volcanic-coast.webp',
+      'public/concepts/horizon-organic-panorama.webp',
+    ]) {
+      const landscape = new URL(`../${path}`, import.meta.url);
+      expect(existsSync(landscape), `${path} should exist`).toBe(true);
+      expect(statSync(landscape).size, `${path} should stay below 350 KB`).toBeLessThan(350_000);
+    }
   });
 
   it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {

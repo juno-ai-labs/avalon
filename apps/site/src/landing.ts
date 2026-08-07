@@ -30,8 +30,8 @@ function randomTheme(except?: Theme): Theme {
   return available[Math.floor(Math.random() * available.length)] ?? fallback;
 }
 
-const requestedTheme = new URLSearchParams(window.location.search).get("theme");
-setTheme(isTheme(requestedTheme) ? requestedTheme : randomTheme());
+const initialTheme = root.dataset.theme;
+setTheme(isTheme(initialTheme) ? initialTheme : randomTheme());
 root.dataset.themeReady = "";
 
 themeButtons.forEach((button) => {
