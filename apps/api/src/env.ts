@@ -7,6 +7,10 @@ import type {
   GlobalLinearRouterRpcBinding,
   LinearRegionalBridgeRpcBinding,
 } from "./services/linear-routing-service";
+import type {
+  GlobalSlackRouterRpcBinding,
+  SlackRegionalBridgeRpcBinding,
+} from "./services/slack-routing-service";
 
 export interface Env {
   DB: D1Database;
@@ -23,8 +27,10 @@ export interface Env {
   EU_GITHUB_BRIDGE?: GitHubRegionalBridgeRpcBinding;
   EU_INBOUND_EMAIL_BRIDGE?: InboundEmailRegionalRpcBinding;
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
+  EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
+  GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
 
   APP_ENV: "development" | "test" | "staging" | "production";
   APP_VERSION?: string;
@@ -38,6 +44,7 @@ export interface Env {
   DESKTOP_DEEP_LINK_URI: string;
   GITHUB_INGRESS_BASE_URL?: string;
   LINEAR_INGRESS_BASE_URL?: string;
+  SLACK_INGRESS_BASE_URL?: string;
 
   OPENROUTER_API_KEY: string;
   OPENROUTER_PRIMARY_MODEL: string;
@@ -45,6 +52,9 @@ export interface Env {
   OPENROUTER_CLASSIFIER_MODEL: string;
   OPENROUTER_STRUCTURED_MODEL: string;
   OPENROUTER_AUTOMATION_MODEL: string;
+  AZURE_OPENAI_ENDPOINT?: string;
+  AZURE_OPENAI_API_KEY?: string;
+  AZURE_OPENAI_REALTIME_DEPLOYMENT?: string;
   FIRECRAWL_API_KEY?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
@@ -73,6 +83,11 @@ export interface Env {
   NOTION_OAUTH_CLIENT_SECRET?: string;
   NOTION_INTEGRATION_ID?: string;
   NOTION_WEBHOOK_SETUP_TOKEN?: string;
+  SLACK_APP_ID?: string;
+  SLACK_CLIENT_ID?: string;
+  SLACK_CLIENT_SECRET?: string;
+  SLACK_SIGNING_SECRET?: string;
+  TWITTER_API_IO_API_KEY?: string;
   SESSION_SIGNING_KEY: string;
   OAUTH_STATE_ENCRYPTION_KEY: string;
   CONNECTOR_CREDENTIALS_KEY: string;

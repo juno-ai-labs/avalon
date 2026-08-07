@@ -187,6 +187,14 @@ export interface MessageMention {
   endOffset: number;
 }
 
+export interface ExternalActor {
+  provider: string;
+  providerAccountId: string;
+  providerUserId: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
 export interface Message {
   id: string;
   /**
@@ -197,8 +205,9 @@ export interface Message {
   clientMessageId?: string;
   workstreamId: string;
   sequenceNumber: number;
-  authorType: 'human' | 'agent' | 'system';
+  authorType: 'human' | 'external' | 'agent' | 'system';
   author?: WorkspaceMember;
+  externalActor?: ExternalActor;
   messageType:
     | 'text'
     | 'thought'
@@ -339,6 +348,12 @@ export interface AutomationDetail extends AutomationSummary {
   expectedOutputs: string[];
   recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
   defaultPluginIds: string[];
+  deliveryTargets?: Array<{
+    type: 'slack_agent_dm';
+    connectionId: string;
+    displayName: string;
+    status: 'active' | 'needs_input' | 'disabled';
+  }>;
   executionScope: string;
   owner?: WorkspaceMember;
   runs: AutomationRunSummary[];
@@ -365,6 +380,7 @@ export interface AutomationDraftSummary {
   scope: Scope;
   triggerSummary: string;
   capabilities: string[];
+  requiresSlackDelivery: boolean;
 }
 
 export interface AutomationDraftResponse {

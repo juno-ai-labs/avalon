@@ -62,6 +62,10 @@ Notion uses public connections with an `Any workspace` installation scope and th
 
 Notion's one-time webhook verification token is accepted through a guarded regional setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing.
 
+## X
+
+X is a read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
+
 ## Web discovery
 
 The loadable `avalon:web` plugin exposes `web_search` and `web_fetch` through Firecrawl. Search returns bounded ranked links; fetch accepts only safe public HTTP(S) URLs and returns bounded clean Markdown. The plugin is omitted entirely when the regional `FIRECRAWL_API_KEY` secret is absent.
@@ -89,4 +93,4 @@ Avalon validates time, signature, replay receipt, body schema, scope, and dedupe
 
 Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
 
-There is deliberately no Slack connector and no global activity feed.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Avalon does not create a global Slack activity feed, subscribe to broad channel message traffic, or mirror Slack content. See `docs/SLACK_INTEGRATION.md`.

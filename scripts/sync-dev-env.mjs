@@ -23,6 +23,9 @@ const workerKeys = [
   "OPENROUTER_FALLBACK_MODELS",
   "OPENROUTER_CLASSIFIER_MODEL",
   "OPENROUTER_STRUCTURED_MODEL",
+  "AZURE_OPENAI_ENDPOINT",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_REALTIME_DEPLOYMENT",
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
@@ -46,6 +49,12 @@ const workerKeys = [
   "LINEAR_OAUTH_CLIENT_SECRET",
   "LINEAR_WEBHOOK_SECRET",
   "LINEAR_NATIVE_AGENT_ENABLED",
+  "SLACK_APP_ID",
+  "SLACK_CLIENT_ID",
+  "SLACK_CLIENT_SECRET",
+  "SLACK_SIGNING_SECRET",
+  "TWITTER_API_IO_API_KEY",
+  "SLACK_INGRESS_BASE_URL",
   "NOTION_OAUTH_CLIENT_ID",
   "NOTION_OAUTH_CLIENT_SECRET",
   "NOTION_INTEGRATION_ID",
@@ -72,6 +81,9 @@ const workerKeys = [
 // use one identity in both Workers because each operates one public App behind
 // a smart, account-aware ingress.
 const regionalizableKeys = [
+  "AZURE_OPENAI_ENDPOINT",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_REALTIME_DEPLOYMENT",
   "FIRECRAWL_API_KEY",
   "RESEND_API_KEY",
   "RESEND_FROM_EMAIL",
@@ -93,6 +105,7 @@ const regionalizableKeys = [
   "NOTION_OAUTH_CLIENT_SECRET",
   "NOTION_INTEGRATION_ID",
   "NOTION_WEBHOOK_SETUP_TOKEN",
+  "TWITTER_API_IO_API_KEY",
   "SESSION_SIGNING_KEY",
   "OAUTH_STATE_ENCRYPTION_KEY",
   "CONNECTOR_CREDENTIALS_KEY"
@@ -180,7 +193,11 @@ const sharedPublicAppKeys = [
   "GITHUB_WEBHOOK_SECRET",
   "LINEAR_OAUTH_CLIENT_ID",
   "LINEAR_OAUTH_CLIENT_SECRET",
-  "LINEAR_WEBHOOK_SECRET"
+  "LINEAR_WEBHOOK_SECRET",
+  "SLACK_APP_ID",
+  "SLACK_CLIENT_ID",
+  "SLACK_CLIENT_SECRET",
+  "SLACK_SIGNING_SECRET"
 ];
 const sharedPublicAppValues = Object.fromEntries(sharedPublicAppKeys.map((key) => [
   key,
@@ -199,7 +216,8 @@ for (const region of ["global", "eu"]) {
     ...existing,
     ...local,
     AVALON_REGION: region,
-    PUBLIC_API_BASE_URL: region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788",
+    PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${region.toUpperCase()}`]
+      || (region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788"),
     OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
   };
   for (const key of regionalizableKeys) {

@@ -9,6 +9,10 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "assets" / "brand" / "avalon-mark-source.png"
+APPLICATION_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "app-icons"
+APPLICATION_ICON_PREVIEW_DIRECTORY = (
+    ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "app-icons"
+)
 PRIMARY = (206, 220, 0, 255)  # #CEDC00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
@@ -133,6 +137,14 @@ def save(image: Image.Image, path: Path) -> None:
     image.save(path, optimize=True)
 
 
+def generate_application_icon_previews() -> None:
+    """Build compact Retina thumbnails without duplicating 1024px app assets in Vite."""
+    for source_path in sorted(APPLICATION_ICON_DIRECTORY.glob("*.png")):
+        with Image.open(source_path) as source:
+            preview = source.convert("RGBA").resize((128, 128), Image.Resampling.LANCZOS)
+            save(preview, APPLICATION_ICON_PREVIEW_DIRECTORY / source_path.name)
+
+
 def main() -> None:
     transparent = mark(1024)
     generic_icon = app_icon(1024)
@@ -141,6 +153,10 @@ def main() -> None:
     save(transparent, ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "avalon-mark.png")
     save(transparent, ROOT / "apps" / "site" / "public" / "brand" / "avalon-mark.png")
     save(generic_icon, ROOT / "apps" / "desktop" / "resources" / "icon.png")
+    # User-selectable Dock artwork stays full-bleed. macOS owns the icon
+    # enclosure, masking, and platform effects when it renders the Dock tile.
+    save(app_icon(1024, LIGHT_CANVAS, DARK_CANVAS), APPLICATION_ICON_DIRECTORY / "light.png")
+    save(app_icon(1024, DARK_CANVAS, PRIMARY), APPLICATION_ICON_DIRECTORY / "dark.png")
     # Icon Composer recolors this transparent mark for each appearance and
     # lets macOS own the enclosure. The separate ICNS is only the DMG volume
     # icon, whose legacy format still requires a baked silhouette.
@@ -158,6 +174,7 @@ def main() -> None:
     save(app_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
     save(social_card(), ROOT / "apps" / "site" / "public" / "og.png")
+    generate_application_icon_previews()
 
 
 if __name__ == "__main__":

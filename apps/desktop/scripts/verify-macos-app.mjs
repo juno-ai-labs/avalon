@@ -80,6 +80,15 @@ const iconName = runWithStderr('/usr/bin/plutil', [
 if (iconName !== 'Icon') {
   throw new Error(`Packaged app must select the Icon Composer asset catalog; found ${iconName || '(none)'}`);
 }
+const dockTilePluginName = runWithStderr('/usr/bin/plutil', [
+  '-extract',
+  'NSDockTilePlugIn',
+  'raw',
+  infoPlistPath,
+]).trim();
+if (dockTilePluginName !== 'AvalonDockTilePlugin.docktileplugin') {
+  throw new Error(`Packaged app must declare the Avalon Dock tile plugin; found ${dockTilePluginName || '(none)'}`);
+}
 
 const legacyIconPath = join(resourcesDirectory, 'icon.icns');
 if (!existsSync(legacyIconPath)) throw new Error('Packaged app is missing its generated ICNS fallback');
@@ -104,15 +113,44 @@ for (const appearance of ['NSAppearanceNameAqua', 'NSAppearanceNameDarkAqua', 'I
   }
 }
 
-function inspectEntitlementKeys(componentPath, label) {
+const applicationIconNames = [
+  'light',
+  'dark',
+  'sunset-sherbet',
+  'ludicrous-speed',
+  'ruby',
+  'holographic',
+  'leather',
+  'blueprint',
+];
+const applicationIconDirectory = join(resourcesDirectory, 'app-icons');
+for (const name of applicationIconNames) {
+  const iconPath = join(applicationIconDirectory, `${name}.png`);
+  if (!existsSync(iconPath)) throw new Error(`Packaged app is missing selectable icon ${name}`);
+  const icon = readFileSync(iconPath);
+  if (!icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    throw new Error(`Selectable icon ${name} is not a PNG file`);
+  }
+  if (icon.readUInt32BE(16) !== 1024 || icon.readUInt32BE(20) !== 1024) {
+    throw new Error(`Selectable icon ${name} must be 1024×1024`);
+  }
+}
+const nativeIconScriptPath = join(resourcesDirectory, 'native/set-application-icon.js');
+if (!existsSync(nativeIconScriptPath)) throw new Error('Packaged app is missing its native application-icon bridge');
+
+function inspectEntitlementKeys(componentPath, label, { allowEmpty = false } = {}) {
   const entitlementResult = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', componentPath], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (entitlementResult.status !== 0 || !entitlementResult.stdout?.trim()) {
+  if (entitlementResult.status !== 0) {
     throw new Error(
       `Could not inspect ${label} entitlements.\n${entitlementResult.stderr || entitlementResult.stdout}`.trim(),
     );
+  }
+  if (!entitlementResult.stdout?.trim()) {
+    if (allowEmpty) return [];
+    throw new Error(`${label} is missing its required entitlements`);
   }
   const plistResult = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '--', '-'], {
     encoding: 'utf8',
@@ -129,7 +167,7 @@ function inspectEntitlementKeys(componentPath, label) {
   return Object.keys(parsed);
 }
 
-function verifyNestedComponent(componentPath, executablePath, label) {
+function verifyNestedComponent(componentPath, executablePath, label, { expectEntitlements = true } = {}) {
   if (!existsSync(componentPath)) throw new Error(`Packaged app is missing nested component ${label}`);
   runWithStderr('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', componentPath]);
   const display = spawnSync('/usr/bin/codesign', ['-dvvv', componentPath], {
@@ -141,7 +179,14 @@ function verifyNestedComponent(componentPath, executablePath, label) {
   }
   const componentDetails = `${display.stdout ?? ''}${display.stderr ?? ''}`;
   assertDeveloperIdDetails(componentDetails, AVALON_APPLE_TEAM_ID, label);
-  assertExactNestedEntitlements(inspectEntitlementKeys(componentPath, label), label);
+  if (expectEntitlements) {
+    assertExactNestedEntitlements(inspectEntitlementKeys(componentPath, label), label);
+  } else {
+    const entitlementKeys = inspectEntitlementKeys(componentPath, label, { allowEmpty: true });
+    if (entitlementKeys.length > 0) {
+      throw new Error(`${label} must not carry entitlements; found ${entitlementKeys.join(', ')}`);
+    }
+  }
   verifyArm64(executablePath, label);
 }
 
@@ -176,6 +221,17 @@ const crashpadPath = join(
   'Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler',
 );
 verifyNestedComponent(crashpadPath, crashpadPath, 'Electron chrome_crashpad_handler');
+
+const dockTilePluginPath = join(
+  appPath,
+  'Contents/PlugIns/AvalonDockTilePlugin.docktileplugin',
+);
+verifyNestedComponent(
+  dockTilePluginPath,
+  join(dockTilePluginPath, 'Contents/MacOS/AvalonDockTilePlugin'),
+  'Avalon Dock tile plugin',
+  { expectEntitlements: false },
+);
 
 if (mode === 'release') {
   const updateConfigPath = join(appPath, 'Contents/Resources/app-update.yml');

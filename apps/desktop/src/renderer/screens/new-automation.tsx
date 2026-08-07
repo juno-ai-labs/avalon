@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
   ArrowLeft,
-  ArrowUp,
+  AtSign,
   CalendarClock,
   Check,
   ChevronRight,
@@ -16,9 +16,11 @@ import {
   WandSparkles,
   Zap,
 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
+import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
+import { ComposerInput } from '../components/composer-input';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
@@ -32,10 +34,12 @@ import {
 } from '../lib/elicitation';
 import { desktopBridge } from '../lib/platform';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
+import { useFileAttachments } from '../lib/use-file-attachments';
 import type {
   AutomationDraftQuestion,
   AutomationDraftResponse,
   Message,
+  MessageAttachment,
   WorkspaceTemplate,
   WorkstreamConnection,
 } from '../lib/types';
@@ -50,6 +54,9 @@ const AUTOMATION_USER = {
 };
 
 interface AutomationCompilePayload {
+  attachmentIds: string[];
+  attachmentLocalIds: string[];
+  attachments: MessageAttachment[];
   message: string;
   templateId?: string;
   turnId: string;
@@ -61,6 +68,7 @@ function automationTextMessage(
   authorType: 'human' | 'agent',
   text: string,
   streaming = false,
+  attachments: MessageAttachment[] = [],
 ): Message {
   return createTextMessage({
     id,
@@ -70,6 +78,7 @@ function automationTextMessage(
     ...(authorType === 'human' ? { author: AUTOMATION_USER } : {}),
     text,
     createdAt: new Date().toISOString(),
+    ...(attachments.length > 0 ? { attachments } : {}),
     ...(streaming ? { streaming: true } : {}),
   });
 }
@@ -92,18 +101,24 @@ function settleThought(turns: Message[], thoughtId: string): Message[] {
 }
 
 function AutomationMessageBlock({
+  loadAttachmentContent,
   message,
   onAnswerElicitation,
+  onOpenAttachment,
 }: {
+  loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   message: Message;
   onAnswerElicitation?: (answer: string | string[] | null) => Promise<void>;
+  onOpenAttachment?: (preview: AttachmentPreview) => void;
 }): React.JSX.Element {
   return (
     <MessageBlock
       currentUserId={AUTOMATION_USER_ID}
+      loadAttachmentContent={loadAttachmentContent}
       message={message}
       onAnswerElicitation={(_elicitationId, answer) => onAnswerElicitation?.(answer) ?? Promise.resolve()}
       onResolveSuggestion={() => Promise.resolve()}
+      onOpenAttachment={onOpenAttachment}
     />
   );
 }
@@ -248,14 +263,18 @@ function DraftSummary({
   creating,
   connections,
   defaultPluginIds,
+  slackDeliveryConnectionId,
   onDefaultPluginsChange,
+  onSlackDeliveryChange,
   onCreate,
 }: {
   draft: AutomationDraftResponse;
   creating: boolean;
   connections: WorkstreamConnection[];
   defaultPluginIds: string[];
+  slackDeliveryConnectionId: string;
   onDefaultPluginsChange: (pluginIds: string[]) => void;
+  onSlackDeliveryChange: (connectionId: string) => void;
   onCreate: () => void;
 }): React.JSX.Element | null {
   if (!draft.summary) return null;
@@ -280,6 +299,18 @@ function DraftSummary({
         scope={summary.scope}
         selected={defaultPluginIds}
       />
+      {summary.scope === 'you' && (
+        <div className="automation-delivery-target">
+          <label htmlFor="automation-slack-delivery"><strong>Deliver results</strong><small>{summary.requiresSlackDelivery ? 'This draft mentions Slack delivery. ' : ''}Choose a destination explicitly; it is frozen when this automation is saved.</small></label>
+          <select id="automation-slack-delivery" onChange={(event) => onSlackDeliveryChange(event.target.value)} value={slackDeliveryConnectionId}>
+            <option value="">Keep results in Avalon</option>
+            {connections.filter((connection) => connection.connectorType === 'slack' && connection.scope === 'workspace' && connection.status === 'healthy').map((connection) => (
+              <option key={connection.id} value={connection.id}>Avalon Agent DM · {connection.displayName}</option>
+            ))}
+          </select>
+          <span>Slack delivery requires linking your Avalon account from the app’s Home tab.</span>
+        </div>
+      )}
       <footer>
         <span>Plugin defaults improve startup speed but never widen runtime authority.</span>
         <Button className="button-primary" disabled={creating} onClick={onCreate}>
@@ -295,7 +326,10 @@ export function NewAutomationScreen(): React.JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState('');
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
   const [streamingAssistant, setStreamingAssistant] = useState<{ hasText: boolean; text: string }>({
@@ -304,15 +338,10 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
+  const [slackDeliveryConnectionId, setSlackDeliveryConnectionId] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = 'auto';
-    if (input) textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-  }, [input]);
+  const attachmentDraft = useFileAttachments(api);
 
   const connections = useQuery({
     queryKey: ['connections'],
@@ -320,6 +349,37 @@ export function NewAutomationScreen(): React.JSX.Element {
     enabled: Boolean(api),
     staleTime: 10_000,
   });
+  const visibleMentionConnections = mentionQuery === null
+    ? []
+    : (connections.data ?? [])
+      .filter((connection) => connection.displayName.toLowerCase().includes(mentionQuery.toLowerCase()))
+      .slice(0, 8);
+  const loadAttachmentContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    [api],
+  );
+
+  const updateInput = (value: string): void => {
+    setInput(value);
+    setMentionQuery(value.match(/(?:^|\s)@([^\s@]*)$/u)?.[1] ?? null);
+  };
+
+  const beginConnectionMention = (): void => {
+    setInput((current) => current.length === 0 || /\s$/u.test(current) ? `${current}@` : `${current} @`);
+    setMentionQuery('');
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      textarea?.focus();
+      textarea?.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+  };
+
+  const insertConnectionMention = (connection: WorkstreamConnection): void => {
+    const atIndex = input.lastIndexOf('@');
+    setInput(`${input.slice(0, atIndex)}@${connection.displayName} `);
+    setMentionQuery(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
 
   useEffect(() => {
     const summary = draft?.summary;
@@ -332,12 +392,28 @@ export function NewAutomationScreen(): React.JSX.Element {
     setInitializedRecommendations(key);
   }, [connections.data, draft, initializedRecommendations]);
 
+  const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
+  useEffect(() => {
+    setSlackDeliveryConnectionId('');
+  }, [deliveryDraftKey]);
+
+  useEffect(() => {
+    if (!slackDeliveryConnectionId) return;
+    const stillAvailable = (connections.data ?? []).some((connection) =>
+      connection.id === slackDeliveryConnectionId
+      && connection.connectorType === 'slack'
+      && connection.scope === 'workspace'
+      && connection.status === 'healthy');
+    if (!stillAvailable || draft?.summary?.scope !== 'you') setSlackDeliveryConnectionId('');
+  }, [connections.data, draft?.summary?.scope, slackDeliveryConnectionId]);
+
   const compile = useMutation({
     mutationFn: (payload: AutomationCompilePayload) =>
       api!.compileAutomation({
         message: payload.message,
         ...(draft?.draftId ? { draftId: draft.draftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
+        ...(payload.attachmentIds.length > 0 ? { attachmentIds: payload.attachmentIds } : {}),
       }, (event) => {
         if (event.type === 'started') {
           setStreamingAssistant({ hasText: false, text: '' });
@@ -407,11 +483,13 @@ export function NewAutomationScreen(): React.JSX.Element {
           : current;
         return updated.some((turn) => turn.id === payload.turnId)
           ? updated
-          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message)];
+          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message, false, payload.attachments)];
       });
       setInput('');
+      setMentionQuery(null);
     },
     onSuccess: (response, payload) => {
+      attachmentDraft.consume(payload.attachmentLocalIds);
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
       const responseMessage = response.question
@@ -432,7 +510,9 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
 
   const create = useMutation({
-    mutationFn: () => api!.createAutomation(draft!.draftId, defaultPluginIds),
+    mutationFn: () => slackDeliveryConnectionId
+      ? api!.createAutomation(draft!.draftId, defaultPluginIds, slackDeliveryConnectionId)
+      : api!.createAutomation(draft!.draftId, defaultPluginIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -452,9 +532,25 @@ export function NewAutomationScreen(): React.JSX.Element {
     turnId: string = crypto.randomUUID(),
     elicitation?: AutomationCompilePayload['elicitation'],
   ): Promise<void> => {
+    const readyAttachments = attachmentDraft.ready;
     const trimmed = message.trim();
-    if (!trimmed || compile.isPending) return;
-    await compile.mutateAsync({ message: trimmed, turnId, ...(elicitation ? { elicitation } : {}) });
+    if ((!trimmed && readyAttachments.length === 0) || attachmentDraft.uploading || compile.isPending) return;
+    const createdAt = new Date().toISOString();
+    await compile.mutateAsync({
+      attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
+      attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
+      attachments: readyAttachments.map((attachment) => ({
+        id: attachment.resource!.id,
+        fileName: attachment.file.name,
+        mimeType: attachment.file.type || 'application/octet-stream',
+        sizeBytes: attachment.file.size,
+        contentAvailable: true,
+        createdAt,
+      })),
+      message: trimmed,
+      turnId,
+      ...(elicitation ? { elicitation } : {}),
+    });
   };
 
   const submit = (message = input): void => {
@@ -531,6 +627,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                 {turns.map((turn) => (
                   <AutomationMessageBlock
                     key={turn.id}
+                    loadAttachmentContent={loadAttachmentContent}
                     message={turn}
                     onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
                       ? (answer) => answerElicitationOptimistically({
@@ -545,6 +642,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                           updateMessages: (update) => setTurns(update),
                         })
                       : undefined}
+                    onOpenAttachment={setAttachmentPreview}
                   />
                 ))}
                 {compile.isPending && (
@@ -563,9 +661,11 @@ export function NewAutomationScreen(): React.JSX.Element {
                     connections={connections.data ?? []}
                     creating={create.isPending}
                     defaultPluginIds={defaultPluginIds}
+                    slackDeliveryConnectionId={slackDeliveryConnectionId}
                     draft={draft}
                     onCreate={() => create.mutate()}
                     onDefaultPluginsChange={setDefaultPluginIds}
+                    onSlackDeliveryChange={setSlackDeliveryConnectionId}
                   />
                 )}
               </div>
@@ -573,29 +673,49 @@ export function NewAutomationScreen(): React.JSX.Element {
 
             {!selectedTemplate && (
               <div className="automation-composer-wrap">
-                <div className="automation-composer">
-                  <textarea
-                    aria-label={draft?.question?.prompt ?? 'Describe an automation'}
-                    onChange={(event) => setInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault();
-                        submit();
-                      }
-                    }}
-                    placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}
-                    ref={textareaRef}
-                    rows={1}
-                    value={input}
-                  />
-                  <button aria-label="Send" disabled={!input.trim() || compile.isPending} onClick={() => submit()} type="button">
-                    {compile.isPending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
-                  </button>
-                </div>
-                {(compile.error || create.error || connections.error) && (
+                {visibleMentionConnections.length > 0 && (
+                  <div className="mention-popover" role="listbox" aria-label="Connections">
+                    {visibleMentionConnections.map((connection) => (
+                      <button key={connection.id} onClick={() => insertConnectionMention(connection)} role="option" type="button">
+                        <span className="mention-icon"><AtSign size={14} /></span>
+                        <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Your connection' : 'Workspace connection'}</small></span>
+                        <Badge>Connection</Badge>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <ComposerInput
+                  api={api ?? undefined}
+                  ariaLabel={draft?.question?.prompt ?? 'Describe an automation'}
+                  attachments={attachmentDraft.attachments}
+                  className="automation-composer"
+                  fileInputRef={fileInputRef}
+                  mentionLabel="Mention a connection"
+                  onAttach={attachmentDraft.addFiles}
+                  onMention={beginConnectionMention}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape' || mentionQuery === null) return;
+                    event.preventDefault();
+                    setMentionQuery(null);
+                  }}
+                  onOpenAttachment={setAttachmentPreview}
+                  onRemoveAttachment={attachmentDraft.removeAttachment}
+                  onRetryAttachment={attachmentDraft.retryAttachment}
+                  onSubmit={() => submitAsync().catch(() => undefined)}
+                  onValueChange={updateInput}
+                  placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}
+                  ref={textareaRef}
+                  shouldSubmitOnEnter={() => mentionQuery === null}
+                  submitDisabled={attachmentDraft.uploading || (!input.trim() && attachmentDraft.ready.length === 0) || compile.isPending}
+                  submitLabel="Send"
+                  submitting={compile.isPending}
+                  uploading={attachmentDraft.uploading}
+                  value={input}
+                />
+                {(compile.error || create.error || connections.error || attachmentDraft.error) && (
                   <div className="automation-error-actions">
                     <InlineError>
-                      {compile.error?.message ?? create.error?.message ?? connections.error?.message}
+                      {compile.error?.message ?? create.error?.message ?? connections.error?.message ?? attachmentDraft.error}
                       {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
                     </InlineError>
                     {compile.error && compile.variables?.message && <Button onClick={() => compile.mutate(compile.variables!)}>Retry</Button>}
@@ -614,6 +734,7 @@ export function NewAutomationScreen(): React.JSX.Element {
           </>
         )}
       </div>
+      <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
   );
 }

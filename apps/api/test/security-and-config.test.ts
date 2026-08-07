@@ -12,7 +12,19 @@ import { redact } from "../src/observability/logger";
 import { AuthService } from "../src/services/auth-service";
 import { __connectionServiceTesting } from "../src/services/connection-service";
 import { __integrationTesting } from "../src/services/integrations";
-import { isAllowedSocketOrigin, issueSocketTicket, verifySocketTicket } from "../src/services/socket-service";
+import {
+  isAllowedSocketOrigin,
+  issueSocketTicket,
+  issueTranscriptionSocketTicket,
+  verifySocketTicket,
+  verifyTranscriptionSocketTicket,
+} from "../src/services/socket-service";
+import {
+  __realtimeTranscriptionTesting,
+  azureRealtimeWebSocketUrl,
+  parseTranscriptionClientEvent,
+  transcriptionSessionUpdate,
+} from "../src/services/realtime-transcription-service";
 import { __resourceServiceTesting } from "../src/services/resource-service";
 import { __workstreamServiceTesting } from "../src/services/workstream-service";
 
@@ -581,6 +593,74 @@ describe("environment guardrails", () => {
     expect(isAllowedSocketOrigin(env, "http://localhost:5173")).toBe(true);
     expect(isAllowedSocketOrigin(env, "https://with-avalon.com.evil.example")).toBe(false);
     expect(isAllowedSocketOrigin(env, null)).toBe(false);
+  });
+
+  it("keeps Azure dictation credentials server-side and scopes its socket ticket", async () => {
+    const env = {
+      SESSION_SIGNING_KEY: "test-signing-key",
+      AVALON_REGION: "eu",
+      AZURE_OPENAI_ENDPOINT: "https://avalon-eu.openai.azure.com/ignored/path",
+      AZURE_OPENAI_REALTIME_DEPLOYMENT: "avalon-live-transcription",
+    } as Env;
+    const auth = {
+      sessionId: "session",
+      userId: "00000000-0000-7000-8000-000000000001",
+      workspaceId: "00000000-0000-7000-8000-000000000002",
+      region: "eu" as const,
+      role: "owner" as const,
+    };
+    const ticket = await issueTranscriptionSocketTicket(env, auth);
+
+    await expect(verifyTranscriptionSocketTicket(env, ticket)).resolves.toMatchObject({
+      userId: auth.userId,
+      workspaceId: auth.workspaceId,
+      region: "eu",
+    });
+    await expect(verifySocketTicket(env, ticket)).rejects.toMatchObject({ code: "invalid_socket_ticket" });
+    expect(azureRealtimeWebSocketUrl(env)).toBe(
+      "https://avalon-eu.openai.azure.com/openai/v1/realtime?intent=transcription",
+    );
+  });
+
+  it("builds the Azure transcription session and accepts only audio-buffer events", () => {
+    expect(transcriptionSessionUpdate("gpt-live-transcribe-deployment")).toMatchObject({
+      type: "session.update",
+      session: {
+        type: "transcription",
+        audio: {
+          input: {
+            transcription: { model: "gpt-live-transcribe-deployment", delay: "minimal" },
+            turn_detection: null,
+          },
+        },
+      },
+    });
+    expect(parseTranscriptionClientEvent(JSON.stringify({
+      type: "input_audio_buffer.append",
+      audio: "AQID",
+    }))).toEqual({ type: "input_audio_buffer.append", audio: "AQID" });
+    expect(parseTranscriptionClientEvent(JSON.stringify({ type: "input_audio_buffer.commit" }))).toEqual({
+      type: "input_audio_buffer.commit",
+    });
+    expect(parseTranscriptionClientEvent(JSON.stringify({
+      type: "input_audio_buffer.append",
+      audio: "not base64",
+    }))).toBeNull();
+    expect(parseTranscriptionClientEvent(JSON.stringify({
+      type: "session.update",
+      session: { audio: { input: { transcription: { model: "other-model" } } } },
+    }))).toBeNull();
+    expect(__realtimeTranscriptionTesting.base64DecodedByteLength("AQID")).toBe(3);
+    expect(__realtimeTranscriptionTesting.base64DecodedByteLength("not base64")).toBeNull();
+    expect(__realtimeTranscriptionTesting.sendableCloseCode(1000)).toBe(1000);
+    expect(__realtimeTranscriptionTesting.sendableCloseCode(1006)).toBe(1011);
+    expect(__realtimeTranscriptionTesting.sendableCloseCode(4_001)).toBe(4_001);
+    expect(__realtimeTranscriptionTesting.limits).toMatchObject({
+      maxClientFramesPerSecond: 30,
+      maxConnectionMs: 300_000,
+      maxConcurrentUserSessions: 2,
+      maxConcurrentWorkspaceSessions: 20,
+    });
   });
 
   it("batches rapid model deltas before publishing realtime frames", async () => {

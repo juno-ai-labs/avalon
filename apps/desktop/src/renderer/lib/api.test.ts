@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail } from './api';
+import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -220,7 +220,7 @@ describe('Avalon API wire adapter', () => {
     const streamed: unknown[] = [];
 
     const result = await api.compileAutomation(
-      { message: 'Check this blog every 24 hours.' },
+      { message: 'Check this blog every 24 hours.', attachmentIds: [resourceId] },
       (event) => streamed.push(event),
     );
     expect(result).toMatchObject({
@@ -239,6 +239,17 @@ describe('Avalon API wire adapter', () => {
       draftId: result.draftId,
       messages: [{ role: 'user', content: 'Check this blog every 24 hours.' }],
       currentDraft: null,
+      attachmentIds: [resourceId],
+    });
+
+    await api.compileAutomation({ message: 'Only report meaningful changes.', draftId: result.draftId });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      attachmentIds: [resourceId],
+      messages: [
+        { role: 'user', content: 'Check this blog every 24 hours.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+        { role: 'user', content: 'Only report meaningful changes.' },
+      ],
     });
   });
 
@@ -272,6 +283,32 @@ describe('Avalon API wire adapter', () => {
       id: resourceId,
       watchEnabled: false,
       watchStatus: 'unsupported',
+    });
+  });
+
+  it('preserves externally attributed Slack actors in renderer messages', () => {
+    expect(mapMessage({
+      ...message,
+      author: {
+        type: 'external' as const,
+        actor: {
+          provider: 'slack',
+          providerAccountId: 'T123',
+          providerUserId: 'U456',
+          displayName: 'Taylor',
+          avatarUrl: 'https://example.com/taylor.png',
+        },
+      },
+      textContent: 'Investigate this incident',
+    })).toMatchObject({
+      authorType: 'external',
+      externalActor: {
+        provider: 'slack',
+        providerAccountId: 'T123',
+        providerUserId: 'U456',
+        displayName: 'Taylor',
+      },
+      text: 'Investigate this incident',
     });
   });
 
@@ -387,6 +424,66 @@ describe('Avalon API wire adapter', () => {
       messageType: 'elicitation',
       elicitation: { id: taskId, status: 'answered', answer: 'foo' },
     });
+  });
+
+  it('replaces a durable open elicitation message with its answered response regardless of order', () => {
+    const elicitation = {
+      id: taskId,
+      workstreamId,
+      harnessRunId: messageId,
+      prompt: 'Choose one',
+      responseType: 'single_select' as const,
+      options: [{ label: 'Foo', value: 'foo', description: null }],
+      minimumSelections: 1,
+      maximumSelections: 1,
+      targetUserId: null,
+      answeredByUserId: null,
+      createdAt: timestamp,
+      answeredAt: null,
+    };
+    const openQuestion = mapMessage({
+      ...message,
+      id: taskId,
+      clientMessageId: `elicitation:${taskId}`,
+      author: { type: 'agent' as const },
+      messageType: 'elicitation' as const,
+      textContent: '',
+      structuredContent: {
+        kind: 'elicitation',
+        elicitation: { ...elicitation, status: 'open' as const, answer: null },
+      },
+      mentions: [],
+      sequenceNumber: 4,
+    });
+    const answeredResponse = mapMessage({
+      ...message,
+      id: 'durable-elicitation-answer-message',
+      clientMessageId: `elicitation-response:${taskId}`,
+      author: { type: 'human' as const, user },
+      messageType: 'elicitation' as const,
+      textContent: '',
+      structuredContent: {
+        kind: 'elicitation_response',
+        elicitation: {
+          ...elicitation,
+          status: 'answered' as const,
+          answer: 'foo',
+          answeredByUserId: userId,
+          answeredAt: timestamp,
+        },
+      },
+      mentions: [],
+      sequenceNumber: 5,
+    });
+
+    expect(messagesWithTransientBlocks(
+      [openQuestion, answeredResponse],
+      mapWorkstreamDetail(detail),
+    )).toEqual([answeredResponse]);
+    expect(messagesWithTransientBlocks(
+      [answeredResponse, openQuestion],
+      mapWorkstreamDetail(detail),
+    )).toEqual([answeredResponse]);
   });
 
   it('maps persisted artifacts and background activity into the durable rail model', () => {
@@ -639,6 +736,29 @@ describe('Avalon API wire adapter', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}`);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ title: 'Launch planning' });
+  });
+
+  it('creates an attachment-only work stream with its draft resource IDs', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      workstream: detail,
+      messageId,
+      harnessRunId: null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.createWorkstream({
+      openingMessage: '',
+      participantIds: [],
+      attachmentIds: [resourceId],
+    })).resolves.toMatchObject({ messageId, workstream: { id: workstreamId } });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      openingMessage: '',
+      participantUserIds: [],
+      clientMessageId: expect.any(String),
+      attachmentIds: [resourceId],
+    });
   });
 
   it('acknowledges visible messages and marks a work stream unread through durable read-state endpoints', async () => {

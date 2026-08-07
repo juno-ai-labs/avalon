@@ -1,0 +1,325 @@
+import { ExternalActorSchema, type ExternalActor } from "@avalon/contracts";
+import { createDatabase, newId, nowIso } from "@avalon/db";
+import { z } from "zod";
+
+import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
+import { publishWorkstreamEvent } from "./integrations";
+import { launchWorkstreamHarness } from "./workstream-service";
+import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
+
+const OpenElicitationRowSchema = z.object({
+  id: z.string().min(1),
+  harness_run_id: z.string().min(1),
+  prompt: z.string(),
+  response_type: z.enum(["text", "radio", "single_select", "multi_select"]),
+  options_json: z.string(),
+  minimum_selections: z.number().int(),
+  maximum_selections: z.number().int().nullable(),
+  created_at: z.string(),
+});
+
+type SlackExternalMessageInput = {
+  actor: ExternalActor;
+  text: string;
+  clientMessageId: string;
+};
+
+/**
+ * Narrow host-authorized surface for Slack members who are not Avalon users.
+ * Every run uses the workspace principal; the Slack identity is attribution,
+ * never an authentication substitute.
+ */
+export class SlackWorkspaceWorkstreamService {
+  private readonly database;
+
+  constructor(
+    private readonly env: Env,
+    private readonly workspaceId: string,
+  ) {
+    this.database = createDatabase(env.DB);
+  }
+
+  async create(input: SlackExternalMessageInput & { title?: string; objective: string }) {
+    const actor = ExternalActorSchema.parse(input.actor);
+    const title = input.title
+      ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180)
+      ?? "Slack task";
+    const workstreamId = newId();
+    const routeInput = {
+      region: this.env.AVALON_REGION,
+      workspaceId: this.workspaceId,
+      workstreamId,
+    } as const;
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const emailRoute = await emailRouting.reserve(routeInput);
+    const created = await this.database.workstreams.create({
+      id: workstreamId,
+      workspaceId: this.workspaceId,
+      title,
+      objective: input.objective,
+      emailAddress: emailRoute.emailAddress,
+      creatorUserId: null,
+      openingAuthor: { type: "external", actor },
+      openingMessage: input.text,
+      clientMessageId: input.clientMessageId,
+      participantUserIds: [],
+    });
+    await emailRouting.activateWorkstreamRoute(routeInput);
+    const message = await this.database.workstreams.getMessageByClientId(
+      this.workspaceId,
+      created.workstream.id,
+      input.clientMessageId,
+    );
+    if (message) {
+      await publishWorkstreamEvent(this.env, this.workspaceId, created.workstream.id, {
+        type: "message_created",
+        message,
+      });
+      await this.recordExternalActorAudit(
+        "slack.workspace_workstream.created",
+        created.workstream.id,
+        "message",
+        message.id,
+        actor,
+      );
+    }
+    const harnessRunId = await launchWorkstreamHarness(this.env, {
+      workspaceId: this.workspaceId,
+      workstreamId: created.workstream.id,
+      triggerMessageId: created.messageId,
+      origin: "slack_workspace_opening_message",
+      executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+    });
+    return { ...created, harnessRunId };
+  }
+
+  async createMessage(workstreamId: string, input: SlackExternalMessageInput) {
+    const persisted = await this.database.workstreams.createExternalMessage({
+      workspaceId: this.workspaceId,
+      workstreamId,
+      actor: ExternalActorSchema.parse(input.actor),
+      text: input.text,
+      clientMessageId: input.clientMessageId,
+    });
+    if (!persisted.inserted) {
+      return { message: persisted.message, harnessRunId: null };
+    }
+    await publishWorkstreamEvent(this.env, this.workspaceId, workstreamId, {
+      type: "message_created",
+      message: persisted.message,
+    });
+    await this.recordExternalActorAudit(
+      "slack.workspace_workstream.message_created",
+      workstreamId,
+      "message",
+      persisted.message.id,
+      input.actor,
+    );
+    const harnessRunId = await launchWorkstreamHarness(this.env, {
+      workspaceId: this.workspaceId,
+      workstreamId,
+      triggerMessageId: persisted.message.id,
+      origin: "slack_workspace_message",
+      executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+    });
+    return { message: persisted.message, harnessRunId };
+  }
+
+  async answerOpenElicitation(workstreamId: string, input: SlackExternalMessageInput) {
+    const clientMessageId = input.clientMessageId.slice(0, 120);
+    const existing = await this.database.workstreams.getMessageByClientId(
+      this.workspaceId,
+      workstreamId,
+      clientMessageId,
+    );
+    if (existing) return { elicitation: null, harnessRunId: null };
+    const raw = await this.env.DB.prepare(
+      `SELECT id, harness_run_id, prompt, response_type, options_json,
+              minimum_selections, maximum_selections, created_at
+       FROM elicitations
+       WHERE workspace_id = ? AND workstream_id = ? AND status = 'open'
+       ORDER BY created_at ASC LIMIT 1`,
+    ).bind(this.workspaceId, workstreamId).first<Record<string, unknown>>();
+    if (!raw) return null;
+    const elicitation = OpenElicitationRowSchema.parse(raw);
+    const actor = ExternalActorSchema.parse(input.actor);
+    const answer = slackElicitationAnswer(elicitation, input.text);
+    const at = nowIso();
+    const responseMessageId = newId();
+    const persistedElicitation = {
+      id: elicitation.id,
+      workstreamId,
+      harnessRunId: elicitation.harness_run_id,
+      prompt: elicitation.prompt,
+      responseType: elicitation.response_type,
+      options: parseOptions(elicitation.options_json),
+      minimumSelections: elicitation.minimum_selections,
+      maximumSelections: elicitation.maximum_selections,
+      targetUserId: null,
+      status: "answered" as const,
+      answer,
+      answeredByUserId: null,
+      createdAt: elicitation.created_at,
+      answeredAt: at,
+    };
+    const results = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE elicitations
+         SET status = 'answered', answer_json = ?, answered_by_user_id = NULL,
+             answered_by_external_actor_json = ?, answered_at = ?
+         WHERE id = ? AND workspace_id = ? AND workstream_id = ? AND status = 'open'`,
+      ).bind(
+        JSON.stringify(answer),
+        JSON.stringify(actor),
+        at,
+        elicitation.id,
+        this.workspaceId,
+        workstreamId,
+      ),
+      this.env.DB.prepare(
+        `INSERT INTO messages
+         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+          message_type, text_content, structured_content_json, sequence_number, created_at,
+          external_actor_json)
+         SELECT ?, ?, ?, w.id, 'system', NULL, 'elicitation', '', ?,
+                w.next_sequence_number, ?, ?
+         FROM workstreams w
+         WHERE w.id = ? AND w.workspace_id = ?
+           AND EXISTS (
+             SELECT 1 FROM elicitations e
+             WHERE e.id = ? AND e.workspace_id = w.workspace_id AND e.workstream_id = w.id
+               AND e.status = 'answered' AND e.answered_at = ?
+               AND e.answered_by_external_actor_json = ?
+           )
+         ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+      ).bind(
+        responseMessageId,
+        clientMessageId,
+        this.workspaceId,
+        JSON.stringify({ kind: "elicitation_response", elicitation: persistedElicitation }),
+        at,
+        JSON.stringify(actor),
+        workstreamId,
+        this.workspaceId,
+        elicitation.id,
+        at,
+        JSON.stringify(actor),
+      ),
+      this.env.DB.prepare(
+        `UPDATE workstreams SET next_sequence_number = next_sequence_number + 1,
+           latest_attention_sequence_number = next_sequence_number,
+           last_activity_at = ?, updated_at = ?
+         WHERE id = ? AND workspace_id = ?
+           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
+      ).bind(at, at, workstreamId, this.workspaceId, responseMessageId),
+    ]);
+    if (Number(results[0]?.meta.changes ?? 0) !== 1) {
+      throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
+    }
+    if (Number(results[1]?.meta.changes ?? 0) !== 1) {
+      throw new ApiError(500, "elicitation_response_write_failed", "The response could not be stored");
+    }
+    const remaining = await this.env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM elicitations WHERE workstream_id = ? AND status = 'open'",
+    ).bind(workstreamId).first<{ count: number }>();
+    const harnessRunId = Number(remaining?.count ?? 0) === 0
+      ? await launchWorkstreamHarness(this.env, {
+          workspaceId: this.workspaceId,
+          workstreamId,
+          triggerMessageId: responseMessageId,
+          origin: "slack_workspace_elicitation_answer",
+          executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+          parentHarnessRunId: elicitation.harness_run_id,
+        })
+      : null;
+    await publishWorkstreamEvent(this.env, this.workspaceId, workstreamId, {
+      type: "elicitation_answered",
+      elicitation: persistedElicitation,
+    });
+    await this.recordExternalActorAudit(
+      "slack.workspace_workstream.elicitation_answered",
+      workstreamId,
+      "elicitation",
+      elicitation.id,
+      actor,
+    );
+    return { elicitation: persistedElicitation, harnessRunId };
+  }
+
+  private async recordExternalActorAudit(
+    action: string,
+    workstreamId: string,
+    targetType: "message" | "elicitation",
+    targetId: string,
+    actorInput: ExternalActor,
+  ): Promise<void> {
+    const actor = ExternalActorSchema.parse(actorInput);
+    await this.env.DB.prepare(
+      `INSERT INTO audit_events
+       (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
+        target_type, target_id, metadata_json, created_at)
+       VALUES (?, ?, 'connector', NULL, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      newId(),
+      this.workspaceId,
+      workstreamId,
+      action,
+      targetType,
+      targetId,
+      JSON.stringify({ externalActor: actor, executionPrincipal: "workspace" }),
+      nowIso(),
+    ).run();
+  }
+}
+
+function parseOptions(value: string): Array<{ value: string; label: string; description?: string | null }> {
+  const json: unknown = (() => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
+    }
+  })();
+  const parsed = z.array(z.object({
+    value: z.string(),
+    label: z.string(),
+    description: z.string().nullable().optional(),
+  })).safeParse(json);
+  return parsed.success
+    ? parsed.data.map((option) => ({
+        value: option.value,
+        label: option.label,
+        ...(option.description !== undefined ? { description: option.description } : {}),
+      }))
+    : [];
+}
+
+function slackElicitationAnswer(
+  elicitation: z.infer<typeof OpenElicitationRowSchema>,
+  text: string,
+): string | string[] {
+  const response = text.trim();
+  if (!response) throw new ApiError(422, "slack_prompt_missing", "The Slack response is empty");
+  if (elicitation.response_type === "text") return response;
+  const options = parseOptions(elicitation.options_json);
+  const valuesByLabel = new Map(options.flatMap((option) => [
+    [option.value.toLocaleLowerCase(), option.value] as const,
+    [option.label.toLocaleLowerCase(), option.value] as const,
+  ]));
+  if (elicitation.response_type !== "multi_select") {
+    if (elicitation.minimum_selections > 1 || elicitation.maximum_selections === 0) {
+      throw new ApiError(422, "invalid_selection_count", "The Slack response has an invalid number of selections");
+    }
+    return valuesByLabel.get(response.toLocaleLowerCase()) ?? response;
+  }
+  const selections = response.split(/\s*,\s*/u).filter(Boolean);
+  const matched = selections.map((selection) =>
+    valuesByLabel.get(selection.toLocaleLowerCase()) ?? selection);
+  const answer = matched.length > 0 ? matched : [response];
+  if (answer.length < elicitation.minimum_selections
+    || (elicitation.maximum_selections != null && answer.length > elicitation.maximum_selections)) {
+    throw new ApiError(422, "invalid_selection_count", "The Slack response has an invalid number of selections");
+  }
+  return answer;
+}

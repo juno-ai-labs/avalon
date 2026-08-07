@@ -15,6 +15,7 @@
     "PUBLIC_WEB_BASE_URL": "https://with-avalon.com",
     "GITHUB_INGRESS_BASE_URL": "https://github.with-avalon.com",
     "LINEAR_INGRESS_BASE_URL": "https://linear.with-avalon.com",
+    "SLACK_INGRESS_BASE_URL": "https://slack.with-avalon.com",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/complete",
@@ -68,7 +69,8 @@
   "routes": [
     { "pattern": "api.with-avalon.com", "custom_domain": true },
     { "pattern": "github.with-avalon.com", "custom_domain": true },
-    { "pattern": "linear.with-avalon.com", "custom_domain": true }
+    { "pattern": "linear.with-avalon.com", "custom_domain": true },
+    { "pattern": "slack.with-avalon.com", "custom_domain": true }
   ],
   "triggers": { "crons": ["*/5 * * * *"] },
   "services": [
@@ -91,6 +93,11 @@
       "binding": "EU_LINEAR_BRIDGE",
       "service": "avalon-api-eu",
       "entrypoint": "LinearRegionalBridge"
+    },
+    {
+      "binding": "EU_SLACK_BRIDGE",
+      "service": "avalon-api-eu",
+      "entrypoint": "SlackRegionalBridge"
     }
   ],
   "r2_buckets": [
