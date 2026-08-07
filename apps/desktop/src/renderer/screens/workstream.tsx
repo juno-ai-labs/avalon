@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
-  Bot,
   CalendarClock,
   Copy,
   Ellipsis,
@@ -20,11 +19,9 @@ import {
   Menu,
   PanelRight,
   Plus,
-  Radio,
   RefreshCcw,
   Search,
   UserPlus,
-  Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -231,7 +228,7 @@ export function AddResourceDialog({
   );
 }
 
-function WorkstreamHeader({
+export function WorkstreamHeader({
   workstream,
   socketState,
   hypersightOpen,
@@ -260,7 +257,6 @@ function WorkstreamHeader({
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
-        <span className="header-origin-icon" aria-hidden="true">{workstream.origin === 'automation' ? <Zap size={14} /> : <Bot size={14} />}</span>
         <div className="workstream-title-block">
           <div className="workstream-title-line">
             <h1>{workstream.title}</h1>
@@ -292,14 +288,14 @@ function WorkstreamHeader({
           <Activity size={15} />
           {runningTasks > 0 && <span className="icon-count">{runningTasks}</span>}
         </IconButton>
-        {workstream.origin === 'automation' && (
-          <IconButton label="Automation runs" onClick={() => openRail('runs')}><Radio size={15} /></IconButton>
-        )}
         <IconButton label="Work-stream context" onClick={() => openRail('context')}><PanelRight size={15} /></IconButton>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+              {workstream.origin === 'automation' && (
+                <DropdownMenu.Item className="menu-item" onSelect={() => openRail('runs')}>Automation runs</DropdownMenu.Item>
+              )}
               <DropdownMenu.Item className="menu-item" onSelect={copyLink}><Copy size={14} /> Copy work-stream link</DropdownMenu.Item>
               {workstream.emailAddress && (
                 <DropdownMenu.Item className="menu-item" onSelect={copyEmailAddress}><Mail size={14} /> Copy work-stream email address</DropdownMenu.Item>
