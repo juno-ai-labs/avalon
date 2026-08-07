@@ -13,6 +13,7 @@ import {
   sendWorkspaceInvitationResolutionEmail,
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
+import { SlackAgentService } from "./slack-agent-service";
 
 interface InvitationRow {
   id: string;
@@ -124,8 +125,11 @@ export async function acceptInvitationForUser(
     throw new ApiError(403, "invitation_email_mismatch", `Sign in with ${invitation.email} to accept this invitation`);
   }
   if (invitation.accepted_at) {
-    if (invitation.accepted_by_user_id === user.id) return invitation.workspace_id;
-    throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+    if (invitation.accepted_by_user_id !== user.id) {
+      throw new ApiError(404, "invitation_invalid", "This invitation is invalid, expired, or no longer available");
+    }
+    await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
+    return invitation.workspace_id;
   }
 
   const otherMembership = await env.DB.prepare(
@@ -174,7 +178,30 @@ export async function acceptInvitationForUser(
   if (transitioned) {
     await notifyInvitationResolution(env, invitation, user, "accepted");
   }
+  await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
   return invitation.workspace_id;
+}
+
+async function adoptSlackWorkstreamsForMember(
+  env: Env,
+  workspaceId: string,
+  user: { id: string; email: string },
+): Promise<void> {
+  try {
+    await new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
+      workspaceId,
+      user.id,
+      user.email,
+    );
+  } catch (error) {
+    // Membership acceptance is authoritative. Slack adoption is a recoverable
+    // convenience and can also run when the member explicitly links Slack.
+    console.warn("Slack workspace workstream adoption failed", {
+      workspace_id: workspaceId,
+      user_id: user.id,
+      reason: error instanceof Error ? error.message : "unknown",
+    });
+  }
 }
 
 export async function declineInvitationForUser(

@@ -1,4 +1,4 @@
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { buildMessageAttachmentStatements, createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
 import { HarnessFailureCodeSchema, WorkstreamDetailSchema } from "@avalon/contracts";
 import type {
@@ -6,6 +6,7 @@ import type {
   Connection,
   CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
+  ExecutionPrincipal,
   Message,
   UpdateWorkstreamRequestSchema,
   Workstream,
@@ -31,6 +32,7 @@ import { issueSocketTicket } from "./socket-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
+import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -104,6 +106,84 @@ const GENERIC_MEMBER_SAFE_HARNESS_ERROR = Object.freeze({
   message: "The Avalon harness could not complete this run",
 });
 
+export async function launchWorkstreamHarness(
+  env: Env,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    triggerMessageId: string | null;
+    origin: string;
+    executionPrincipal: ExecutionPrincipal;
+    parentHarnessRunId?: string;
+  },
+): Promise<string> {
+  const id = newId();
+  const at = nowIso();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
+        status, started_at, model, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+    ).bind(
+      id,
+      input.workspaceId,
+      input.workstreamId,
+      input.origin,
+      JSON.stringify(input.executionPrincipal),
+      input.parentHarnessRunId ?? null,
+      at,
+      env.OPENROUTER_PRIMARY_MODEL,
+      at,
+    ),
+    env.DB.prepare(
+      `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ?`,
+    ).bind(at, at, input.workstreamId, input.workspaceId),
+  ]);
+  const workflowInput: WorkstreamWorkflowInput = {
+    region: env.AVALON_REGION,
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+    harnessRunId: id,
+    triggerMessageId: input.triggerMessageId,
+    automationSubscriptionId: null,
+    activityId: null,
+    executionPrincipal: input.executionPrincipal,
+    reason: input.origin,
+  };
+  try {
+    await startWorkstreamWorkflow(env, workflowInput);
+  } catch (error) {
+    const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
+    logStructuredEvent(env, "error", "workstream_harness_launch_failed", {
+      request_id: id,
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      origin: input.origin,
+      execution_principal_type: input.executionPrincipal.type,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      error_message: diagnosticMessage,
+    });
+    const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
+      ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?",
+      ).bind(nowIso(), JSON.stringify(memberSafeError), id),
+      env.DB.prepare(
+        "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
+      ).bind(nowIso(), input.workstreamId),
+    ]);
+    throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
+  }
+  await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+    type: "harness_status_changed",
+    status: "running",
+  });
+  return id;
+}
+
 function json<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try {
@@ -175,7 +255,11 @@ export class WorkstreamService {
 
   async create(input: CreateWorkstreamInput) {
     await this.assertMembersExist(input.participantUserIds);
-    const title = input.title ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
+    const attachmentIds = [...new Set(input.attachmentIds)];
+    await this.assertDraftAttachments(attachmentIds);
+    const objective = input.objective
+      ?? (input.openingMessage.trim() || "Review the attached files");
+    const title = input.title ?? objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
     const workstreamId = newId();
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = {
@@ -188,12 +272,14 @@ export class WorkstreamService {
       id: workstreamId,
       workspaceId: this.auth.workspaceId,
       title,
-      objective: input.objective,
+      objective,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
+      openingAuthor: { type: "human", userId: this.auth.userId },
       openingMessage: input.openingMessage,
       clientMessageId: input.clientMessageId,
       participantUserIds: input.participantUserIds,
+      attachmentIds,
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
@@ -540,8 +626,15 @@ export class WorkstreamService {
     ]);
   }
 
-  async answerElicitation(id: string, elicitationId: string, input: AnswerElicitationInput) {
+  async answerElicitation(
+    id: string,
+    elicitationId: string,
+    input: AnswerElicitationInput,
+    clientMessageId = `elicitation-response:${elicitationId}`,
+  ) {
     await this.requireWorkstream(id);
+    const duplicate = await this.loadMessageByClientId(id, clientMessageId);
+    if (duplicate) return { elicitation: undefined, harnessRunId: null };
     const elicitation = await this.env.DB.prepare(
       `SELECT * FROM elicitations WHERE id = ? AND workstream_id = ? AND workspace_id = ? AND status = 'open'`,
     ).bind(elicitationId, id, this.auth.workspaceId).first<Record<string, unknown>>();
@@ -596,7 +689,7 @@ export class WorkstreamService {
          ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
       ).bind(
         responseMessageId,
-        `elicitation-response:${elicitationId}`,
+        clientMessageId,
         this.auth.workspaceId,
         this.auth.userId,
         JSON.stringify({ kind: "elicitation_response", elicitation: persistedElicitation }),
@@ -787,30 +880,14 @@ export class WorkstreamService {
   ): Promise<{ message: Message; inserted: boolean }> {
     const messageId = newId();
     const at = nowIso();
-    const attachmentStatements = input.attachmentIds.flatMap((resourceId, position) => [
-      this.env.DB.prepare(
-        `INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
-         SELECT ?, r.id, ?, ? FROM resources r
-         WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
-           AND r.uploaded_by_user_id = ? AND r.attachment_status = 'draft'
-           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
-         ON CONFLICT(message_id, resource_id) DO NOTHING`,
-      ).bind(messageId, position, at, resourceId, this.auth.workspaceId, this.auth.userId, messageId),
-      this.env.DB.prepare(
-        `INSERT INTO workstream_resources
-         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-         SELECT ?, r.id, ?, 0, 'message_attachment', ? FROM resources r
-         WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
-           AND r.uploaded_by_user_id = ?
-           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
-         ON CONFLICT(workstream_id, resource_id) DO NOTHING`,
-      ).bind(workstreamId, this.auth.userId, at, resourceId, this.auth.workspaceId, this.auth.userId, messageId),
-      this.env.DB.prepare(
-        `UPDATE resources SET attachment_status = 'attached', updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND uploaded_by_user_id = ?
-           AND EXISTS (SELECT 1 FROM message_attachments WHERE message_id = ? AND resource_id = ?)`,
-      ).bind(at, resourceId, this.auth.workspaceId, this.auth.userId, messageId, resourceId),
-    ]);
+    const attachmentStatements = buildMessageAttachmentStatements(this.env.DB, {
+      attachmentIds: input.attachmentIds,
+      attachedAt: at,
+      attachedByUserId: this.auth.userId,
+      messageId,
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+    });
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workstream_participants
@@ -864,69 +941,11 @@ export class WorkstreamService {
   }
 
   private async loadMessageByClientId(workstreamId: string, clientMessageId: string): Promise<Message | null> {
-    const row = await this.env.DB.prepare(
-      `SELECT m.*, u.email AS author_email, u.name AS author_name,
-         u.avatar_url AS author_avatar_url, u.timezone AS author_timezone, u.created_at AS author_created_at,
-         COALESCE((SELECT json_group_array(json_object(
-           'type', mm.mention_type,
-           'userId', mm.mentioned_user_id,
-           'connectorType', mm.connector_type,
-           'displayName', mentioned_person.name,
-           'avatarUrl', mentioned_person.avatar_url,
-           'startOffset', mm.start_offset,
-           'endOffset', mm.end_offset
-         )) FROM message_mentions mm
-           LEFT JOIN users mentioned_person ON mentioned_person.id = mm.mentioned_user_id
-           WHERE mm.message_id = m.id), '[]') AS mentions_json,
-         COALESCE((SELECT json_group_array(json_object(
-           'id', attachment_resource.id,
-           'fileName', attachment_resource.title,
-           'mimeType', COALESCE(attachment_resource.mime_type, 'application/octet-stream'),
-           'sizeBytes', COALESCE(json_extract(attachment_resource.metadata_json, '$.size'), 0),
-           'contentAvailable', CASE WHEN attachment_resource.content_ref IS NULL THEN 0 ELSE 1 END,
-           'createdAt', attachment_resource.created_at
-         )) FROM message_attachments ma
-           JOIN resources attachment_resource ON attachment_resource.id = ma.resource_id
-           WHERE ma.message_id = m.id ORDER BY ma.position), '[]') AS attachments_json
-       FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
-       WHERE m.workspace_id = ? AND m.workstream_id = ? AND m.client_message_id = ?`,
-    ).bind(this.auth.workspaceId, workstreamId, clientMessageId).first<Record<string, unknown>>();
-    if (!row) return null;
-    const authorType = String(row.author_type);
-    return {
-      id: String(row.id),
-      clientMessageId: row.client_message_id == null ? null : String(row.client_message_id),
-      workspaceId: String(row.workspace_id),
-      workstreamId: String(row.workstream_id),
-      author: authorType === "human"
-        ? {
-            type: "human",
-            user: {
-              id: String(row.author_user_id),
-              email: String(row.author_email),
-              name: String(row.author_name),
-              avatarUrl: row.author_avatar_url == null ? null : String(row.author_avatar_url),
-              timezone: String(row.author_timezone),
-              createdAt: String(row.author_created_at),
-            },
-          }
-        : authorType === "agent" ? { type: "agent" } : { type: "system" },
-      messageType: String(row.message_type) as Message["messageType"],
-      textContent: String(row.text_content ?? ""),
-      structuredContent: json(row.structured_content_json, null),
-      mentions: json(row.mentions_json, []),
-      attachments: json<Array<Record<string, unknown>>>(row.attachments_json, []).map((attachment) => ({
-        id: String(attachment.id),
-        fileName: String(attachment.fileName),
-        mimeType: String(attachment.mimeType || "application/octet-stream"),
-        sizeBytes: Math.max(0, Number(attachment.sizeBytes ?? 0)),
-        contentAvailable: Number(attachment.contentAvailable ?? 0) === 1 || attachment.contentAvailable === true,
-        createdAt: String(attachment.createdAt),
-      })),
-      sequenceNumber: Number(row.sequence_number),
-      createdAt: String(row.created_at),
-      editedAt: row.edited_at == null ? null : String(row.edited_at),
-    };
+    return this.database.workstreams.getMessageByClientId(
+      this.auth.workspaceId,
+      workstreamId,
+      clientMessageId,
+    );
   }
 
   private async assertDraftAttachments(ids: string[]): Promise<void> {
@@ -943,54 +962,14 @@ export class WorkstreamService {
   }
 
   private async launchHarness(workstreamId: string, triggerMessageId: string | null, origin: string, parentHarnessRunId?: string): Promise<string> {
-    const id = newId();
-    const at = nowIso();
-    const principal = { type: "user" as const, userId: this.auth.userId };
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
-          status, started_at, model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
-      ).bind(id, this.auth.workspaceId, workstreamId, origin, JSON.stringify(principal), parentHarnessRunId ?? null, at, this.env.OPENROUTER_PRIMARY_MODEL, at),
-      this.env.DB.prepare(
-        `UPDATE workstreams SET harness_status = 'running', last_activity_at = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ?`,
-      ).bind(at, at, workstreamId, this.auth.workspaceId),
-    ]);
-    const workflowInput: WorkstreamWorkflowInput = {
-      region: this.env.AVALON_REGION,
+    return launchWorkstreamHarness(this.env, {
       workspaceId: this.auth.workspaceId,
       workstreamId,
-      harnessRunId: id,
       triggerMessageId,
-      automationSubscriptionId: null,
-      activityId: null,
-      executionPrincipal: principal,
-      reason: origin,
-    };
-    try {
-      await startWorkstreamWorkflow(this.env, workflowInput);
-    } catch (error) {
-      const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
-      logStructuredEvent(this.env, "error", "workstream_harness_launch_failed", {
-        request_id: id,
-        workspace_id: this.auth.workspaceId,
-        workstream_id: workstreamId,
-        origin,
-        error_name: error instanceof Error ? error.name : "UnknownError",
-        error_message: diagnosticMessage,
-      });
-      const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
-        ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
-      await this.env.DB.batch([
-        this.env.DB.prepare("UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?").bind(nowIso(), JSON.stringify(memberSafeError), id),
-        this.env.DB.prepare("UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?").bind(nowIso(), workstreamId),
-      ]);
-      throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
-    }
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, workstreamId, { type: "harness_status_changed", status: "running" });
-    return id;
+      origin,
+      executionPrincipal: { type: "user", userId: this.auth.userId },
+      ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
+    });
   }
 
   private async assertMembersExist(ids: string[]): Promise<void> {
@@ -1025,7 +1004,7 @@ export class WorkstreamService {
 
   private scheduleMentionNotifications(message: Message, workstream: Workstream): void {
     const task = this.sendMentionNotifications(message, workstream).catch((error: unknown) => {
-      console.warn("Mention email delivery failed", {
+      console.warn("Mention notification delivery failed", {
         messageId: message.id,
         region: this.env.AVALON_REGION,
         reason: error instanceof ApiError ? error.code : "unknown_error",
@@ -1070,19 +1049,29 @@ export class WorkstreamService {
       })) continue;
       recipients.set(row.person_id, row);
     }
-    await Promise.all([...recipients.values()].map((recipient) => sendWorkstreamMentionEmail(this.env, {
-      messageId: message.id,
-      recipientUserId: recipient.person_id,
-      recipientEmail: recipient.email,
-      recipientName: recipient.name,
-      authorName: author.user.name,
-      workspaceName: recipient.workspace_name,
-      workstreamId: message.workstreamId,
-      workstreamTitle: String(workstream.title),
-      workstreamEmailAddress: workstream.emailAddress,
-      messageText: message.textContent,
-      region: this.env.AVALON_REGION,
-    })));
+    await Promise.all([...recipients.values()].map(async (recipient) => {
+      const common = {
+        messageId: message.id,
+        recipientUserId: recipient.person_id,
+        recipientEmail: recipient.email,
+        authorName: author.user.name,
+        workspaceName: recipient.workspace_name,
+        workstreamId: message.workstreamId,
+        workstreamTitle: String(workstream.title),
+        messageText: message.textContent,
+      };
+      const slack = await sendWorkstreamMentionSlack(this.env, {
+        ...common,
+        workspaceId: this.auth.workspaceId,
+      });
+      if (slack === "sent") return;
+      await sendWorkstreamMentionEmail(this.env, {
+        ...common,
+        recipientName: recipient.name,
+        workstreamEmailAddress: workstream.emailAddress,
+        region: this.env.AVALON_REGION,
+      });
+    }));
   }
 
   private async nonParticipantIds(workstreamId: string, ids: string[]): Promise<string[]> {

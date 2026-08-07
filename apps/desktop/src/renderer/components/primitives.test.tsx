@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { describe, expect, it, vi } from 'vitest';
-import { AvalonMark, DropdownSelect, OpeningState, StatusDot } from './primitives';
+import { AvalonMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -38,6 +38,35 @@ describe('StatusDot', () => {
 
     expect(screen.getByText('Running')).toBeVisible();
     expect(screen.getByText('Running').parentElement).toHaveClass('status-running');
+  });
+});
+
+describe('SocketStatusIndicator', () => {
+  it('explains the current live-update state from the compact header indicator', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const { rerender } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <SocketStatusIndicator state="reconnecting" />
+      </Tooltip.Provider>,
+    );
+
+    const indicator = screen.getByRole('status', { name: 'Reconnecting live updates' });
+    expect(indicator).toHaveClass('header-socket-state', 'socket-reconnecting');
+    expect(indicator).toHaveTextContent('Reconnecting live updates');
+    fireEvent.focus(indicator);
+    expect(await screen.findByText('The connection was interrupted. Avalon is reconnecting live updates.')).toBeVisible();
+
+    rerender(
+      <Tooltip.Provider delayDuration={0}>
+        <SocketStatusIndicator state="unavailable" />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getByRole('status', { name: 'Live updates unavailable' }))
+      .toHaveTextContent('Live updates unavailable');
   });
 });
 

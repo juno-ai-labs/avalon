@@ -1,11 +1,13 @@
 import { createRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { WorkstreamComposer } from './workstream-composer';
+
+afterEach(() => vi.unstubAllGlobals());
 
 const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
 const bob: WorkspaceMember = { id: 'user-2', name: 'Bob Builder', email: 'bob@example.com', timezone: 'America/Los_Angeles' };
@@ -55,7 +57,6 @@ function renderComposer(
         onSend={onSend}
         onStop={async () => undefined}
         sending={sending}
-        socketState="connected"
         uploading={false}
         workstream={workstream}
       />
@@ -64,6 +65,50 @@ function renderComposer(
 }
 
 describe('WorkstreamComposer mention confirmation', () => {
+  it('places dictation after attachments and exposes microphone selection', async () => {
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        addEventListener: vi.fn(),
+        enumerateDevices: vi.fn(async () => [
+          { deviceId: 'default', kind: 'audioinput', label: 'Default - MacBook Pro Microphone' },
+          { deviceId: 'studio-mic', kind: 'audioinput', label: 'Studio microphone' },
+        ]),
+        removeEventListener: vi.fn(),
+      },
+    });
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[creator]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={async () => undefined}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const attach = screen.getByRole('button', { name: 'Attach a file' });
+    const dictate = screen.getByRole('button', { name: 'Click or hold to dictate' });
+    expect(attach.compareDocumentPosition(dictate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Choose microphone' })).toBeEnabled());
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Choose microphone' }), { button: 0, ctrlKey: false });
+    const studioMicrophone = await screen.findByRole('menuitemradio', { name: 'Studio microphone' });
+    expect(studioMicrophone).toBeVisible();
+    expect(studioMicrophone).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('menuitemradio', { name: 'Default - MacBook Pro Microphone' }))
+      .toHaveAttribute('aria-checked', 'true');
+  });
+
   it('sends an attachment without requiring message text', async () => {
     const onSend = vi.fn(async () => undefined);
     const attachment: PendingAttachment = {
@@ -101,7 +146,6 @@ describe('WorkstreamComposer mention confirmation', () => {
           onSend={onSend}
           onStop={async () => undefined}
           sending={false}
-          socketState="connected"
           uploading={false}
           workstream={workstream}
         />

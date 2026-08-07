@@ -68,6 +68,11 @@ describe('public Avalon site', () => {
     const pages = [
       readProjectFile('index.html'),
       readProjectFile('invite/index.html'),
+      readProjectFile('slack/link/index.html'),
+      readProjectFile('open/index.html'),
+      readProjectFile('slack/index.html'),
+      readProjectFile('privacy/index.html'),
+      readProjectFile('support/index.html'),
       readProjectFile('auth/desktop/index.html'),
       readProjectFile('404.html'),
     ];
@@ -298,6 +303,36 @@ describe('public Avalon site', () => {
     expect(script).toContain("new URL('avalon://invitations/accept')");
     expect(script).toContain('window.history.replaceState');
     expect(script).not.toContain('window.location.search');
+  });
+
+  it('provides a private Slack identity handoff to the signed-in desktop app', () => {
+    const page = readProjectFile('slack/link/index.html');
+    const script = readProjectFile('src/slack-link.ts');
+
+    expect(page).toContain('Continue in the Avalon app');
+    expect(page).toContain('noindex, nofollow');
+    expect(script).toContain('window.location.hash');
+    expect(script).toContain("new URL('avalon://slack/link')");
+    expect(script).toContain('window.history.replaceState');
+    expect(script).not.toContain('window.location.search');
+  });
+
+  it('ships working Marketplace landing, privacy, support, and exact desktop handoff surfaces', () => {
+    const landing = readProjectFile('slack/index.html');
+    const privacy = readProjectFile('privacy/index.html');
+    const support = readProjectFile('support/index.html');
+    const handoff = readProjectFile('src/desktop-open.ts');
+
+    expect(landing).toContain('Optional personal authorization');
+    expect(landing).toContain('/privacy');
+    expect(privacy).toContain('does not scrape, mirror');
+    expect(support).toContain('within two business days');
+    expect(handoff).toContain("url.hostname === 'workstreams'");
+    expect(handoff).toContain("url.hostname === 'settings'");
+    expect(handoff).toContain("url.hostname === 'automations'");
+    expect(handoff).toContain('window.location.hash');
+    expect(handoff).toContain('window.history.replaceState');
+    expect(handoff).not.toContain('window.location.search');
   });
 
   it('validates and launches only exact desktop OAuth handoff targets', () => {

@@ -238,6 +238,27 @@ describe('MessageBlock human identity', () => {
     expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
   });
 
+  it('shows an externally attributed Slack member as a coworker rather than Avalon', () => {
+    const externalMessage: Message = {
+      ...baseMessage,
+      id: 'message-slack-taylor',
+      authorType: 'external',
+      author: undefined,
+      externalActor: {
+        provider: 'slack',
+        providerAccountId: 'T123',
+        providerUserId: 'U456',
+        displayName: 'Taylor',
+        avatarUrl: null,
+      },
+    };
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={externalMessage} />);
+
+    expect(screen.getByLabelText('Message from Taylor · Slack')).toHaveClass('coworker-message');
+    expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author');
+    expect(screen.queryByText('Avalon')).not.toBeInTheDocument();
+  });
+
   it('renders sent attachments outside the rounded human text bubble', () => {
     const message: Message = {
       ...baseMessage,

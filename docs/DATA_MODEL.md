@@ -34,6 +34,8 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 ## Connectors and activities
 
 - `connector_connections` owns scope, encrypted provider credentials, capabilities, cursors, and health.
+- `slack_installation_routes` is the opaque Global team-to-region directory; `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs` remain regional.
+- `automation_delivery_targets` freezes a selected Slack installation and linked Slack user for deterministic Agent-DM automation delivery.
 - `activities` stores normalized metadata and an optional R2 payload reference. Provider identity and dedupe constraints make at-least-once delivery safe.
 - `resource_watches` records explicit direct relationships.
 - `webhook_receipts` prevents replay of signed generic-webhook deliveries.

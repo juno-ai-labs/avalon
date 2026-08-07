@@ -153,24 +153,33 @@ describe("agent harness", () => {
       apiKey: "test-key",
       model: "test/model",
       messages: [{ role: "user", content: "Run it every morning in Pacific time." }],
+      latestUserAttachmentParts: [{ type: "text", text: "<attachment name=\"schedule.md\">Every weekday at 08:00</attachment>" }],
       currentDraft,
       fetch: fetcher,
     })).resolves.toMatchObject({ ready: true, suggestedScope: "personal" });
 
-    const messages = requestBody!.messages as Array<{ role: string; content: string }>;
+    const messages = requestBody!.messages as Array<{ role: string; content: unknown }>;
     expect(messages[0]).toMatchObject({ role: "system" });
-    expect(messages[0]!.content).not.toContain(currentDraft.instructions);
-    expect(messages[0]!.content).toContain("Once the automation is well defined, call automation_submit_draft");
+    expect(String(messages[0]!.content)).not.toContain(currentDraft.instructions);
+    expect(String(messages[0]!.content)).toContain("Once the automation is well defined, call automation_submit_draft");
     expect(messages[1]).toMatchObject({ role: "user" });
-    expect(messages[1]!.content).toContain(currentDraft.instructions);
-    expect(messages[2]).toEqual({ role: "user", content: "Run it every morning in Pacific time." });
+    expect(String(messages[1]!.content)).toContain(currentDraft.instructions);
+    expect(messages[2]).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "Run it every morning in Pacific time." },
+        { type: "text", text: "<attachment name=\"schedule.md\">Every weekday at 08:00</attachment>" },
+      ],
+    });
     const schemaMessage = messages.find((message) =>
-      message.role === "user" && message.content.includes("Expected structured output JSON Schema (automation_draft):"));
+      message.role === "user"
+      && typeof message.content === "string"
+      && message.content.includes("Expected structured output JSON Schema (automation_draft):"));
     expect(schemaMessage).toBeDefined();
-    expect(schemaMessage!.content).not.toContain("If an essential task detail is missing");
-    expect(schemaMessage!.content).not.toContain("On the final turn");
-    expect(schemaMessage!.content).toContain('"recommendedPlugins"');
-    expect(schemaMessage!.content).toContain('"required"');
+    expect(String(schemaMessage!.content)).not.toContain("If an essential task detail is missing");
+    expect(String(schemaMessage!.content)).not.toContain("On the final turn");
+    expect(String(schemaMessage!.content)).toContain('"recommendedPlugins"');
+    expect(String(schemaMessage!.content)).toContain('"required"');
     const submitTool = (requestBody!.tools as Array<{
       function: { name: string; parameters: { properties: Record<string, unknown>; required: string[] } };
     }>).find((tool) => tool.function.name === "automation_submit_draft");

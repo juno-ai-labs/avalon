@@ -19,8 +19,13 @@ vi.mock("../src/services/mention-email-service", () => ({
   sendWorkstreamMentionEmail: vi.fn(async () => "sent"),
 }));
 
+vi.mock("../src/services/slack-mention-service", () => ({
+  sendWorkstreamMentionSlack: vi.fn(async () => "skipped"),
+}));
+
 import { WorkstreamService } from "../src/services/workstream-service";
 import { sendWorkstreamMentionEmail } from "../src/services/mention-email-service";
+import { sendWorkstreamMentionSlack } from "../src/services/slack-mention-service";
 import { classifyWorkstreamMessage, startWorkstreamWorkflow } from "../src/services/integrations";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
@@ -159,6 +164,14 @@ describe("work-stream person mention persistence", () => {
       endOffset: 11 + token.length,
     })]);
     expect(deferred).toHaveLength(1);
+    expect(sendWorkstreamMentionSlack).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        recipientUserId: personId,
+        recipientEmail: "ada@example.com",
+        workspaceId,
+      }),
+    );
     expect(sendWorkstreamMentionEmail).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -192,6 +205,32 @@ describe("work-stream person mention persistence", () => {
     expect(replay.agentInvoked).toBe(false);
     expect(deferred).toHaveLength(1);
     expect(sendWorkstreamMentionEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to email when Slack only partially delivers the notification", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    vi.mocked(sendWorkstreamMentionSlack).mockResolvedValueOnce("partial");
+    const deferred: Promise<unknown>[] = [];
+    const service = new WorkstreamService(environment(database), auth(), (promise) => deferred.push(promise));
+
+    await service.createMessage(workstreamId, {
+      text: "Please ask @Ada Lovelace.",
+      clientMessageId: "mention-message-slack",
+      mentions: [{
+        type: "person",
+        userId: personId,
+        connectorType: null,
+        startOffset: 11,
+        endOffset: 24,
+      }],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+    });
+    await Promise.all(deferred);
+
+    expect(sendWorkstreamMentionSlack).toHaveBeenCalledOnce();
+    expect(sendWorkstreamMentionEmail).toHaveBeenCalledOnce();
   });
 });
 

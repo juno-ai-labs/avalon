@@ -1,13 +1,11 @@
-import clsx from 'clsx';
-import { ArrowUp, AtSign, LoaderCircle, Paperclip, Square, UserPlus } from 'lucide-react';
+import { AtSign, LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
-import type { MentionIdentity } from '../lib/api';
+import type { AvalonApi, MentionIdentity } from '../lib/api';
 import type { PendingAttachment } from '../lib/use-file-attachments';
-import { useFileDrop } from '../lib/use-file-drop';
-import type { SocketState } from '../lib/use-workstream-socket';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
-import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
-import { Avatar, Badge, Button, IconButton, InlineError, Modal } from './primitives';
+import type { AttachmentPreview } from './attachments';
+import { ComposerInput } from './composer-input';
+import { Avatar, Badge, Button, Modal } from './primitives';
 
 interface MentionCandidate {
   id: string;
@@ -19,9 +17,9 @@ interface MentionCandidate {
 }
 
 interface WorkstreamComposerProps {
+  api?: Pick<AvalonApi, 'getTranscriptionSocketTicket'>;
   workstream: WorkstreamDetail;
   members: WorkspaceMember[];
-  socketState: SocketState;
   fileInputRef: RefObject<HTMLInputElement | null>;
   sending: boolean;
   uploading: boolean;
@@ -53,18 +51,10 @@ const BASE_COMMANDS: ComposerCommand[] = [
   { id: 'clear', label: 'clear', description: 'Clear this draft' },
 ];
 
-function socketLabel(state: SocketState): string {
-  if (state === 'connected') return 'Live';
-  if (state === 'connecting') return 'Connecting';
-  if (state === 'reconnecting') return 'Reconnecting';
-  if (state === 'unavailable') return 'Live updates unavailable';
-  return 'Loading';
-}
-
 export function WorkstreamComposer({
+  api,
   workstream,
   members,
-  socketState,
   fileInputRef,
   sending,
   uploading,
@@ -85,7 +75,6 @@ export function WorkstreamComposer({
   const [selectedMentions, setSelectedMentions] = useState<MentionIdentity[]>([]);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const drop = useFileDrop(onAttach);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => [
@@ -277,86 +266,40 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      <div
-        className={clsx('workstream-composer', sending && 'is-sending', drop.dragging && 'is-file-dragging')}
-        onDragEnter={drop.onDragEnter}
-        onDragLeave={drop.onDragLeave}
-        onDragOver={drop.onDragOver}
-        onDrop={drop.onDrop}
-      >
-        {attachments.length > 0 && (
-          <div className="composer-attachments" aria-label="Attachments">
-            {attachments.map((attachment) => (
-              <PendingAttachmentTile
-                attachment={attachment}
-                key={attachment.localId}
-                onOpen={onOpenAttachment}
-                onRemove={() => onRemoveAttachment(attachment.localId)}
-                onRetry={() => onRetryAttachment(attachment.localId)}
-              />
-            ))}
-          </div>
-        )}
-        <textarea
-          aria-label="Message the work stream"
-          onChange={(event) => {
-            updateText(event.target.value);
-            event.target.style.height = 'auto';
-            event.target.style.height = `${Math.min(event.target.scrollHeight, 180)}px`;
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              if (mentionQuery !== null) setMentionQuery(null);
-              if (visibleCommands.length > 0) setSlashDismissed(true);
-            }
-            if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && visibleCommands[0]) {
-              event.preventDefault();
-              void runCommand(visibleCommands[0]);
-              return;
-            }
-            if (event.key === 'Enter' && !event.shiftKey && mentionQuery === null) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-          placeholder="Message the work stream…"
-          ref={textareaRef}
-          rows={1}
-          value={text}
-        />
-        <div className="composer-toolbar">
-          <div className="composer-tools">
-            <IconButton label="Mention a participant or connection" onClick={beginMention}>
-              <AtSign size={15} />
-            </IconButton>
-            <IconButton label="Attach a file" onClick={() => fileInputRef.current?.click()}>
-              {uploading ? <LoaderCircle className="spin" size={15} /> : <Paperclip size={15} />}
-            </IconButton>
-            <span aria-label={socketLabel(socketState)} className={clsx('socket-state', `socket-${socketState}`)} role="status" title={socketLabel(socketState)}>
-              <span aria-hidden="true" /><span className="sr-only">{socketLabel(socketState)}</span>
-            </span>
-          </div>
-          <div className="composer-submit-area">
-            {workstream.harnessStatus === 'running' && (
-              <Button className="stop-button" onClick={() => void onStop()}><Square fill="currentColor" size={9} /> Stop</Button>
-            )}
-            <button aria-label="Send message" className="composer-send" disabled={uploading || (!text.trim() && readyAttachmentCount === 0)} onClick={() => void send()} type="button">
-              {sending ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={15} />}
-            </button>
-          </div>
-        </div>
-      </div>
-      {error && <div className="composer-error-slot"><InlineError>{error}</InlineError></div>}
-      <input
-        className="sr-only"
-        multiple
-        onChange={(event) => {
-          if (event.target.files?.length) onAttach(event.target.files);
-          event.target.value = '';
+      <ComposerInput
+        api={api}
+        ariaLabel="Message the work stream"
+        attachments={attachments}
+        error={error}
+        fileInputRef={fileInputRef}
+        onAttach={onAttach}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            if (mentionQuery !== null) setMentionQuery(null);
+            if (visibleCommands.length > 0) setSlashDismissed(true);
+          }
+          if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && visibleCommands[0]) {
+            event.preventDefault();
+            void runCommand(visibleCommands[0]);
+          }
         }}
-        ref={fileInputRef}
-        tabIndex={-1}
-        type="file"
+        onMention={beginMention}
+        onOpenAttachment={onOpenAttachment}
+        onRemoveAttachment={onRemoveAttachment}
+        onRetryAttachment={onRetryAttachment}
+        onSubmit={send}
+        onValueChange={updateText}
+        placeholder="Message the work stream…"
+        ref={textareaRef}
+        shouldSubmitOnEnter={() => mentionQuery === null}
+        submitAccessory={workstream.harnessStatus === 'running'
+          ? <Button className="stop-button" onClick={() => void onStop()}><Square fill="currentColor" size={9} /> Stop</Button>
+          : undefined}
+        submitDisabled={uploading || (!text.trim() && readyAttachmentCount === 0)}
+        submitLabel="Send message"
+        submitting={sending}
+        uploading={uploading}
+        value={text}
       />
 
       <Modal

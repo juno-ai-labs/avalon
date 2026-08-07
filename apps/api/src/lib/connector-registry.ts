@@ -3,6 +3,8 @@ import {
   type GitHubConnectorConfig,
   type LinearConnectorConfig,
   type NotionConnectorConfig,
+  type SlackConnectorConfig,
+  type XConnectorConfig,
 } from "@avalon/connectors";
 import type { Env } from "../env";
 
@@ -53,15 +55,36 @@ export function googleConnectorConfig(env: Env) {
   };
 }
 
+export function slackConnectorConfig(env: Env): SlackConnectorConfig | null {
+  if (!env.SLACK_CLIENT_ID || !env.SLACK_CLIENT_SECRET || !env.SLACK_SIGNING_SECRET) return null;
+  return {
+    clientId: env.SLACK_CLIENT_ID,
+    clientSecret: env.SLACK_CLIENT_SECRET,
+    signingSecret: env.SLACK_SIGNING_SECRET,
+    ...(env.SLACK_APP_ID ? { appId: env.SLACK_APP_ID } : {}),
+    redirectUri: new URL("/connections/slack/callback", env.PUBLIC_API_BASE_URL).toString(),
+  };
+}
+
+export function xConnectorConfig(env: Env): XConnectorConfig | null {
+  const apiKey = env.TWITTER_API_IO_API_KEY?.trim();
+  if (!apiKey) return null;
+  return { apiKey };
+}
+
 export function connectorRegistryForEnv(env: Env) {
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
   const notion = notionConnectorConfig(env);
   const google = googleConnectorConfig(env);
+  const slack = slackConnectorConfig(env);
+  const x = xConnectorConfig(env);
   return createConnectorRegistry({
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),
     ...(linear ? { linear } : {}),
     ...(notion ? { notion } : {}),
+    ...(slack ? { slack } : {}),
+    ...(x ? { x } : {}),
   });
 }

@@ -4,6 +4,7 @@ import {
   IconBrandGoogle,
   IconBrandGoogleDrive,
   IconBrandNotion,
+  IconBrandSlack,
   IconPlug,
   IconStack2,
   IconWebhook,
@@ -321,6 +322,7 @@ const pluginIconByKey: Record<AutomationPluginIcon, TablerIcon> = {
   'brand-google': IconBrandGoogle,
   'brand-google-drive': IconBrandGoogleDrive,
   'brand-notion': IconBrandNotion,
+  'brand-slack': IconBrandSlack,
   linear: IconStack2,
   plug: IconPlug,
   webhook: IconWebhook,
@@ -677,12 +679,17 @@ export function MessageBlock({
   if (message.messageType === 'artifact') return <div className="transcript-event" id={`message-${message.id}`}><ArtifactBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {
     if (message.elicitation.status === 'answered') {
+      const externalResponse = message.authorType === 'external';
       return (
         <article
-          aria-label="Human elicitation response"
-          className="message-block human-message own-human-message elicitation-response-message"
+          aria-label={externalResponse ? `Response from ${message.externalActor?.displayName ?? 'Slack workspace member'}` : 'Human elicitation response'}
+          className={clsx(
+            'message-block human-message elicitation-response-message',
+            externalResponse ? 'coworker-message' : 'own-human-message',
+          )}
           id={`message-${message.id}`}
         >
+          {externalResponse && <header><span aria-hidden="true" className="message-author-dot" /><span className="message-author">{message.externalActor?.displayName ?? 'Slack workspace member'} · Slack</span><time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time></header>}
           <div className="human-message-content">
             <ElicitationPanel
               elicitation={message.elicitation}
@@ -701,9 +708,12 @@ export function MessageBlock({
     return <div className="system-message" id={`message-${message.id}`}><span />{message.text}</div>;
   }
 
-  const human = message.authorType === 'human';
-  const ownHumanMessage = human && currentUserId !== undefined && message.author?.id === currentUserId;
-  const humanAuthorName = message.author?.name ?? 'Workspace member';
+  const human = message.authorType === 'human' || message.authorType === 'external';
+  const external = message.authorType === 'external';
+  const ownHumanMessage = message.authorType === 'human' && currentUserId !== undefined && message.author?.id === currentUserId;
+  const humanAuthorName = external
+    ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
+    : message.author?.name ?? 'Workspace member';
   const sending = message.deliveryState === 'sending';
   return (
     <article
@@ -717,7 +727,7 @@ export function MessageBlock({
         sending && 'is-sending',
       )}
       id={`message-${message.id}`}
-      style={human ? { '--person-accent': personAccent(message.author?.id ?? message.id) } as React.CSSProperties : undefined}
+      style={human ? { '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties : undefined}
     >
       {!sending && (!human || !ownHumanMessage) && (
         <header>

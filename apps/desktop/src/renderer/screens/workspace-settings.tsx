@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AtSign,
   Building2,
   Bug,
   CalendarDays,
@@ -13,6 +14,7 @@ import {
   LoaderCircle,
   LogOut,
   MailPlus,
+  MessageSquare,
   MonitorCog,
   Plug,
   RefreshCcw,
@@ -31,6 +33,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
+import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -52,13 +55,13 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
       { id: 'general', label: 'General', searchTerms: 'region data residency organization', icon: SlidersHorizontal },
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
       { id: 'workspace', label: 'Workspace', searchTerms: 'organization members invitations invite roles', icon: Users },
-      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion integrations', icon: Plug },
+      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack x integrations', icon: Plug },
     ],
   },
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
@@ -118,6 +121,26 @@ const connectorProviders = [
     ],
   },
   {
+    id: 'slack' as const,
+    provider: 'slack' as const,
+    name: 'Slack',
+    description: 'Messages, files, people, canvases, conversations, and the Avalon workspace Agent.',
+    icon: MessageSquare,
+    scopes: ['you', 'workspace'] as const,
+    personalCapabilities: [
+      'slack.search',
+      'slack.messages.read',
+      'slack.files.read',
+      'slack.users.read',
+      'slack.messages.write',
+      'slack.conversations.write',
+      'slack.reactions.write',
+      'slack.canvases.read',
+      'slack.canvases.write',
+    ],
+    capabilities: ['slack.agent', 'slack.notifications.write'],
+  },
+  {
     id: 'notion' as const,
     provider: 'notion' as const,
     name: 'Notion',
@@ -125,6 +148,15 @@ const connectorProviders = [
     icon: FileText,
     scopes: ['you'] as const,
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
+  },
+  {
+    id: 'x' as const,
+    provider: 'x' as const,
+    name: 'X',
+    description: 'User timelines, threads, replies, and List timelines.',
+    icon: AtSign,
+    scopes: ['you', 'workspace'] as const,
+    capabilities: ['x.read'],
   },
 ] as const;
 
@@ -141,9 +173,13 @@ function providerHasConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
+  const capabilities = [
+    ...provider.capabilities,
+    ...('personalCapabilities' in provider ? provider.personalCapabilities : []),
+  ];
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
-    provider.capabilities.some((capability) => connection.capabilities?.includes(capability)),
+    capabilities.some((capability) => connection.capabilities?.includes(capability)),
   );
 }
 
@@ -154,6 +190,17 @@ function providerHasActiveWorkspaceConnection(
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'workspace' &&
+    connection.status !== 'disabled',
+  );
+}
+
+function providerHasActivePersonalConnection(
+  provider: (typeof connectorProviders)[number],
+  connections: WorkstreamConnection[],
+): boolean {
+  return provider.provider === 'x' && connections.some((connection) =>
+    connection.connectorType === provider.provider &&
+    connection.scope === 'you' &&
     connection.status !== 'disabled',
   );
 }
@@ -201,6 +248,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
     enabled: Boolean(api),
+    refetchOnMount: 'always',
     staleTime: 30_000,
   });
   const invitations = useQuery({
@@ -217,10 +265,15 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     staleTime: 5_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+      if (input.provider === 'x') {
+        await api!.createXConnection(input.scope, input.capabilities);
+        return;
+      }
       const url = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
       await desktopBridge().openExternal(url);
     },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
   });
   const testConnection = useMutation({
     mutationFn: (id: string) => api!.testConnection(id),
@@ -576,7 +629,17 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   {visibleProviders.map((provider) => {
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
+                    const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
                     const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                    const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
+                    const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || hasActivePersonalConnection;
+                    const personalConnectTitle = hasActivePersonalConnection
+                      ? `An ${provider.name} personal connection is already installed. Manage it below.`
+                      : provider.provider === 'x' && connections.isLoading
+                        ? 'Checking installed personal connections…'
+                        : provider.provider === 'x' && connections.isError
+                          ? 'Installed personal connections could not be loaded.'
+                          : undefined;
                     const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
                     const workspaceConnectTitle = hasActiveWorkspaceConnection
                       ? `A ${provider.name} workspace connection is already installed. Manage it below.`
@@ -594,7 +657,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <p>{provider.description}</p>
                         <div className="provider-actions">
                           {provider.scopes.includes('you' as never) && (
-                            <Button disabled={connectProvider.isPending} onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}>Connect for me</Button>
+                            <Button
+                              disabled={personalConnectDisabled}
+                              onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
+                              title={personalConnectTitle}
+                            >Connect for me</Button>
                           )}
                           {provider.scopes.includes('workspace' as never) && isAdmin && (
                             <Button
@@ -620,7 +687,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span>{connections.data?.length ?? 0}</span>
                   </div>
                   <div className="settings-connection-list settings-list-card">
-                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion'].includes(connection.connectorType)).map((connection) => (
+                    {(connections.data ?? []).filter((connection) => ['google', 'github', 'linear', 'notion', 'slack', 'x'].includes(connection.connectorType)).map((connection) => (
                       <div className="settings-connection-row" key={connection.id}>
                         <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
@@ -638,7 +705,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
 
             {activeSection === 'application' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>General desktop settings</h2><p>Build and service details for this Avalon installation.</p></div>
+                <div className="settings-pane-heading"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                <ApplicationIconPicker />
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
                   <div><dt>Version</dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
                   <div><dt>Build</dt><dd>{runtime?.isPackaged ? 'Installed app' : 'Development'}</dd></div>

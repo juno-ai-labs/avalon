@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111210" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <title>Connect Slack to Avalon</title>
+  </head>
+  <body class="invite-page">
+    <main class="invite-shell">
+      <section class="invite-card" aria-labelledby="slack-link-title">
+        <a class="brand invite-brand" href="/" aria-label="Avalon home">
+          <img class="brand-mark" src="/brand/avalon-mark.png" width="24" height="24" alt="" />
+          <span>Avalon</span>
+        </a>
+        <p class="eyebrow">Slack account connection</p>
+        <h1 id="slack-link-title">Continue in the Avalon app</h1>
+        <p>Open Avalon to securely link this Slack identity to your signed-in Avalon account.</p>
+        <a aria-disabled="true" class="button button-primary invite-open" href="#" id="open-avalon">
+          Open Avalon
+          <span class="button-arrow" aria-hidden="true">↗</span>
+        </a>
+        <p class="invite-help">Sign in to the Avalon workspace that installed this Slack app. This link expires after 15 minutes and works once.</p>
+        <p class="invite-error" hidden id="slack-link-error" role="alert">This Slack connection link is incomplete or invalid. Return to Avalon’s Home tab in Slack for a new link.</p>
+      </section>
+    </main>
+    <script type="module" src="/src/slack-link.ts"></script>
+  </body>
+</html>

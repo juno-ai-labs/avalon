@@ -6,6 +6,7 @@ import {
   getGitHubInstallation,
   GoogleCapabilityScopes,
   LinearCapabilityScopes,
+  SlackCapabilityScopes,
   verifyGenericWebhook,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
@@ -22,11 +23,13 @@ import type { AuthContext, Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
-import { connectorRegistryForEnv, githubConnectorConfig } from "../lib/connector-registry";
+import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
 import { decryptString, encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { LinearRoutingService } from "./linear-routing-service";
+import { SlackAgentService } from "./slack-agent-service";
+import { SlackRoutingService } from "./slack-routing-service";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
@@ -52,7 +55,7 @@ interface StoredConnection extends Record<string, unknown> {
   model_plugin_id: string;
 }
 
-type OAuthConnectorProvider = "linear" | "notion";
+type OAuthConnectorProvider = "linear" | "notion" | "slack";
 
 export interface GitHubSetupResult {
   url: string;
@@ -68,6 +71,7 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
     "notion.comment.read": ["notion.comment.read"],
     "notion.comment.insert": ["notion.comment.insert"],
   },
+  slack: SlackCapabilityScopes,
 };
 
 export class ConnectionService {
@@ -605,12 +609,33 @@ export class ConnectionService {
         connectionId = existing.id;
         existingCredentials = (await this.context(existing)).credentials;
       }
+    } else if (provider === "slack") {
+      existing = await this.env.DB.prepare(
+        `SELECT * FROM connector_connections
+         WHERE connector_type = 'slack' AND scope = ? AND provider_account_id = ? AND status <> 'disabled'
+           AND ((scope = 'personal' AND workspace_id = ? AND owner_user_id = ?)
+             OR (scope = 'workspace'))
+         ORDER BY created_at LIMIT 1`,
+      ).bind(stateData.scope, providerAccountId, row.workspace_id, row.user_id).first<StoredConnection>();
+      if (existing) {
+        if (existing.workspace_id !== row.workspace_id) {
+          throw new ApiError(409, "slack_workspace_already_connected", "This Slack workspace is already connected to another Avalon workspace");
+        }
+        connectionId = existing.id;
+        existingCredentials = (await this.context(existing)).credentials;
+      }
     }
     if (provider === "linear" && stateData.scope === "personal") {
       assertSameLinearPersonalIdentity(existingCredentials, incomingCredentials);
     } else if (provider === "linear") {
       assertSameLinearWorkspaceIdentity(existingCredentials, incomingCredentials);
     }
+    const grantedCapabilities = provider === "slack" && stateData.scope === "personal" && existing
+      ? [...new Set([
+          ...parseJson<string[]>(existing.granted_scopes_json, []),
+          ...stateData.capabilities,
+        ])]
+      : stateData.capabilities;
     const credentials = { ...existingCredentials, ...incomingCredentials, providerAccountId };
     const encrypted = await encryptString(JSON.stringify(credentials), this.env.CONNECTOR_CREDENTIALS_KEY, connectionId);
     const at = nowIso();
@@ -633,7 +658,7 @@ export class ConnectionService {
         encrypted.ciphertext,
         encrypted.iv,
         Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(stateData.capabilities),
+        JSON.stringify(grantedCapabilities),
         providerAccountId,
         displayName,
         modelPluginId,
@@ -662,7 +687,7 @@ export class ConnectionService {
           encrypted.ciphertext,
           encrypted.iv,
           Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-          JSON.stringify(stateData.capabilities),
+          JSON.stringify(grantedCapabilities),
           modelPluginId,
           JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
           at,
@@ -704,12 +729,38 @@ export class ConnectionService {
         throw error;
       }
     }
+    if (provider === "slack" && stateData.scope === "workspace") {
+      try {
+        await new SlackRoutingService(this.env).registerConnection({
+          teamId: providerAccountId,
+          region: this.env.AVALON_REGION,
+          workspaceId: String(row.workspace_id),
+          connectionId,
+        });
+      } catch (error) {
+        await this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
+        ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
+        throw error;
+      }
+      try {
+        await new SlackAgentService(this.env).schedulePublicChannelSync(connectionId);
+      } catch (error) {
+        // Auto-join is recoverable and must not invalidate otherwise healthy
+        // Slack credentials or routing after the OAuth state is consumed.
+        console.warn("Slack public-channel sync could not be scheduled", {
+          connection_id: connectionId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
     await this.recordConnectionAudit(
       String(row.workspace_id),
       String(row.user_id),
       existing ? "connector.reauthorized" : "connector.authorized",
       connectionId,
-      { provider, scope: stateData.scope, capabilities: stateData.capabilities, providerAccountId },
+      { provider, scope: stateData.scope, capabilities: grantedCapabilities, providerAccountId },
     );
     const redirect = new URL(String(row.return_uri));
     redirect.searchParams.set("connection", connectionId);
@@ -726,7 +777,7 @@ export class ConnectionService {
         connectionId: id,
       });
     }
-    if (connection.connector_type === "linear" || connection.connector_type === "notion") {
+    if (connection.connector_type === "linear" || connection.connector_type === "notion" || connection.connector_type === "slack") {
       return this.beginProvider(connection.connector_type, {
         scope: connection.scope,
         capabilities: parseJson(connection.granted_scopes_json, []),
@@ -770,6 +821,23 @@ export class ConnectionService {
           });
         } catch {
           result = { ok: false, message: "The shared Linear webhook route could not be registered" };
+        }
+      }
+    }
+    if (result.ok && connection.connector_type === "slack" && connection.scope === "workspace") {
+      const teamId = connection.provider_account_id == null ? null : String(connection.provider_account_id);
+      if (!teamId) {
+        result = { ok: false, message: "The Slack workspace identity is missing", reconnectRequired: true };
+      } else {
+        try {
+          await new SlackRoutingService(this.env).registerConnection({
+            teamId,
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            connectionId: connection.id,
+          });
+        } catch {
+          result = { ok: false, message: "The shared Slack ingress route could not be registered" };
         }
       }
     }
@@ -841,6 +909,27 @@ export class ConnectionService {
           });
         }
       }
+      if (
+        connection.connector_type === "slack"
+        && connection.scope === "workspace"
+        && connection.provider_account_id
+      ) {
+        try {
+          await new SlackRoutingService(this.env).setConnectionStatus({
+            teamId: String(connection.provider_account_id),
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            connectionId: connection.id,
+            status: "disabled",
+          });
+        } catch (error) {
+          console.warn("Slack route deactivation failed", {
+            region: this.env.AVALON_REGION,
+            connection_id: connection.id,
+            reason: error instanceof Error ? error.message : "unknown route error",
+          });
+        }
+      }
       await this.recordConnectionAudit(
         connection.workspace_id,
         this.requireAuth().userId,
@@ -879,6 +968,76 @@ export class ConnectionService {
       signingSecret: secret,
       signatureFormat: "t=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>",
     };
+  }
+
+  async createX(input: { scope: Scope; capabilities: string[] }) {
+    const auth = this.requireAuth();
+    this.assertScopeAllowed(input.scope);
+    const adapter = xConnectorConfig(this.env) ? this.registry().get("x") : null;
+    if (!adapter) throw new ApiError(503, "x_connector_unavailable", "X access is not configured");
+    const capabilities = [...new Set(input.capabilities)];
+    const supported = new Set(adapter.manifest.capabilities.map((capability) => capability.id));
+    if (
+      capabilities.length === 0
+      || capabilities.some((capability) =>
+        !supported.has(capability)
+        || !connectorCapabilitySupportsScope(adapter, capability, input.scope))
+    ) {
+      throw new ApiError(422, "invalid_connector_capabilities", "Choose supported X capabilities");
+    }
+
+    const existing = input.scope === "workspace"
+      ? await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'workspace'
+             AND status <> 'disabled' LIMIT 1`,
+        ).bind(auth.workspaceId).first<{ id: string }>()
+      : await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'personal'
+             AND owner_user_id = ? AND status <> 'disabled' LIMIT 1`,
+        ).bind(auth.workspaceId, auth.userId).first<{ id: string }>();
+    if (existing) {
+      throw new ApiError(
+        409,
+        "x_connection_exists",
+        input.scope === "workspace"
+          ? "An active workspace X connection already exists"
+          : "You already have an active X connection",
+      );
+    }
+
+    const id = newId();
+    const encrypted = await encryptString("{}", this.env.CONNECTOR_CREDENTIALS_KEY, id);
+    const at = nowIso();
+    const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "x");
+    await this.env.DB.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+        encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
+        model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+       VALUES (?, ?, 'x', ?, ?, 'X', ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
+    ).bind(
+      id,
+      auth.workspaceId,
+      input.scope,
+      input.scope === "personal" ? auth.userId : null,
+      encrypted.ciphertext,
+      encrypted.iv,
+      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      JSON.stringify(capabilities),
+      modelPluginId,
+      at,
+      at,
+    ).run();
+    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
+      provider: "x",
+      scope: input.scope,
+      capabilities,
+    });
+    const connection = (await this.list()).find((item) => item.id === id);
+    if (!connection) throw new ApiError(500, "connection_write_failed", "The X connection could not be loaded");
+    return { connection };
   }
 
   async ingestWebhook(connectionId: string, rawBody: string, signatureHeader: string | null) {

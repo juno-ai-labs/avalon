@@ -1,4 +1,5 @@
 import type { DesktopSettingsSection } from './settings';
+import type { ApplicationIconId, DesktopApplicationIconState } from './application-icons';
 
 export type AvalonRegion = 'global' | 'eu';
 
@@ -62,6 +63,10 @@ export interface DesktopWorkspaceOnboardingState {
 
 export interface AvalonDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
+  getApplicationIcon: () => Promise<DesktopApplicationIconState>;
+  setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;
+  resetApplicationIcon: () => Promise<DesktopApplicationIconState>;
+  onApplicationIconChanged: (listener: (state: DesktopApplicationIconState) => void) => () => void;
   getSession: () => Promise<DesktopSession | null>;
   createDesktopAuthAttempt: (input: { apiBaseUrl: string; region: AvalonRegion }) => Promise<DesktopAuthAttempt>;
   cancelDesktopAuthAttempt: (attemptId: string) => Promise<void>;
