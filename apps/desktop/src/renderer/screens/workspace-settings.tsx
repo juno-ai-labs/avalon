@@ -213,7 +213,7 @@ const connectorProviders = [
     name: 'X',
     description: 'User timelines, threads, replies, and List timelines.',
     icon: AtSign,
-    scopes: ['you', 'workspace'] as const,
+    scopes: ['workspace'] as const,
     capabilities: ['x.read'],
   },
 ] as const;
@@ -340,7 +340,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const connectProvider = useMutation({
     mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
-        await api!.createXConnection(input.scope, input.capabilities);
+        await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
       }
       const authorization = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
@@ -854,18 +854,13 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
                       const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                      const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
-                      const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectDisabled = connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
-                        ? `An ${provider.name} personal connection is already installed. Manage it above.`
-                        : provider.provider === 'x' && connections.isLoading
-                          ? 'Checking installed personal connections…'
-                          : provider.provider === 'x' && connections.isError
-                            ? 'Installed personal connections could not be loaded.'
-                            : undefined;
+                        ? `A ${provider.name} personal connection is already installed. Manage it above.`
+                        : undefined;
                       const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
-                        ? `A ${provider.name} workspace connection is already installed. Manage it above.`
+                        ? `${provider.provider === 'x' ? 'An' : 'A'} ${provider.name} workspace connection is already installed. Manage it above.`
                         : connections.isLoading
                           ? 'Checking installed workspace connections…'
                           : connections.isError
