@@ -21,6 +21,16 @@ function refreshDockIconCache() {
   }
 }
 
+function notifyDockTilePlugin() {
+  $.NSDistributedNotificationCenter.defaultCenter
+    .postNotificationNameObjectUserInfoDeliverImmediately(
+      $(notificationName),
+      $('Avalon'),
+      $(),
+      true,
+    );
+}
+
 function run(arguments_) {
   if (arguments_.length !== 2) {
     throw new Error('Expected an icon path and application bundle path, or --reset and an application bundle path');
@@ -38,9 +48,12 @@ function run(arguments_) {
   );
   if (!didSetFinderIcon) throw new Error(`Could not set the Finder icon for ${applicationPath}`);
 
-  $.NSDistributedNotificationCenter.defaultCenter.postNotificationNameObject(
-    $(notificationName),
-    $('Avalon'),
-  );
-  return JSON.stringify({ didSetFinderIcon: true, didRefreshDockCache: refreshDockIconCache(), reset: isReset });
+  // Distributed notifications are normally queued. The Dock plug-in needs to
+  // clear or replace its content view before this short-lived JXA process exits.
+  notifyDockTilePlugin();
+  const didRefreshDockCache = refreshDockIconCache();
+  // The cache refresh may recreate the tile or load the plug-in for the first
+  // time, so deliver the selected state once more after the refresh.
+  notifyDockTilePlugin();
+  return JSON.stringify({ didSetFinderIcon: true, didRefreshDockCache, reset: isReset });
 }

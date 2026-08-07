@@ -83,7 +83,7 @@ static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.
   NSURL *contentsURL = [[pluginURL URLByDeletingLastPathComponent] URLByDeletingLastPathComponent];
   NSURL *iconURL = [[[contentsURL URLByAppendingPathComponent:@"Resources/app-icons"]
       URLByAppendingPathComponent:identifier]
-      URLByAppendingPathExtension:@"png"];
+      URLByAppendingPathExtension:@"icns"];
   return [[NSImage alloc] initWithContentsOfURL:iconURL];
 }
 

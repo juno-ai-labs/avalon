@@ -124,15 +124,18 @@ const applicationIconNames = [
   'blueprint',
 ];
 const applicationIconDirectory = join(resourcesDirectory, 'app-icons');
+const expectedApplicationIconFiles = new Set(applicationIconNames.map((name) => `${name}.icns`));
+for (const fileName of readdirSync(applicationIconDirectory)) {
+  if (!expectedApplicationIconFiles.has(fileName)) {
+    throw new Error(`Packaged app contains unexpected selectable icon resource ${fileName}`);
+  }
+}
 for (const name of applicationIconNames) {
-  const iconPath = join(applicationIconDirectory, `${name}.png`);
+  const iconPath = join(applicationIconDirectory, `${name}.icns`);
   if (!existsSync(iconPath)) throw new Error(`Packaged app is missing selectable icon ${name}`);
   const icon = readFileSync(iconPath);
-  if (!icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    throw new Error(`Selectable icon ${name} is not a PNG file`);
-  }
-  if (icon.readUInt32BE(16) !== 1024 || icon.readUInt32BE(20) !== 1024) {
-    throw new Error(`Selectable icon ${name} must be 1024×1024`);
+  if (icon.subarray(0, 4).toString('ascii') !== 'icns') {
+    throw new Error(`Selectable icon ${name} is not an ICNS file compiled by actool`);
   }
 }
 const nativeIconScriptPath = join(resourcesDirectory, 'native/set-application-icon.js');
