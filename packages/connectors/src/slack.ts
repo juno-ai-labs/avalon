@@ -4,6 +4,7 @@ import {
   isRecord,
   jsonHeaders,
   providerJson,
+  providerJsonResponse,
   readResponseBytes,
   sha256Hex,
   stringValue,
@@ -239,6 +240,9 @@ const SlackWebApiSchemas = {
       action_token: z.string().min(1),
       channel_types: z.array(z.enum(["public_channel", "private_channel", "mpim", "im"])).optional(),
       content_types: z.array(z.enum(["messages", "files", "channels", "users"])).optional(),
+      context_channel_id: SlackIdSchema.optional(),
+      include_context_messages: z.boolean().optional(),
+      limit: z.number().int().min(1).max(20).optional(),
     }).strict(),
     response: SlackSearchContextResponseSchema,
   },
@@ -345,6 +349,7 @@ const SlackApiErrorSchema = z.object({
 const SlackOAuthSuccessSchema = z.object({
   ok: z.literal(true),
   access_token: z.string().min(1).optional(),
+  scope: z.string().optional(),
   bot_user_id: z.string().min(1).optional(),
   app_id: z.string().min(1).optional(),
   expires_in: z.number().int().positive().optional(),
@@ -353,6 +358,7 @@ const SlackOAuthSuccessSchema = z.object({
   authed_user: z.object({
     id: z.string().min(1).optional(),
     access_token: z.string().min(1).optional(),
+    scope: z.string().optional(),
     expires_in: z.number().int().positive().optional(),
     refresh_token: z.string().min(1).optional(),
   }).passthrough().optional(),
@@ -362,10 +368,12 @@ const SlackOAuthSuccessSchema = z.object({
 const SlackRefreshSuccessSchema = z.object({
   ok: z.literal(true),
   access_token: z.string().min(1).optional(),
+  scope: z.string().optional(),
   expires_in: z.number().int().positive().optional(),
   refresh_token: z.string().min(1).optional(),
   authed_user: z.object({
     access_token: z.string().min(1).optional(),
+    scope: z.string().optional(),
     expires_in: z.number().int().positive().optional(),
     refresh_token: z.string().min(1).optional(),
   }).passthrough().optional(),
@@ -487,17 +495,50 @@ export async function slackApi<M extends SlackWebApiMethod>(
   signal: AbortSignal,
   fetcher: FetchLike = fetch,
 ): Promise<SlackApiResponse<M>> {
+  return (await slackApiResponse(token, method, body, signal, fetcher)).data;
+}
+
+interface SlackApiCallResult<M extends SlackWebApiMethod> {
+  data: SlackApiResponse<M>;
+  oauthScopes: string[] | null;
+}
+
+const SlackGetMethods = new Set<SlackWebApiMethod>([
+  "auth.revoke",
+  "conversations.info",
+  "conversations.list",
+  "users.info",
+  "users.lookupByEmail",
+]);
+
+async function slackApiResponse<M extends SlackWebApiMethod>(
+  token: string,
+  method: M,
+  body: SlackApiRequest<M>,
+  signal: AbortSignal,
+  fetcher: FetchLike = fetch,
+): Promise<SlackApiCallResult<M>> {
   const definition = SlackWebApiSchemas[method] as {
     request: z.ZodType;
     response: z.ZodType;
   };
-  const requestBody = definition.request.parse(body);
-  const payload = await providerJson(fetcher, `${SLACK_API}/${method}`, {
-    method: "POST",
-    headers: jsonHeaders(token),
-    body: JSON.stringify(requestBody),
+  const requestBody = definition.request.parse(body) as Record<string, unknown>;
+  const url = new URL(`${SLACK_API}/${method}`);
+  const headers = jsonHeaders(token);
+  const useQueryTransport = SlackGetMethods.has(method);
+  if (useQueryTransport) {
+    headers.delete("content-type");
+    for (const [key, value] of Object.entries(requestBody)) {
+      if (value !== undefined) url.searchParams.set(key, String(value));
+    }
+  }
+  const responseWithMetadata = await providerJsonResponse(fetcher, url, {
+    method: useQueryTransport ? "GET" : "POST",
+    headers,
+    ...(useQueryTransport ? {} : { body: JSON.stringify(requestBody) }),
     signal,
   }, SLACK_MAX_RESPONSE_BYTES);
+  const payload = responseWithMetadata.data;
   const apiError = SlackApiErrorSchema.safeParse(payload);
   if (apiError.success) {
     const unauthorized = new Set(["account_inactive", "invalid_auth", "invalid_refresh_token", "not_authed", "token_expired", "token_revoked"]);
@@ -507,7 +548,13 @@ export async function slackApi<M extends SlackWebApiMethod>(
   if (!response.success) {
     throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, response.error.flatten());
   }
-  return response.data as SlackApiResponse<M>;
+  const rawScopes = responseWithMetadata.headers.get("x-oauth-scopes");
+  return {
+    data: response.data as SlackApiResponse<M>,
+    oauthScopes: rawScopes == null
+      ? null
+      : [...new Set(rawScopes.split(",").map((scope) => scope.trim()).filter(Boolean))].sort(),
+  };
 }
 
 export type SlackPublicChannelJoinResult = "joined" | "already_member" | "skipped";
@@ -526,7 +573,6 @@ const SlackUnjoinablePublicChannelErrors = new Set([
   "enterprise_is_restricted",
   "is_archived",
   "method_not_supported_for_channel_type",
-  "missing_scope",
   "no_permission",
   "restricted_action",
   "too_many_members",
@@ -795,7 +841,7 @@ function parseSlackSuccess<T extends z.ZodType>(
 ): z.output<T> {
   const apiError = SlackApiErrorSchema.safeParse(payload);
   if (apiError.success) {
-    const unauthorized = new Set(["account_inactive", "invalid_auth", "not_authed", "token_expired", "token_revoked"]);
+    const unauthorized = new Set(["account_inactive", "invalid_auth", "invalid_refresh_token", "not_authed", "token_expired", "token_revoked"]);
     throw new ConnectorError(
       unauthorized.has(apiError.data.error) ? "unauthorized" : "provider_error",
       apiError.data.error,
@@ -893,6 +939,18 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       if (connectionScope === "workspace") {
         const accessToken = response.access_token;
         if (!accessToken) throw new ConnectorError("provider_error", "Slack OAuth did not return a bot token");
+        const oauthScopes = slackOAuthScopes(response.scope);
+        const missingScopes = SlackWorkspaceBotScopes.filter((scope) => !oauthScopes.includes(scope));
+        if (missingScopes.length > 0) {
+          for (const token of [...new Set([response.refresh_token, accessToken].filter((value): value is string => Boolean(value)))]) {
+            try { await slackApi(token, "auth.revoke", {}, AbortSignal.timeout(10_000), fetcher); } catch { /* best effort after an incomplete grant */ }
+          }
+          throw new ConnectorError(
+            "unauthorized",
+            `Slack authorization is missing required permissions: ${missingScopes.join(", ")}`,
+            { missingScopes },
+          );
+        }
         const billing = await slackApi(accessToken, "team.billing.info", {}, AbortSignal.timeout(10_000), fetcher);
         const plan = billing.plan;
         if (plan === "free") {
@@ -901,12 +959,12 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
           }
           throw new ConnectorError("unauthorized", "Avalon Agent and automation features require a paid Slack workspace plan. Remove the app from Slack App Management to finish uninstalling it.");
         }
-        return { providerAccountId: teamId, teamId, workspaceName: team.name ?? teamId, slackPlan: plan, botAccessToken: accessToken, botUserId: response.bot_user_id ?? null, appId: response.app_id ?? config.appId ?? null, refreshToken: response.refresh_token ?? null, expiresAt: expiresAt(response.expires_in, now()) };
+        return { providerAccountId: teamId, teamId, workspaceName: team.name ?? teamId, slackPlan: plan, botAccessToken: accessToken, botUserId: response.bot_user_id ?? null, appId: response.app_id ?? config.appId ?? null, oauthScopes, refreshToken: response.refresh_token ?? null, expiresAt: expiresAt(response.expires_in, now()) };
       }
       const accessToken = response.access_token ?? authedUser.access_token;
       const userId = authedUser.id ?? response.authed_user_id;
       if (!accessToken || !userId) throw new ConnectorError("provider_error", "Slack OAuth did not return a user token and identity");
-      return { providerAccountId: `${teamId}:${userId}`, teamId, slackUserId: userId, workspaceName: team.name ?? teamId, userAccessToken: accessToken, refreshToken: response.refresh_token ?? authedUser.refresh_token ?? null, expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()) };
+      return { providerAccountId: `${teamId}:${userId}`, teamId, slackUserId: userId, workspaceName: team.name ?? teamId, userAccessToken: accessToken, oauthScopes: slackOAuthScopes(response.scope ?? authedUser.scope), refreshToken: response.refresh_token ?? authedUser.refresh_token ?? null, expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()) };
     },
     async refreshCredentials(connection, signal) {
       const refreshToken = stringValue(connection.credentials, "refreshToken");
@@ -921,9 +979,29 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       const authedUser = response.authed_user ?? {};
       const accessToken = response.access_token ?? authedUser.access_token;
       if (!accessToken) throw new ConnectorError("provider_error", "Slack token refresh did not return an access token");
+      const returnedScope = response.scope ?? authedUser.scope;
+      let oauthScopes = returnedScope == null
+        ? (Array.isArray(connection.credentials.oauthScopes) ? connection.credentials.oauthScopes : [])
+        : slackOAuthScopes(returnedScope);
+      if (connection.scope === "workspace") {
+        if (oauthScopes.length === 0) {
+          const authentication = await slackApiResponse(accessToken, "auth.test", {}, signal, fetcher);
+          oauthScopes = authentication.oauthScopes ?? [];
+        }
+        const granted = new Set(oauthScopes.filter((scope): scope is string => typeof scope === "string"));
+        const missingScopes = SlackWorkspaceBotScopes.filter((scope) => !granted.has(scope));
+        if (missingScopes.length > 0) {
+          throw new ConnectorError(
+            "unauthorized",
+            `Slack authorization is missing required permissions: ${missingScopes.join(", ")}`,
+            { missingScopes },
+          );
+        }
+      }
       return {
         ...connection.credentials,
         ...(connection.scope === "personal" ? { userAccessToken: accessToken } : { botAccessToken: accessToken }),
+        oauthScopes,
         refreshToken: response.refresh_token ?? authedUser.refresh_token ?? refreshToken,
         expiresAt: expiresAt(response.expires_in ?? authedUser.expires_in, now()),
       };
@@ -962,7 +1040,25 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       if (!connection) return { ok: Boolean(config.clientId && config.clientSecret && config.signingSecret), message: "Slack connector configuration is available" };
       try {
         const token = connection.scope === "workspace" ? botToken(connection) : userToken(connection);
-        await slackApi(token, "auth.test", {}, AbortSignal.timeout(10_000), fetcher);
+        const authentication = await slackApiResponse(token, "auth.test", {}, AbortSignal.timeout(10_000), fetcher);
+        if (connection.scope === "workspace") {
+          if (authentication.oauthScopes == null) {
+            return {
+              ok: false,
+              message: "Slack did not report the permissions granted to this bot; reconnect the workspace authorization",
+              reconnectRequired: true,
+            };
+          }
+          const granted = new Set(authentication.oauthScopes);
+          const missing = SlackWorkspaceBotScopes.filter((scope) => !granted.has(scope));
+          if (missing.length > 0) {
+            return {
+              ok: false,
+              message: `Slack authorization is missing required permissions: ${missing.join(", ")}`,
+              reconnectRequired: true,
+            };
+          }
+        }
         return { ok: true, message: "Slack authorization is healthy" };
       } catch (error) {
         return {
@@ -1004,4 +1100,8 @@ function expiresAt(value: unknown, now: number): string | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? new Date(now + value * 1_000).toISOString()
     : null;
+}
+
+function slackOAuthScopes(value: string | undefined): string[] {
+  return [...new Set((value ?? "").split(",").map((scope) => scope.trim()).filter(Boolean))].sort();
 }

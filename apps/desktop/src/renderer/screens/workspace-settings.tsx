@@ -39,7 +39,7 @@ import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal }
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
-import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
+import type { SlackAgentPolicySettings, Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
@@ -48,6 +48,36 @@ interface PendingConnectorOAuth {
   attemptId: string;
   provider: ConnectorOAuthProvider;
   startedAt: number;
+}
+
+function slackAllowlistText(policy: SlackAgentPolicySettings, channelType: 'public' | 'private'): string {
+  return policy.allowlistedChannels
+    .filter((channel) => channel.channelType === channelType)
+    .map((channel) => channel.channelId)
+    .join(', ');
+}
+
+function slackAllowlistIds(rawValue: string): string[] {
+  return [...new Set(rawValue.split(/[\s,]+/u).map((value) => value.trim()).filter(Boolean))];
+}
+
+function updateSlackAllowlists(
+  policy: SlackAgentPolicySettings,
+  publicRawValue: string,
+  privateRawValue: string,
+): SlackAgentPolicySettings {
+  return {
+    ...policy,
+    allowlistedChannels: [
+      ...slackAllowlistIds(publicRawValue).map((channelId) => ({ channelId, channelType: 'public' as const })),
+      ...slackAllowlistIds(privateRawValue).map((channelId) => ({ channelId, channelType: 'private' as const })),
+    ],
+  };
+}
+
+function slackAllowlistCollision(publicRawValue: string, privateRawValue: string): string | null {
+  const publicIds = new Set(slackAllowlistIds(publicRawValue));
+  return slackAllowlistIds(privateRawValue).find((channelId) => publicIds.has(channelId)) ?? null;
 }
 
 const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
@@ -273,6 +303,10 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
+  const [slackPolicyTarget, setSlackPolicyTarget] = useState<WorkstreamConnection | null>(null);
+  const [slackPolicyDraft, setSlackPolicyDraft] = useState<SlackAgentPolicySettings | null>(null);
+  const [slackPublicAllowlist, setSlackPublicAllowlist] = useState('');
+  const [slackPrivateAllowlist, setSlackPrivateAllowlist] = useState('');
   const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
   const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const timezoneOptions = useMemo(
@@ -299,6 +333,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     enabled: Boolean(api),
     refetchOnWindowFocus: 'always',
     staleTime: 5_000,
+  });
+  const slackPolicy = useQuery({
+    queryKey: ['slack-agent-policy', slackPolicyTarget?.id],
+    queryFn: ({ signal }) => api!.getSlackAgentPolicy(slackPolicyTarget!.id, signal),
+    enabled: Boolean(api && slackPolicyTarget),
   });
   const connectProvider = useMutation({
     mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
@@ -350,6 +389,13 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const disconnectConnection = useMutation({
     mutationFn: (id: string) => api!.disconnectConnection(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
+  });
+  const updateSlackPolicy = useMutation({
+    mutationFn: (input: SlackAgentPolicySettings) => api!.updateSlackAgentPolicy(slackPolicyTarget!.id, input),
+    onSuccess: (policy) => {
+      void queryClient.setQueryData(['slack-agent-policy', slackPolicyTarget?.id], policy);
+      setSlackPolicyTarget(null);
+    },
   });
   const createInvitation = useMutation({
     mutationFn: () => api!.createWorkspaceInvitation(email.trim(), role),
@@ -414,6 +460,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     if (connectionFilter === 'not_connected') return !connected;
     return true;
   });
+  const duplicateSlackChannelId = slackAllowlistCollision(slackPublicAllowlist, slackPrivateAllowlist);
 
   useEffect(() => {
     if (availableSections.has(activeSection)) return;
@@ -427,6 +474,12 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     setNavigationQuery('');
     setActiveSection(nextSection);
   }), [bridge]);
+
+  useEffect(() => {
+    setSlackPolicyDraft(slackPolicy.data ?? null);
+    setSlackPublicAllowlist(slackPolicy.data ? slackAllowlistText(slackPolicy.data, 'public') : '');
+    setSlackPrivateAllowlist(slackPolicy.data ? slackAllowlistText(slackPolicy.data, 'private') : '');
+  }, [slackPolicy.data]);
 
   useEffect(() => {
     let cancelled = false;
@@ -773,6 +826,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                       <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
                       <Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge>
+                      {isAdmin && connection.connectorType === 'slack' && connection.scope === 'workspace' && (
+                        <Button onClick={() => setSlackPolicyTarget(connection)}>Policy</Button>
+                      )}
                       <Button disabled={testConnection.isPending} onClick={() => testConnection.mutate(connection.id)}>Test</Button>
                       {reconnectableConnectorTypes.has(connection.connectorType) && (
                         <button
@@ -916,6 +972,109 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
             )}
           </div>
         </main>
+        <Modal
+          description="Controls whether unlinked Slack members can create workspace-owned Avalon tasks. Linked members keep their personal Avalon authority."
+          footer={slackPolicyDraft ? (
+            <>
+              <Button onClick={() => setSlackPolicyTarget(null)}>Cancel</Button>
+              <Button
+                className="button-primary"
+                disabled={updateSlackPolicy.isPending || Boolean(duplicateSlackChannelId)}
+                onClick={() => updateSlackPolicy.mutate(updateSlackAllowlists(
+                  slackPolicyDraft,
+                  slackPublicAllowlist,
+                  slackPrivateAllowlist,
+                ))}
+              >
+                {updateSlackPolicy.isPending ? 'Saving…' : 'Save policy'}
+              </Button>
+            </>
+          ) : undefined}
+          onOpenChange={(open) => {
+            if (!open) setSlackPolicyTarget(null);
+          }}
+          open={Boolean(slackPolicyTarget)}
+          title={`Slack Agent policy · ${slackPolicyTarget?.displayName ?? ''}`}
+        >
+          {slackPolicy.isLoading && <p className="modal-copy">Loading Slack policy…</p>}
+          {(slackPolicy.error || updateSlackPolicy.error) && (
+            <InlineError>{slackPolicy.error?.message ?? updateSlackPolicy.error?.message}</InlineError>
+          )}
+          {slackPolicyDraft && (
+            <div className="slack-policy-form">
+              <label className="slack-policy-check">
+                <input
+                  checked={slackPolicyDraft.allowUnlinkedWorkspaceTasks}
+                  onChange={(event) => setSlackPolicyDraft({ ...slackPolicyDraft, allowUnlinkedWorkspaceTasks: event.target.checked })}
+                  type="checkbox"
+                />
+                <span><strong>Allow unlinked workspace tasks</strong><small>Lets Slack members without a linked Avalon account start workspace-owned tasks.</small></span>
+              </label>
+              <label>
+                <span>Public channels</span>
+                <select
+                  onChange={(event) => setSlackPolicyDraft({ ...slackPolicyDraft, publicChannelMode: event.target.value as SlackAgentPolicySettings['publicChannelMode'] })}
+                  value={slackPolicyDraft.publicChannelMode}
+                >
+                  <option value="all_invited">All channels Avalon joined</option>
+                  <option value="allowlist">Allowlist only</option>
+                  <option value="disabled">Disabled</option>
+                </select>
+              </label>
+              <label>
+                <span>Private channels</span>
+                <select
+                  onChange={(event) => setSlackPolicyDraft({ ...slackPolicyDraft, privateChannelMode: event.target.value as SlackAgentPolicySettings['privateChannelMode'] })}
+                  value={slackPolicyDraft.privateChannelMode}
+                >
+                  <option value="disabled">Disabled</option>
+                  <option value="allowlist">Allowlist only</option>
+                </select>
+              </label>
+              <label>
+                <span>Public-channel IDs</span>
+                <textarea
+                  onChange={(event) => setSlackPublicAllowlist(event.target.value)}
+                  placeholder="C0123456789, C9876543210"
+                  rows={2}
+                  value={slackPublicAllowlist}
+                />
+              </label>
+              <label>
+                <span>Private-channel IDs</span>
+                <textarea
+                  aria-label="Private-channel IDs"
+                  onChange={(event) => setSlackPrivateAllowlist(event.target.value)}
+                  placeholder="G0123456789"
+                  rows={2}
+                  value={slackPrivateAllowlist}
+                />
+                <small>Copy channel IDs from Slack channel details. Separate IDs with commas, spaces, or new lines.</small>
+              </label>
+              {duplicateSlackChannelId && (
+                <InlineError>
+                  Channel {duplicateSlackChannelId} cannot be listed as both public and private.
+                </InlineError>
+              )}
+              <div className="slack-policy-surfaces">
+                {([
+                  ['allowDirectMessages', 'Direct messages'],
+                  ['allowCommands', 'Slash commands'],
+                  ['allowShortcuts', 'Shortcuts'],
+                ] as const).map(([field, label]) => (
+                  <label className="slack-policy-check" key={field}>
+                    <input
+                      checked={slackPolicyDraft[field]}
+                      onChange={(event) => setSlackPolicyDraft({ ...slackPolicyDraft, [field]: event.target.checked })}
+                      type="checkbox"
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </Modal>
         <Modal
           description="You’ll be sent to the provider to authorize this connection again."
           footer={(
