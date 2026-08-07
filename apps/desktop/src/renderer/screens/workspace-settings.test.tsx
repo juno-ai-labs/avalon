@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
   createXConnection: vi.fn(),
+  getConnectorOAuthAttempt: vi.fn(),
   startProviderConnection: vi.fn(),
   reconnectConnection: vi.fn(),
   testConnection: vi.fn(),
@@ -110,7 +111,22 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
-    api.startProviderConnection.mockResolvedValue('https://accounts.google.com/o/oauth2/v2/auth?state=opaque');
+    api.startProviderConnection.mockResolvedValue({
+      url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
+      attemptId: 'a'.repeat(43),
+    });
+    api.reconnectConnection.mockResolvedValue({
+      url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
+      attemptId: 'b'.repeat(43),
+    });
+    api.getConnectorOAuthAttempt.mockResolvedValue({
+      attemptId: 'a'.repeat(43),
+      provider: 'google',
+      status: 'succeeded',
+      connectionId: '00000000-0000-7000-8000-000000000004',
+      errorCode: null,
+      expiresAt: '2026-08-08T00:00:00.000Z',
+    });
     api.createWorkspaceInvitation.mockResolvedValue({ invitation, inviteUrl, emailDelivery: 'sent' });
     api.revokeWorkspaceInvitation.mockResolvedValue(undefined);
     api.updateWorkspaceLogAgentInference.mockImplementation(async (enabled: boolean) => ({
@@ -204,6 +220,60 @@ describe('Workspace settings', () => {
       ['drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write'],
     ));
     expect(openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  it('reconciles a denied connector attempt from the regional API when no deep link arrives', async () => {
+    api.getConnectorOAuthAttempt.mockResolvedValueOnce({
+      attemptId: 'a'.repeat(43),
+      provider: 'google',
+      status: 'denied',
+      connectionId: null,
+      errorCode: 'oauth_denied',
+      expiresAt: '2026-08-08T00:00:00.000Z',
+    });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
+    fireEvent.click(within(mailCard!).getByRole('button', { name: 'Connect for me' }));
+
+    expect(await screen.findByText('Google authorization was cancelled.')).toBeVisible();
+    expect(api.getConnectorOAuthAttempt).toHaveBeenCalledWith('a'.repeat(43));
+  });
+
+  it('uses the server-owned attempt provider for reconnect status messaging', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000010',
+      connectorType: 'google',
+      scope: 'you',
+      displayName: 'Imported connection label',
+      capabilities: ['drive.read'],
+      status: 'reconnect_required',
+    }]);
+    api.getConnectorOAuthAttempt
+      .mockResolvedValueOnce({
+        attemptId: 'b'.repeat(43),
+        provider: 'notion',
+        status: 'pending',
+        connectionId: null,
+        errorCode: null,
+        expiresAt: '2026-08-08T00:00:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        attemptId: 'b'.repeat(43),
+        provider: 'notion',
+        status: 'denied',
+        connectionId: null,
+        errorCode: 'oauth_denied',
+        expiresAt: '2026-08-08T00:00:00.000Z',
+      });
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+
+    expect(await screen.findByText('Notion authorization was cancelled.')).toBeVisible();
+    expect(api.getConnectorOAuthAttempt).toHaveBeenNthCalledWith(1, 'b'.repeat(43));
   });
 
   it('offers personal and workspace Linear authorization without granting agent identity personally', async () => {

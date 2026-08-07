@@ -626,6 +626,20 @@ export const DesktopExchangeRequestSchema = z.object({
   codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
   timezone: IanaTimezoneSchema.default("America/Los_Angeles")
 });
+export const ConnectorOAuthProviderSchema = z.enum(["google", "github", "linear", "notion", "slack"]);
+export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
+export const ConnectorOAuthStartSchema = z.object({
+  url: z.string().url(),
+  attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+});
+export const ConnectorOAuthAttemptSchema = z.object({
+  attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+  provider: ConnectorOAuthProviderSchema,
+  status: ConnectorOAuthAttemptStatusSchema,
+  connectionId: IdSchema.nullable(),
+  errorCode: z.string().regex(/^[a-z0-9_-]{1,100}$/u).nullable(),
+  expiresAt: TimestampSchema,
+});
 export const RefreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{20,500}$/u);
 export const RefreshRequestSchema = z.object({ refreshToken: RefreshTokenSchema });
 export const UpdateUserTimezoneRequestSchema = z.object({ timezone: IanaTimezoneSchema });
@@ -1126,6 +1140,10 @@ export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
 export type Session = z.infer<typeof SessionSchema>;
+export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
+export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;
+export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
+export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
