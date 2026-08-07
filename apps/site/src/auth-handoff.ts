@@ -4,6 +4,18 @@ const DESKTOP_PATH = '/complete';
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{20,500}$/u;
 const ATTEMPT_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
+const CONNECTION_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27}$/iu;
+const CONNECTOR_PROVIDERS = ['google', 'github', 'linear', 'notion', 'slack'] as const;
+
+type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
+
+const connectorName: Record<ConnectorProvider, string> = {
+  google: 'Google',
+  github: 'GitHub',
+  linear: 'Linear',
+  notion: 'Notion',
+  slack: 'Slack',
+};
 
 const hasSingleValue = (parameters: URLSearchParams, name: string): boolean =>
   parameters.getAll(name).length === 1;
@@ -48,7 +60,11 @@ export function parseDesktopTarget(fragment: string): string | null {
   const error = target.searchParams.get('error');
   const region = target.searchParams.get('region');
   const attempt = target.searchParams.get('attempt');
+  const connection = target.searchParams.get('connection');
+  const provider = target.searchParams.get('provider');
+  const status = target.searchParams.get('status');
   const validRegion = region === 'global' || region === 'eu';
+  const validProvider = CONNECTOR_PROVIDERS.some((candidate) => candidate === provider);
 
   const validTicketTarget =
     entries.length === 3
@@ -81,7 +97,40 @@ export function parseDesktopTarget(fragment: string): string | null {
       )
     );
 
-  return validTicketTarget || validErrorTarget ? target.toString() : null;
+  const validConnectorSuccessTarget =
+    entries.length >= 4
+    && entries.length <= 5
+    && entries.every(([name]) => ['connection', 'status', 'region', 'attempt', 'provider'].includes(name))
+    && ['connection', 'status', 'region', 'provider'].every((name) => hasSingleValue(target.searchParams, name))
+    && connection !== null
+    && CONNECTION_PATTERN.test(connection)
+    && status === 'connected'
+    && validRegion
+    && (attempt === null || (hasSingleValue(target.searchParams, 'attempt') && ATTEMPT_PATTERN.test(attempt)))
+    && validProvider
+    && ticket === null
+    && error === null;
+
+  const validConnectorErrorTarget =
+    entries.length >= 4
+    && entries.length <= 5
+    && entries.every(([name]) => ['status', 'error', 'region', 'attempt', 'provider'].includes(name))
+    && ['status', 'error', 'region', 'provider'].every((name) => hasSingleValue(target.searchParams, name))
+    && (status === 'denied' || status === 'failed')
+    && error !== null
+    && ERROR_PATTERN.test(error)
+    && validRegion
+    && validProvider
+    && connection === null
+    && ticket === null
+    && (
+      attempt === null
+      || (hasSingleValue(target.searchParams, 'attempt') && ATTEMPT_PATTERN.test(attempt))
+    );
+
+  return validTicketTarget || validErrorTarget || validConnectorSuccessTarget || validConnectorErrorTarget
+    ? target.toString()
+    : null;
 }
 
 function initializeHandoff(): void {
@@ -103,7 +152,21 @@ function initializeHandoff(): void {
     return;
   }
 
-  status.textContent = 'Sign-in is complete. Opening the Avalon desktop app…';
+  const parsedTarget = new URL(target);
+  const provider = parsedTarget.searchParams.get('provider') as ConnectorProvider | null;
+  const result = parsedTarget.searchParams.get('status');
+  const error = parsedTarget.searchParams.get('error');
+  if (provider && result === 'connected') {
+    status.textContent = `${connectorName[provider]} is connected. Opening the Avalon desktop app…`;
+  } else if (provider && error) {
+    status.textContent = `${connectorName[provider]} could not be connected. Opening Avalon…`;
+    help.textContent = 'Avalon will show the authorization result and let you try again.';
+  } else if (error) {
+    status.textContent = 'Sign-in could not be completed. Opening Avalon…';
+    help.textContent = 'Avalon will show the sign-in result and let you try again.';
+  } else {
+    status.textContent = 'Sign-in is complete. Opening the Avalon desktop app…';
+  }
   link.href = target;
   link.setAttribute('aria-disabled', 'false');
 

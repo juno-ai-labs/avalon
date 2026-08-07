@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
@@ -40,6 +41,20 @@ import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../li
 
 type SettingsSection = DesktopSettingsSection;
 type ConnectionFilter = 'all' | 'connected' | 'not_connected';
+
+interface PendingConnectorOAuth {
+  attemptId: string;
+  provider: ConnectorOAuthProvider;
+  startedAt: number;
+}
+
+const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
+  google: 'Google',
+  github: 'GitHub',
+  linear: 'Linear',
+  notion: 'Notion',
+  slack: 'Slack',
+};
 
 interface SettingsNavItem {
   id: SettingsSection;
@@ -239,6 +254,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
+  const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
+  const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
+  const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -268,12 +286,43 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.scope, input.capabilities);
+        return { kind: 'direct' as const };
+      }
+      const authorization = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
+      await desktopBridge().openExternal(authorization.url);
+      return { kind: 'oauth' as const, authorization, provider: input.provider };
+    },
+    onMutate: () => {
+      setConnectorOAuthMessage(null);
+      setConnectorOAuthError(null);
+    },
+    onSuccess: (result) => {
+      if (result.kind === 'direct') {
+        void queryClient.invalidateQueries({ queryKey: ['connections'] });
         return;
       }
-      const url = await api!.startProviderConnection(input.provider, input.scope, input.capabilities);
-      await desktopBridge().openExternal(url);
+      setPendingConnectorOAuth({
+        attemptId: result.authorization.attemptId,
+        provider: result.provider,
+        startedAt: Date.now(),
+      });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['connections'] }),
+  });
+  const reconnectConnection = useMutation({
+    mutationFn: async (connection: WorkstreamConnection) => {
+      const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id);
+      await desktopBridge().openExternal(authorization.url);
+      return { authorization, provider: connection.connectorType as ConnectorOAuthProvider };
+    },
+    onMutate: () => {
+      setConnectorOAuthMessage(null);
+      setConnectorOAuthError(null);
+    },
+    onSuccess: ({ authorization, provider }) => setPendingConnectorOAuth({
+      attemptId: authorization.attemptId,
+      provider,
+      startedAt: Date.now(),
+    }),
   });
   const testConnection = useMutation({
     mutationFn: (id: string) => api!.testConnection(id),
@@ -352,6 +401,60 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     setNavigationQuery('');
     setActiveSection(nextSection);
   }), [bridge]);
+
+  useEffect(() => {
+    if (!api || !pendingConnectorOAuth) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    let retryDelayMs = 750;
+    const providerName = connectorProviderName[pendingConnectorOAuth.provider];
+
+    const poll = async (): Promise<void> => {
+      try {
+        const attempt = await api.getConnectorOAuthAttempt(pendingConnectorOAuth.attemptId);
+        if (cancelled) return;
+        if (attempt.status === 'pending') {
+          retryDelayMs = 1_000;
+          timer = window.setTimeout(() => void poll(), retryDelayMs);
+          return;
+        }
+        setPendingConnectorOAuth(null);
+        if (attempt.status === 'succeeded') {
+          setConnectorOAuthError(null);
+          setConnectorOAuthMessage(`${providerName} is connected.`);
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['connections'] }),
+            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+            queryClient.invalidateQueries({ queryKey: ['automation'] }),
+          ]);
+          return;
+        }
+        setConnectorOAuthMessage(null);
+        setConnectorOAuthError(
+          attempt.status === 'denied'
+            ? `${providerName} authorization was cancelled.`
+            : attempt.errorCode === 'oauth_attempt_expired'
+              ? `${providerName} authorization expired. Try connecting again.`
+              : `${providerName} could not be connected. Try again.`,
+        );
+      } catch {
+        if (cancelled) return;
+        if (Date.now() - pendingConnectorOAuth.startedAt >= 16 * 60_000) {
+          setPendingConnectorOAuth(null);
+          setConnectorOAuthError(`${providerName} authorization could not be confirmed. Refresh connections or try again.`);
+          return;
+        }
+        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
+        timer = window.setTimeout(() => void poll(), retryDelayMs);
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [api, pendingConnectorOAuth, queryClient]);
 
   const copyInvitation = async (): Promise<void> => {
     if (!createdUrl) return;
@@ -629,10 +732,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   {visibleProviders.map((provider) => {
                     const Icon = provider.icon;
                     const connected = providerHasConnection(provider, connections.data ?? []);
+                    const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
                     const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
                     const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                     const personalConnectionStateUnavailable = provider.provider === 'x' && (connections.isLoading || connections.isError);
-                    const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || hasActivePersonalConnection;
+                    const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                     const personalConnectTitle = hasActivePersonalConnection
                       ? `An ${provider.name} personal connection is already installed. Manage it below.`
                       : provider.provider === 'x' && connections.isLoading
@@ -640,7 +744,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         : provider.provider === 'x' && connections.isError
                           ? 'Installed personal connections could not be loaded.'
                           : undefined;
-                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || hasActiveWorkspaceConnection;
+                    const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                     const workspaceConnectTitle = hasActiveWorkspaceConnection
                       ? `A ${provider.name} workspace connection is already installed. Manage it below.`
                       : connections.isLoading
@@ -652,17 +756,17 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       <article className="provider-card" key={provider.id}>
                         <div className="provider-card-heading">
                           <div className="provider-icon"><Icon aria-hidden="true" size={18} /></div>
-                          <div><strong>{provider.name}</strong><span>{connected ? 'Connected' : 'Available'}</span></div>
+                          <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : 'Available'}</span></div>
                         </div>
                         <p>{provider.description}</p>
-                        <div className="provider-actions">
-                          {provider.scopes.includes('you' as never) && (
-                            <Button
-                              disabled={personalConnectDisabled}
-                              onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
-                              title={personalConnectTitle}
-                            >Connect for me</Button>
-                          )}
+                          <div className="provider-actions">
+                            {provider.scopes.includes('you' as never) && (
+                              <Button
+                                disabled={personalConnectDisabled}
+                                onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
+                                title={personalConnectTitle}
+                              >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</Button>
+                            )}
                           {provider.scopes.includes('workspace' as never) && isAdmin && (
                             <Button
                               disabled={workspaceConnectDisabled}
@@ -678,8 +782,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   })}
                   {visibleProviders.length === 0 && <EmptyState title="No connectors here" description="Change the filter to see other available providers." />}
                 </div>
-                {(connections.error || connectProvider.error || testConnection.error || disconnectConnection.error) && (
-                  <InlineError>{connections.error?.message ?? connectProvider.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
+                {(connectorOAuthError || connections.error || connectProvider.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
+                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectProvider.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
                 )}
                 <div className="settings-subsection">
                   <div className="settings-pane-heading settings-pane-heading-count">
@@ -692,7 +797,11 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
                         <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
                         <Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge>
-                        {connection.status === 'reconnect_required' && <Button onClick={async () => desktopBridge().openExternal(await api!.reconnectConnection(connection.id))}><RefreshCcw aria-hidden="true" size={13} /> Reconnect</Button>}
+                        {connection.status === 'reconnect_required' && (
+                          <Button disabled={reconnectConnection.isPending || Boolean(pendingConnectorOAuth)} onClick={() => reconnectConnection.mutate(connection)}>
+                            <RefreshCcw aria-hidden="true" size={13} /> Reconnect
+                          </Button>
+                        )}
                         <Button disabled={testConnection.isPending} onClick={() => testConnection.mutate(connection.id)}>Test</Button>
                         <button aria-label={`Disconnect ${connection.displayName}`} className="settings-icon-action" disabled={disconnectConnection.isPending} onClick={() => disconnectConnection.mutate(connection.id)} type="button"><Trash2 aria-hidden="true" size={14} /></button>
                       </div>

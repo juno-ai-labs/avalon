@@ -288,10 +288,14 @@ describe('public Avalon site', () => {
     const attempt = 'a'.repeat(43);
     const successTarget = `avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}`;
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
+    const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}&provider=linear`;
+    const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`;
     const asFragment = (target: string): string => `#${new URLSearchParams({ target }).toString()}`;
 
     expect(parseDesktopTarget(asFragment(successTarget))).toBe(successTarget);
     expect(parseDesktopTarget(asFragment(errorTarget))).toBe(errorTarget);
+    expect(parseDesktopTarget(asFragment(connectorSuccessTarget))).toBe(connectorSuccessTarget);
+    expect(parseDesktopTarget(asFragment(connectorErrorTarget))).toBe(connectorErrorTarget);
     expect(parseDesktopTarget(asFragment('avalon://auth/complete?error=google_oauth_denied')))
       .toBe('avalon://auth/complete?error=google_oauth_denied');
     expect(parseDesktopTarget(`?target=${encodeURIComponent(successTarget)}`)).toBeNull();
@@ -300,12 +304,16 @@ describe('public Avalon site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=us&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=short`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}&extra=value`))).toBeNull();
+    expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&provider=linear')))
+      .toBe('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&provider=linear');
+    expect(parseDesktopTarget(asFragment(`avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}`))).toBeNull();
+    expect(parseDesktopTarget(asFragment(`avalon://auth/complete?provider=unknown&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`https://with-avalon.com/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
 
     const page = readProjectFile('auth/desktop/index.html');
     const script = readProjectFile('src/auth-handoff.ts');
-    expect(page).toContain('Secure desktop sign-in');
+    expect(page).toContain('Secure desktop handoff');
     expect(page).toContain('id="open-avalon"');
     expect(page).toContain('noindex, nofollow');
     expect(script).toContain('window.location.hash');

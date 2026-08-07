@@ -5,6 +5,8 @@ import {
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
   ConnectionSchema as WireConnectionSchema,
+  ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
+  ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
   ElicitationSchema as WireElicitationSchema,
   MessageSchema as WireMessageSchema,
@@ -25,6 +27,8 @@ import {
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
   type Connection as WireConnection,
+  type ConnectorOAuthAttempt,
+  type ConnectorOAuthStart,
   type Elicitation as WireElicitation,
   type Message as WireMessage,
   type Resource as WireResource,
@@ -1302,7 +1306,7 @@ export class AvalonApi {
     return page.items.map(mapConnection);
   }
 
-  async startGoogleConnection(scope: 'you' | 'workspace', capabilities: string[]): Promise<string> {
+  async startGoogleConnection(scope: 'you' | 'workspace', capabilities: string[]): Promise<ConnectorOAuthStart> {
     return this.startProviderConnection('google', scope, capabilities);
   }
 
@@ -1310,13 +1314,12 @@ export class AvalonApi {
     provider: 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
-  ): Promise<string> {
-    const response = await this.request(`/connections/${provider}/start`, {
+  ): Promise<ConnectorOAuthStart> {
+    return this.request(`/connections/${provider}/start`, {
       method: 'POST',
       body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
-      schema: z.object({ url: z.string().url() }),
+      schema: WireConnectorOAuthStartSchema,
     });
-    return response.url;
   }
 
   async createXConnection(
@@ -1331,12 +1334,35 @@ export class AvalonApi {
     return mapConnection(response.connection);
   }
 
-  async reconnectConnection(id: string): Promise<string> {
-    const response = await this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
+  async reconnectConnection(id: string): Promise<ConnectorOAuthStart> {
+    return this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
       method: 'POST',
-      schema: z.object({ url: z.string().url() }),
+      schema: WireConnectorOAuthStartSchema,
     });
-    return response.url;
+  }
+
+  async getConnectorOAuthAttempt(attemptId: string, signal?: AbortSignal): Promise<ConnectorOAuthAttempt> {
+    return this.request(`/connections/oauth-attempts/${encodeURIComponent(attemptId)}`, {
+      schema: WireConnectorOAuthAttemptSchema,
+      signal,
+    });
+  }
+
+  async waitForConnectorOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttempt> {
+    const deadline = Date.now() + 16 * 60_000;
+    let retryDelayMs = 750;
+    while (Date.now() < deadline) {
+      try {
+        const attempt = await this.getConnectorOAuthAttempt(attemptId);
+        if (attempt.status !== 'pending') return attempt;
+        retryDelayMs = 1_000;
+      } catch (error) {
+        if (error instanceof ApiError && error.status > 0 && error.status < 500) throw error;
+        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelayMs));
+    }
+    throw new ApiError('Connector authorization could not be confirmed.', 408, 'oauth_attempt_timeout');
   }
 
   async testConnection(id: string): Promise<{ ok: boolean; message: string }> {

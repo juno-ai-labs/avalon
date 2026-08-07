@@ -12,7 +12,7 @@ interface AppShellProps extends PropsWithChildren {
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
-  const { api, signOut } = useAppSession();
+  const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -78,6 +78,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workstreams={workstreams.data ?? []}
       />
       <main className="main-pane">
+        {deepLinkError && (
+          <div className="connection-banner" role="alert">
+            <span>{deepLinkError}</span>
+            <button onClick={clearDeepLinkError} type="button">Dismiss</button>
+          </div>
+        )}
         {(automations.error || workstreams.error) && (
           <div className="connection-banner" role="status">
             <span>

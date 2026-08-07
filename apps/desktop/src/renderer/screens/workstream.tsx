@@ -622,9 +622,22 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const reconnect = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
-      const url = await api!.reconnectConnection(connection.id);
-      await desktopBridge().openExternal(url);
+      const authorization = await api!.reconnectConnection(connection.id);
+      await desktopBridge().openExternal(authorization.url);
+      const attempt = await api!.waitForConnectorOAuthAttempt(authorization.attemptId);
+      if (attempt.status !== 'succeeded') {
+        throw new Error(
+          attempt.status === 'denied'
+            ? 'Connector authorization was cancelled.'
+            : 'The connector could not be reconnected. Try again.',
+        );
+      }
     },
+    onSuccess: () => void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
+      queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
+      queryClient.invalidateQueries({ queryKey: ['automation'] }),
+    ]),
   });
 
   const watchResource = useMutation({
