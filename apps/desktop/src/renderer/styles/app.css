@@ -1504,14 +1504,14 @@ pre {
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; }
 
 /* HyperSight */
-.hypersight-shell { margin: 10px 18px 0; max-height: 58%; min-height: 18%; min-width: 0; position: relative; }
+.hypersight-shell { margin: 10px 18px 0; min-width: 0; position: relative; }
 .hypersight-panel { background: #20211e; border: 1px solid #3c3d38; border-radius: 13px; box-shadow: 0 10px 34px rgba(0, 0, 0, .24); display: grid; grid-template-rows: 39px minmax(0, 1fr); height: calc(100% - 8px); min-height: 0; overflow: hidden; }
 .hypersight-panel-header { align-items: center; border-bottom: 1px solid #343530; display: flex; justify-content: space-between; padding: 0 12px 0 14px; }
 .hypersight-panel-header > div { align-items: center; color: var(--brand); display: flex; gap: 7px; }
 .hypersight-panel-header h2 { color: var(--ink-soft); font-size: 12px; font-weight: 620; margin: 0; }
 .hypersight-panel-header > span { color: var(--muted); font-size: 9.5px; }
 .hypersight-panel-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.hypersight-block-list { margin: 0 auto; max-width: 980px; padding: 12px 14px 14px; }
+.hypersight-block-list { padding: 8px 10px 10px; }
 .hypersight-block { display: grid; gap: 7px; grid-template-columns: minmax(0, 1fr) 29px; margin-bottom: 9px; min-height: 96px; position: relative; transition: opacity 100ms ease, transform 100ms ease; }
 .hypersight-block-card { background: #2c2d29; border: 1px solid #42433e; border-radius: 9px; color: var(--ink-soft); line-height: 1.48; max-height: 260px; min-height: 96px; overflow-y: auto; padding: 12px 14px; }
 .hypersight-block-card .markdown-body { font-size: 12px; }

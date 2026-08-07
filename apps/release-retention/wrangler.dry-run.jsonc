@@ -1,0 +1,26 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "avalon-release-retention-dry-run",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "RETENTION_DRY_RUN": "true",
+    "RETENTION_KEEP_COUNT": "5",
+    "RETENTION_LOCAL_HOUR": "2",
+    "RETENTION_TIME_ZONE": "America/Los_Angeles"
+  },
+  "r2_buckets": [
+    {
+      "binding": "ACTIVE_RELEASES",
+      "bucket_name": "avalon-desktop-releases",
+      "remote": true
+    },
+    {
+      "binding": "ARCHIVED_RELEASES",
+      "bucket_name": "avalon-desktop-releases-archive",
+      "remote": true
+    }
+  ]
+}
