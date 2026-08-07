@@ -391,6 +391,128 @@ describe("Slack public channel membership", () => {
       "SELECT status, payload_json, completed_at FROM slack_ingress_jobs WHERE id = 'event:EvChannelCreated'",
     ).get()).toMatchObject({ status: "completed", payload_json: null });
   });
+
+  it("makes deterministic ingress failures terminal in the durable job row", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:invalid", { type: 42 });
+
+    await expect(new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:invalid")).rejects.toBeDefined();
+
+    expect(database.prepare(
+      "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:invalid'",
+    ).get()).toMatchObject({ status: "failed", attempt_count: 20 });
+  });
+
+  it("retries an access-token expiration without poisoning the Slack connection", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:expired", {
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event_id: "EvExpired",
+      event: { type: "channel_created", channel: { id: "CNEW", name: "new-channel" } },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      error: "token_expired",
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    await expect(new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:expired")).rejects.toMatchObject({ message: "token_expired" });
+
+    expect(database.prepare(
+      "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:expired'",
+    ).get()).toEqual({ status: "failed", attempt_count: 1, error_code: "token_expired" });
+    expect(database.prepare(
+      "SELECT status FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).get()).toEqual({ status: "healthy" });
+  });
+
+  it("marks a missing channel-lookup scope for reconnect before unlinked dispatch", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:missing-scope", appMention("EvMissingScope"));
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("conversations.info")) {
+        return new Response(JSON.stringify({ ok: false, error: "missing_scope" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.pathname.endsWith("chat.postMessage")) {
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:missing-scope");
+
+    expect(database.prepare(
+      "SELECT status, error_json FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).get()).toMatchObject({ status: "needs_reconnect" });
+    expect(database.prepare(
+      "SELECT status FROM slack_ingress_jobs WHERE id = 'event:missing-scope'",
+    ).get()).toEqual({ status: "completed" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("denies dispatch from an unhealthy Slack connection without creating a task", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      "UPDATE connector_connections SET status = 'needs_reconnect' WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).run();
+    insertSlackEventJob(database, "event:unhealthy", appMention("EvUnhealthy"));
+    const postedMessages: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("conversations.info")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          channel: { id: "C123", is_private: false, is_im: false, is_mpim: false },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname.endsWith("chat.postMessage")) {
+        postedMessages.push(String((JSON.parse(String(init?.body)) as Record<string, unknown>).text));
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:unhealthy");
+
+    expect(postedMessages).toEqual([expect.stringContaining("connection needs attention")]);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
+  });
 });
 
 function seedElicitationRetry(
@@ -469,6 +591,35 @@ async function seedSlackInstallation(database: DatabaseSync, credentialsKey: str
             '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
             'plugin_slack_workspace');
   `);
+}
+
+function insertSlackEventJob(database: DatabaseSync, id: string, payload: unknown): void {
+  database.prepare(
+    `INSERT INTO slack_ingress_jobs
+     (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
+      status, attempt_count, received_at, updated_at)
+     VALUES (?, '22222222-2222-4222-8222-222222222222',
+             '11111111-1111-4111-8111-111111111111', 'T123', 'hash', 'event', ?,
+             'queued', 0, '2026-01-01', '2026-01-01')`,
+  ).run(id, JSON.stringify(payload));
+}
+
+function appMention(eventId: string): Record<string, unknown> {
+  return {
+    type: "event_callback",
+    team_id: "T123",
+    api_app_id: "A1",
+    event_id: eventId,
+    authorizations: [{ team_id: "T123", user_id: "UBOT", is_bot: true }],
+    event: {
+      type: "app_mention",
+      user: "U456",
+      channel: "C123",
+      channel_type: "channel",
+      ts: "1.0",
+      text: "<@UBOT> investigate this",
+    },
+  };
 }
 
 function slackMembershipEnvironment(
