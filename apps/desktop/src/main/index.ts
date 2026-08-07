@@ -56,12 +56,12 @@ import {
 } from './application-icon';
 import { ApplicationIconController } from './application-icon-controller';
 import {
-  defaultStoredApplicationSettings,
   readStoredApplicationSettings,
   writeStoredApplicationSettings,
 } from './application-settings';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
+import { LockdownModeController } from './lockdown-mode';
 import { allowsTrustedAudioCapture } from './media-permission';
 import {
   migrateLegacyUserDataStoredSessionFile,
@@ -69,9 +69,11 @@ import {
   readStoredAuthFile,
   readStoredProfileFile,
   readStoredSessionFile,
+  removeStoredCredentialFiles,
   removeStoredStateFiles,
   removeStoredSessionFiles,
   tombstoneStoredStateFiles,
+  tombstoneStoredCredentialFiles,
   writeStoredAuthFile,
   writeStoredProfileFile,
   writeStoredSessionFile,
@@ -127,7 +129,6 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
-let lockdownMode = defaultStoredApplicationSettings.lockdownMode;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
@@ -223,7 +224,7 @@ function apiBaseForAuth(auth: StoredAuth): string {
 }
 
 function activeSessionEncryptionMode(): SessionEncryptionMode {
-  return lockdownMode ? 'lockdown' : 'global';
+  return lockdownModeController.encryptionMode();
 }
 
 function encryptStoredSessionValue(value: string): Buffer {
@@ -234,15 +235,7 @@ function decryptStoredSessionValue(value: Uint8Array): string {
   return decryptSessionValue(value, safeStorage).plaintext;
 }
 
-function desktopApplicationSettings(): DesktopApplicationSettings {
-  return {
-    lockdownMode,
-    lockdownAvailable: safeStorage.isEncryptionAvailable(),
-  };
-}
-
-function broadcastApplicationSettingsChanged(): void {
-  const settings = desktopApplicationSettings();
+function broadcastApplicationSettingsChanged(settings: DesktopApplicationSettings): void {
   for (const window of [mainWindow, settingsWindow]) {
     if (window && !window.isDestroyed()) {
       window.webContents.send('application-settings:changed', settings);
@@ -254,42 +247,103 @@ function storedSessionEncryptionValues() {
   const directory = userDataDirectory();
   return [
     {
+      credentialBearing: true,
       read: () => readStoredAuthFile(directory),
       write: (value: Uint8Array) => writeStoredAuthFile(directory, value),
     },
     {
+      credentialBearing: false,
       read: () => readStoredProfileFile(directory),
       write: (value: Uint8Array) => writeStoredProfileFile(directory, value),
     },
     {
+      credentialBearing: true,
       read: () => readStoredSessionFile(directory),
       write: (value: Uint8Array) => writeStoredSessionFile(directory, value),
     },
   ];
 }
 
-async function migrateSessionEncryption(mode: SessionEncryptionMode): Promise<void> {
-  await migrateStoredSessionEncryption(storedSessionEncryptionValues(), mode, safeStorage);
+async function migrateSessionEncryption(
+  mode: SessionEncryptionMode,
+  options?: { allowLockdownToGlobal?: boolean },
+): Promise<void> {
+  await migrateStoredSessionEncryption(
+    storedSessionEncryptionValues(),
+    mode,
+    safeStorage,
+    options,
+  );
 }
 
-async function setLockdownMode(rawEnabled: unknown): Promise<DesktopApplicationSettings> {
-  if (typeof rawEnabled !== 'boolean') throw new Error('Invalid Lockdown mode value');
-  if (rawEnabled && !safeStorage.isEncryptionAvailable()) {
-    throw new Error('Lockdown mode requires an available operating-system keystore');
+async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
+  if (!inMemoryAuth) {
+    await clearCredentialsForLockdownRelogin();
+    return;
   }
-  return withSessionMutation(async () => {
-    if (rawEnabled === lockdownMode) return desktopApplicationSettings();
-    const targetMode: SessionEncryptionMode = rawEnabled ? 'lockdown' : 'global';
-    // Re-encrypt every durable session component before committing the
-    // preference. Envelopes identify their own key source, so an interrupted
-    // multi-file migration remains readable and can be retried safely.
-    await migrateSessionEncryption(targetMode);
-    await writeStoredApplicationSettings(userDataDirectory(), { lockdownMode: rawEnabled });
-    lockdownMode = rawEnabled;
-    broadcastApplicationSettingsChanged();
-    return desktopApplicationSettings();
-  });
+  await writeStoredAuthFile(
+    userDataDirectory(),
+    encryptSessionValue(JSON.stringify(inMemoryAuth), 'global', safeStorage),
+  );
+  if (inMemorySession) {
+    await writeStoredProfileFile(
+      userDataDirectory(),
+      encryptSessionValue(
+        JSON.stringify(storedProfileFromSession(inMemorySession)),
+        'global',
+        safeStorage,
+      ),
+    );
+  }
+  try {
+    await removeStoredSessionFiles(userDataDirectory());
+  } catch {
+    // The recovered split credential is authoritative. A later logout still
+    // removes every obsolete full-session credential location.
+  }
 }
+
+async function clearCredentialsForLockdownRelogin(): Promise<void> {
+  sessionLifecycleEpoch += 1;
+  desktopAuthAttempts.clear();
+  inMemoryAuth = null;
+  inMemorySession = null;
+  let failure: unknown;
+  const directories = [
+    userDataDirectory(),
+    ...(app.isPackaged ? [legacyPackagedUserDataDirectory(appDataDirectory)] : []),
+  ];
+  for (const directory of directories) {
+    try {
+      await removeStoredCredentialFiles(directory);
+    } catch (error) {
+      let directoryFailure: unknown = error;
+      try {
+        await tombstoneStoredCredentialFiles(
+          directory,
+          encryptSessionValue('{}', 'global', safeStorage),
+        );
+        directoryFailure = undefined;
+      } catch {
+        // Preserve this directory's original deletion error for the caller.
+      }
+      if (directoryFailure !== undefined && failure === undefined) failure = directoryFailure;
+    }
+  }
+  broadcastSessionChanged(null);
+  if (failure) throw failure;
+}
+
+const lockdownModeController = new LockdownModeController({
+  safeStorage,
+  readSettings: () => readStoredApplicationSettings(userDataDirectory()),
+  writeSettings: (settings) => writeStoredApplicationSettings(userDataDirectory(), settings),
+  migrateSession: migrateSessionEncryption,
+  recoverGlobalSessionWithoutKeystore,
+  clearCredentialsForRelogin: clearCredentialsForLockdownRelogin,
+  runExclusive: withSessionMutation,
+  onChange: broadcastApplicationSettingsChanged,
+});
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
   const auth = storedAuthFromSession(value, regionForStoredSession(value));
@@ -974,11 +1028,11 @@ function registerIpc(): void {
   });
   ipcMain.handle('application-settings:get', (event) => {
     assertTrustedIpcSender(event);
-    return desktopApplicationSettings();
+    return lockdownModeController.settings();
   });
   ipcMain.handle('application-settings:set-lockdown-mode', (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
-    return setLockdownMode(rawEnabled);
+    return lockdownModeController.set(rawEnabled);
   });
   ipcMain.handle('application-icon:get', (event) => {
     assertTrustedIpcSender(event);
@@ -1520,7 +1574,6 @@ if (!singleInstanceLock) {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('app.avalon.desktop');
     app.setAsDefaultProtocolClient(customProtocol);
-    lockdownMode = (await readStoredApplicationSettings(userDataDirectory())).lockdownMode;
     try {
       if (app.isPackaged) {
         await migrateLegacyUserDataStoredSessionFile(
@@ -1534,9 +1587,9 @@ if (!singleInstanceLock) {
       if (code !== 'ENOENT') console.warn('[avalon] could not migrate the legacy desktop session file', error);
     }
     try {
-      await migrateSessionEncryption(activeSessionEncryptionMode());
+      await lockdownModeController.initialize();
     } catch (error) {
-      console.warn('[avalon] could not migrate desktop session encryption', error);
+      console.warn('[avalon] could not initialize desktop session encryption', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
