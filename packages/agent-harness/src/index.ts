@@ -1044,6 +1044,7 @@ export async function compileAutomation(input: {
   userId?: string;
   fallbackModels?: string[];
   messages: Array<{ role: "user" | "assistant"; content: string }>;
+  latestUserAttachmentParts?: ModelMessageContentPart[];
   currentDraft?: AutomationDraft | null;
   defaultTimezones?: { personal: string; workspace: string };
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
@@ -1064,6 +1065,26 @@ export async function compileAutomation(input: {
     messages: input.messages,
     currentDraft: input.currentDraft ?? null,
   });
+  const conversationMessages: ModelMessage[] = rendered.slice(1);
+  if (input.latestUserAttachmentParts?.length) {
+    let latestUserIndex = -1;
+    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
+      if (conversationMessages[index]?.role === "user") {
+        latestUserIndex = index;
+        break;
+      }
+    }
+    if (latestUserIndex >= 0) {
+      const latestUserMessage = conversationMessages[latestUserIndex]!;
+      conversationMessages[latestUserIndex] = {
+        ...latestUserMessage,
+        content: [
+          ...(latestUserMessage.content ? [{ type: "text" as const, text: String(latestUserMessage.content) }] : []),
+          ...input.latestUserAttachmentParts,
+        ],
+      };
+    }
+  }
   const catalog = input.pluginCatalog ?? [];
   const executablePlugins: HarnessPlugin[] = catalog.map((plugin) => ({
     canonicalId: `automation:${plugin.pluginId}`,
@@ -1286,7 +1307,7 @@ export async function compileAutomation(input: {
     },
     systemPrompt: String(rendered[0]?.content ?? ""),
     messages: [
-      ...rendered.slice(1),
+      ...conversationMessages,
       {
         role: "user",
         content: [

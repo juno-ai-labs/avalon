@@ -1,4 +1,4 @@
-import { createDatabase, newId, nowIso } from "@avalon/db";
+import { buildMessageAttachmentStatements, createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
 import { HarnessFailureCodeSchema, WorkstreamDetailSchema } from "@avalon/contracts";
 import type {
@@ -255,7 +255,11 @@ export class WorkstreamService {
 
   async create(input: CreateWorkstreamInput) {
     await this.assertMembersExist(input.participantUserIds);
-    const title = input.title ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
+    const attachmentIds = [...new Set(input.attachmentIds)];
+    await this.assertDraftAttachments(attachmentIds);
+    const objective = input.objective
+      ?? (input.openingMessage.trim() || "Review the attached files");
+    const title = input.title ?? objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
     const workstreamId = newId();
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = {
@@ -268,13 +272,14 @@ export class WorkstreamService {
       id: workstreamId,
       workspaceId: this.auth.workspaceId,
       title,
-      objective: input.objective,
+      objective,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
       openingAuthor: { type: "human", userId: this.auth.userId },
       openingMessage: input.openingMessage,
       clientMessageId: input.clientMessageId,
       participantUserIds: input.participantUserIds,
+      attachmentIds,
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
@@ -875,30 +880,14 @@ export class WorkstreamService {
   ): Promise<{ message: Message; inserted: boolean }> {
     const messageId = newId();
     const at = nowIso();
-    const attachmentStatements = input.attachmentIds.flatMap((resourceId, position) => [
-      this.env.DB.prepare(
-        `INSERT INTO message_attachments (message_id, resource_id, position, attached_at)
-         SELECT ?, r.id, ?, ? FROM resources r
-         WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
-           AND r.uploaded_by_user_id = ? AND r.attachment_status = 'draft'
-           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
-         ON CONFLICT(message_id, resource_id) DO NOTHING`,
-      ).bind(messageId, position, at, resourceId, this.auth.workspaceId, this.auth.userId, messageId),
-      this.env.DB.prepare(
-        `INSERT INTO workstream_resources
-         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
-         SELECT ?, r.id, ?, 0, 'message_attachment', ? FROM resources r
-         WHERE r.id = ? AND r.workspace_id = ? AND r.provider = 'avalon_upload'
-           AND r.uploaded_by_user_id = ?
-           AND EXISTS (SELECT 1 FROM messages WHERE id = ?)
-         ON CONFLICT(workstream_id, resource_id) DO NOTHING`,
-      ).bind(workstreamId, this.auth.userId, at, resourceId, this.auth.workspaceId, this.auth.userId, messageId),
-      this.env.DB.prepare(
-        `UPDATE resources SET attachment_status = 'attached', updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND uploaded_by_user_id = ?
-           AND EXISTS (SELECT 1 FROM message_attachments WHERE message_id = ? AND resource_id = ?)`,
-      ).bind(at, resourceId, this.auth.workspaceId, this.auth.userId, messageId, resourceId),
-    ]);
+    const attachmentStatements = buildMessageAttachmentStatements(this.env.DB, {
+      attachmentIds: input.attachmentIds,
+      attachedAt: at,
+      attachedByUserId: this.auth.userId,
+      messageId,
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+    });
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workstream_participants

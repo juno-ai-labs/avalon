@@ -58,6 +58,7 @@ import { numericEnv } from "../env";
 import { decryptString, encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { ApiError } from "../lib/api-error";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
   FirecrawlClient,
@@ -766,11 +767,54 @@ export async function classifyWorkstreamMessage(
   });
 }
 
+async function loadAutomationDraftAttachmentParts(
+  env: Env,
+  workspaceId: string,
+  userId: string,
+  attachmentIds: string[],
+) {
+  const ids = [...new Set(attachmentIds)];
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(
+    `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type, model_metadata_json
+       FROM resources
+      WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
+        AND uploaded_by_user_id = ? AND attachment_status = 'draft'`,
+  ).bind(...ids, workspaceId, userId).all<{
+    id: string;
+    title: string;
+    mime_type: string | null;
+    content_ref: string | null;
+    model_content_ref: string | null;
+    model_mime_type: string | null;
+    model_metadata_json: string | null;
+  }>();
+  const sources = new Map((rows.results ?? []).map((row) => [row.id, {
+    id: row.id,
+    fileName: row.title,
+    mimeType: row.mime_type ?? "application/octet-stream",
+    contentRef: row.content_ref,
+    modelContentRef: row.model_content_ref,
+    modelMimeType: row.model_mime_type,
+    modelMetadataJson: row.model_metadata_json,
+  } satisfies ModelAttachmentSource]));
+  if (sources.size !== ids.length) {
+    throw new ApiError(422, "invalid_automation_attachment", "One or more automation attachments are unavailable");
+  }
+  return buildAttachmentModelParts(
+    env.PAYLOADS,
+    ids.map((id) => sources.get(id)!),
+    { database: env.DB, images: env.IMAGES },
+  );
+}
+
 export async function compileAutomationDraft(
   env: Env,
   input: {
     draftId?: string | undefined;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
+    attachmentIds?: string[];
     currentDraft?: AutomationDraft | null;
     defaultTimezones: { personal: string; workspace: string };
     requestId: string;
@@ -781,6 +825,12 @@ export async function compileAutomationDraft(
   },
 ): Promise<AutomationDraft> {
   const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
+  const latestUserAttachmentParts = await loadAutomationDraftAttachmentParts(
+    env,
+    input.workspaceId,
+    input.userId,
+    input.attachmentIds ?? [],
+  );
   const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
@@ -796,6 +846,7 @@ export async function compileAutomationDraft(
       userId: input.userId,
       fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
       messages: input.messages,
+      ...(latestUserAttachmentParts.length > 0 ? { latestUserAttachmentParts } : {}),
       currentDraft: input.currentDraft ?? null,
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
