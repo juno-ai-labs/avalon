@@ -16,7 +16,7 @@ import {
   WandSparkles,
   Zap,
 } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -39,6 +39,7 @@ import type {
   AutomationDraftQuestion,
   AutomationDraftResponse,
   Message,
+  MessageAttachment,
   WorkspaceTemplate,
   WorkstreamConnection,
 } from '../lib/types';
@@ -55,6 +56,7 @@ const AUTOMATION_USER = {
 interface AutomationCompilePayload {
   attachmentIds: string[];
   attachmentLocalIds: string[];
+  attachments: MessageAttachment[];
   message: string;
   templateId?: string;
   turnId: string;
@@ -66,6 +68,7 @@ function automationTextMessage(
   authorType: 'human' | 'agent',
   text: string,
   streaming = false,
+  attachments: MessageAttachment[] = [],
 ): Message {
   return createTextMessage({
     id,
@@ -75,6 +78,7 @@ function automationTextMessage(
     ...(authorType === 'human' ? { author: AUTOMATION_USER } : {}),
     text,
     createdAt: new Date().toISOString(),
+    ...(attachments.length > 0 ? { attachments } : {}),
     ...(streaming ? { streaming: true } : {}),
   });
 }
@@ -97,18 +101,24 @@ function settleThought(turns: Message[], thoughtId: string): Message[] {
 }
 
 function AutomationMessageBlock({
+  loadAttachmentContent,
   message,
   onAnswerElicitation,
+  onOpenAttachment,
 }: {
+  loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   message: Message;
   onAnswerElicitation?: (answer: string | string[] | null) => Promise<void>;
+  onOpenAttachment?: (preview: AttachmentPreview) => void;
 }): React.JSX.Element {
   return (
     <MessageBlock
       currentUserId={AUTOMATION_USER_ID}
+      loadAttachmentContent={loadAttachmentContent}
       message={message}
       onAnswerElicitation={(_elicitationId, answer) => onAnswerElicitation?.(answer) ?? Promise.resolve()}
       onResolveSuggestion={() => Promise.resolve()}
+      onOpenAttachment={onOpenAttachment}
     />
   );
 }
@@ -333,13 +343,6 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
   const attachmentDraft = useFileAttachments(api);
 
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = 'auto';
-    if (input) textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-  }, [input]);
-
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
@@ -351,6 +354,10 @@ export function NewAutomationScreen(): React.JSX.Element {
     : (connections.data ?? [])
       .filter((connection) => connection.displayName.toLowerCase().includes(mentionQuery.toLowerCase()))
       .slice(0, 8);
+  const loadAttachmentContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
+    [api],
+  );
 
   const updateInput = (value: string): void => {
     setInput(value);
@@ -476,13 +483,13 @@ export function NewAutomationScreen(): React.JSX.Element {
           : current;
         return updated.some((turn) => turn.id === payload.turnId)
           ? updated
-          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message)];
+          : [...updated, automationTextMessage(payload.turnId, 'human', payload.message, false, payload.attachments)];
       });
       setInput('');
       setMentionQuery(null);
     },
     onSuccess: (response, payload) => {
-      for (const localId of payload.attachmentLocalIds) attachmentDraft.removeAttachment(localId);
+      attachmentDraft.consume(payload.attachmentLocalIds);
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
       const responseMessage = response.question
@@ -526,11 +533,20 @@ export function NewAutomationScreen(): React.JSX.Element {
     elicitation?: AutomationCompilePayload['elicitation'],
   ): Promise<void> => {
     const readyAttachments = attachmentDraft.ready;
-    const trimmed = message.trim() || (readyAttachments.length > 0 ? 'Create an automation based on the attached files.' : '');
-    if (!trimmed || attachmentDraft.uploading || compile.isPending) return;
+    const trimmed = message.trim();
+    if ((!trimmed && readyAttachments.length === 0) || attachmentDraft.uploading || compile.isPending) return;
+    const createdAt = new Date().toISOString();
     await compile.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
+      attachments: readyAttachments.map((attachment) => ({
+        id: attachment.resource!.id,
+        fileName: attachment.file.name,
+        mimeType: attachment.file.type || 'application/octet-stream',
+        sizeBytes: attachment.file.size,
+        contentAvailable: true,
+        createdAt,
+      })),
       message: trimmed,
       turnId,
       ...(elicitation ? { elicitation } : {}),
@@ -571,7 +587,6 @@ export function NewAutomationScreen(): React.JSX.Element {
           <TemplateBrowser
             onBack={() => setTemplatesOpen(false)}
             onSelect={(template) => {
-              for (const attachment of attachmentDraft.attachments) attachmentDraft.removeAttachment(attachment.localId);
               setTemplatesOpen(false);
               setDefaultPluginIds([]);
               setSelectedTemplate(template);
@@ -612,6 +627,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                 {turns.map((turn) => (
                   <AutomationMessageBlock
                     key={turn.id}
+                    loadAttachmentContent={loadAttachmentContent}
                     message={turn}
                     onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
                       ? (answer) => answerElicitationOptimistically({
@@ -626,6 +642,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                           updateMessages: (update) => setTurns(update),
                         })
                       : undefined}
+                    onOpenAttachment={setAttachmentPreview}
                   />
                 ))}
                 {compile.isPending && (
@@ -676,6 +693,11 @@ export function NewAutomationScreen(): React.JSX.Element {
                   mentionLabel="Mention a connection"
                   onAttach={attachmentDraft.addFiles}
                   onMention={beginConnectionMention}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape' || mentionQuery === null) return;
+                    event.preventDefault();
+                    setMentionQuery(null);
+                  }}
                   onOpenAttachment={setAttachmentPreview}
                   onRemoveAttachment={attachmentDraft.removeAttachment}
                   onRetryAttachment={attachmentDraft.retryAttachment}
@@ -683,6 +705,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                   onValueChange={updateInput}
                   placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}
                   ref={textareaRef}
+                  shouldSubmitOnEnter={() => mentionQuery === null}
                   submitDisabled={attachmentDraft.uploading || (!input.trim() && attachmentDraft.ready.length === 0) || compile.isPending}
                   submitLabel="Send"
                   submitting={compile.isPending}

@@ -167,12 +167,19 @@ export function useFileAttachments(api: AvalonApi | null) {
     void upload(retrying);
   }, [replace, upload]);
 
-  const consume = useCallback((): void => {
-    for (const attachment of attachmentsRef.current) {
+  const consume = useCallback((localIds?: string[]): void => {
+    const consumedIds = localIds ? new Set(localIds) : null;
+    const consumed = consumedIds
+      ? attachmentsRef.current.filter((attachment) => consumedIds.has(attachment.localId))
+      : attachmentsRef.current;
+    for (const attachment of consumed) {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     }
-    attachmentsRef.current = [];
-    setAttachments([]);
+    const remaining = consumedIds
+      ? attachmentsRef.current.filter((attachment) => !consumedIds.has(attachment.localId))
+      : [];
+    attachmentsRef.current = remaining;
+    setAttachments(remaining);
     setError(undefined);
   }, []);
 
