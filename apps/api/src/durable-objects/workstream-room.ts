@@ -124,6 +124,34 @@ export function workstreamRoomName(
   return `${region}:${workspaceId}:${workstreamId}`;
 }
 
+export async function loadVisibleWorkstreamRoomResources(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+  viewerUserId: string,
+): Promise<Record<string, unknown>[]> {
+  const result = await env.DB.prepare(
+    `SELECT r.*, CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled
+       FROM workstream_resources wr
+       JOIN resources r ON r.id = wr.resource_id
+       LEFT JOIN resource_watches rw
+        ON rw.workstream_id = wr.workstream_id
+        AND rw.resource_id = wr.resource_id
+        AND rw.enabled = 1
+      WHERE wr.workstream_id = ?1
+        AND (r.provider != 'avalon_note' OR EXISTS (
+          SELECT 1 FROM notes visible_note
+          WHERE visible_note.resource_id = r.id
+            AND visible_note.workspace_id = ?2
+            AND visible_note.workspace_id = r.workspace_id
+            AND visible_note.archived_at IS NULL
+            AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?3)
+        ))
+      ORDER BY wr.attached_at`,
+  ).bind(workstreamId, workspaceId, viewerUserId).all<Record<string, unknown>>();
+  return result.results ?? [];
+}
+
 export async function consumeSocketTicket(
   storage: DurableObjectStorage,
   ticketId: string,
@@ -606,7 +634,9 @@ export class WorkstreamRoom {
     knownSequence?: number,
   ): Promise<void> {
     try {
-      const workstream = await this.loadSnapshot(workspaceId, workstreamId);
+      const attachment = this.readAttachment(socket);
+      if (!attachment) throw new Error("Missing connection identity while loading snapshot");
+      const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
       const event = ServerSocketEventSchema.parse({
         type: "snapshot",
@@ -620,7 +650,11 @@ export class WorkstreamRoom {
     }
   }
 
-  private async loadSnapshot(workspaceId: string, workstreamId: string): Promise<WorkstreamDetail> {
+  private async loadSnapshot(
+    workspaceId: string,
+    workstreamId: string,
+    viewerUserId: string,
+  ): Promise<WorkstreamDetail> {
     const row = await this.env.DB.prepare(
       `SELECT * FROM workstreams WHERE id = ?1 AND workspace_id = ?2 LIMIT 1`
     )
@@ -639,19 +673,7 @@ export class WorkstreamRoom {
         )
           .bind(workstreamId)
           .all<UserRow & { participation_reason: string; joined_at: string }>(),
-        this.env.DB.prepare(
-          `SELECT r.*, CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled
-             FROM workstream_resources wr
-             JOIN resources r ON r.id = wr.resource_id
-             LEFT JOIN resource_watches rw
-              ON rw.workstream_id = wr.workstream_id
-              AND rw.resource_id = wr.resource_id
-              AND rw.enabled = 1
-            WHERE wr.workstream_id = ?1
-            ORDER BY wr.attached_at`
-        )
-          .bind(workstreamId)
-          .all<Record<string, unknown>>(),
+        loadVisibleWorkstreamRoomResources(this.env, workspaceId, workstreamId, viewerUserId),
         this.env.DB.prepare(
           `SELECT DISTINCT c.*, owner.name AS owner_name
              FROM workstream_resources wr
@@ -714,7 +736,7 @@ export class WorkstreamRoom {
         joinedAt: participant.joined_at
       })),
       viewers,
-      resources: resourceRows.results.map((resource) => ({
+      resources: resourceRows.map((resource) => ({
         id: resource.id,
         workspaceId: resource.workspace_id,
         connectionId: resource.connection_id,

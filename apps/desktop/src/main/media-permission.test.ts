@@ -2,27 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { allowsTrustedAudioCapture } from './media-permission';
 
 describe('desktop media permission policy', () => {
-  it('allows only audio capture from the trusted primary renderer', () => {
+  it('allows only audio capture from a trusted recording renderer', () => {
     expect(allowsTrustedAudioCapture({
-      isMainWindow: true,
+      isAudioCaptureWindow: true,
       mediaTypes: ['audio'],
       permission: 'media',
       trustedRenderer: true,
     })).toBe(true);
     expect(allowsTrustedAudioCapture({
-      isMainWindow: true,
+      isAudioCaptureWindow: true,
       mediaTypes: ['audio', 'video'],
       permission: 'media',
       trustedRenderer: true,
     })).toBe(false);
     expect(allowsTrustedAudioCapture({
-      isMainWindow: false,
+      isAudioCaptureWindow: false,
       mediaTypes: ['audio'],
       permission: 'media',
       trustedRenderer: true,
     })).toBe(false);
     expect(allowsTrustedAudioCapture({
-      isMainWindow: true,
+      isAudioCaptureWindow: true,
       mediaTypes: ['audio'],
       permission: 'media',
       trustedRenderer: false,

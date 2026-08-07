@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { Sidebar } from './sidebar';
 
@@ -17,6 +17,7 @@ const workspace: Workspace = {
 
 const defaultActions = {
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
+  onOpenMeetingNotes: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
   onRunAutomation: async (): Promise<void> => undefined,
 };
@@ -48,6 +49,26 @@ function workstream(
     hasUnread: false,
     firstUnreadSequenceNumber: null,
     lastActivityAt,
+  };
+}
+
+function note(id: string, title: string, lastActivityAt: string): NoteSummary {
+  return {
+    id,
+    workspaceId: '00000000-0000-4000-8000-000000000010',
+    resourceId: '00000000-0000-4000-8000-000000000011',
+    ownerUserId: '00000000-0000-4000-8000-000000000012',
+    scope: 'personal',
+    title,
+    recordingStatus: 'complete',
+    recordedMs: 60_000,
+    startedAt: '2026-07-31T19:00:00.000Z',
+    endedAt: '2026-07-31T19:01:00.000Z',
+    generatedAt: null,
+    lastActivityAt,
+    createdAt: lastActivityAt,
+    updatedAt: lastActivityAt,
+    archivedAt: null,
   };
 }
 
@@ -201,6 +222,65 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
     await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
+  });
+
+  it('opens meeting notes from the primary actions', async () => {
+    const onOpenMeetingNotes = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onOpenMeetingNotes={onOpenMeetingNotes}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New meeting/notes' }));
+    await waitFor(() => expect(onOpenMeetingNotes).toHaveBeenCalledTimes(1));
+  });
+
+  it('sorts notes inline with work streams and opens them with a gray note marker', async () => {
+    const onOpenMeetingNotes = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[
+              note('00000000-0000-4000-8000-000000000021', 'Customer interview', '2026-07-31T19:55:00.000Z'),
+              {
+                ...note('00000000-0000-4000-8000-000000000022', 'Shared research', '2026-07-31T19:45:00.000Z'),
+                scope: 'workspace',
+              },
+            ]}
+            onOpenMeetingNotes={onOpenMeetingNotes}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('older', 'Older work stream', 'completed', 'ad_hoc', '2026-07-31T19:40:00.000Z')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
+      'Customer interview',
+      'Shared research',
+      'Older work stream',
+    ]);
+    const noteButton = screen.getByRole('button', { name: /Customer interview/u });
+    expect(within(noteButton).getByRole('img', { name: 'Note' })).toHaveClass('sidebar-note-marker');
+    expect(within(noteButton).getByRole('img', { name: 'Private note' })).toHaveClass('sidebar-note-privacy');
+    expect(within(screen.getByRole('button', { name: /Shared research/u })).queryByRole('img', { name: 'Private note' }))
+      .not.toBeInTheDocument();
+    fireEvent.click(noteButton);
+    await waitFor(() => expect(onOpenMeetingNotes).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000021'));
   });
 
   it('marks work streams unread on the server and renames from the menu', async () => {

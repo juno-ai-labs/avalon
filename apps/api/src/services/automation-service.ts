@@ -154,6 +154,7 @@ export class AutomationService {
     if (!input.draft.ready) throw new ApiError(422, "automation_not_ready", "Finish the automation conversation before creating it");
     this.assertScopeAllowed(input.scope);
     await this.validateDefaultPluginIds(input.scope, input.defaultPluginIds);
+    const resourceIds = await this.validateAutomationResources(input.scope, input.resourceIds);
     const deliveryTargets = await this.resolveSlackDeliveryTargets(input.scope, input.deliveryTargets);
     const templateId = newId();
     const versionId = newId();
@@ -203,6 +204,11 @@ export class AutomationService {
           user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
          VALUES (?, ?, ?, 'slack_agent_dm', ?, ?, ?, ?, 'active', ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, target.connectionId, this.auth.userId, target.teamId, target.slackUserId, at, at)),
+      ...resourceIds.map((resourceId) => this.env.DB.prepare(
+        `INSERT INTO automation_resources
+         (automation_subscription_id, resource_id, attached_by_user_id, relationship_type, attached_at)
+         VALUES (?, ?, ?, 'context', ?)`,
+      ).bind(subscriptionId, resourceId, this.auth.userId, at)),
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
          (id, workspace_id, automation_subscription_id, schedule_type, rrule,
@@ -666,6 +672,21 @@ export class AutomationService {
           ).bind(workstreamId, openingInput.resourceId, at),
         );
       }
+      statements.push(this.env.DB.prepare(
+        `INSERT OR IGNORE INTO workstream_resources
+         (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+         SELECT ?, ar.resource_id, ar.attached_by_user_id, 0, ar.relationship_type, ?
+         FROM automation_resources ar
+         JOIN notes n ON n.resource_id = ar.resource_id AND n.workspace_id = ?
+         WHERE ar.automation_subscription_id = ? AND n.archived_at IS NULL
+           AND (n.scope = 'workspace' OR n.owner_user_id = ?)`,
+      ).bind(
+        workstreamId,
+        at,
+        this.auth.workspaceId,
+        subscription.id,
+        principal.type === "user" ? principal.userId : null,
+      ));
       if (start) {
         statements.push(this.env.DB.prepare(
           `INSERT INTO harness_runs
@@ -888,6 +909,36 @@ export class AutomationService {
     if (subscription.scope === "workspace" && this.auth.role !== "owner" && this.auth.role !== "admin") {
       throw new ApiError(403, "workspace_admin_required", "Only administrators can change workspace automations");
     }
+  }
+
+  private async validateAutomationResources(scope: Scope, requestedIds: string[]): Promise<string[]> {
+    const ids = [...new Set(requestedIds)];
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = await this.env.DB.prepare(
+      `SELECT r.id
+       FROM resources r
+       JOIN notes n ON n.resource_id = r.id AND n.workspace_id = r.workspace_id
+       WHERE r.id IN (${placeholders}) AND r.workspace_id = ?
+         AND r.provider = 'avalon_note' AND r.resource_type = 'note'
+         AND n.archived_at IS NULL
+         AND (n.scope = 'workspace' OR n.owner_user_id = ?)`,
+    ).bind(...ids, this.auth.workspaceId, this.auth.userId).all<{ id: string }>();
+    const available = new Set((rows.results ?? []).map((row) => row.id));
+    if (available.size !== ids.length) {
+      throw new ApiError(422, "invalid_automation_resource", "One or more selected note resources are unavailable");
+    }
+    if (scope === "workspace") {
+      const workspaceRows = await this.env.DB.prepare(
+        `SELECT resource_id FROM notes
+         WHERE resource_id IN (${placeholders}) AND workspace_id = ?
+           AND scope = 'workspace' AND archived_at IS NULL`,
+      ).bind(...ids, this.auth.workspaceId).all<{ resource_id: string }>();
+      if ((workspaceRows.results ?? []).length !== ids.length) {
+        throw new ApiError(422, "personal_resource_in_workspace_automation", "Workspace automations can only use workspace notes");
+      }
+    }
+    return ids;
   }
 
   private async loadSubscription(id: string): Promise<Record<string, unknown>> {
