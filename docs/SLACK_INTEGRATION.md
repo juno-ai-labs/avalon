@@ -269,6 +269,6 @@ briefing's three/one/zero-result cases.
 5. Confirm paid-plan eligibility for Agent/automation features and document the `team.billing:read` use in review materials.
 6. Provide working privacy, support, installation landing, pricing, AI disclosure, data-use, and deletion pages. Respond to support within two business days.
 7. Before submission, meet Slack's active-workspace and weekly-active-user thresholds, complete preliminary review, and budget for functional review.
-8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why the bot does not join or ingest broad channels, how account linking works, and how automation approval/delivery binding works.
+8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Validation does not replace deployment or Marketplace review.

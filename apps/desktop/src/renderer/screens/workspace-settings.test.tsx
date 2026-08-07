@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   startProviderConnection: vi.fn(),
   reconnectConnection: vi.fn(),
   testConnection: vi.fn(),
+  getSlackAgentPolicy: vi.fn(),
+  updateSlackAgentPolicy: vi.fn(),
   disconnectConnection: vi.fn(),
   revokeWorkspaceInvitation: vi.fn(),
   updateWorkspaceLogAgentInference: vi.fn(),
@@ -121,6 +123,16 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.getSlackAgentPolicy.mockResolvedValue({
+      allowUnlinkedWorkspaceTasks: true,
+      publicChannelMode: 'all_invited',
+      privateChannelMode: 'disabled',
+      allowDirectMessages: true,
+      allowCommands: true,
+      allowShortcuts: true,
+      allowlistedChannels: [],
+    });
+    api.updateSlackAgentPolicy.mockImplementation(async (_id, policy) => policy);
     api.startProviderConnection.mockResolvedValue({
       url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
       attemptId: 'a'.repeat(43),
@@ -427,6 +439,76 @@ describe('Workspace settings', () => {
       'slack',
       'workspace',
       ['slack.agent', 'slack.notifications.write'],
+    ));
+  });
+
+  it('lets a workspace owner inspect and update the Slack Agent policy', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000015',
+      connectorType: 'slack',
+      scope: 'workspace',
+      displayName: 'Slack · Avalon',
+      capabilities: ['slack.agent'],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Policy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Slack Agent policy · Slack · Avalon' });
+    await waitFor(() => expect(api.getSlackAgentPolicy).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000015',
+      expect.any(AbortSignal),
+    ));
+    const directMessages = await within(dialog).findByRole('checkbox', { name: /Direct messages/u });
+    fireEvent.click(directMessages);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save policy' }));
+
+    await waitFor(() => expect(api.updateSlackAgentPolicy).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000015',
+      expect.objectContaining({ allowDirectMessages: false }),
+    ));
+  });
+
+  it('rejects a channel ID entered in both Slack Agent allowlists', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000015',
+      connectorType: 'slack',
+      scope: 'workspace',
+      displayName: 'Slack · Avalon',
+      capabilities: ['slack.agent'],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Policy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Slack Agent policy · Slack · Avalon' });
+    const publicChannels = await within(dialog).findByRole('textbox', { name: 'Public-channel IDs' });
+    const privateChannels = within(dialog).getByRole('textbox', { name: 'Private-channel IDs' });
+    const save = within(dialog).getByRole('button', { name: 'Save policy' });
+
+    fireEvent.change(publicChannels, { target: { value: 'CSHARED' } });
+    fireEvent.change(privateChannels, { target: { value: 'CSHARED' } });
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Channel CSHARED cannot be listed as both public and private.',
+    );
+    expect(save).toBeDisabled();
+    expect(api.updateSlackAgentPolicy).not.toHaveBeenCalled();
+
+    fireEvent.change(privateChannels, { target: { value: 'GPRIVATE' } });
+    await waitFor(() => expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument());
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(api.updateSlackAgentPolicy).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000015',
+      expect.objectContaining({
+        allowlistedChannels: [
+          { channelId: 'CSHARED', channelType: 'public' },
+          { channelId: 'GPRIVATE', channelType: 'private' },
+        ],
+      }),
     ));
   });
 

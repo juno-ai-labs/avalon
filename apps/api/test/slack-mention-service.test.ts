@@ -229,7 +229,7 @@ describe("workspace Slack mention delivery", () => {
       posted_chunks: 0,
     }));
     expect(database.prepare("SELECT status FROM connector_connections WHERE id = ?").get(connectionId))
-      .toEqual({ status: "healthy" });
+      .toEqual({ status: "needs_reconnect" });
   });
 
   it("skips Slack without making a request when no healthy workspace installation exists", async () => {
@@ -268,10 +268,13 @@ function slackApiFixture(
 ): typeof fetch {
   return vi.fn(async (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
-    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     const method = url.pathname.split("/").pop()!;
+    const body = init?.method === "GET"
+      ? Object.fromEntries(url.searchParams)
+      : JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push({ method, body });
     if (method === "users.lookupByEmail") {
+      expect(init?.method).toBe("GET");
       const authorization = new Headers(init?.headers).get("authorization") ?? "";
       return response(behavior.lookupResponseByToken?.[authorization] ?? { ok: true, ...lookup });
     }
