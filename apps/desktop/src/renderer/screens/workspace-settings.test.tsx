@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  createXConnection: vi.fn(),
   startProviderConnection: vi.fn(),
   reconnectConnection: vi.fn(),
   testConnection: vi.fn(),
@@ -19,6 +20,9 @@ const api = vi.hoisted(() => ({
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
+const getApplicationIcon = vi.hoisted(() => vi.fn());
+const setApplicationIcon = vi.hoisted(() => vi.fn());
+const resetApplicationIcon = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
@@ -41,6 +45,10 @@ vi.mock('../lib/app-session', () => ({
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
+    getApplicationIcon,
+    setApplicationIcon,
+    resetApplicationIcon,
+    onApplicationIconChanged: () => () => undefined,
     openExternal,
     onSettingsSectionRequested: (listener: (section: string) => void) => {
       settingsSectionRequest.listener = listener;
@@ -73,10 +81,13 @@ const invitation: WorkspaceInvitation = {
 };
 const inviteUrl = 'https://with-avalon.com/invite/#region=eu&token=private-token-value-long-enough';
 
-function renderSettings(nextWorkspace: Workspace = workspace): void {
-  const client = new QueryClient({
+function createTestQueryClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+}
+
+function renderSettings(nextWorkspace: Workspace = workspace, client = createTestQueryClient()): void {
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={client}>
@@ -108,6 +119,13 @@ describe('Workspace settings', () => {
     }));
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
+    getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+    setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
+      activeIcon,
+      isAutomatic: false,
+      supported: true,
+    }));
+    resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
   });
 
   it('lets workspace admins enable full agent inference logging', async () => {
@@ -129,6 +147,18 @@ describe('Workspace settings', () => {
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
     expect(within(navigation).getByRole('button', { name: 'Workspace' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible();
+    expect(await screen.findByText('Sam')).toBeVisible();
+  });
+
+  it('refreshes members whenever settings opens even when the cached list is fresh', async () => {
+    const client = createTestQueryClient();
+    client.setQueryData(['workspace-members'], [owner]);
+
+    renderSettings(workspace, client);
+    openSettingsSection('Workspace');
+
+    expect(screen.getByText('Adam')).toBeVisible();
+    await waitFor(() => expect(api.getWorkspaceMembers).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Sam')).toBeVisible();
   });
 
@@ -195,6 +225,140 @@ describe('Workspace settings', () => {
       'linear',
       'workspace',
       ['linear.read', 'linear.issue.create', 'linear.comment.create', 'linear.write'],
+    ));
+  });
+
+  it('offers one Slack card with personal MCP and workspace Agent authorization', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const slackCard = (await screen.findByText('Slack')).closest('article');
+    expect(slackCard).not.toBeNull();
+    expect(screen.queryByText('Slack knowledge')).not.toBeInTheDocument();
+    expect(screen.queryByText('Slack actions')).not.toBeInTheDocument();
+    expect(screen.queryByText('Avalon Agent for Slack')).not.toBeInTheDocument();
+
+    fireEvent.click(within(slackCard!).getByRole('button', { name: 'Connect for me' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'slack',
+      'you',
+      [
+        'slack.search',
+        'slack.messages.read',
+        'slack.files.read',
+        'slack.users.read',
+        'slack.messages.write',
+        'slack.conversations.write',
+        'slack.reactions.write',
+        'slack.canvases.read',
+        'slack.canvases.write',
+      ],
+    ));
+
+    await waitFor(() => expect(within(slackCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(slackCard!).getByRole('button', { name: 'Connect workspace' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
+      'slack',
+      'workspace',
+      ['slack.agent', 'slack.notifications.write'],
+    ));
+  });
+
+  it('offers the read-only X connector for personal and workspace use', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const xCard = (await screen.findByText('X')).closest('article');
+    expect(xCard).not.toBeNull();
+    const personalButton = within(xCard!).getByRole('button', { name: 'Connect for me' });
+    await waitFor(() => expect(personalButton).toBeEnabled());
+    fireEvent.click(personalButton);
+    await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith('you', ['x.read']));
+
+    await waitFor(() => expect(within(xCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(xCard!).getByRole('button', { name: 'Connect workspace' }));
+    await waitFor(() => expect(api.createXConnection).toHaveBeenLastCalledWith('workspace', ['x.read']));
+    expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
+  });
+
+  it('disables duplicate personal X connections while preserving workspace setup', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000017',
+      connectorType: 'x',
+      scope: 'you',
+      displayName: 'X',
+      capabilities: ['x.read'],
+      status: 'healthy',
+    }]);
+
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const xCard = (await screen.findByText('X')).closest('article');
+    expect(xCard).not.toBeNull();
+    const personalButton = within(xCard!).getByRole('button', { name: 'Connect for me' });
+    await waitFor(() => {
+      expect(personalButton).toBeDisabled();
+      expect(personalButton).toHaveAttribute(
+        'title',
+        'An X personal connection is already installed. Manage it below.',
+      );
+    });
+    expect(within(xCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled();
+  });
+
+  it.each(['healthy', 'reconnect_required'] as const)(
+    'disables duplicate Slack workspace authorization for an existing %s installation',
+    async (status) => {
+      api.getConnections.mockResolvedValue([{
+        id: '00000000-0000-7000-8000-000000000015',
+        connectorType: 'slack',
+        scope: 'workspace',
+        displayName: 'Slack · Avalon',
+        capabilities: ['slack.agent', 'slack.notifications.write'],
+        status,
+      }]);
+
+      renderSettings();
+      openSettingsSection('Connections');
+
+      const slackCard = (await screen.findByText('Slack')).closest('article');
+      expect(slackCard).not.toBeNull();
+      expect(within(slackCard!).getByRole('button', { name: 'Connect for me' })).toBeEnabled();
+      expect(within(slackCard!).queryByRole('button', { name: 'Connect another workspace' })).not.toBeInTheDocument();
+      const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
+      await waitFor(() => expect(workspaceButton).toBeDisabled());
+      expect(workspaceButton).toHaveAttribute(
+        'title',
+        'A Slack workspace connection is already installed. Manage it below.',
+      );
+      fireEvent.click(workspaceButton);
+      expect(api.startProviderConnection).not.toHaveBeenCalled();
+    },
+  );
+
+  it('allows replacing a disabled Slack workspace installation', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000016',
+      connectorType: 'slack',
+      scope: 'workspace',
+      displayName: 'Slack · Avalon',
+      capabilities: ['slack.agent', 'slack.notifications.write'],
+      status: 'disabled',
+    }]);
+
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const slackCard = (await screen.findByText('Slack')).closest('article');
+    expect(slackCard).not.toBeNull();
+    const workspaceButton = within(slackCard!).getByRole('button', { name: 'Connect workspace' });
+    await waitFor(() => expect(workspaceButton).toBeEnabled());
+    fireEvent.click(workspaceButton);
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'slack',
+      'workspace',
+      ['slack.agent', 'slack.notifications.write'],
     ));
   });
 
@@ -369,5 +533,23 @@ describe('Workspace settings', () => {
 
     fireEvent.change(search, { target: { value: 'does not exist' } });
     expect(screen.getByText('No settings found')).toBeVisible();
+  });
+
+  it('selects a macOS app icon with an immediate jump state', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const ruby = await screen.findByRole('button', { name: 'Ruby app icon' });
+    expect(screen.getByRole('button', { name: 'Dark app icon' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(ruby);
+
+    expect(ruby).toHaveClass('is-jumping');
+    expect(ruby).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('ruby'));
+    expect(await screen.findByText('Ruby is selected.')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
+    await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
   });
 });

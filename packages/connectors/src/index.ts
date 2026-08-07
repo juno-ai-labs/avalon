@@ -17,9 +17,12 @@ import {
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
+import { createSlackConnector, type SlackConnectorConfig } from "./slack";
+import { createXConnector, type XConnectorConfig } from "./x";
 
 export {
   assertPrincipalAccess,
+  connectorRetryAfterMs,
   connectorCapabilitySupportsScope,
   ConnectorError,
   defineConnectorAgentPlugin,
@@ -34,7 +37,32 @@ export {
   type ConnectorToolResult,
   type ConnectorNativeAgentAdapter,
   type ConnectorNativeAgentExecutionContext,
+  type ConnectorMessagingAgentAdapter,
 } from "./types";
+export {
+  callSlackMcp,
+  createSlackConnector,
+  joinAllSlackPublicChannels,
+  joinSlackPublicChannel,
+  parseSlackAgentInvocation,
+  parseSlackEventEnvelope,
+  slackApi,
+  verifySlackRequest,
+  SlackAgentPluginDescriptor,
+  SlackCapabilities,
+  SlackCapabilityScopes,
+  SlackWorkspaceBotScopes,
+  slackTools,
+  type SlackAgentInvocation,
+  type SlackApiRequest,
+  type SlackApiResponse,
+  type SlackConnectorConfig,
+  type SlackIngressEnvelope,
+  type SlackMcpTool,
+  type SlackPublicChannelJoinResult,
+  type SlackPublicChannelSyncResult,
+  type SlackWebApiMethod,
+} from "./slack";
 export {
   createGitHubConnector,
   createGitHubAppJwt,
@@ -122,6 +150,13 @@ export {
   type VerifyNotionWebhookInput,
   type VerifiedNotionWebhook,
 } from "./notion";
+export {
+  createXConnector,
+  XAgentPluginDescriptor,
+  XCapabilities,
+  xTools,
+  type XConnectorConfig,
+} from "./x";
 
 export interface GoogleConnectorConfig {
   clientId: string;
@@ -1381,7 +1416,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         );
         const messages = recordArray(payload, "messages").slice(0, args.maxResults).map((message) => ({
           id: readString(message, "id"),
-          threadId: readString(message, "threadId")
+          threadId: readString(message, "threadId"),
+          webUrl: gmailThreadWebUrl(readString(message, "threadId"))
         }));
         return {
           output: boundedToolOutput({
@@ -2133,6 +2169,7 @@ function sanitizeGmailThread(payload: Record<string, unknown>): Record<string, u
   return {
     resourceType: "gmail_thread",
     id: readString(payload, "id"),
+    webUrl: gmailThreadWebUrl(readString(payload, "id")),
     historyId: readString(payload, "historyId"),
     messages: messages.slice(0, GOOGLE_MAX_HYDRATED_MESSAGES).map((message) => ({
       id: readString(message, "id"),
@@ -2168,6 +2205,7 @@ function sanitizeGmailThreadForTool(payload: Record<string, unknown>): Record<st
   return {
     resourceType: "gmail_thread",
     id: readString(payload, "id"),
+    webUrl: gmailThreadWebUrl(readString(payload, "id")),
     historyId: readString(payload, "historyId"),
     messages: boundedMessages,
     messagesTruncated: messages.length > GOOGLE_TOOL_GMAIL_MESSAGES,
@@ -2185,6 +2223,7 @@ function sanitizeGmailMessageForTool(
     resourceType: "gmail_message",
     id: readString(message, "id"),
     threadId: readString(message, "threadId"),
+    webUrl: gmailThreadWebUrl(readString(message, "threadId")),
     historyId: readString(message, "historyId"),
     internalDate: readString(message, "internalDate"),
     labelIds: readStringArray(message, "labelIds"),
@@ -2201,6 +2240,10 @@ function sanitizeGmailMessageForTool(
     textTruncated: extracted.truncated,
     attachments: extracted.attachments
   };
+}
+
+function gmailThreadWebUrl(threadId: string | null): string | null {
+  return threadId ? `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(threadId)}` : null;
 }
 
 function extractGmailTextAndAttachments(
@@ -2934,6 +2977,25 @@ export class ConnectorRegistry {
           `Connector ${manifest.type} has a native-agent protocol adapter without a native-agent surface`,
         );
       }
+      if (manifest.surfaces.includes("messaging_agent")) {
+        if (!adapter.messagingAgent) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} declares a messaging-agent surface without a protocol adapter`,
+          );
+        }
+        if (adapter.messagingAgent.capability !== manifest.messagingAgent?.capability) {
+          throw new ConnectorError(
+            "invalid_configuration",
+            `Connector ${manifest.type} messaging-agent capability does not match its manifest`,
+          );
+        }
+      } else if (adapter.messagingAgent) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          `Connector ${manifest.type} has a messaging-agent protocol adapter without a messaging-agent surface`,
+        );
+      }
       if (adapter.capabilityConnectionScopes) {
         const declaredCapabilities = new Set(manifest.capabilities.map((capability) => capability.id));
         for (const [capability, scopes] of Object.entries(adapter.capabilityConnectionScopes)) {
@@ -2978,12 +3040,16 @@ export function createConnectorRegistry(input: {
   github?: GitHubConnectorConfig;
   linear?: LinearConnectorConfig;
   notion?: NotionConnectorConfig;
+  slack?: SlackConnectorConfig;
+  x?: XConnectorConfig;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
   if (input.google) adapters.push(createGoogleConnector(input.google));
   if (input.github) adapters.push(createGitHubConnector(input.github));
   if (input.linear) adapters.push(createLinearConnector(input.linear));
   if (input.notion) adapters.push(createNotionConnector(input.notion));
+  if (input.slack) adapters.push(createSlackConnector(input.slack));
+  if (input.x) adapters.push(createXConnector(input.x));
   return new ConnectorRegistry(adapters);
 }
 

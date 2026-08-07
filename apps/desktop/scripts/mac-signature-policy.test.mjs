@@ -1,21 +1,25 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   AVALON_UPDATE_URL,
   assertDeveloperIdDetails,
   assertEmbeddedUpdateConfig,
+  assertEntitlementPlistMatchesPolicy,
   assertExactNestedEntitlements,
 } from './mac-signature-policy.mjs';
 
-test('nested components permit exactly the two audited Electron entitlements', () => {
+test('nested components permit exactly the audited Electron and microphone entitlements', () => {
   assert.doesNotThrow(() => assertExactNestedEntitlements([
     'com.apple.security.network.client',
     'com.apple.security.cs.allow-jit',
+    'com.apple.security.device.audio-input',
   ], 'Helper'));
   assert.throws(
     () => assertExactNestedEntitlements([
       'com.apple.security.cs.allow-jit',
+      'com.apple.security.device.audio-input',
       'com.apple.security.network.client',
       'com.apple.developer.aps-environment',
     ], 'Helper'),
@@ -25,6 +29,11 @@ test('nested components permit exactly the two audited Electron entitlements', (
     () => assertExactNestedEntitlements(['com.apple.security.cs.allow-jit'], 'Helper'),
     /must be exactly/u,
   );
+});
+
+test('the checked-in inherited entitlement plist matches the signing allowlist', () => {
+  const contents = readFileSync(new URL('../resources/entitlements.mac.inherit.plist', import.meta.url), 'utf8');
+  assert.doesNotThrow(() => assertEntitlementPlistMatchesPolicy(contents, 'Inherited plist'));
 });
 
 test('nested components require the Avalon Developer ID team', () => {

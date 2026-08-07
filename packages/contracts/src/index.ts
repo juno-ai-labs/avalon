@@ -147,8 +147,17 @@ export const WorkstreamSchema = z.object({
   archivedAt: TimestampSchema.nullable()
 });
 
+export const ExternalActorSchema = z.object({
+  provider: z.string().min(1).max(80),
+  providerAccountId: z.string().min(1).max(200),
+  providerUserId: z.string().min(1).max(200),
+  displayName: z.string().min(1).max(180),
+  avatarUrl: z.string().url().nullable(),
+});
+
 export const MessageAuthorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("human"), user: UserSchema }),
+  z.object({ type: z.literal("external"), actor: ExternalActorSchema }),
   z.object({ type: z.literal("agent") }),
   z.object({ type: z.literal("system") })
 ]);
@@ -211,7 +220,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion"]),
+  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -228,6 +237,7 @@ export const AutomationPluginIconSchema = z.enum([
   "brand-google",
   "brand-google-drive",
   "brand-notion",
+  "brand-slack",
   "linear",
   "plug",
   "webhook",
@@ -577,6 +587,12 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
+  deliveryTargets: z.array(z.object({
+    type: z.literal("slack_agent_dm"),
+    connectionId: IdSchema,
+    displayName: z.string().min(1).max(180),
+    status: z.enum(["active", "needs_input", "disabled"]),
+  })).default([]),
   templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
   nextPlannedWorkstream: WorkstreamSchema.nullable(),
   recentRuns: z.array(AutomationRunSchema)
@@ -623,10 +639,13 @@ export const UpdateWorkspaceRequestSchema = z.object({
 
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
-  objective: z.string().min(1).max(4000),
+  objective: z.string().trim().min(1).max(4000).optional(),
   participantUserIds: z.array(IdSchema).max(25).default([]),
-  openingMessage: z.string().min(1).max(50000),
-  clientMessageId: z.string().min(1).max(120)
+  openingMessage: z.string().max(50000),
+  clientMessageId: z.string().min(1).max(120),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
+}).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
+  message: "An opening message must include text or an attachment",
 });
 
 export const UpdateWorkstreamRequestSchema = z.object({
@@ -668,12 +687,21 @@ export const AnswerElicitationRequestSchema = z.union([
 export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
-  defaultPluginIds: z.array(ModelPluginIdSchema).default([])
+  defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
+  deliveryTargets: z.array(z.object({
+    type: z.literal("slack_agent_dm"),
+    connectionId: IdSchema,
+  }).strict()).max(1).default([]),
+}).superRefine((input, context) => {
+  if (input.deliveryTargets.length > 0 && input.scope !== "personal") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Slack Agent DM delivery requires a personal automation" });
+  }
 });
 export const CompileAutomationRequestSchema = z.object({
   draftId: IdSchema.optional(),
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
-  currentDraft: AutomationDraftSchema.nullable().default(null)
+  currentDraft: AutomationDraftSchema.nullable().default(null),
+  attachmentIds: z.array(IdSchema).max(10).default([]),
 });
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
@@ -779,6 +807,13 @@ export const ActivityQueueMessageSchema = z.object({
   attempt: z.number().int().nonnegative().default(0)
 });
 
+export const SlackIngressQueueMessageSchema = z.object({
+  kind: z.literal("slack_ingress"),
+  region: RegionSchema,
+  workspaceId: IdSchema,
+  jobId: z.string().min(1),
+});
+
 export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("user"), userId: IdSchema }),
   z.object({ type: z.literal("workspace"), workspaceId: IdSchema })
@@ -842,7 +877,7 @@ export const ToolDefinitionSchema = z.object({
  * ordinary resources and tools while also hosting Avalon as a native agent.
  * Legacy manifests omit this field and normalize to the resource surface.
  */
-export const ConnectorSurfaceSchema = z.enum(["resource", "native_agent"]);
+export const ConnectorSurfaceSchema = z.enum(["resource", "native_agent", "messaging_agent"]);
 
 export const NativeAgentInvocationModeSchema = z.enum([
   "delegation",
@@ -884,7 +919,26 @@ export const NativeAgentSurfaceSchema = z.object({
   sessionAcknowledgementDeadlineMs: z.number().int().positive().max(60_000).optional()
 });
 
-export const ConnectorCapabilityKindSchema = z.enum(["tool", "native_agent"]);
+/**
+ * A provider-native conversational surface whose transport is owned by the
+ * connector control plane. Unlike ordinary tools, inbound invocations and
+ * streamed responses are never exposed to the model as callable operations.
+ */
+export const MessagingAgentSurfaceSchema = z.object({
+  capability: z.string().regex(/^[a-z][a-z0-9_.-]*$/),
+  invocationModes: z.array(z.enum(["direct_message", "mention", "shortcut", "command", "follow_up"])).min(1),
+  supportsStreaming: z.boolean(),
+  supportsThreads: z.boolean(),
+  supportsAppHome: z.boolean(),
+  supportsModals: z.boolean(),
+  supportsUnfurling: z.boolean(),
+  supportsProactiveDelivery: z.boolean(),
+  maturity: ConnectorSurfaceMaturitySchema.default("stable"),
+  runtimeStatus: ConnectorSurfaceRuntimeStatusSchema,
+  webhookResponseDeadlineMs: z.number().int().positive().max(60_000),
+});
+
+export const ConnectorCapabilityKindSchema = z.enum(["tool", "host", "native_agent", "messaging_agent"]);
 
 /**
  * Authorization is capability based, including capabilities that do not map
@@ -902,6 +956,7 @@ const ConnectorManifestBaseSchema = z.object({
   displayName: z.string().min(1),
   surfaces: z.array(ConnectorSurfaceSchema).min(1).default(["resource"]),
   nativeAgent: NativeAgentSurfaceSchema.optional(),
+  messagingAgent: MessagingAgentSurfaceSchema.optional(),
   capabilities: z.array(ConnectorCapabilitySchema).default([]),
   supportedScopes: z.array(ScopeSchema),
   oauthRequired: z.boolean(),
@@ -926,6 +981,21 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Native agent capabilities require the native_agent surface",
+      path: ["surfaces"]
+    });
+  }
+  const declaresMessagingAgent = manifest.surfaces.includes("messaging_agent");
+  if (declaresMessagingAgent && !manifest.messagingAgent) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A messaging-agent connector must declare its messaging agent capabilities",
+      path: ["messagingAgent"]
+    });
+  }
+  if (!declaresMessagingAgent && manifest.messagingAgent) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Messaging agent capabilities require the messaging_agent surface",
       path: ["surfaces"]
     });
   }
@@ -968,6 +1038,23 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
       path: ["capabilities"]
     });
   }
+  const declaresMessagingAgentCapability = manifest.capabilities.some(
+    (capability) => capability.kind === "messaging_agent"
+  );
+  if (declaresMessagingAgent && !declaresMessagingAgentCapability) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A messaging-agent connector must declare an authorizable messaging-agent capability",
+      path: ["capabilities"]
+    });
+  }
+  if (!declaresMessagingAgent && declaresMessagingAgentCapability) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Messaging-agent capabilities require the messaging_agent surface",
+      path: ["capabilities"]
+    });
+  }
   if (manifest.nativeAgent) {
     const capability = manifest.capabilities.find(
       (candidate) => candidate.id === manifest.nativeAgent?.capability
@@ -977,6 +1064,18 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
         code: z.ZodIssueCode.custom,
         message: `Native-agent surface capability ${manifest.nativeAgent.capability} must name a native_agent capability`,
         path: ["nativeAgent", "capability"]
+      });
+    }
+  }
+  if (manifest.messagingAgent) {
+    const capability = manifest.capabilities.find(
+      (candidate) => candidate.id === manifest.messagingAgent?.capability
+    );
+    if (!capability || capability.kind !== "messaging_agent") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Messaging-agent surface capability ${manifest.messagingAgent.capability} must name a messaging_agent capability`,
+        path: ["messagingAgent", "capability"]
       });
     }
   }
@@ -1009,6 +1108,7 @@ export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
+export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
@@ -1030,6 +1130,7 @@ export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
+export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;
 export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
@@ -1043,6 +1144,7 @@ export type ConnectorSurfaceMaturity = z.infer<typeof ConnectorSurfaceMaturitySc
 export type ConnectorSurfaceRuntimeStatus = z.infer<typeof ConnectorSurfaceRuntimeStatusSchema>;
 export type NativeAgentSessionOwnership = z.infer<typeof NativeAgentSessionOwnershipSchema>;
 export type NativeAgentSurface = z.infer<typeof NativeAgentSurfaceSchema>;
+export type MessagingAgentSurface = z.infer<typeof MessagingAgentSurfaceSchema>;
 export type ConnectorCapabilityKind = z.infer<typeof ConnectorCapabilityKindSchema>;
 export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
 /** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */

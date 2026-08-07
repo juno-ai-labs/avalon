@@ -1,0 +1,378 @@
+import type { AuthContext, Env } from "../env";
+import { ApiError } from "../lib/api-error";
+import {
+  isAllowedSocketOrigin,
+  issueTranscriptionSocketTicket,
+  type TranscriptionSocketClaims,
+  verifyTranscriptionSocketTicket,
+} from "./socket-service";
+
+const MAX_CLIENT_FRAME_CHARACTERS = 256_000;
+const MAX_CONNECTION_MS = 5 * 60 * 1_000;
+const MAX_AUDIO_BYTES = 24_000 * 2 * (MAX_CONNECTION_MS / 1_000);
+const MAX_CLIENT_FRAMES_PER_SECOND = 30;
+const MAX_CONCURRENT_USER_SESSIONS = 2;
+const MAX_CONCURRENT_WORKSPACE_SESSIONS = 20;
+const RELEASE_RETRY_DELAYS_MS = [0, 50, 200] as const;
+
+type AllowedClientEvent =
+  | { type: "input_audio_buffer.append"; audio: string }
+  | { type: "input_audio_buffer.commit" }
+  | { type: "input_audio_buffer.clear" };
+
+function configuredAzureRealtime(env: Env): {
+  endpoint: string;
+  apiKey: string;
+  deployment: string;
+} {
+  const endpoint = env.AZURE_OPENAI_ENDPOINT?.trim();
+  const apiKey = env.AZURE_OPENAI_API_KEY?.trim();
+  const deployment = env.AZURE_OPENAI_REALTIME_DEPLOYMENT?.trim();
+  if (!endpoint || !apiKey || !deployment) {
+    throw new ApiError(
+      503,
+      "dictation_not_configured",
+      "Dictation is not configured for this Avalon region",
+    );
+  }
+  return { endpoint, apiKey, deployment };
+}
+
+export function azureRealtimeWebSocketUrl(
+  env: Pick<Env, "AZURE_OPENAI_ENDPOINT">,
+): string {
+  const endpoint = env.AZURE_OPENAI_ENDPOINT?.trim();
+  if (!endpoint) {
+    throw new ApiError(503, "dictation_not_configured", "Dictation is not configured for this Avalon region");
+  }
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new ApiError(503, "dictation_not_configured", "The Azure OpenAI endpoint is invalid");
+  }
+  if (url.protocol !== "https:") {
+    throw new ApiError(503, "dictation_not_configured", "The Azure OpenAI endpoint must use HTTPS");
+  }
+  url.pathname = "/openai/v1/realtime";
+  url.search = new URLSearchParams({ intent: "transcription" }).toString();
+  url.hash = "";
+  return url.toString();
+}
+
+export function transcriptionSessionUpdate(deployment: string): Record<string, unknown> {
+  return {
+    type: "session.update",
+    session: {
+      type: "transcription",
+      audio: {
+        input: {
+          format: { type: "audio/pcm", rate: 24_000 },
+          transcription: { model: deployment, delay: "minimal" },
+          turn_detection: null,
+        },
+      },
+    },
+  };
+}
+
+export function parseTranscriptionClientEvent(raw: unknown): AllowedClientEvent | null {
+  if (typeof raw !== "string" || raw.length > MAX_CLIENT_FRAME_CHARACTERS) return null;
+  try {
+    const event: unknown = JSON.parse(raw);
+    if (!event || typeof event !== "object") return null;
+    const candidate = event as Record<string, unknown>;
+    if (candidate.type === "input_audio_buffer.append") {
+      if (
+        typeof candidate.audio !== "string" || candidate.audio.length === 0 ||
+        base64DecodedByteLength(candidate.audio) === null
+      ) return null;
+      return { type: candidate.type, audio: candidate.audio };
+    }
+    if (candidate.type === "input_audio_buffer.commit" || candidate.type === "input_audio_buffer.clear") {
+      return { type: candidate.type };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function base64DecodedByteLength(value: string): number | null {
+  if (value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/u.test(value)) return null;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return (value.length / 4) * 3 - padding;
+}
+
+export function sendableCloseCode(code: number, fallback = 1011): number {
+  if (code === 1000) return code;
+  if (code >= 1001 && code <= 1014 && ![1004, 1005, 1006].includes(code)) return code;
+  if (code >= 3_000 && code <= 4_999) return code;
+  return fallback;
+}
+
+function closeSocket(socket: WebSocket, code: number, reason: string): void {
+  if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) return;
+  const safeCode = sendableCloseCode(code);
+  try {
+    socket.close(safeCode, reason.slice(0, 123));
+  } catch {
+    try {
+      socket.close(1011, "Realtime connection closed");
+    } catch {
+      // The peer may already have closed between the readyState check and close.
+    }
+  }
+}
+
+function sendJson(socket: WebSocket, payload: unknown): void {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  try { socket.send(JSON.stringify(payload)); } catch { /* The peer closed before the send. */ }
+}
+
+function stringMessage(data: string | ArrayBuffer | Blob): string | null {
+  return typeof data === "string" ? data : null;
+}
+
+async function reserveTranscriptionSession(
+  env: Env,
+  claims: TranscriptionSocketClaims,
+): Promise<string> {
+  const now = Math.floor(Date.now() / 1_000);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM realtime_transcription_sessions WHERE expires_at <= ?").bind(now),
+    env.DB.prepare("DELETE FROM realtime_transcription_ticket_receipts WHERE expires_at <= ?").bind(now),
+  ]);
+
+  const receipt = await env.DB.prepare(
+    `INSERT OR IGNORE INTO realtime_transcription_ticket_receipts
+       (ticket_id, workspace_id, user_id, consumed_at, expires_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).bind(claims.ticketId, claims.workspaceId, claims.userId, now, claims.expiresAt).run();
+  if (Number(receipt.meta?.changes ?? 0) !== 1) {
+    throw new ApiError(401, "socket_ticket_replayed", "The realtime ticket has already been used");
+  }
+
+  const sessionId = crypto.randomUUID();
+  const expiresAt = now + Math.ceil(MAX_CONNECTION_MS / 1_000);
+  const reserved = await env.DB.prepare(
+    `INSERT INTO realtime_transcription_sessions
+       (id, ticket_id, workspace_id, user_id, started_at, expires_at)
+     SELECT ?, ?, ?, ?, ?, ?
+     WHERE (
+       SELECT COUNT(*) FROM realtime_transcription_sessions
+       WHERE workspace_id = ? AND user_id = ? AND expires_at > ?
+     ) < ?
+       AND (
+         SELECT COUNT(*) FROM realtime_transcription_sessions
+         WHERE workspace_id = ? AND expires_at > ?
+       ) < ?`,
+  ).bind(
+    sessionId,
+    claims.ticketId,
+    claims.workspaceId,
+    claims.userId,
+    now,
+    expiresAt,
+    claims.workspaceId,
+    claims.userId,
+    now,
+    MAX_CONCURRENT_USER_SESSIONS,
+    claims.workspaceId,
+    now,
+    MAX_CONCURRENT_WORKSPACE_SESSIONS,
+  ).run();
+  if (Number(reserved.meta?.changes ?? 0) !== 1) {
+    throw new ApiError(429, "dictation_concurrency_limit", "Too many dictation sessions are already active");
+  }
+  return sessionId;
+}
+
+async function releaseTranscriptionSession(env: Env, sessionId: string): Promise<void> {
+  await env.DB.prepare("DELETE FROM realtime_transcription_sessions WHERE id = ?").bind(sessionId).run();
+}
+
+export class RealtimeTranscriptionService {
+  constructor(
+    private readonly env: Env,
+    private readonly defer: (promise: Promise<void>) => void = (promise) => { void promise; },
+  ) {}
+
+  async ticket(auth: AuthContext): Promise<{ url: string; ticket: string }> {
+    configuredAzureRealtime(this.env);
+    const ticket = await issueTranscriptionSocketTicket(this.env, auth);
+    const url = new URL(this.env.PUBLIC_API_BASE_URL);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/socket/transcription";
+    url.search = new URLSearchParams({ ticket }).toString();
+    return { url: url.toString(), ticket };
+  }
+
+  async upgrade(ticket: string, request: Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
+    }
+    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
+      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
+    }
+    const claims = await verifyTranscriptionSocketTicket(this.env, ticket);
+    if (claims.region !== this.env.AVALON_REGION) {
+      throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket belongs to another region");
+    }
+
+    const sessionId = await reserveTranscriptionSession(this.env, claims);
+    let released = false;
+    let releaseInFlight: Promise<void> | undefined;
+    let lifetimeTimer: ReturnType<typeof setTimeout> | undefined;
+    const release = (): Promise<void> => {
+      if (released) return Promise.resolve();
+      if (releaseInFlight) return releaseInFlight;
+      if (lifetimeTimer !== undefined) clearTimeout(lifetimeTimer);
+      releaseInFlight = releaseTranscriptionSession(this.env, sessionId)
+        .then(() => { released = true; })
+        .finally(() => { releaseInFlight = undefined; });
+      return releaseInFlight;
+    };
+    const releaseAndReport = async (): Promise<void> => {
+      let lastError: unknown;
+      for (const delayMs of RELEASE_RETRY_DELAYS_MS) {
+        if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        try {
+          await release();
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      console.error("realtime_transcription_session_release_failed", {
+        sessionId,
+        error: lastError instanceof Error ? lastError.message : String(lastError),
+      });
+    };
+    const deferRelease = (): void => {
+      const promise = releaseAndReport();
+      try {
+        this.defer(promise);
+      } catch {
+        void promise;
+      }
+    };
+
+    const azure = configuredAzureRealtime(this.env);
+    try {
+      const upstreamResponse = await fetch(azureRealtimeWebSocketUrl(this.env), {
+        headers: { "api-key": azure.apiKey, Upgrade: "websocket" },
+      });
+      const upstream = upstreamResponse.webSocket;
+      if (!upstream) {
+        throw new ApiError(502, "azure_realtime_unavailable", "Azure OpenAI did not accept the realtime connection");
+      }
+
+      const pair = Object.values(new WebSocketPair());
+      const client = pair[0];
+      const server = pair[1];
+      if (!client || !server) {
+        closeSocket(upstream, 1011, "Avalon realtime is unavailable");
+        throw new ApiError(503, "websocket_unavailable", "Avalon realtime is unavailable");
+      }
+
+      upstream.accept({ allowHalfOpen: true });
+      server.accept({ allowHalfOpen: true });
+      let audioBytes = 0;
+      const connectionStartedAt = Date.now();
+      let frameWindowStartedAt = connectionStartedAt;
+      let frameCount = 0;
+
+      const terminateForPolicy = (code: string, message: string): void => {
+        sendJson(server, { type: "error", error: { code, message } });
+        closeSocket(server, 1008, message);
+        closeSocket(upstream, 1008, message);
+        deferRelease();
+      };
+
+      lifetimeTimer = setTimeout(() => {
+        terminateForPolicy("dictation_duration_limit", "Dictation is limited to five minutes per recording.");
+      }, MAX_CONNECTION_MS);
+
+      server.addEventListener("message", (event) => {
+        const now = Date.now();
+        if (now - connectionStartedAt >= MAX_CONNECTION_MS) {
+          terminateForPolicy("dictation_duration_limit", "Dictation is limited to five minutes per recording.");
+          return;
+        }
+        if (now - frameWindowStartedAt >= 1_000) {
+          frameWindowStartedAt = now;
+          frameCount = 0;
+        }
+        frameCount += 1;
+        if (frameCount > MAX_CLIENT_FRAMES_PER_SECOND) {
+          terminateForPolicy("dictation_frame_rate_limit", "Dictation audio arrived too quickly.");
+          return;
+        }
+
+        const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
+        if (!parsed) {
+          sendJson(server, {
+            type: "error",
+            error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },
+          });
+          return;
+        }
+        if (parsed.type === "input_audio_buffer.append") {
+          audioBytes += base64DecodedByteLength(parsed.audio) ?? 0;
+          if (audioBytes > MAX_AUDIO_BYTES) {
+            terminateForPolicy("dictation_audio_limit", "Dictation is limited to five minutes of audio.");
+            return;
+          }
+        }
+        sendJson(upstream, parsed);
+      });
+      upstream.addEventListener("message", (event) => {
+        if (server.readyState !== WebSocket.OPEN || typeof event.data !== "string") return;
+        try { server.send(event.data); } catch { /* The desktop closed before the provider frame arrived. */ }
+      });
+      server.addEventListener("close", (event) => {
+        closeSocket(upstream, event.code || 1000, event.reason || "Client closed");
+        deferRelease();
+      });
+      upstream.addEventListener("close", (event) => {
+        closeSocket(server, event.code || 1011, event.reason || "Azure closed");
+        deferRelease();
+      });
+      server.addEventListener("error", () => {
+        closeSocket(upstream, 1011, "Client connection failed");
+        deferRelease();
+      });
+      upstream.addEventListener("error", () => {
+        closeSocket(server, 1011, "Azure realtime connection failed");
+        deferRelease();
+      });
+
+      try {
+        upstream.send(JSON.stringify(transcriptionSessionUpdate(azure.deployment)));
+      } catch {
+        closeSocket(server, 1011, "Azure realtime setup failed");
+        closeSocket(upstream, 1011, "Azure realtime setup failed");
+        throw new ApiError(502, "azure_realtime_unavailable", "Azure OpenAI rejected the realtime setup");
+      }
+      return new Response(null, { status: 101, webSocket: client });
+    } catch (error) {
+      await releaseAndReport();
+      throw error;
+    }
+  }
+}
+
+export const __realtimeTranscriptionTesting = {
+  base64DecodedByteLength,
+  limits: {
+    maxAudioBytes: MAX_AUDIO_BYTES,
+    maxClientFramesPerSecond: MAX_CLIENT_FRAMES_PER_SECOND,
+    maxConnectionMs: MAX_CONNECTION_MS,
+    maxConcurrentUserSessions: MAX_CONCURRENT_USER_SESSIONS,
+    maxConcurrentWorkspaceSessions: MAX_CONCURRENT_WORKSPACE_SESSIONS,
+  },
+  releaseTranscriptionSession,
+  reserveTranscriptionSession,
+  sendableCloseCode,
+};

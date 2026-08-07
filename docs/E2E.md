@@ -48,6 +48,20 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 5. Simulate a missing `pong`, offline/online transitions, and a burst of reconnecting clients. Confirm the desktop closes the stale socket, applies capped jittered backoff, resumes immediately when online, and keeps the last cursor.
 6. Attempt an upgrade without `Origin`, from an unconfigured origin, and with an allowed-origin suffix lookalike. Confirm all are rejected; then connect from the exact desktop or development origin with a fresh ticket.
 
+## Desktop dictation acceptance
+
+Configure the regional Worker with an Azure OpenAI realtime deployment backed by `gpt-live-transcribe`, then run the Electron desktop against that Worker.
+
+1. Open a work stream and confirm the live-update dot appears in the top-right action bar, no longer appears in the composer, and describes each connected, connecting, reconnecting, and unavailable state in its tooltip. With a screen reader, confirm each state transition is announced from the live region.
+2. Confirm the microphone control appears immediately after the file button. Hover it and verify the tooltip reads **Click or hold to dictate**.
+3. Open the adjacent arrow menu, select a non-default audio input, close and reopen the menu, and confirm the selection remains checked and is exposed as the checked radio item to assistive technology. Restart before granting microphone permission and confirm the saved selection is not erased. Confirm the menu contains no recording-mode toggle.
+4. Click the microphone, speak, then click it again. Confirm the transcript is appended to the draft without sending the message and incoming deltas do not move keyboard focus away from the Stop control. Repeat by holding the microphone for at least 350 ms and releasing it to stop.
+5. Deny microphone access and confirm Avalon reports a recoverable permission error. Grant access in macOS System Settings, restart dictation, and confirm it succeeds without granting camera or display-capture permission.
+6. Inspect the renderer and Worker traffic. Confirm the desktop connects only to Avalon's short-lived transcription socket, the Worker opens Azure's `intent=transcription` socket, and no Azure endpoint, deployment, or API key reaches the renderer or logs.
+7. Reuse a consumed transcription socket URL and confirm it is rejected. Open two active recordings for one user and confirm a third is rejected; after closing one, confirm a fresh ticket can connect.
+8. Stop and immediately restart while the first permission or ticket request is still pending. Resolve the older request last and confirm it cannot reopen a microphone, socket, or overwrite the new draft.
+9. After Stop, deliver a transcript delta followed by a corrected completion event. Confirm the partial remains visible and Avalon waits for the completion before closing. While it waits, edit the draft or activate **Cancel dictation** and confirm the pending finalization ends immediately without overwriting the edit. Switch work streams during recording and confirm the old capture stops instead of writing into the new draft.
+
 ## PRD flow 1 — ad hoc collaboration
 
 Use a test workspace with two members, Adam and Samantha.
@@ -134,6 +148,22 @@ Pass evidence: one activity, one suggestion before acceptance, one attached reso
 5. Complete the run and confirm the next planned work stream uses the correct local Monday time across the next daylight-saving boundary.
 
 Pass evidence: the planned work-stream ID is reused, the uniqueness key on subscription plus planned time prevents a duplicate, pre-run context reaches the harness, and the next local occurrence is correct.
+
+## Flow 11 — Slack Agent connector
+
+1. Validate `config/provider-apps/slack.json` with Slack CLI 4.4.0 or later and install the development app in two Slack test workspaces.
+2. Connect both Slack installations to one Avalon workspace. Confirm two `Slack · <team>` workspace connections exist and each bot durably joins every existing public channel. Reconnect one installation and confirm the idempotent sync runs again. Attempt to connect either Slack team to a different Avalon workspace and confirm `slack_workspace_already_connected`.
+3. Open each app Home as an unlinked user. Confirm onboarding, privacy/help, and a unique expiring link. Link one Avalon member and confirm Home changes to quick actions, active tasks, automations, and notifications.
+4. Create a public Slack channel and confirm the `channel_created` ingress job makes Avalon join it. Send a new Agent DM, a threaded follow-up, and a channel mention. Confirm each root maps to one `slack_agent_sessions` row, follow-ups reuse the workstream, status appears, and completion stops the stream or posts the fallback thread reply.
+5. Mention one linked Avalon teammate and one unlinked teammate whose verified email matches exactly one active member across the installed Slack teams. Confirm both receive one bot-authored Agent DM and the unlinked teammate does not gain a `slack_user_links` record. Repeat with no match, matches in two teams, a cross-team result, and a missing `users:read.email` grant; confirm each falls back to the existing mention email, and the additive missing scope does not disable existing Agent features.
+6. Invoke both shortcuts and `/avalon`; confirm the modal opens in under three seconds, submissions create tasks, and malformed/replayed signatures are rejected.
+7. Redeliver the same Events API `event_id` and body; confirm it is acknowledged once. Reuse the ID with different bytes and confirm the conflict is recorded. Force the first regional worker attempt to fail and confirm the durable queue retries the same ingress job instead of permanently deduplicating the failed receipt.
+8. Add a personal Slack connection with read-only MCP capabilities. Confirm search/read tools appear only for that user. Reauthorize with one write capability, verify confirmation/receipt behavior, and confirm another Avalon member cannot use it.
+9. Share an Avalon link and confirm the unfurl reveals no workspace data before normal Avalon authorization.
+10. Create “Check my Gmail every morning and send me the stack-ranked top 3 emails in Slack,” select one Slack Agent DM destination, and inspect the stored frozen target. Run it with three, one, and zero qualifying emails. Confirm the complete ranked Slack output and controls, fewer-than-three behavior, and default empty suppression.
+11. Revoke Gmail, then Slack. Confirm each run/destination moves to `needs_input`; no alternate account or Slack installation is selected.
+12. Repeat an Agent DM and automation delivery for an EU Avalon workspace. Confirm Global stores only the team route and the EU D1 owns links, sessions, workstreams, and results.
+13. Expire a rotating Slack credential and start two simultaneous connector operations. Confirm exactly one `oauth.v2.*.access` refresh consumes the old refresh token and both operations continue with the newly persisted token pair.
 
 ## Provider and deployment note
 

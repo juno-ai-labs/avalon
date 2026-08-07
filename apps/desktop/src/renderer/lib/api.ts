@@ -37,7 +37,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
-import { createElicitationMessage } from './transcript';
+import { createElicitationMessage, upsertTranscriptMessage } from './transcript';
 import type {
   ActivitySuggestionData,
   ArtifactData,
@@ -94,6 +94,7 @@ interface RequestOptions<T> {
 }
 
 interface DraftState {
+  attachmentIds: string[];
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   draft: WireAutomationDraft | null;
 }
@@ -339,15 +340,17 @@ export function mapMessage(message: WireMessage): Message {
       ? 'activity_suggestion'
       : message.messageType;
   return {
-    // The open question arrives as a realtime-only block while its durable
-    // answer is later stored as a message. Give both representations one UI
-    // identity so the answer replaces the open card instead of duplicating it.
+    // The durable open question and its later durable answer are separate
+    // transcript rows, while an unfetched open question can also be synthesized
+    // from detail.openElicitations. Give every representation one UI identity so
+    // messagesWithTransientBlocks can render only the current state.
     id: elicitation.success ? elicitationMessageId(elicitation.data.id) : message.id,
     ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
     sequenceNumber: message.sequenceNumber,
     authorType: message.author.type === 'human' ? 'human' : message.author.type,
     ...(message.author.type === 'human' ? { author: mapUser(message.author.user) } : {}),
+    ...(message.author.type === 'external' ? { externalActor: { ...message.author.actor } } : {}),
     messageType,
     text: message.textContent,
     mentions: message.mentions.map((mention) => ({
@@ -416,10 +419,19 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 }
 
 export function messagesWithTransientBlocks(mapped: Message[], detail: WorkstreamDetail): Message[] {
-  let sequence = mapped.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
-  const mappedIds = new Set(mapped.map((message) => message.id));
+  // Both the question and its durable human response remain separate rows in
+  // the model transcript. mapMessage intentionally gives those rows one UI
+  // identity, so collapse the canonical page before React and the virtualizer
+  // see duplicate keys. The shared upsert keeps answered elicitations from
+  // regressing to open even when pages or realtime updates arrive out of order.
+  const canonicalMessages = mapped.reduce<Message[]>(
+    (messages, message) => upsertTranscriptMessage(messages, message),
+    [],
+  );
+  let sequence = canonicalMessages.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
+  const canonicalIds = new Set(canonicalMessages.map((message) => message.id));
   const elicitationMessages = (detail.openElicitations ?? [])
-    .filter((elicitation) => !mappedIds.has(elicitationMessageId(elicitation.id)))
+    .filter((elicitation) => !canonicalIds.has(elicitationMessageId(elicitation.id)))
     .map((elicitation) => createElicitationMessage({
     id: elicitationMessageId(elicitation.id),
     workstreamId: detail.id,
@@ -437,7 +449,7 @@ export function messagesWithTransientBlocks(mapped: Message[], detail: Workstrea
     createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
     activitySuggestion: suggestion,
   }));
-  return [...mapped, ...elicitationMessages, ...suggestionMessages];
+  return [...canonicalMessages, ...elicitationMessages, ...suggestionMessages];
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
@@ -497,6 +509,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     expectedOutputs: detail.expectedOutputs,
     recommendedPlugins: detail.recommendedPlugins,
     defaultPluginIds: detail.defaultPluginIds,
+    deliveryTargets: detail.deliveryTargets,
     executionScope: detail.executionPrincipal['type'] === 'workspace' ? 'Workspace' : 'You',
     runs,
     ...(detail.templateUpdate
@@ -811,15 +824,15 @@ export class AvalonApi {
     return mapWorkstreamSummary(workstream);
   }
 
-  async createWorkstream(input: { openingMessage: string; participantIds: string[] }): Promise<CreatedWorkstream> {
+  async createWorkstream(input: { openingMessage: string; participantIds: string[]; attachmentIds?: string[] }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
     const response = await this.request('/workstreams', {
       method: 'POST',
       body: {
-        objective: input.openingMessage,
         openingMessage: input.openingMessage,
         participantUserIds: input.participantIds,
         clientMessageId,
+        attachmentIds: input.attachmentIds ?? [],
       },
       schema: createWorkstreamResponseSchema,
     });
@@ -1131,20 +1144,30 @@ export class AvalonApi {
     return this.request(`/workstreams/${encodeURIComponent(id)}/socket`, { schema: socketTicketSchema });
   }
 
+  getTranscriptionSocketTicket(): Promise<SocketTicket> {
+    return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
+  }
+
   async compileAutomation(
-    input: { message: string; draftId?: string; templateId?: string },
+    input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
     const draftId = input.draftId ?? crypto.randomUUID();
-    const previous = this.drafts.get(draftId) ?? { messages: [], draft: null };
+    const previous = this.drafts.get(draftId) ?? { attachmentIds: [], messages: [], draft: null };
     const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
+    const attachmentIds = [...new Set([...previous.attachmentIds, ...(input.attachmentIds ?? [])])];
     const response = await this.execute('/automations/draft/stream', {
       method: 'POST',
       headers: {
         Accept: 'text/event-stream',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ draftId, messages, currentDraft: previous.draft }),
+      body: JSON.stringify({
+        draftId,
+        messages,
+        currentDraft: previous.draft,
+        attachmentIds,
+      }),
     });
     if (!response.ok) return this.throwResponseError(response);
     const streamState: {
@@ -1184,6 +1207,7 @@ export class AvalonApi {
     const raw = WireAutomationDraftSchema.parse(completed.draft);
     const assistantMessage = completed.assistantMessage;
     this.drafts.set(draftId, {
+      attachmentIds,
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
@@ -1219,18 +1243,30 @@ export class AvalonApi {
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
+              requiresSlackDelivery: raw.expectedOutputs.some((output) => /\bslack\b/iu.test(output)),
             },
           }
         : {}),
     };
   }
 
-  async createAutomation(draftId: string, defaultPluginIds: string[]): Promise<AutomationDetail> {
+  async createAutomation(
+    draftId: string,
+    defaultPluginIds: string[],
+    slackDeliveryConnectionId?: string,
+  ): Promise<AutomationDetail> {
     const state = this.drafts.get(draftId);
     if (!state?.draft?.ready) throw new ApiError('Finish the automation conversation before creating it.', 422, 'automation_not_ready');
     const raw = await this.request('/automations', {
       method: 'POST',
-      body: { draft: state.draft, scope: state.draft.suggestedScope, defaultPluginIds },
+      body: {
+        draft: state.draft,
+        scope: state.draft.suggestedScope,
+        defaultPluginIds,
+        deliveryTargets: slackDeliveryConnectionId
+          ? [{ type: 'slack_agent_dm', connectionId: slackDeliveryConnectionId }]
+          : [],
+      },
       schema: WireAutomationDetailSchema,
     });
     this.automationDetails.set(raw.id, raw);
@@ -1271,7 +1307,7 @@ export class AvalonApi {
   }
 
   async startProviderConnection(
-    provider: 'google' | 'github' | 'linear' | 'notion',
+    provider: 'google' | 'github' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<string> {
@@ -1281,6 +1317,18 @@ export class AvalonApi {
       schema: z.object({ url: z.string().url() }),
     });
     return response.url;
+  }
+
+  async createXConnection(
+    scope: 'you' | 'workspace',
+    capabilities: string[],
+  ): Promise<WorkstreamConnection> {
+    const response = await this.request('/connections/x', {
+      method: 'POST',
+      body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
+      schema: z.object({ connection: WireConnectionSchema }),
+    });
+    return mapConnection(response.connection);
   }
 
   async reconnectConnection(id: string): Promise<string> {
@@ -1300,6 +1348,22 @@ export class AvalonApi {
 
   async disconnectConnection(id: string): Promise<void> {
     await this.requestVoid(`/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async linkSlackUser(token: string): Promise<{ linked: true; teamId: string; slackUserId: string }> {
+    return this.request('/connections/slack/link', {
+      method: 'POST',
+      body: { token },
+      schema: z.object({ linked: z.literal(true), teamId: z.string().min(1), slackUserId: z.string().min(1) }),
+    });
+  }
+
+  async previewSlackUserLink(token: string): Promise<{ teamId: string; slackUserId: string; workspaceName: string }> {
+    return this.request('/connections/slack/link/preview', {
+      method: 'POST',
+      body: { token },
+      schema: z.object({ teamId: z.string().min(1), slackUserId: z.string().min(1), workspaceName: z.string().min(1) }),
+    });
   }
 
   async beginGoogleLogin(

@@ -75,7 +75,7 @@ function message(
   id: string,
   sequenceNumber: number,
   input: Partial<Pick<Message, "messageType" | "textContent" | "structuredContent">> & {
-    author: "human" | "agent" | "system";
+    author: "human" | "external" | "agent" | "system";
   },
 ): Message {
   return {
@@ -95,6 +95,17 @@ function message(
             createdAt: "2026-08-01T00:00:00.000Z",
           },
         }
+      : input.author === "external"
+        ? {
+            type: "external",
+            actor: {
+              provider: "slack",
+              providerAccountId: "T123",
+              providerUserId: "U456",
+              displayName: "Taylor",
+              avatarUrl: null,
+            },
+          }
       : { type: input.author },
     messageType: input.messageType ?? "text",
     textContent: input.textContent ?? "",
@@ -121,6 +132,25 @@ function streamResponse(content: string): Response {
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("projects an external Slack actor as an attributed user request", async () => {
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: null },
+      [message("00000000-0000-4000-8000-000000000029", 1, {
+        author: "external",
+        textContent: "Investigate the failed deployment",
+      })],
+    );
+
+    expect(projection.messages).toEqual([expect.objectContaining({
+      role: "user",
+      content: expect.stringContaining("EXTERNALLY ATTRIBUTED SLACK WORKSPACE MEMBER REQUEST"),
+    })]);
+    expect(projection.messages[0]?.content).toContain("Display name: Taylor");
+    expect(projection.messages[0]?.content).toContain("Provider member ID: U456");
+    expect(projection.messages[0]?.content).toContain("Investigate the failed deployment");
+  });
+
   it("renders selected labels, custom text, and skips into the continuation turn", () => {
     const selected = __integrationTesting.renderElicitationResponseMessage({
       prompt: "What should I review?",

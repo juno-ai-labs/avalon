@@ -58,6 +58,7 @@ import { numericEnv } from "../env";
 import { decryptString, encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { ApiError } from "../lib/api-error";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
   FirecrawlClient,
@@ -65,6 +66,7 @@ import {
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
@@ -100,7 +102,7 @@ import {
 } from "./memory-table-service";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
-const WORKSTREAM_PROMPT_VERSION = "workstream-v5-structured-memory";
+const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
 const INLINE_CHILD_PROMPT_VERSION = "inline-child-v2";
 const INLINE_CHILD_ROUTING_POLICY_VERSION = "bind-10-openrouter-inline-child-v1";
 const TOOL_REPLAY_READ_TIMEOUT_MS = 2_000;
@@ -656,7 +658,19 @@ async function projectModelProtocolTranscript(
       issues.push({ kind: "empty_ui_message_omitted", healed: true });
       continue;
     }
-    if (message.author.type === "human") {
+    if (message.author.type === "external") {
+      const actor = message.author.actor;
+      projected.push({
+        role: "user",
+        content: [
+          `EXTERNALLY ATTRIBUTED ${actor.provider.toLocaleUpperCase()} WORKSPACE MEMBER REQUEST`,
+          `Display name: ${actor.displayName}`,
+          `Provider member ID: ${actor.providerUserId}`,
+          content,
+        ].join("\n"),
+      });
+    }
+    else if (message.author.type === "human") {
       if (message.attachments.length > 0 && message.id === input.triggerMessageId) {
         const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
           id: attachment.id,
@@ -753,11 +767,54 @@ export async function classifyWorkstreamMessage(
   });
 }
 
+async function loadAutomationDraftAttachmentParts(
+  env: Env,
+  workspaceId: string,
+  userId: string,
+  attachmentIds: string[],
+) {
+  const ids = [...new Set(attachmentIds)];
+  if (ids.length === 0) return [];
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = await env.DB.prepare(
+    `SELECT id, title, mime_type, content_ref, model_content_ref, model_mime_type, model_metadata_json
+       FROM resources
+      WHERE id IN (${placeholders}) AND workspace_id = ? AND provider = 'avalon_upload'
+        AND uploaded_by_user_id = ? AND attachment_status = 'draft'`,
+  ).bind(...ids, workspaceId, userId).all<{
+    id: string;
+    title: string;
+    mime_type: string | null;
+    content_ref: string | null;
+    model_content_ref: string | null;
+    model_mime_type: string | null;
+    model_metadata_json: string | null;
+  }>();
+  const sources = new Map((rows.results ?? []).map((row) => [row.id, {
+    id: row.id,
+    fileName: row.title,
+    mimeType: row.mime_type ?? "application/octet-stream",
+    contentRef: row.content_ref,
+    modelContentRef: row.model_content_ref,
+    modelMimeType: row.model_mime_type,
+    modelMetadataJson: row.model_metadata_json,
+  } satisfies ModelAttachmentSource]));
+  if (sources.size !== ids.length) {
+    throw new ApiError(422, "invalid_automation_attachment", "One or more automation attachments are unavailable");
+  }
+  return buildAttachmentModelParts(
+    env.PAYLOADS,
+    ids.map((id) => sources.get(id)!),
+    { database: env.DB, images: env.IMAGES },
+  );
+}
+
 export async function compileAutomationDraft(
   env: Env,
   input: {
     draftId?: string | undefined;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
+    attachmentIds?: string[];
     currentDraft?: AutomationDraft | null;
     defaultTimezones: { personal: string; workspace: string };
     requestId: string;
@@ -768,6 +825,12 @@ export async function compileAutomationDraft(
   },
 ): Promise<AutomationDraft> {
   const pluginCatalog = await loadAutomationCreatorPluginCatalog(env, input.workspaceId, input.userId);
+  const latestUserAttachmentParts = await loadAutomationDraftAttachmentParts(
+    env,
+    input.workspaceId,
+    input.userId,
+    input.attachmentIds ?? [],
+  );
   const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
@@ -783,6 +846,7 @@ export async function compileAutomationDraft(
       userId: input.userId,
       fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
       messages: input.messages,
+      ...(latestUserAttachmentParts.length > 0 ? { latestUserAttachmentParts } : {}),
       currentDraft: input.currentDraft ?? null,
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
@@ -934,14 +998,8 @@ async function executeAutomationCreatorConnectorTool(
     capability,
     signal,
   );
+  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
   return withConnectorCredentialLifecycle(env, connection, async () => {
-    if (
-      adapter.refreshCredentials &&
-      typeof connection.credentials.expiresAt === "string" &&
-      Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
-    ) {
-      connection.credentials = await adapter.refreshCredentials(connection, signal);
-    }
     await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
     const health = await raceWithSignal(adapter.healthCheck(connection), signal);
     if (!health.ok) throw new ConnectorError("unauthorized", "Connector authorization is not healthy");
@@ -2825,6 +2883,7 @@ async function loadRunPromptContext(
     systemPrompt: renderWorkstreamSystemPrompt({
       title: workstream.title,
       objective: workstream.objective,
+      executionAuthority: input.executionPrincipal.type,
       ...(automationContext ? { automation: automationContext } : {}),
     }),
     additionalMessages,
@@ -3380,15 +3439,9 @@ async function executeAuthorizedConnectorTool(
     signal,
     ownershipGuard,
   );
+  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
   return withConnectorCredentialLifecycle(env, connection, async () => {
     await ownershipGuard?.();
-    if (
-      adapter.refreshCredentials &&
-      typeof connection.credentials.expiresAt === "string" &&
-      Date.parse(connection.credentials.expiresAt) < Date.now() + 60_000
-    ) {
-      connection.credentials = await adapter.refreshCredentials(connection, signal);
-    }
     await ownershipGuard?.();
     // Membership, ownership, grants, and stored health are checked again after
     // credentials are available and immediately before external execution.
@@ -4490,20 +4543,10 @@ export async function pollConnectorConnection(
   if (!adapter.poll) {
     return { activityIds: [], cursor: context.cursor, baseCursorJson, nextPollAt: null };
   }
+  const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
+  const signal = AbortSignal.timeout(pollTimeoutMs);
+  await ensureFreshConnectorCredentials(env, context, adapter, signal);
   const result = await withConnectorCredentialLifecycle(env, context, async () => {
-    const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
-    const signal = AbortSignal.timeout(pollTimeoutMs);
-    if (
-      adapter.refreshCredentials &&
-      typeof context.credentials.expiresAt === "string" &&
-      Date.parse(context.credentials.expiresAt) < Date.now() + 60_000
-    ) {
-      credentials = await adapter.refreshCredentials(
-        context,
-        signal,
-      );
-      context.credentials = credentials;
-    }
     return adapter.poll!(context, signal);
   });
   const activityIds = new Set<string>();

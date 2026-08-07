@@ -8,8 +8,10 @@ import { NewWorkstreamScreen } from './new-workstream';
 
 const api = vi.hoisted(() => ({
   createWorkstream: vi.fn(),
+  deleteDraftResource: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkstreams: vi.fn(),
+  uploadResource: vi.fn(),
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
@@ -82,6 +84,18 @@ describe('New work-stream home', () => {
       workstream('failed', 'Broken connector', 'failed'),
     ]);
     api.createWorkstream.mockResolvedValue(createdWorkstream);
+    api.deleteDraftResource.mockResolvedValue(undefined);
+    api.uploadResource.mockResolvedValue({
+      id: 'resource-notes',
+      title: 'notes.txt',
+      resourceType: 'uploaded_file',
+      provider: 'avalon_upload',
+      mimeType: 'text/plain',
+      watchEnabled: false,
+      watchStatus: 'unsupported',
+      contentAvailable: true,
+      sizeBytes: 5,
+    });
   });
 
   it('shows only work streams explicitly waiting for input', async () => {
@@ -94,6 +108,17 @@ describe('New work-stream home', () => {
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
     expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
     expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
+  });
+
+  it('uses the shared mention, attachment, and dictation controls', async () => {
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Mention a participant or connection' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a participant or connection' }));
+    expect(await screen.findByRole('dialog', { name: 'Add people' })).toBeVisible();
   });
 
   it('keeps participant selection above the composer and sends selected people', async () => {
@@ -140,6 +165,26 @@ describe('New work-stream home', () => {
 
     resolveCreate(createdWorkstream);
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(1));
+  });
+
+  it('freezes shared attachment actions while work-stream creation is pending', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [file] },
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening work-stream message' }), { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: '',
+      participantIds: [],
+      attachmentIds: ['resource-notes'],
+    }));
+    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeDisabled();
   });
 
   it('seeds the new work-stream detail and opening message before navigation', async () => {

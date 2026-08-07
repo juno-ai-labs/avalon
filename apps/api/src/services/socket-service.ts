@@ -14,6 +14,14 @@ interface SocketClaims {
   expiresAt: number;
 }
 
+export interface TranscriptionSocketClaims {
+  userId: string;
+  workspaceId: string;
+  region: "global" | "eu";
+  ticketId: string;
+  expiresAt: number;
+}
+
 function signingKey(env: Env): Uint8Array {
   if (env.SESSION_SIGNING_KEY) return encoder.encode(env.SESSION_SIGNING_KEY);
   if (env.APP_ENV === "development" && env.AVALON_DEV_AUTH === "true") {
@@ -50,6 +58,44 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       userId: payload.sub,
       workspaceId: payload.wid,
       workstreamId: payload.wsid,
+      region: payload.region,
+      ticketId: payload.jti,
+      expiresAt: payload.exp,
+    };
+  } catch {
+    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
+  }
+}
+
+export async function issueTranscriptionSocketTicket(env: Env, auth: AuthContext): Promise<string> {
+  const now = Math.floor(Date.now() / 1_000);
+  return new SignJWT({ purpose: "transcription_socket", wid: auth.workspaceId, region: auth.region })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(auth.userId)
+    .setJti(crypto.randomUUID())
+    .setIssuer("avalon-api")
+    .setAudience("avalon-transcription-socket")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(signingKey(env));
+}
+
+export async function verifyTranscriptionSocketTicket(
+  env: Env,
+  ticket: string,
+): Promise<TranscriptionSocketClaims> {
+  try {
+    const { payload } = await jwtVerify(ticket, signingKey(env), {
+      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-transcription-socket",
+    });
+    if (
+      payload.purpose !== "transcription_socket" || typeof payload.sub !== "string" ||
+      typeof payload.wid !== "string" || typeof payload.jti !== "string" ||
+      typeof payload.exp !== "number" || (payload.region !== "global" && payload.region !== "eu")
+    ) throw new Error("Incomplete transcription socket claims");
+    return {
+      userId: payload.sub,
+      workspaceId: payload.wid,
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
