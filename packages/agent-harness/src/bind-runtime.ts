@@ -1086,7 +1086,7 @@ async function createPluginRuntime(
     })),
   }, true);
   const corePlugins = [
-    discovery,
+    ...(input.pluginDiscovery === false ? [] : [discovery]),
     ...(input.corePlugins ?? []).map((plugin) => buildPlugin(plugin, true)),
   ];
   const plugins = [...corePlugins, ...(input.plugins ?? []).map(toBindPlugin)];

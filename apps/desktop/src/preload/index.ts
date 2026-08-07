@@ -76,6 +76,7 @@ const bridge: AvalonDesktopBridge = {
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
+  openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
   onSettingsSectionRequested: (listener) => {
     settingsSectionListeners.add(listener);
     const pending = queuedSettingsSection;

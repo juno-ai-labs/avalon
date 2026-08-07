@@ -1,0 +1,51 @@
+import {
+  AppendNoteTranscriptSegmentRequestSchema,
+  CreateNoteRequestSchema,
+  GenerateNoteNotesRequestSchema,
+  IdSchema,
+  UpdateNoteRequestSchema,
+} from "@avalon/contracts";
+import { Hono } from "hono";
+import { z } from "zod";
+import type { HonoAppEnv } from "../env";
+import { getAuth } from "../middleware/auth";
+import { zValidator } from "../middleware/validation";
+import { NoteService } from "../services/note-service";
+
+const idParam = z.object({ id: IdSchema });
+const listQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(250).default(250),
+});
+
+export const noteRoutes = new Hono<HonoAppEnv>();
+
+noteRoutes.get("/", zValidator("query", listQuery), async (c) =>
+  c.json(await new NoteService(c.env, getAuth(c)).list(c.req.valid("query").limit)),
+);
+noteRoutes.post("/", zValidator("json", CreateNoteRequestSchema), async (c) =>
+  c.json(await new NoteService(c.env, getAuth(c)).create(c.req.valid("json")), 201),
+);
+noteRoutes.get("/:id", zValidator("param", idParam), async (c) =>
+  c.json(await new NoteService(c.env, getAuth(c)).get(c.req.valid("param").id)),
+);
+noteRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateNoteRequestSchema), async (c) =>
+  c.json(await new NoteService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))),
+);
+noteRoutes.post(
+  "/:id/segments",
+  zValidator("param", idParam),
+  zValidator("json", AppendNoteTranscriptSegmentRequestSchema),
+  async (c) => c.json(await new NoteService(c.env, getAuth(c)).appendSegment(
+    c.req.valid("param").id,
+    c.req.valid("json"),
+  ), 201),
+);
+noteRoutes.post(
+  "/:id/generate",
+  zValidator("param", idParam),
+  zValidator("json", GenerateNoteNotesRequestSchema),
+  async (c) => c.json(await new NoteService(c.env, getAuth(c)).generate(
+    c.req.valid("param").id,
+    c.get("requestId"),
+  )),
+);

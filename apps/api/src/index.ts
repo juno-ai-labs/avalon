@@ -3,6 +3,8 @@ import type { Env } from "./env";
 import { consumeActivityQueue } from "./queues/activity-consumer";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { processMemoryIndexOutbox } from "./services/memory-service";
+import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
+import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
 import { SlackAgentService } from "./services/slack-agent-service";
 
 const REAPER_BATCH_LIMIT = 100;
@@ -55,6 +57,8 @@ export default {
     context.waitUntil(Promise.all([
       reapExpiredHarnessAttempts(env),
       reapExpiredDraftAttachments(env),
+      reapDeletedNoteObjects(env),
+      processPendingNotePrivacyNotifications(env),
       processMemoryIndexOutbox(env),
       new SlackAgentService(env).maintainIngress(),
     ]));

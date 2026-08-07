@@ -11,6 +11,7 @@ import {
   Ellipsis,
   Info,
   LoaderCircle,
+  NotebookText,
   Sparkles,
   Users,
   WandSparkles,
@@ -40,6 +41,7 @@ import type {
   AutomationDraftResponse,
   Message,
   MessageAttachment,
+  NoteSummary,
   WorkspaceTemplate,
   WorkstreamConnection,
 } from '../lib/types';
@@ -263,8 +265,11 @@ function DraftSummary({
   creating,
   connections,
   defaultPluginIds,
+  notes,
+  selectedResourceIds,
   slackDeliveryConnectionId,
   onDefaultPluginsChange,
+  onResourcesChange,
   onSlackDeliveryChange,
   onCreate,
 }: {
@@ -272,8 +277,11 @@ function DraftSummary({
   creating: boolean;
   connections: WorkstreamConnection[];
   defaultPluginIds: string[];
+  notes: NoteSummary[];
+  selectedResourceIds: string[];
   slackDeliveryConnectionId: string;
   onDefaultPluginsChange: (pluginIds: string[]) => void;
+  onResourcesChange: (resourceIds: string[]) => void;
   onSlackDeliveryChange: (connectionId: string) => void;
   onCreate: () => void;
 }): React.JSX.Element | null {
@@ -299,6 +307,39 @@ function DraftSummary({
         scope={summary.scope}
         selected={defaultPluginIds}
       />
+      <section className="automation-plugin-defaults automation-note-resources" aria-label="Note resources">
+        <header>
+          <div><strong>Note resources</strong><small>Attach meeting transcripts and notes as context for every run.</small></div>
+          <span>{selectedResourceIds.length} selected</span>
+        </header>
+        {notes.length === 0 ? (
+          <p className="automation-plugin-empty">No compatible notes are available for this automation.</p>
+        ) : (
+          <ul>
+            {notes.map((note) => {
+              const checked = selectedResourceIds.includes(note.resourceId);
+              return (
+                <li key={note.id}>
+                  <label>
+                    <input
+                      checked={checked}
+                      onChange={() => onResourcesChange(checked
+                        ? selectedResourceIds.filter((resourceId) => resourceId !== note.resourceId)
+                        : [...selectedResourceIds, note.resourceId])}
+                      type="checkbox"
+                    />
+                    <span className="automation-plugin-check">{checked && <Check size={12} />}</span>
+                    <span className="automation-plugin-copy">
+                      <strong><NotebookText size={14} /> {note.title}</strong>
+                      <small>{note.scope === 'workspace' ? 'Public note' : 'Private note'}</small>
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
       {summary.scope === 'you' && (
         <div className="automation-delivery-target">
           <label htmlFor="automation-slack-delivery"><strong>Deliver results</strong><small>{summary.requiresSlackDelivery ? 'This draft mentions Slack delivery. ' : ''}Choose a destination explicitly; it is frozen when this automation is saved.</small></label>
@@ -338,6 +379,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
   const [slackDeliveryConnectionId, setSlackDeliveryConnectionId] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
@@ -346,6 +388,12 @@ export function NewAutomationScreen(): React.JSX.Element {
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
+    enabled: Boolean(api),
+    staleTime: 10_000,
+  });
+  const notes = useQuery({
+    queryKey: ['notes'],
+    queryFn: ({ signal }) => api!.getNotes(signal),
     enabled: Boolean(api),
     staleTime: 10_000,
   });
@@ -406,6 +454,13 @@ export function NewAutomationScreen(): React.JSX.Element {
       && connection.status === 'healthy');
     if (!stillAvailable || draft?.summary?.scope !== 'you') setSlackDeliveryConnectionId('');
   }, [connections.data, draft?.summary?.scope, slackDeliveryConnectionId]);
+
+  const compatibleNotes = (notes.data ?? []).filter((note) =>
+    draft?.summary?.scope !== 'workspace' || note.scope === 'workspace');
+  useEffect(() => {
+    const available = new Set(compatibleNotes.map((note) => note.resourceId));
+    setSelectedResourceIds((current) => current.filter((resourceId) => available.has(resourceId)));
+  }, [notes.data, draft?.summary?.scope]);
 
   const compile = useMutation({
     mutationFn: (payload: AutomationCompilePayload) =>
@@ -511,8 +566,8 @@ export function NewAutomationScreen(): React.JSX.Element {
 
   const create = useMutation({
     mutationFn: () => slackDeliveryConnectionId
-      ? api!.createAutomation(draft!.draftId, defaultPluginIds, slackDeliveryConnectionId)
-      : api!.createAutomation(draft!.draftId, defaultPluginIds),
+      ? api!.createAutomation(draft!.draftId, defaultPluginIds, selectedResourceIds, slackDeliveryConnectionId)
+      : api!.createAutomation(draft!.draftId, defaultPluginIds, selectedResourceIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -661,10 +716,13 @@ export function NewAutomationScreen(): React.JSX.Element {
                     connections={connections.data ?? []}
                     creating={create.isPending}
                     defaultPluginIds={defaultPluginIds}
+                    notes={compatibleNotes}
+                    selectedResourceIds={selectedResourceIds}
                     slackDeliveryConnectionId={slackDeliveryConnectionId}
                     draft={draft}
                     onCreate={() => create.mutate()}
                     onDefaultPluginsChange={setDefaultPluginIds}
+                    onResourcesChange={setSelectedResourceIds}
                     onSlackDeliveryChange={setSlackDeliveryConnectionId}
                   />
                 )}

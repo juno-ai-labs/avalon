@@ -1991,6 +1991,8 @@ export interface RunHarnessInput {
   /** Stable always-active plugin bundles registered for this runtime. */
   corePlugins?: HarnessPlugin[];
   plugins?: HarnessPlugin[];
+  /** Disable even the built-in discovery tools for deliberately model-only runs. */
+  pluginDiscovery?: boolean;
   /** Connector activations already durably persisted by the host. */
   activationHints?: string[];
   includeWebSearch?: boolean;
