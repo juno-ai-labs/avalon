@@ -628,6 +628,8 @@ export class WorkstreamService {
     clientMessageId = `elicitation-response:${elicitationId}`,
   ) {
     await this.requireWorkstream(id);
+    const duplicate = await this.loadMessageByClientId(id, clientMessageId);
+    if (duplicate) return { elicitation: undefined, harnessRunId: null };
     const elicitation = await this.env.DB.prepare(
       `SELECT * FROM elicitations WHERE id = ? AND workstream_id = ? AND workspace_id = ? AND status = 'open'`,
     ).bind(elicitationId, id, this.auth.workspaceId).first<Record<string, unknown>>();

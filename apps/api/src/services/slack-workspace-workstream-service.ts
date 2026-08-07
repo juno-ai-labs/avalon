@@ -127,6 +127,13 @@ export class SlackWorkspaceWorkstreamService {
   }
 
   async answerOpenElicitation(workstreamId: string, input: SlackExternalMessageInput) {
+    const clientMessageId = input.clientMessageId.slice(0, 120);
+    const existing = await this.database.workstreams.getMessageByClientId(
+      this.workspaceId,
+      workstreamId,
+      clientMessageId,
+    );
+    if (existing) return { elicitation: null, harnessRunId: null };
     const raw = await this.env.DB.prepare(
       `SELECT id, harness_run_id, prompt, response_type, options_json,
               minimum_selections, maximum_selections, created_at
@@ -156,7 +163,6 @@ export class SlackWorkspaceWorkstreamService {
       createdAt: elicitation.created_at,
       answeredAt: at,
     };
-    const clientMessageId = input.clientMessageId.slice(0, 120);
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE elicitations

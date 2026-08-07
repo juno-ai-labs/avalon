@@ -109,6 +109,8 @@ describe("Slack connector", () => {
     expect(connectorCapabilitySupportsScope(adapter, SlackCapabilities.search, "workspace")).toBe(false);
     expect(SlackWorkspaceBotScopes).toContain("users:read.email");
     expect(SlackWorkspaceBotScopes).toContain("users:read");
+    expect(SlackWorkspaceBotScopes).toContain("channels:read");
+    expect(SlackWorkspaceBotScopes).toContain("groups:read");
   });
 
   it("discovers the hosted MCP tool name before invoking it", async () => {
@@ -282,6 +284,15 @@ describe("Slack connector", () => {
           profile: { display_name: "Ada", email: "ada@example.com" },
         },
       });
+      if (url.pathname.endsWith("conversations.info")) return json({
+        ok: true,
+        channel: {
+          id: "CPRIVATE",
+          is_private: true,
+          is_im: false,
+          is_mpim: false,
+        },
+      });
       return json({ ok: true, plan: 42 });
     });
 
@@ -301,6 +312,11 @@ describe("Slack connector", () => {
       user: "UADA",
     }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
       user: { id: "UADA", team_id: "TACME", profile: { email: "ada@example.com" } },
+    });
+    await expect(slackApi("xoxb", "conversations.info", {
+      channel: "CPRIVATE",
+    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+      channel: { id: "CPRIVATE", is_private: true },
     });
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "not-an-email",
