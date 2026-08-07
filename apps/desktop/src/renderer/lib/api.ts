@@ -340,8 +340,9 @@ export function mapMessage(message: WireMessage): Message {
       : message.messageType;
   return {
     // The durable open question and its later durable answer are separate
-    // transcript rows. Give both representations one UI identity;
-    // messagesWithTransientBlocks collapses that identity to the answer.
+    // transcript rows, while an unfetched open question can also be synthesized
+    // from detail.openElicitations. Give every representation one UI identity so
+    // messagesWithTransientBlocks can render only the current state.
     id: elicitation.success ? elicitationMessageId(elicitation.data.id) : message.id,
     ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
     workstreamId: message.workstreamId,
@@ -419,8 +420,8 @@ export function messagesWithTransientBlocks(mapped: Message[], detail: Workstrea
   // Both the question and its durable human response remain separate rows in
   // the model transcript. mapMessage intentionally gives those rows one UI
   // identity, so collapse the canonical page before React and the virtualizer
-  // see duplicate keys. Message pages are ordered by sequence, which makes the
-  // later answered response replace the earlier open question.
+  // see duplicate keys. The shared upsert keeps answered elicitations from
+  // regressing to open even when pages or realtime updates arrive out of order.
   const canonicalMessages = mapped.reduce<Message[]>(
     (messages, message) => upsertTranscriptMessage(messages, message),
     [],
