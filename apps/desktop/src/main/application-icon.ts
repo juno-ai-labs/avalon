@@ -18,6 +18,21 @@ export function applicationIconPath(resourceDirectory: string, iconId: Applicati
   return join(resourceDirectory, applicationIconFileName(iconId));
 }
 
+export function applicationIconPreferenceDirectoryForLaunch(
+  appDataDirectory: string,
+  userDataDirectory: string,
+  isPackaged: boolean,
+  isPackageSmoke: boolean,
+): string {
+  // The Dock plugin runs outside Avalon and cannot see Chromium's
+  // --user-data-dir switch. A selected app icon belongs to the installed app,
+  // so packaged launches use the canonical directory the plugin can read.
+  // Package smoke tests are isolated so they never touch a developer's choice.
+  return isPackaged && !isPackageSmoke
+    ? join(appDataDirectory, 'Avalon')
+    : userDataDirectory;
+}
+
 export function parseStoredApplicationIcon(value: unknown): ApplicationIconId | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const stored = value as { version?: unknown; icon?: unknown };

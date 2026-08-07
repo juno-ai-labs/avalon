@@ -4,14 +4,14 @@ import {
   type ApplicationIconId,
   type DesktopApplicationIconState,
 } from '../../common/application-icons';
-import blueprintIcon from '../../../resources/app-icons/blueprint.png';
-import darkIcon from '../../../resources/app-icons/dark.png';
-import holographicIcon from '../../../resources/app-icons/holographic.png';
-import leatherIcon from '../../../resources/app-icons/leather.png';
-import lightIcon from '../../../resources/app-icons/light.png';
-import ludicrousSpeedIcon from '../../../resources/app-icons/ludicrous-speed.png';
-import rubyIcon from '../../../resources/app-icons/ruby.png';
-import sunsetSherbetIcon from '../../../resources/app-icons/sunset-sherbet.png';
+import blueprintIcon from '../assets/app-icons/blueprint.png';
+import darkIcon from '../assets/app-icons/dark.png';
+import holographicIcon from '../assets/app-icons/holographic.png';
+import leatherIcon from '../assets/app-icons/leather.png';
+import lightIcon from '../assets/app-icons/light.png';
+import ludicrousSpeedIcon from '../assets/app-icons/ludicrous-speed.png';
+import rubyIcon from '../assets/app-icons/ruby.png';
+import sunsetSherbetIcon from '../assets/app-icons/sunset-sherbet.png';
 import { desktopBridge } from '../lib/platform';
 
 const applicationIconArtwork: Record<ApplicationIconId, string> = {

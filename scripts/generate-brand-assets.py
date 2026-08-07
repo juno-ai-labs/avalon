@@ -10,6 +10,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "assets" / "brand" / "avalon-mark-source.png"
 APPLICATION_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "app-icons"
+APPLICATION_ICON_PREVIEW_DIRECTORY = (
+    ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "app-icons"
+)
 PRIMARY = (206, 220, 0, 255)  # #CEDC00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
@@ -134,6 +137,14 @@ def save(image: Image.Image, path: Path) -> None:
     image.save(path, optimize=True)
 
 
+def generate_application_icon_previews() -> None:
+    """Build compact Retina thumbnails without duplicating 1024px app assets in Vite."""
+    for source_path in sorted(APPLICATION_ICON_DIRECTORY.glob("*.png")):
+        with Image.open(source_path) as source:
+            preview = source.convert("RGBA").resize((128, 128), Image.Resampling.LANCZOS)
+            save(preview, APPLICATION_ICON_PREVIEW_DIRECTORY / source_path.name)
+
+
 def main() -> None:
     transparent = mark(1024)
     generic_icon = app_icon(1024)
@@ -163,6 +174,7 @@ def main() -> None:
     save(app_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
     save(social_card(), ROOT / "apps" / "site" / "public" / "og.png")
+    generate_application_icon_previews()
 
 
 if __name__ == "__main__":

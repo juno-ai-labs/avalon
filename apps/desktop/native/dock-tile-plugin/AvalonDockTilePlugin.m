@@ -2,12 +2,17 @@
 
 static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.application-icon-changed";
 
-@interface AvalonDockTilePlugin : NSObject <NSDockTilePlugIn>
+@interface AvalonDockTilePlugin : NSObject <NSDockTilePlugIn> {
+ @private
+  NSDockTile *_dockTile;
+}
 @property(nonatomic, strong) NSDockTile *dockTile;
 @property(nonatomic, strong) NSImageView *imageView;
 @end
 
 @implementation AvalonDockTilePlugin
+
+@synthesize dockTile = _dockTile;
 
 - (instancetype)init {
   self = [super init];
@@ -27,7 +32,7 @@ static NSString *const AvalonApplicationIconNotification = @"app.avalon.desktop.
 }
 
 - (void)setDockTile:(NSDockTile *)dockTile {
-  self.dockTile = dockTile;
+  _dockTile = dockTile;
   [self refreshDockTile];
 }
 

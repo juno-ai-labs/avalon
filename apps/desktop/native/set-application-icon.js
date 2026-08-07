@@ -6,11 +6,15 @@ function refreshDockIconCache() {
   try {
     const configurationClass = $.NSClassFromString('SLSIconAppearanceConfiguration');
     if (!configurationClass) return false;
+    // JXA invokes zero-argument Objective-C selectors through property access.
+    // Calling either value with `()` throws because the bridged result is not a
+    // JavaScript function.
     const configuration = configurationClass.fetchCurrentIconAppearanceConfiguration;
     if (!configuration) return false;
-    configuration.save;
+    const saveResult = configuration.save;
+    void saveResult;
     return true;
-  } catch (_error) {
+  } catch {
     // The cache refresh uses the same private selector as System Settings.
     // Icon selection still succeeds if Apple removes it in a later release.
     return false;

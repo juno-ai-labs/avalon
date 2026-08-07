@@ -36,7 +36,6 @@ import type {
 } from '../common/desktop';
 import {
   automaticApplicationIcon,
-  parseApplicationIconId,
   type ApplicationIconId,
   type DesktopApplicationIconState,
 } from '../common/application-icons';
@@ -48,10 +47,12 @@ import {
 } from './api-response-error';
 import {
   applicationIconPath,
+  applicationIconPreferenceDirectoryForLaunch,
   clearStoredApplicationIcon,
   readStoredApplicationIcon,
   writeStoredApplicationIcon,
 } from './application-icon';
+import { ApplicationIconController } from './application-icon-controller';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { allowsTrustedAudioCapture } from './media-permission';
@@ -111,9 +112,7 @@ let loggingOut = false;
 let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
-let selectedApplicationIcon: ApplicationIconId | null = null;
-let applicationIconMutationTail: Promise<void> = Promise.resolve();
-let developmentApplicationIconOverride = false;
+let developmentDockIconUsesAppearancePreview = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
@@ -1063,10 +1062,12 @@ function applicationIconResourceDirectory(): string {
 }
 
 function applicationIconPreferenceDirectory(): string {
-  // Normal packaged launches already use Avalon's canonical Application
-  // Support directory, which the Dock plugin reads independently. Preserve an
-  // explicit --user-data-dir for isolated package smoke tests and diagnostics.
-  return userDataDirectory();
+  return applicationIconPreferenceDirectoryForLaunch(
+    appDataDirectory,
+    userDataDirectory(),
+    app.isPackaged,
+    process.argv.some((argument) => argument.startsWith('--avalon-package-smoke=')),
+  );
 }
 
 function packagedApplicationBundlePath(): string {
@@ -1087,11 +1088,7 @@ async function runNativeApplicationIconScript(...arguments_: string[]): Promise<
 }
 
 function desktopApplicationIconState(): DesktopApplicationIconState {
-  return {
-    activeIcon: selectedApplicationIcon ?? automaticApplicationIcon(nativeTheme.shouldUseDarkColors),
-    isAutomatic: selectedApplicationIcon === null,
-    supported: process.platform === 'darwin',
-  };
+  return applicationIconController.state();
 }
 
 function broadcastApplicationIconChanged(): void {
@@ -1122,7 +1119,7 @@ async function applyApplicationIcon(iconId: ApplicationIconId): Promise<void> {
     // Development runs have no containing signed Avalon bundle or Dock tile
     // plugin. Keep the picker testable without changing Electron.app in place.
     app.dock.setIcon(icon);
-    developmentApplicationIconOverride = true;
+    developmentDockIconUsesAppearancePreview = true;
     return;
   }
   await runNativeApplicationIconScript(
@@ -1131,89 +1128,55 @@ async function applyApplicationIcon(iconId: ApplicationIconId): Promise<void> {
   );
 }
 
-async function changeApplicationIcon(rawIconId: unknown): Promise<DesktopApplicationIconState> {
-  const iconId = parseApplicationIconId(rawIconId);
-  if (!iconId) throw new Error('Unknown application icon');
-  if (process.platform !== 'darwin') throw new Error('Custom application icons are available only on macOS');
-
-  // Validate before persisting so a damaged or incomplete package cannot
-  // strand the preference on an icon that Electron cannot decode.
-  const icon = loadApplicationIcon(iconId);
-  const preferenceDirectory = applicationIconPreferenceDirectory();
-  const previousIcon = selectedApplicationIcon;
-  await writeStoredApplicationIcon(preferenceDirectory, iconId);
-  try {
-    if (!app.isPackaged) {
-      if (!app.dock) throw new Error('The macOS Dock is unavailable');
-      app.dock.setIcon(icon);
-      developmentApplicationIconOverride = true;
-    } else {
-      await applyApplicationIcon(iconId);
-    }
-  } catch (error) {
-    if (previousIcon) await writeStoredApplicationIcon(preferenceDirectory, previousIcon);
-    else await clearStoredApplicationIcon(preferenceDirectory);
-    throw error;
+async function resetNativeApplicationIcon(): Promise<void> {
+  if (process.platform !== 'darwin' || !app.dock) {
+    throw new Error('Custom application icons are available only on macOS');
   }
-  selectedApplicationIcon = iconId;
-  broadcastApplicationIconChanged();
-  return desktopApplicationIconState();
+  if (app.isPackaged) {
+    await runNativeApplicationIconScript('--reset', packagedApplicationBundlePath());
+    return;
+  }
+  app.dock.setIcon(loadApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)));
+  developmentDockIconUsesAppearancePreview = true;
 }
 
-async function resetApplicationIcon(): Promise<DesktopApplicationIconState> {
-  if (process.platform !== 'darwin') throw new Error('Custom application icons are available only on macOS');
-  const preferenceDirectory = applicationIconPreferenceDirectory();
-  const previousIcon = selectedApplicationIcon;
-  await clearStoredApplicationIcon(preferenceDirectory);
-  try {
-    if (app.isPackaged) {
-      await runNativeApplicationIconScript('--reset', packagedApplicationBundlePath());
-    } else {
-      if (!app.dock) throw new Error('The macOS Dock is unavailable');
-      app.dock.setIcon(loadApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)));
-      developmentApplicationIconOverride = true;
-    }
-  } catch (error) {
-    if (previousIcon) await writeStoredApplicationIcon(preferenceDirectory, previousIcon);
-    throw error;
-  }
-  selectedApplicationIcon = null;
-  broadcastApplicationIconChanged();
-  return desktopApplicationIconState();
-}
+const applicationIconController = new ApplicationIconController({
+  supported: process.platform === 'darwin',
+  automaticIcon: () => automaticApplicationIcon(nativeTheme.shouldUseDarkColors),
+  validateIcon: (iconId) => {
+    loadApplicationIcon(iconId);
+  },
+  readStoredIcon: () => readStoredApplicationIcon(applicationIconPreferenceDirectory()),
+  writeStoredIcon: (iconId) => writeStoredApplicationIcon(applicationIconPreferenceDirectory(), iconId),
+  clearStoredIcon: () => clearStoredApplicationIcon(applicationIconPreferenceDirectory()),
+  applyIcon: applyApplicationIcon,
+  resetNativeIcon: resetNativeApplicationIcon,
+  onStateChange: broadcastApplicationIconChanged,
+});
 
 function enqueueApplicationIconChange(rawIconId: unknown): Promise<DesktopApplicationIconState> {
-  const change = applicationIconMutationTail.then(() => changeApplicationIcon(rawIconId));
-  applicationIconMutationTail = change.then(() => undefined, () => undefined);
-  return change;
+  return applicationIconController.change(rawIconId);
 }
 
 function enqueueApplicationIconReset(): Promise<DesktopApplicationIconState> {
-  const reset = applicationIconMutationTail.then(() => resetApplicationIcon());
-  applicationIconMutationTail = reset.then(() => undefined, () => undefined);
-  return reset;
+  return applicationIconController.reset();
 }
 
 async function initializeApplicationIcon(): Promise<void> {
   if (process.platform !== 'darwin') return;
-  try {
-    const storedIcon = await readStoredApplicationIcon(applicationIconPreferenceDirectory());
-    if (storedIcon) {
-      selectedApplicationIcon = storedIcon;
-      await applyApplicationIcon(storedIcon);
-    }
-  } catch (error) {
-    console.warn('[avalon] could not restore the selected application icon', error);
-  }
   nativeTheme.on('updated', () => {
-    if (selectedApplicationIcon !== null) return;
-    if (developmentApplicationIconOverride) {
+    if (applicationIconController.state().isAutomatic && developmentDockIconUsesAppearancePreview) {
       void applyApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)).catch((error: unknown) => {
         console.warn('[avalon] could not refresh the development application icon', error);
       });
     }
-    broadcastApplicationIconChanged();
+    applicationIconController.appearanceChanged();
   });
+  try {
+    await applicationIconController.restore();
+  } catch (error) {
+    console.warn('[avalon] could not restore the selected application icon', error);
+  }
 }
 
 function preloadPath(): string {
@@ -1469,7 +1432,6 @@ if (!singleInstanceLock) {
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
     await loadStoredAuth();
-    await initializeApplicationIcon();
     await installRendererProtocol();
     installContentSecurityPolicy();
     registerIpc();
@@ -1490,6 +1452,7 @@ if (!singleInstanceLock) {
     });
     installApplicationMenu();
     await createMainWindow();
+    void initializeApplicationIcon();
 
     const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));
     if (initialDeepLink) emitDeepLink(initialDeepLink);
