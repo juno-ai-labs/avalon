@@ -105,7 +105,7 @@ function renderSettings(nextWorkspace: Workspace = workspace, client = createTes
   );
 }
 
-function openSettingsSection(name: 'General' | 'Account' | 'Workspace' | 'Connections' | 'Application'): void {
+function openSettingsSection(name: 'Account' | 'Workspace' | 'Connections' | 'Application'): void {
   const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
   fireEvent.click(within(navigation).getByRole('button', { name }));
 }
@@ -207,7 +207,7 @@ describe('Workspace settings', () => {
 
   it('targets an already-open singleton settings window and ignores invalid section events', async () => {
     renderSettings();
-    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
 
     act(() => settingsSectionRequest.listener?.('connections'));
     expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeVisible();
@@ -216,11 +216,11 @@ describe('Workspace settings', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Connections' })).toBeVisible();
   });
 
-  it('falls back to General for an invalid initial settings section', () => {
-    window.history.replaceState({}, '', '/?surface=settings&settingsSection=not-a-section#/settings');
+  it('falls back to Account for the removed General settings section', () => {
+    window.history.replaceState({}, '', '/?surface=settings&settingsSection=general#/settings');
     renderSettings();
 
-    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
   });
 
   it('offers separate Google presets with their exact personal and workspace capabilities', async () => {
@@ -765,11 +765,11 @@ describe('Workspace settings', () => {
 
   it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {
     renderSettings();
+    openSettingsSection('Workspace');
 
     expect(await screen.findByText('Data region')).toBeVisible();
     expect(screen.getByText('European Union')).toBeVisible();
     expect(screen.getByText('Locked')).toBeVisible();
-    openSettingsSection('Workspace');
     expect(await screen.findByText('Sam')).toBeVisible();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Email address' }), {
@@ -799,15 +799,19 @@ describe('Workspace settings', () => {
     renderSettings();
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    expect(within(navigation).getByRole('button', { name: 'General' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { level: 1, name: 'General' })).toBeVisible();
-
-    openSettingsSection('Account');
+    expect(within(navigation).queryByRole('button', { name: 'General' })).not.toBeInTheDocument();
     expect(within(navigation).getByRole('button', { name: 'Account' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('heading', { level: 1, name: 'Account' })).toBeVisible();
+
     expect(screen.getByText('adam@example.com')).toBeVisible();
 
     const search = screen.getByRole('searchbox', { name: 'Search settings' });
+    fireEvent.change(search, { target: { value: 'region' } });
+    expect(within(navigation).getByRole('button', { name: 'Workspace' })).toBeVisible();
+    expect(within(navigation).queryByRole('button', { name: 'Account' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Workspace' })).toBeVisible());
+    expect(screen.getByText('Data region')).toBeVisible();
+
     fireEvent.change(search, { target: { value: 'connector' } });
     expect(within(navigation).getByRole('button', { name: 'Connections' })).toBeVisible();
     expect(within(navigation).queryByRole('button', { name: 'Account' })).not.toBeInTheDocument();
