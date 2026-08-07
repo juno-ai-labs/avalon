@@ -1319,6 +1319,18 @@ export class AvalonApi {
     return response.url;
   }
 
+  async createXConnection(
+    scope: 'you' | 'workspace',
+    capabilities: string[],
+  ): Promise<WorkstreamConnection> {
+    const response = await this.request('/connections/x', {
+      method: 'POST',
+      body: { scope: scope === 'you' ? 'personal' : 'workspace', capabilities },
+      schema: z.object({ connection: WireConnectionSchema }),
+    });
+    return mapConnection(response.connection);
+  }
+
   async reconnectConnection(id: string): Promise<string> {
     const response = await this.request(`/connections/${encodeURIComponent(id)}/reconnect`, {
       method: 'POST',
