@@ -87,7 +87,7 @@ export interface Env {
   SLACK_CLIENT_ID?: string;
   SLACK_CLIENT_SECRET?: string;
   SLACK_SIGNING_SECRET?: string;
-  X_API_KEY?: string;
+  TWITTER_API_IO_API_KEY?: string;
   SESSION_SIGNING_KEY: string;
   OAUTH_STATE_ENCRYPTION_KEY: string;
   CONNECTOR_CREDENTIALS_KEY: string;

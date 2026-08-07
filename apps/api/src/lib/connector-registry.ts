@@ -67,7 +67,7 @@ export function slackConnectorConfig(env: Env): SlackConnectorConfig | null {
 }
 
 export function xConnectorConfig(env: Env): XConnectorConfig | null {
-  const apiKey = env.X_API_KEY?.trim();
+  const apiKey = env.TWITTER_API_IO_API_KEY?.trim();
   if (!apiKey) return null;
   return { apiKey };
 }

@@ -14,12 +14,12 @@ function env(overrides: Partial<Env> = {}): Env {
 describe("X connector configuration", () => {
   it("keeps the connector unavailable without an API key", () => {
     expect(xConnectorConfig(env())).toBeNull();
-    expect(xConnectorConfig(env({ X_API_KEY: "   " }))).toBeNull();
+    expect(xConnectorConfig(env({ TWITTER_API_IO_API_KEY: "   " }))).toBeNull();
     expect(connectorRegistryForEnv(env()).list().map((manifest) => manifest.type)).not.toContain("x");
   });
 
   it("registers the complete X read surface when configured", () => {
-    const input = env({ X_API_KEY: "  x-api-key  " });
+    const input = env({ TWITTER_API_IO_API_KEY: "  x-api-key  " });
     expect(xConnectorConfig(input)).toEqual({ apiKey: "x-api-key" });
     expect(connectorRegistryForEnv(input).get("x").manifest.tools.map((tool) => tool.name)).toEqual([
       "get_user_timeline",
