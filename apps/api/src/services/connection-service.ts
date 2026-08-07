@@ -14,6 +14,9 @@ import {
 } from "@avalon/connectors";
 import type {
   Connection,
+  ConnectorOAuthAttempt,
+  ConnectorOAuthProvider,
+  ConnectorOAuthStart,
   CreateWebhookConnectionRequestSchema,
   Scope,
 } from "@avalon/contracts";
@@ -55,7 +58,16 @@ interface StoredConnection extends Record<string, unknown> {
   model_plugin_id: string;
 }
 
-type OAuthConnectorProvider = "linear" | "notion" | "slack";
+type OAuthConnectorProvider = Exclude<ConnectorOAuthProvider, "google" | "github">;
+
+interface ConnectorOAuthAttemptRow {
+  id: string;
+  provider: ConnectorOAuthProvider;
+  status: "pending" | "succeeded" | "denied" | "failed";
+  connection_id: string | null;
+  error_code: string | null;
+  expires_at: string;
+}
 
 export interface GitHubSetupResult {
   url: string;
@@ -92,7 +104,7 @@ export class ConnectionService {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
-  }): Promise<{ url: string }> {
+  }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
     const capabilities = [...new Set(input.capabilities)];
@@ -102,18 +114,24 @@ export class ConnectionService {
     const verifier = randomToken(64);
     const challenge = await sha256(verifier);
     const state = randomToken(32);
+    const attemptId = randomToken(32);
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     const statePayload = await sealString(JSON.stringify({
+      provider: "google",
+      attemptId,
       verifier,
       scope: input.scope,
       capabilities,
       connectionId: input.connectionId ?? null,
     }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    await this.env.DB.prepare(
-      `INSERT INTO oauth_states
-       (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
-        return_uri, expires_at)
-       VALUES (?, ?, 'google', 'connector', ?, ?, ?, ?, ?)`,
-    ).bind(state, this.env.AVALON_REGION, statePayload, auth.userId, auth.workspaceId, this.env.DESKTOP_DEEP_LINK_URI, new Date(Date.now() + 10 * 60_000).toISOString()).run();
+    await this.persistOAuthStart({
+      attemptId,
+      provider: "google",
+      state,
+      statePayload,
+      auth,
+      expiresAt,
+    });
     const adapter = this.registry().get("google");
     const authorization = await adapter.beginAuthorization?.({
       state,
@@ -126,20 +144,14 @@ export class ConnectionService {
       ],
     });
     if (!authorization) throw new ApiError(503, "google_oauth_unavailable", "Google authorization is unavailable");
-    return { url: authorization.url };
+    return { url: authorization.url, attemptId };
   }
 
   async completeGoogle(code: string, state: string): Promise<string> {
-    const row = await this.env.DB.prepare(
-      `UPDATE oauth_states SET consumed_at = ?
-       WHERE id = ? AND provider = 'google' AND purpose = 'connector' AND region = ?
-         AND consumed_at IS NULL AND expires_at > ?
-       RETURNING *`,
-    ).bind(nowIso(), state, this.env.AVALON_REGION, nowIso()).first<Record<string, unknown>>();
-    if (!row) throw new ApiError(401, "invalid_oauth_state", "Google authorization is invalid or expired");
+    const row = await this.consumeProviderState("google", state, "connector");
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
-    ) as { verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
+    ) as { provider?: "google"; attemptId?: unknown; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
     const adapter = this.registry().get("google");
     const incomingCredentials = await adapter.handleAuthorizationCallback?.({ code, codeVerifier: stateData.verifier });
     if (!incomingCredentials) throw new ApiError(502, "google_token_exchange_failed", "Google did not return connector credentials");
@@ -232,13 +244,18 @@ export class ConnectionService {
     const redirect = new URL(String(row.return_uri));
     redirect.searchParams.set("connection", connectionId);
     redirect.searchParams.set("status", "connected");
+    redirect.searchParams.set("region", this.env.AVALON_REGION);
+    const attemptId = oauthAttemptIdValue(stateData.attemptId);
+    if (attemptId) redirect.searchParams.set("attempt", attemptId);
+    redirect.searchParams.set("provider", "google");
+    if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
     return redirect.toString();
   }
 
   async beginProvider(
     provider: OAuthConnectorProvider,
     input: { scope: Scope; capabilities: string[]; connectionId?: string },
-  ): Promise<{ url: string }> {
+  ): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
     const adapter = this.registry().get(provider);
@@ -266,28 +283,24 @@ export class ConnectionService {
     const verifier = randomToken(64);
     const challenge = await sha256(verifier);
     const state = randomToken(32);
+    const attemptId = randomToken(32);
+    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
     const statePayload = await sealString(JSON.stringify({
       provider,
+      attemptId,
       verifier,
       scope: input.scope,
       capabilities,
       connectionId: input.connectionId ?? null,
     }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    await this.env.DB.prepare(
-      `INSERT INTO oauth_states
-       (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
-        return_uri, expires_at)
-       VALUES (?, ?, ?, 'connector', ?, ?, ?, ?, ?)`,
-    ).bind(
-      state,
-      this.env.AVALON_REGION,
+    await this.persistOAuthStart({
+      attemptId,
       provider,
+      state,
       statePayload,
-      auth.userId,
-      auth.workspaceId,
-      this.env.DESKTOP_DEEP_LINK_URI,
-      new Date(Date.now() + 10 * 60_000).toISOString(),
-    ).run();
+      auth,
+      expiresAt,
+    });
     const authorization = await adapter.beginAuthorization?.({
       state,
       codeChallenge: challenge,
@@ -295,14 +308,14 @@ export class ConnectionService {
       scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
     });
     if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
-    return { url: authorization.url };
+    return { url: authorization.url, attemptId };
   }
 
   async beginGitHub(input: {
     scope: Scope;
     capabilities: string[];
     connectionId?: string;
-  }): Promise<{ url: string }> {
+  }): Promise<ConnectorOAuthStart> {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
     const adapter = this.registry().get("github");
@@ -317,35 +330,34 @@ export class ConnectionService {
     // The public App has one setup URL. Keep the unpredictable value in this
     // regional D1 row and expose only the region as a routing prefix.
     const state = createGitHubInstallState(this.env.AVALON_REGION, randomToken(32));
+    const attemptId = randomToken(32);
+    const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     const statePayload = await sealString(JSON.stringify({
       provider: "github",
+      attemptId,
       scope: input.scope,
       capabilities,
       connectionId: input.connectionId ?? null,
     }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
-    await this.env.DB.prepare(
-      `INSERT INTO oauth_states
-       (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id, return_uri, expires_at)
-       VALUES (?, ?, 'github', 'github_install', ?, ?, ?, ?, ?)`,
-    ).bind(
+    await this.persistOAuthStart({
+      attemptId,
+      provider: "github",
+      purpose: "github_install",
       state,
-      this.env.AVALON_REGION,
       statePayload,
-      auth.userId,
-      auth.workspaceId,
-      this.env.DESKTOP_DEEP_LINK_URI,
-      new Date(Date.now() + 15 * 60_000).toISOString(),
-    ).run();
+      auth,
+      expiresAt,
+    });
     const url = new URL(`https://github.com/apps/${encodeURIComponent(this.env.GITHUB_APP_SLUG)}/installations/new`);
     url.searchParams.set("state", state);
-    return { url: url.toString() };
+    return { url: url.toString(), attemptId };
   }
 
   async setupGitHub(installationId: string, state: string): Promise<GitHubSetupResult> {
     const installState = await this.consumeProviderState("github", state, "github_install");
     const stateData = JSON.parse(
       await openString(String(installState.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
-    ) as { provider: "github"; scope: Scope; capabilities: string[]; connectionId: string | null };
+    ) as { provider: "github"; attemptId: string; scope: Scope; capabilities: string[]; connectionId: string | null };
     const config = githubConnectorConfig(this.env);
     if (!config) throw new ApiError(503, "github_app_unavailable", "The Avalon GitHub App is not configured");
     const installation = await getGitHubInstallation(config, installationId, AbortSignal.timeout(15_000));
@@ -391,7 +403,7 @@ export class ConnectionService {
     const row = await this.consumeProviderState("github", state, "connector");
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
-    ) as { provider: "github"; verifier: string; installationId: string; scope: Scope; capabilities: string[]; connectionId: string | null };
+    ) as { provider: "github"; attemptId?: unknown; verifier: string; installationId: string; scope: Scope; capabilities: string[]; connectionId: string | null };
     const adapter = this.registry().get("github");
     const incomingCredentials = await adapter.handleAuthorizationCallback?.({
       code,
@@ -543,6 +555,11 @@ export class ConnectionService {
     const redirect = new URL(String(row.return_uri));
     redirect.searchParams.set("connection", connectionId);
     redirect.searchParams.set("status", "connected");
+    redirect.searchParams.set("region", this.env.AVALON_REGION);
+    const attemptId = oauthAttemptIdValue(stateData.attemptId);
+    if (attemptId) redirect.searchParams.set("attempt", attemptId);
+    redirect.searchParams.set("provider", "github");
+    if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
     return redirect.toString();
   }
 
@@ -550,7 +567,7 @@ export class ConnectionService {
     const row = await this.consumeProviderState(provider, state, "connector");
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
-    ) as { provider: OAuthConnectorProvider; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
+    ) as { provider: OAuthConnectorProvider; attemptId?: unknown; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
     if (stateData.provider !== provider) throw new ApiError(401, "invalid_oauth_state", "The connector provider does not match this authorization");
     await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
     const adapter = this.registry().get(provider);
@@ -765,10 +782,117 @@ export class ConnectionService {
     const redirect = new URL(String(row.return_uri));
     redirect.searchParams.set("connection", connectionId);
     redirect.searchParams.set("status", "connected");
+    redirect.searchParams.set("region", this.env.AVALON_REGION);
+    const attemptId = oauthAttemptIdValue(stateData.attemptId);
+    if (attemptId) redirect.searchParams.set("attempt", attemptId);
+    redirect.searchParams.set("provider", provider);
+    if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
     return redirect.toString();
   }
 
-  async reconnect(id: string): Promise<{ url: string }> {
+  async completeProviderDenial(provider: ConnectorOAuthProvider, state: string): Promise<string> {
+    const purpose = provider === "github" && (state.startsWith("global.") || state.startsWith("eu."))
+      ? "github_install"
+      : "connector";
+    const row = await this.consumeProviderState(provider, state, purpose);
+    const attemptId = await this.oauthAttemptIdFromState(row);
+    await this.finishOAuthAttempt(attemptId, "denied", { errorCode: "oauth_denied" });
+    return this.connectorAttemptTarget({
+      provider,
+      status: "denied",
+      attemptId,
+      errorCode: "oauth_denied",
+    });
+  }
+
+  async failProviderAttempt(
+    provider: ConnectorOAuthProvider,
+    state: string,
+    errorCode: string,
+  ): Promise<string> {
+    const row = await this.env.DB.prepare(
+      `SELECT * FROM oauth_states
+       WHERE id = ? AND provider = ? AND region = ?
+         AND purpose IN ('connector', 'github_install')`,
+    ).bind(state, provider, this.env.AVALON_REGION).first<Record<string, unknown>>();
+    if (!row) {
+      return this.connectorAttemptTarget({
+        provider,
+        status: "failed",
+        errorCode: normalizeOAuthErrorCode(errorCode),
+      });
+    }
+    let attemptId: string;
+    try {
+      attemptId = await this.oauthAttemptIdFromState(row);
+    } catch {
+      return this.connectorAttemptTarget({
+        provider,
+        status: "failed",
+        errorCode: normalizeOAuthErrorCode(errorCode),
+      });
+    }
+    const existing = await this.loadOAuthAttempt(attemptId);
+    if (existing?.status === "succeeded" && existing.connection_id) {
+      return this.connectorAttemptTarget({
+        provider,
+        status: "succeeded",
+        attemptId,
+        connectionId: existing.connection_id,
+      });
+    }
+    const terminalStatus = existing?.status === "denied" ? "denied" : "failed";
+    const terminalError = existing?.error_code ?? normalizeOAuthErrorCode(errorCode);
+    if (!existing || existing.status === "pending") {
+      await this.finishOAuthAttempt(attemptId, terminalStatus, { errorCode: terminalError });
+    }
+    return this.connectorAttemptTarget({
+      provider,
+      status: terminalStatus,
+      attemptId,
+      errorCode: terminalError,
+    });
+  }
+
+  async getOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttempt> {
+    const auth = this.requireAuth();
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `UPDATE connector_oauth_attempts
+       SET status = 'failed', error_code = 'oauth_attempt_expired', completed_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?
+         AND status = 'pending' AND expires_at <= ?`,
+    ).bind(
+      at,
+      at,
+      attemptId,
+      auth.workspaceId,
+      auth.userId,
+      this.env.AVALON_REGION,
+      at,
+    ).run();
+    const row = await this.env.DB.prepare(
+      `SELECT id, provider, status, connection_id, error_code, expires_at
+       FROM connector_oauth_attempts
+       WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?`,
+    ).bind(
+      attemptId,
+      auth.workspaceId,
+      auth.userId,
+      this.env.AVALON_REGION,
+    ).first<ConnectorOAuthAttemptRow>();
+    if (!row) throw new ApiError(404, "oauth_attempt_not_found", "The connector authorization attempt was not found");
+    return {
+      attemptId: row.id,
+      provider: row.provider,
+      status: row.status,
+      connectionId: row.connection_id,
+      errorCode: row.error_code,
+      expiresAt: row.expires_at,
+    };
+  }
+
+  async reconnect(id: string): Promise<ConnectorOAuthStart> {
     const connection = await this.loadAuthorized(id);
     if (connection.connector_type === "google") {
       return this.beginGoogle({
@@ -1128,6 +1252,117 @@ export class ConnectionService {
 
   private registry() {
     return connectorRegistryForEnv(this.env);
+  }
+
+  private async persistOAuthStart(input: {
+    attemptId: string;
+    provider: ConnectorOAuthProvider;
+    purpose?: "connector" | "github_install";
+    state: string;
+    statePayload: string;
+    auth: AuthContext;
+    expiresAt: string;
+  }): Promise<void> {
+    const at = nowIso();
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO connector_oauth_attempts
+         (id, region, provider, user_id, workspace_id, status, connection_id,
+          error_code, expires_at, completed_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?)`,
+      ).bind(
+        input.attemptId,
+        this.env.AVALON_REGION,
+        input.provider,
+        input.auth.userId,
+        input.auth.workspaceId,
+        input.expiresAt,
+        at,
+        at,
+      ),
+      this.env.DB.prepare(
+        `INSERT INTO oauth_states
+         (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
+          return_uri, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        input.state,
+        this.env.AVALON_REGION,
+        input.provider,
+        input.purpose ?? "connector",
+        input.statePayload,
+        input.auth.userId,
+        input.auth.workspaceId,
+        this.env.DESKTOP_DEEP_LINK_URI,
+        input.expiresAt,
+      ),
+    ]);
+  }
+
+  private async oauthAttemptIdFromState(row: Record<string, unknown>): Promise<string> {
+    const payload = JSON.parse(
+      await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
+    ) as { attemptId?: unknown };
+    if (typeof payload.attemptId !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(payload.attemptId)) {
+      throw new ApiError(401, "invalid_oauth_state", "The connector authorization attempt is invalid");
+    }
+    return payload.attemptId;
+  }
+
+  private async finishOAuthAttempt(
+    attemptId: string,
+    status: "succeeded" | "denied" | "failed",
+    result: { connectionId?: string; errorCode?: string },
+  ): Promise<void> {
+    const at = nowIso();
+    const updated = await this.env.DB.prepare(
+      `UPDATE connector_oauth_attempts
+       SET status = ?, connection_id = ?, error_code = ?, completed_at = ?, updated_at = ?
+       WHERE id = ? AND region = ? AND status = 'pending'
+       RETURNING id`,
+    ).bind(
+      status,
+      result.connectionId ?? null,
+      result.errorCode ?? null,
+      at,
+      at,
+      attemptId,
+      this.env.AVALON_REGION,
+    ).first<{ id: string }>();
+    if (!updated) {
+      const existing = await this.loadOAuthAttempt(attemptId);
+      if (!existing || existing.status !== status || existing.connection_id !== (result.connectionId ?? null)) {
+        throw new ApiError(409, "oauth_attempt_already_completed", "The connector authorization attempt already completed");
+      }
+    }
+  }
+
+  private async loadOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttemptRow | null> {
+    return this.env.DB.prepare(
+      `SELECT id, provider, status, connection_id, error_code, expires_at
+       FROM connector_oauth_attempts WHERE id = ? AND region = ?`,
+    ).bind(attemptId, this.env.AVALON_REGION).first<ConnectorOAuthAttemptRow>();
+  }
+
+  private connectorAttemptTarget(input: {
+    provider: ConnectorOAuthProvider;
+    status: "succeeded" | "denied" | "failed";
+    attemptId?: string;
+    connectionId?: string;
+    errorCode?: string;
+  }): string {
+    const target = new URL(this.env.DESKTOP_DEEP_LINK_URI);
+    target.searchParams.set("provider", input.provider);
+    target.searchParams.set("region", this.env.AVALON_REGION);
+    if (input.attemptId) target.searchParams.set("attempt", input.attemptId);
+    if (input.status === "succeeded" && input.connectionId) {
+      target.searchParams.set("connection", input.connectionId);
+      target.searchParams.set("status", "connected");
+    } else {
+      target.searchParams.set("status", input.status);
+      target.searchParams.set("error", normalizeOAuthErrorCode(input.errorCode ?? "connector_oauth_failed"));
+    }
+    return target.toString();
   }
 
   private requireAuth(): AuthContext {
@@ -1623,6 +1858,15 @@ function isUniqueConstraintError(error: unknown): boolean {
   return error instanceof Error && /unique constraint failed|constraint_unique/iu.test(error.message);
 }
 
+function normalizeOAuthErrorCode(value: string): string {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9_-]+/gu, "_").replace(/^_+|_+$/gu, "").slice(0, 100);
+  return normalized || "connector_oauth_failed";
+}
+
+function oauthAttemptIdValue(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/u.test(value) ? value : null;
+}
+
 function assertLinearNativeAgentCapabilityEnabled(
   capabilities: string[],
   env: Pick<Env, "LINEAR_NATIVE_AGENT_ENABLED">,
@@ -1655,5 +1899,7 @@ export const __connectionServiceTesting = {
   assertSameLinearPersonalIdentity,
   assertSameLinearWorkspaceIdentity,
   isUniqueConstraintError,
+  normalizeOAuthErrorCode,
+  oauthAttemptIdValue,
   assertLinearNativeAgentCapabilityEnabled,
 };

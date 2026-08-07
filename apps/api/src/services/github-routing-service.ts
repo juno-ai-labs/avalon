@@ -30,8 +30,14 @@ export interface GitHubRegionalSetupInput {
   state: string;
 }
 
+export interface GitHubRegionalSetupFailureInput {
+  state: string;
+  errorCode: string;
+}
+
 export interface GitHubRegionalBridgeRpcBinding {
   setupGitHub(input: GitHubRegionalSetupInput): Promise<GitHubRegionalRpcResult<GitHubSetupResult>>;
+  failGitHubSetup(input: GitHubRegionalSetupFailureInput): Promise<GitHubRegionalRpcResult<string>>;
   ingestGitHub(input: GitHubRegionalWebhookInput): Promise<GitHubRegionalRpcResult<ProviderWebhookIngestionResult>>;
 }
 
@@ -77,6 +83,11 @@ interface GitHubRoutingServiceOptions {
     installationId: string,
     state: string,
   ) => Promise<GitHubSetupResult>;
+  failSetupInRegion?: (
+    region: Region,
+    state: string,
+    errorCode: string,
+  ) => Promise<string>;
   ingestInRegion?: (
     region: Region,
     rawBody: Uint8Array,
@@ -106,6 +117,7 @@ interface ExpiredPendingDeliveryRow {
 export class GitHubRoutingService {
   private readonly now: () => number;
   private readonly setupInRegion: NonNullable<GitHubRoutingServiceOptions["setupInRegion"]>;
+  private readonly failSetupInRegion: NonNullable<GitHubRoutingServiceOptions["failSetupInRegion"]>;
   private readonly ingestInRegion: NonNullable<GitHubRoutingServiceOptions["ingestInRegion"]>;
 
   constructor(
@@ -115,6 +127,8 @@ export class GitHubRoutingService {
     this.now = options.now ?? Date.now;
     this.setupInRegion = options.setupInRegion ?? ((region, installationId, state) =>
       this.defaultSetupInRegion(region, installationId, state));
+    this.failSetupInRegion = options.failSetupInRegion ?? ((region, state, errorCode) =>
+      this.defaultFailSetupInRegion(region, state, errorCode));
     this.ingestInRegion = options.ingestInRegion ?? ((region, rawBody, headers) =>
       this.defaultIngestInRegion(region, rawBody, headers));
   }
@@ -134,6 +148,12 @@ export class GitHubRoutingService {
     await this.replayPendingBestEffort(installationId);
     await this.cleanupExpiredPending();
     return setup.url;
+  }
+
+  async failGitHubSetup(state: string, errorCode: string): Promise<string> {
+    this.assertGlobalIngress();
+    const region = githubRegionFromInstallState(state);
+    return this.failSetupInRegion(region, state, errorCode);
   }
 
   async ingestGitHub(
@@ -186,6 +206,22 @@ export class GitHubRoutingService {
     if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_GITHUB_BRIDGE) {
       return unwrapRegionalResult(
         await this.env.EU_GITHUB_BRIDGE.setupGitHub({ installationId, state }),
+      );
+    }
+    throw new ApiError(503, "github_region_unavailable", `The ${region} GitHub connector service is unavailable`);
+  }
+
+  private async defaultFailSetupInRegion(
+    region: Region,
+    state: string,
+    errorCode: string,
+  ): Promise<string> {
+    if (region === this.env.AVALON_REGION) {
+      return new ConnectionService(this.env).failProviderAttempt("github", state, errorCode);
+    }
+    if (region === "eu" && this.env.AVALON_REGION === "global" && this.env.EU_GITHUB_BRIDGE) {
+      return unwrapRegionalResult(
+        await this.env.EU_GITHUB_BRIDGE.failGitHubSetup({ state, errorCode }),
       );
     }
     throw new ApiError(503, "github_region_unavailable", `The ${region} GitHub connector service is unavailable`);

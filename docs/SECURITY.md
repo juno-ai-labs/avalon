@@ -12,7 +12,7 @@ The renderer, inbound internet, connector providers, monitored URLs, model outpu
 - Navigation and popup creation are denied by default; OAuth opens in the system browser.
 - A strict Content Security Policy allows bundled content and the configured regional API only.
 - Refresh material uses `safeStorage` in the main process. The renderer receives short-lived access only through the narrow session bridge.
-- The custom `avalon://` callback carries one opaque, expiring, single-use ticket—never Google or connector tokens.
+- The custom `avalon://` callback carries only an opaque, expiring, single-use login ticket or a non-secret connector result—never provider codes or tokens.
 - The native Settings window uses the same sandbox, preload, CSP, navigation denial, and regional session bridge as the main window. **Command-,** opens a singleton window rather than a privileged remote page.
 
 ### macOS distribution and updates
@@ -25,7 +25,7 @@ Both `Avalon.app` and the DMG container are signed, submitted to Apple's notary 
 
 ## Authentication and authorization
 
-Google identity OAuth uses state and PKCE. The desktop starts it with POST, then opens only the provider URL containing opaque state. The temporary `/auth/desktop/` page validates the exact custom-protocol target, keeps the ticket in the URL fragment, applies `no-store`/`no-referrer`, removes the fragment immediately, and never renders or logs it. Connector consent is a separate incremental flow. OAuth states and desktop tickets are expiring and atomically consumed. Refresh tokens are hashed for sessions or AES-GCM encrypted for providers.
+Google identity OAuth uses state and PKCE. The desktop starts it with POST, then opens only the provider URL containing opaque state. Every identity and connector callback is completed by the owning regional server before the temporary `/auth/desktop/` page receives an exact custom-protocol target in its URL fragment. The page applies `no-store`/`no-referrer`, removes the fragment immediately, and never renders or logs the target. Connector consent is a separate incremental flow whose durable attempt result lets the desktop reconcile success, denial, failure, or expiry even if the custom-protocol notification is lost. OAuth states and desktop tickets are expiring and atomically consumed. Refresh tokens are hashed for sessions or AES-GCM encrypted for providers.
 
 Every API resource query includes `workspace_id`. Mutations additionally resolve membership role. Every connector tool checks its execution principal, connection scope, granted capability, and resource visibility. Workspace-scoped connector capabilities roll down to every work stream in that workspace and execute as the workspace principal; participants do not implicitly share their personal connectors.
 
