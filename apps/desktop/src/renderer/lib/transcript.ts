@@ -25,13 +25,35 @@ export function isSameLogicalMessage(left: Message, right: Message): boolean {
   return Boolean(right.clientMessageId && right.clientMessageId === left.id);
 }
 
+function preferLogicalMessage(existing: Message, incoming: Message): Message {
+  const existingElicitation = existing.messageType === 'elicitation' ? existing.elicitation : undefined;
+  const incomingElicitation = incoming.messageType === 'elicitation' ? incoming.elicitation : undefined;
+  if (
+    existingElicitation
+    && incomingElicitation
+    && existingElicitation.id === incomingElicitation.id
+    && existingElicitation.status === 'answered'
+    && incomingElicitation.status === 'open'
+  ) {
+    return existing;
+  }
+  return incoming;
+}
+
 export function upsertTranscriptMessage(messages: Message[] | undefined, message: Message): Message[] {
   const existing = messages ?? [];
   const index = existing.findIndex((candidate) => isSameLogicalMessage(candidate, message));
   if (index < 0) return [...existing, message];
+  const existingReplacement = existing.slice(index + 1).reduce(
+    (preferred, candidate) => isSameLogicalMessage(candidate, message)
+      ? preferLogicalMessage(preferred, candidate)
+      : preferred,
+    existing[index]!,
+  );
+  const replacement = preferLogicalMessage(existingReplacement, message);
   return [
     ...existing.slice(0, index),
-    message,
+    replacement,
     ...existing.slice(index + 1).filter((candidate) => !isSameLogicalMessage(candidate, message)),
   ];
 }

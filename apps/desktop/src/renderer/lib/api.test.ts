@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail } from './api';
+import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -413,6 +413,66 @@ describe('Avalon API wire adapter', () => {
       messageType: 'elicitation',
       elicitation: { id: taskId, status: 'answered', answer: 'foo' },
     });
+  });
+
+  it('replaces a durable open elicitation message with its answered response regardless of order', () => {
+    const elicitation = {
+      id: taskId,
+      workstreamId,
+      harnessRunId: messageId,
+      prompt: 'Choose one',
+      responseType: 'single_select' as const,
+      options: [{ label: 'Foo', value: 'foo', description: null }],
+      minimumSelections: 1,
+      maximumSelections: 1,
+      targetUserId: null,
+      answeredByUserId: null,
+      createdAt: timestamp,
+      answeredAt: null,
+    };
+    const openQuestion = mapMessage({
+      ...message,
+      id: taskId,
+      clientMessageId: `elicitation:${taskId}`,
+      author: { type: 'agent' as const },
+      messageType: 'elicitation' as const,
+      textContent: '',
+      structuredContent: {
+        kind: 'elicitation',
+        elicitation: { ...elicitation, status: 'open' as const, answer: null },
+      },
+      mentions: [],
+      sequenceNumber: 4,
+    });
+    const answeredResponse = mapMessage({
+      ...message,
+      id: 'durable-elicitation-answer-message',
+      clientMessageId: `elicitation-response:${taskId}`,
+      author: { type: 'human' as const, user },
+      messageType: 'elicitation' as const,
+      textContent: '',
+      structuredContent: {
+        kind: 'elicitation_response',
+        elicitation: {
+          ...elicitation,
+          status: 'answered' as const,
+          answer: 'foo',
+          answeredByUserId: userId,
+          answeredAt: timestamp,
+        },
+      },
+      mentions: [],
+      sequenceNumber: 5,
+    });
+
+    expect(messagesWithTransientBlocks(
+      [openQuestion, answeredResponse],
+      mapWorkstreamDetail(detail),
+    )).toEqual([answeredResponse]);
+    expect(messagesWithTransientBlocks(
+      [answeredResponse, openQuestion],
+      mapWorkstreamDetail(detail),
+    )).toEqual([answeredResponse]);
   });
 
   it('maps persisted artifacts and background activity into the durable rail model', () => {
