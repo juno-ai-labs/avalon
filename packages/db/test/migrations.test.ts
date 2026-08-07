@@ -159,6 +159,83 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("retires personal X connections and enforces workspace-only scope", () => {
+    const database = migrateDatabaseThrough("0043_hypersight.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-x-workspace-only', 'google-x-workspace-only',
+              'x-workspace-only@example.com', 'X Workspace Owner',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-x-workspace-only', 'X Workspace Only',
+              'x-workspace-only', 'global', 'user-x-workspace-only',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, model_plugin_id, status, next_poll_at,
+         created_at, updated_at)
+      VALUES ('connection-x-personal-legacy', 'workspace-x-workspace-only', 'x',
+              'personal', 'user-x-workspace-only', 'X', 'encrypted', 'iv', 1,
+              '["x.read"]', 'plugin_x', 'healthy', '2026-01-02',
+              '2026-01-01', '2026-01-01');
+    `);
+
+    database.exec("BEGIN");
+    database.exec(readFileSync(new URL("../migrations/0044_x_workspace_only.sql", import.meta.url), "utf8"));
+    database.exec("COMMIT");
+
+    expect(database.prepare(
+      `SELECT status, encrypted_credentials, credential_iv, next_poll_at
+       FROM connector_connections WHERE id = 'connection-x-personal-legacy'`,
+    ).get()).toEqual({
+      status: "disabled",
+      encrypted_credentials: null,
+      credential_iv: null,
+      next_poll_at: null,
+    });
+    expect(database.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'index' AND name = 'connector_connections_x_personal_active_user_uq'`,
+    ).get()).toBeUndefined();
+
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-workspace-only', 'workspace-x-workspace-only', 'x',
+              'workspace', NULL, 'X', '["x.read"]', 'plugin_x',
+              '2026-01-02', '2026-01-02');
+    `);
+    expect(database.prepare(
+      `SELECT scope, owner_user_id, status FROM connector_connections
+       WHERE id = 'connection-x-workspace-only'`,
+    ).get()).toEqual({ scope: "workspace", owner_user_id: null, status: "healthy" });
+
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-personal-rejected', 'workspace-x-workspace-only', 'x',
+              'personal', 'user-x-workspace-only', 'X', '["x.read"]',
+              'plugin_x_personal_rejected', '2026-01-02', '2026-01-02');
+    `)).toThrow(/X connections must use workspace scope/u);
+    expect(() => database.exec(`
+      UPDATE connector_connections
+      SET scope = 'personal', owner_user_id = 'user-x-workspace-only'
+      WHERE id = 'connection-x-workspace-only';
+    `)).toThrow(/X connections must use workspace scope/u);
+    expect(() => database.exec(`
+      UPDATE connector_connections SET status = 'healthy'
+      WHERE id = 'connection-x-personal-legacy';
+    `)).toThrow(/X connections must use workspace scope/u);
+
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("establishes a rollout baseline and stores independent per-user read cursors", () => {
     const database = migrateDatabaseThrough("0038_remove_web_monitor.sql");
     database.exec(`
