@@ -1,6 +1,6 @@
 {
   "name": "avalon",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.13.0",
@@ -31,6 +31,7 @@
     "publish:desktop:release": "dotenv -e .env.local -- pnpm --filter @avalon/desktop release:publish:r2",
     "start:desktop:packaged": "pnpm --filter @avalon/desktop start:packaged",
     "deploy:site": "dotenv -e .env.local -- pnpm --filter @avalon/site run deploy",
+    "deploy:release-retention": "dotenv -e .env.local -- pnpm --filter @avalon/release-retention run deploy",
     "deploy:global": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:global",
     "deploy:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api run deploy:eu"
   },

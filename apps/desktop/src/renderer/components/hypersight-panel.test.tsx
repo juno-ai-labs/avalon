@@ -57,7 +57,7 @@ function renderPanel(onChange = vi.fn(async () => {})) {
 }
 
 describe('HyperSightPanel', () => {
-  it('clamps panel resizing to 18–58 percent of the main view', () => {
+  it('resizes linearly, clamps to 18–58 percent, and stops after release', () => {
     const onResize = vi.fn();
     const { container } = render(
       <div className="workstream-screen">
@@ -68,15 +68,23 @@ describe('HyperSightPanel', () => {
     );
     const mainView = container.querySelector('.workstream-screen') as HTMLElement;
     const shell = container.querySelector('.hypersight-shell') as HTMLElement;
+    const handle = screen.getByRole('separator', { name: 'Resize HyperSight' });
     vi.spyOn(mainView, 'getBoundingClientRect').mockReturnValue({ height: 1_000 } as DOMRect);
     vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({ height: 300 } as DOMRect);
 
-    fireEvent.pointerDown(screen.getByRole('separator', { name: 'Resize HyperSight' }), { clientY: 300 });
-    fireEvent.pointerMove(window, { clientY: 1_000 });
+    fireEvent.pointerDown(handle, { clientY: 300, pointerId: 7 });
+    fireEvent.pointerMove(handle, { clientY: 350, pointerId: 7 });
+    expect(onResize).toHaveBeenLastCalledWith(350);
+    fireEvent.pointerMove(handle, { clientY: 400, pointerId: 7 });
+    expect(onResize).toHaveBeenLastCalledWith(400);
+    fireEvent.pointerMove(handle, { clientY: 1_000, pointerId: 7 });
     expect(onResize).toHaveBeenLastCalledWith(580);
-    fireEvent.pointerMove(window, { clientY: -1_000 });
+    fireEvent.pointerMove(handle, { clientY: -1_000, pointerId: 7 });
     expect(onResize).toHaveBeenLastCalledWith(180);
-    fireEvent.pointerUp(window);
+    fireEvent.pointerUp(handle, { pointerId: 7 });
+    fireEvent.pointerMove(handle, { clientY: 450, pointerId: 7 });
+    expect(onResize).toHaveBeenCalledTimes(4);
+    expect(document.body).not.toHaveClass('is-resizing-hypersight');
   });
 
   it('renders model Markdown and live refresh state inside separate blocks', () => {
