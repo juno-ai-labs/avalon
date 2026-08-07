@@ -32,6 +32,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
+import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -59,7 +60,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
@@ -664,7 +665,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
 
             {activeSection === 'application' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>General desktop settings</h2><p>Build and service details for this Avalon installation.</p></div>
+                <div className="settings-pane-heading"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                <ApplicationIconPicker />
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
                   <div><dt>Version</dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>
                   <div><dt>Build</dt><dd>{runtime?.isPackaged ? 'Installed app' : 'Development'}</dd></div>

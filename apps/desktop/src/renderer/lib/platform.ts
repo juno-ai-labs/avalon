@@ -5,6 +5,11 @@ import type {
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../../common/desktop';
+import {
+  automaticApplicationIcon,
+  parseApplicationIconId,
+  type DesktopApplicationIconState,
+} from '../../common/application-icons';
 
 export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
 
@@ -165,6 +170,28 @@ const browserBridge: AvalonDesktopBridge = {
       },
       devAuthEnabled: import.meta.env.DEV,
     } as RuntimeConfig;
+  },
+  async getApplicationIcon() {
+    return {
+      activeIcon: automaticApplicationIcon(window.matchMedia('(prefers-color-scheme: dark)').matches),
+      isAutomatic: true,
+      supported: false,
+    } as DesktopApplicationIconState;
+  },
+  async setApplicationIcon(iconId) {
+    const parsed = parseApplicationIconId(iconId);
+    if (!parsed) throw new Error('Unknown application icon');
+    return { activeIcon: parsed, isAutomatic: false, supported: false };
+  },
+  async resetApplicationIcon() {
+    return {
+      activeIcon: automaticApplicationIcon(window.matchMedia('(prefers-color-scheme: dark)').matches),
+      isAutomatic: true,
+      supported: false,
+    };
+  },
+  onApplicationIconChanged() {
+    return () => undefined;
   },
   async getSession() {
     return browserSession;

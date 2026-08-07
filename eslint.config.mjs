@@ -22,6 +22,18 @@ export default tseslint.config(
     languageOptions: { globals: globals.node }
   },
   {
+    files: ["apps/desktop/native/*.js"],
+    languageOptions: {
+      globals: {
+        $: "readonly",
+        ObjC: "readonly"
+      }
+    },
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["error", { varsIgnorePattern: "^run$" }]
+    }
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
