@@ -62,10 +62,22 @@ export function HyperSightPanel({
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('');
   const dragImageRef = useRef<HTMLElement | null>(null);
   const dragFinishedRef = useRef(false);
+  const draggingIdRef = useRef<string | null>(null);
 
-  useEffect(() => setBlocks(hypersight.blocks), [hypersight.blocks]);
+  useEffect(() => {
+    if (!draggingIdRef.current) {
+      setBlocks(hypersight.blocks);
+      return;
+    }
+    const incomingById = new Map(hypersight.blocks.map((block) => [block.id, block]));
+    setBlocks((current) => current.map((block) => {
+      const incoming = incomingById.get(block.id);
+      return incoming ? { ...block, latestRun: incoming.latestRun } : block;
+    }));
+  }, [hypersight.blocks]);
   useEffect(() => () => dragImageRef.current?.remove(), []);
 
   const openPrompt = (block: HyperSightBlock): void => {
@@ -87,6 +99,7 @@ export function HyperSightPanel({
   const finishDrag = (): void => {
     if (dragFinishedRef.current) return;
     dragFinishedRef.current = true;
+    draggingIdRef.current = null;
     dragImageRef.current?.remove();
     dragImageRef.current = null;
     const changed = blocks.some((block, index) => block.id !== hypersight.blocks[index]?.id);
@@ -104,8 +117,9 @@ export function HyperSightPanel({
         <span>{blocks.length === 1 ? '1 block' : `${blocks.length} blocks`}</span>
       </header>
       <div className="hypersight-panel-scroll">
+        <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
         <div className="hypersight-block-list">
-          {blocks.map((block) => (
+          {blocks.map((block, blockIndex) => (
             <article
               className={clsx('hypersight-block', draggingId === block.id && 'is-dragging')}
               key={block.id}
@@ -134,12 +148,14 @@ export function HyperSightPanel({
                 <div className="hypersight-block-hover-controls">
                   <button
                     aria-label="Reorder HyperSight block"
+                    aria-keyshortcuts="ArrowUp ArrowDown"
                     className="hypersight-grip"
                     disabled={pending}
                     draggable={!pending}
                     onDragEnd={finishDrag}
                     onDragStart={(event) => {
                       dragFinishedRef.current = false;
+                      draggingIdRef.current = block.id;
                       setDraggingId(block.id);
                       event.dataTransfer.effectAllowed = 'move';
                       event.dataTransfer.setData('text/plain', block.id);
@@ -152,6 +168,16 @@ export function HyperSightPanel({
                         event.dataTransfer.setDragImage(ghost, 24, 24);
                         dragImageRef.current = ghost;
                       }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                      event.preventDefault();
+                      const targetIndex = blockIndex + (event.key === 'ArrowUp' ? -1 : 1);
+                      const target = blocks[targetIndex];
+                      if (!target) return;
+                      const next = moveBlock(blocks, block.id, target.id);
+                      setReorderAnnouncement(`Moved block to position ${targetIndex + 1} of ${blocks.length}.`);
+                      void commit(next);
                     }}
                     type="button"
                   >

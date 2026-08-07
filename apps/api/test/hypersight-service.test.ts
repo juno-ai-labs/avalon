@@ -121,9 +121,11 @@ describe("HyperSightService", () => {
       "https://room.internal/internal/events",
       expect.objectContaining({
         body: JSON.stringify({
-          type: "hypersight_preference_updated",
-          userId: OWNER_ID,
-          preference: hidden,
+          event: {
+            type: "hypersight_preference_updated",
+            preference: hidden,
+          },
+          audienceUserId: OWNER_ID,
         }),
       }),
     );
@@ -208,7 +210,7 @@ describe("HyperSightService", () => {
 
     const launched = await launchHyperSightRefresh(env, WORKSPACE_ID, WORKSTREAM_ID, 42);
     expect(launched).toEqual([
-      expect.objectContaining({ blockId: BLOCK_ID, status: "queued" }),
+      expect.objectContaining({ blockId: BLOCK_ID, triggerSequence: 42, status: "queued" }),
     ]);
     expect(startWorkflow).toHaveBeenCalledWith(expect.objectContaining({
       params: expect.objectContaining({

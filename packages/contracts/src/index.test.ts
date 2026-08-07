@@ -17,6 +17,7 @@ import {
   MessageSchema,
   MentionSchema,
   RefreshRequestSchema,
+  PersonalSocketEventSchema,
   ServerSocketEventSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
@@ -302,13 +303,17 @@ describe("boundary contracts", () => {
       visible: true,
       updatedAt: "2026-08-07T20:00:00.000Z",
     });
-    expect(ServerSocketEventSchema.parse({
+    expect(PersonalSocketEventSchema.parse({
+      type: "hypersight_preference_updated",
+      occurredAt: "2026-08-07T20:00:00.000Z",
+      preference,
+    })).toMatchObject({ type: "hypersight_preference_updated", preference });
+    expect(ServerSocketEventSchema.safeParse({
       type: "hypersight_preference_updated",
       sequence: 44,
       occurredAt: "2026-08-07T20:00:00.000Z",
-      userId: id,
       preference,
-    })).toMatchObject({ type: "hypersight_preference_updated", userId: id, preference });
+    }).success).toBe(false);
   });
 
   it("keeps room replay sequence separate from Bind stream epochs", () => {

@@ -1,8 +1,10 @@
 import {
   ClientSocketEventSchema,
   IdSchema,
+  PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WorkstreamDetailSchema,
+  type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
   type WorkstreamDetail
@@ -23,7 +25,10 @@ const SocketAttachmentSchema = z.object({
   subscribed: z.boolean().default(false)
 });
 
-const BroadcastRequestSchema = z.object({ event: z.unknown() });
+const BroadcastRequestSchema = z.object({
+  event: z.unknown(),
+  audienceUserId: IdSchema.optional(),
+}).strict();
 const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
 const SOCKET_TICKET_PREFIX = "socket-ticket:";
 const MAX_REPLAY_EVENTS = 256;
@@ -45,6 +50,10 @@ const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
 ]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+
+export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
+  return socketUserId === audienceUserId;
+}
 
 interface PendingHyperSightRefresh {
   workspaceId: string;
@@ -443,7 +452,39 @@ export class WorkstreamRoom {
       return jsonResponse({ error: "invalid_event" }, 400);
     }
 
+    const requestIdentity = RoomIdentitySchema.safeParse({
+      workspaceId: request.headers.get("x-avalon-workspace-id"),
+      workstreamId: request.headers.get("x-avalon-workstream-id"),
+    });
+    if (requestIdentity.success) {
+      const storedIdentity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
+      if (!storedIdentity.success) {
+        await this.state.storage.put("roomIdentity", requestIdentity.data);
+      } else if (
+        storedIdentity.data.workspaceId !== requestIdentity.data.workspaceId
+        || storedIdentity.data.workstreamId !== requestIdentity.data.workstreamId
+      ) {
+        return jsonResponse({ error: "room_identity_mismatch" }, 409);
+      }
+    }
+
     const rawEvent = unvalidatedEvent as Record<string, unknown>;
+    if (wrapped.success && wrapped.data.audienceUserId) {
+      const personalEvent = PersonalSocketEventSchema.safeParse({
+        ...rawEvent,
+        occurredAt:
+          typeof rawEvent.occurredAt === "string" ? rawEvent.occurredAt : new Date().toISOString(),
+      });
+      if (!personalEvent.success) {
+        return jsonResponse(
+          { error: "invalid_event", details: personalEvent.error.flatten().fieldErrors },
+          400,
+        );
+      }
+      this.broadcast(personalEvent.data, undefined, wrapped.data.audienceUserId);
+      return jsonResponse({ accepted: true }, 202);
+    }
+
     const requestedSequence =
       typeof rawEvent.sequence === "number" && Number.isSafeInteger(rawEvent.sequence)
         ? rawEvent.sequence
@@ -462,22 +503,6 @@ export class WorkstreamRoom {
         { error: "invalid_event", details: event.error.flatten().fieldErrors },
         400
       );
-    }
-
-    const requestIdentity = RoomIdentitySchema.safeParse({
-      workspaceId: request.headers.get("x-avalon-workspace-id"),
-      workstreamId: request.headers.get("x-avalon-workstream-id"),
-    });
-    if (requestIdentity.success) {
-      const storedIdentity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
-      if (!storedIdentity.success) {
-        await this.state.storage.put("roomIdentity", requestIdentity.data);
-      } else if (
-        storedIdentity.data.workspaceId !== requestIdentity.data.workspaceId
-        || storedIdentity.data.workstreamId !== requestIdentity.data.workstreamId
-      ) {
-        return jsonResponse({ error: "room_identity_mismatch" }, 409);
-      }
     }
 
     this.recordRecentEvent(event.data);
@@ -801,7 +826,11 @@ export class WorkstreamRoom {
     }
   }
 
-  private broadcast(event: ServerSocketEvent, excluding?: WebSocket): void {
+  private broadcast(
+    event: ServerSocketEvent | PersonalSocketEvent,
+    excluding?: WebSocket,
+    audienceUserId?: string,
+  ): void {
     const payload = JSON.stringify(event);
     if (textEncoder.encode(payload).byteLength > 1_000_000) {
       throw new Error("Realtime event exceeds the bounded frame size");
@@ -809,7 +838,9 @@ export class WorkstreamRoom {
 
     for (const socket of this.state.getWebSockets()) {
       if (socket === excluding) continue;
-      if (!this.readAttachment(socket)?.subscribed) continue;
+      const attachment = this.readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      if (audienceUserId && !isPersonalEventAudience(attachment.userId, audienceUserId)) continue;
       try {
         socket.send(payload);
       } catch {

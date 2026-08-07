@@ -257,6 +257,82 @@ describe("durable harness attempt runtime", () => {
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
   });
 
+  it("runs HyperSight blocks beside each other and beside the single interactive executor", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const runThree = "00000000-0000-4000-8000-000000000005";
+    const runFour = "00000000-0000-4000-8000-000000000006";
+    sqlite.database.exec(`
+      UPDATE harness_runs SET origin = 'hypersight_block', status = 'scheduled';
+      UPDATE workstreams SET harness_status = 'idle' WHERE id = '${WORKSTREAM_ID}';
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES
+        ('${runThree}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'human_message',
+         '{"type":"user","userId":"user-runtime"}', 'running', '2026-08-03'),
+        ('${runFour}', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 'hypersight_block',
+         '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}', 'scheduled', '2026-08-03');
+    `);
+
+    const [firstBlock, secondBlock] = await Promise.all([
+      claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+        attemptId: "attempt-hypersight-one",
+        owner: "owner-hypersight-one",
+      }),
+      claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
+        attemptId: "attempt-hypersight-two",
+        owner: "owner-hypersight-two",
+      }),
+    ]);
+    expect(firstBlock.state).toBe("claimed");
+    expect(secondBlock.state).toBe("claimed");
+    expect(sqlite.database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "idle" });
+
+    const interactive = await claimHarnessAttempt(sqlite.binding, input(runThree), {
+      attemptId: "attempt-interactive",
+      owner: "owner-interactive",
+    });
+    expect(interactive.state).toBe("claimed");
+    const laterBlock = await claimHarnessAttempt(sqlite.binding, input(runFour), {
+      attemptId: "attempt-hypersight-four",
+      owner: "owner-hypersight-four",
+    });
+    expect(laterBlock.state).toBe("claimed");
+  });
+
+  it("keeps the workstream running while a superseding interactive turn is pending", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    const original = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-superseded",
+      owner: "owner-superseded",
+    });
+    if (original.state !== "claimed") throw new Error("expected claimed original attempt");
+    sqlite.database.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = ?, cancellation_reason = 'superseded_by_follow_up'
+        WHERE id = ?`,
+    ).run("2026-08-07T12:00:00.000Z", RUN_ONE);
+
+    await expect(terminalizeHarnessAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      original.lease,
+      { status: "stopped" },
+    )).resolves.toBe("terminalized");
+    expect(sqlite.database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
+
+    const replacement = await claimHarnessAttempt(sqlite.binding, input(RUN_TWO), {
+      attemptId: "attempt-replacement",
+      owner: "owner-replacement",
+    });
+    expect(replacement.state).toBe("claimed");
+  });
+
   it("terminalizes a HyperSight result without a transcript message or workstream status change", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);
@@ -1304,8 +1380,8 @@ describe("durable harness attempt runtime", () => {
       `UPDATE harness_runs
           SET cancellation_requested_at = '2026-08-03T00:00:00.000Z',
               cancellation_reason = 'member_stop'
-        WHERE id = ?`,
-    ).run(RUN_ONE);
+        WHERE id IN (?, ?)`,
+    ).run(RUN_ONE, RUN_TWO);
 
     await expect(heartbeatHarnessAttempt(sqlite.binding, RUN_ONE, claim.lease))
       .rejects.toMatchObject({ code: "run_cancelled" });

@@ -117,11 +117,21 @@ export async function launchWorkstreamHarness(
     origin: string;
     executionPrincipal: ExecutionPrincipal;
     parentHarnessRunId?: string;
+    supersedeActiveRun?: boolean;
   },
 ): Promise<string> {
   const id = newId();
   const at = nowIso();
   await env.DB.batch([
+    ...(input.supersedeActiveRun ? [env.DB.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
+              cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up')
+        WHERE workspace_id = ? AND workstream_id = ?
+          AND origin != 'hypersight_block'
+          AND parent_tool_call_id IS NULL
+          AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
+    ).bind(at, input.workspaceId, input.workstreamId)] : []),
     env.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
@@ -774,6 +784,7 @@ export class WorkstreamService {
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user')
         WHERE workstream_id = ? AND workspace_id = ?
+          AND origin != 'hypersight_block'
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, id, this.auth.workspaceId).run();
   }
@@ -972,6 +983,7 @@ export class WorkstreamService {
       triggerMessageId,
       origin,
       executionPrincipal: { type: "user", userId: this.auth.userId },
+      supersedeActiveRun: origin === "human_message",
       ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
     });
   }

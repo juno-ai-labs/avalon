@@ -95,7 +95,7 @@ async function updateHyperSightRun(
     input.workstreamId,
   ).run();
   const row = await env.DB.prepare(
-    `SELECT id, block_id, configuration_version_id, status, markdown, error_json, created_at, started_at, completed_at
+    `SELECT id, block_id, configuration_version_id, trigger_sequence, status, markdown, error_json, created_at, started_at, completed_at
        FROM hypersight_block_runs
       WHERE harness_run_id = ? AND workspace_id = ? AND workstream_id = ?`,
   ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<HyperSightBlockRunRow>();
@@ -150,9 +150,18 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
           });
           return outcome;
         }
-        await step.do("deliver-slack-cancelled-before-start", SlackDeliveryRetryConfig, async () => {
-          await this.deliverSlackDurably(input, outcome);
+        const cancellationReason = await step.do("load-queued-cancellation-reason", async () => {
+          const row = await this.env.DB.prepare(
+            "SELECT cancellation_reason FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
+          ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
+            .first<{ cancellation_reason: string | null }>();
+          return row?.cancellation_reason ?? null;
         });
+        if (cancellationReason !== "superseded_by_follow_up") {
+          await step.do("deliver-slack-cancelled-before-start", SlackDeliveryRetryConfig, async () => {
+            await this.deliverSlackDurably(input, outcome);
+          });
+        }
         return outcome;
       }
       if (claim.state === "claimed") {
@@ -208,14 +217,17 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       outcome = memberSafeFailure(error);
     }
 
-    const stopped = await step.do("recheck-persisted-stop", async () => {
+    const stopState = await step.do("recheck-persisted-stop", async () => {
       const row = await this.env.DB.prepare(
-        "SELECT status, cancellation_requested_at FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
+        "SELECT status, cancellation_requested_at, cancellation_reason FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?",
       ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
-        .first<{ status: string; cancellation_requested_at: string | null }>();
-      return row?.status === "stopped" || row?.cancellation_requested_at != null;
+        .first<{ status: string; cancellation_requested_at: string | null; cancellation_reason: string | null }>();
+      return {
+        stopped: row?.status === "stopped" || row?.cancellation_requested_at != null,
+        reason: row?.cancellation_reason ?? null,
+      };
     });
-    const effectiveOutcome: HarnessWorkflowOutcome = stopped ? { ...outcome, status: "stopped" } : outcome;
+    const effectiveOutcome: HarnessWorkflowOutcome = stopState.stopped ? { ...outcome, status: "stopped" } : outcome;
 
     await step.do("terminalize-harness-attempt", async () => {
       await terminalizeHarnessAttempt(this.env.DB, input, lease!, {
@@ -246,13 +258,23 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     if (effectiveOutcome.messageId) {
       await this.publishPersistedFinalBestEffort(input, effectiveOutcome.messageId);
     }
-    await step.do("deliver-slack-terminal-outcome", SlackDeliveryRetryConfig, async () => {
-      await this.deliverSlackDurably(input, effectiveOutcome);
-    });
+    if (stopState.reason !== "superseded_by_follow_up") {
+      await step.do("deliver-slack-terminal-outcome", SlackDeliveryRetryConfig, async () => {
+        await this.deliverSlackDurably(input, effectiveOutcome);
+      });
+    }
 
+    const currentStatus = await step.do("load-current-workstream-status", async () => {
+      const row = await this.env.DB.prepare(
+        "SELECT harness_status FROM workstreams WHERE id = ? AND workspace_id = ?",
+      ).bind(input.workstreamId, input.workspaceId)
+        .first<{ harness_status: "idle" | "scheduled" | "running" | "needs_input" | "completed" | "failed" }>();
+      return row?.harness_status
+        ?? (effectiveOutcome.status === "stopped" ? "idle" : effectiveOutcome.status);
+    });
     await this.publishBestEffort(input, {
       type: "harness_status_changed",
-      status: effectiveOutcome.status === "stopped" ? "idle" : effectiveOutcome.status,
+      status: currentStatus,
     });
     return effectiveOutcome;
   }
