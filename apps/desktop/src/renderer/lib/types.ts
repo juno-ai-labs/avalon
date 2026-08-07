@@ -181,6 +181,7 @@ export interface HyperSightBlockRun {
   id: string;
   blockId: string;
   configurationVersionId: string;
+  triggerSequence: number;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
   markdown: string | null;
   error: { code: string; message: string } | null;

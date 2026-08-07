@@ -42,6 +42,7 @@ import {
   type ExecutionPrincipal,
   type Message,
   type NormalizedActivity,
+  type PersonalSocketEvent,
   type ServerSocketEvent,
   type ToolInvocation,
   type ToolDefinition,
@@ -1234,6 +1235,31 @@ export async function publishWorkstreamEvent(
   } catch {
     // Realtime delivery is an optimization. Canonical D1 state and snapshots
     // recover the UI after a room outage without replaying product mutations.
+  }
+}
+
+/** Deliver an ephemeral event only to one authenticated user's sockets. */
+export async function publishPersonalWorkstreamEvent(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+  userId: string,
+  event: Omit<PersonalSocketEvent, "occurredAt"> | Record<string, unknown>,
+): Promise<void> {
+  try {
+    const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, env.AVALON_REGION, env.APP_ENV);
+    const id = rooms.idFromName(`${env.AVALON_REGION}:${workspaceId}:${workstreamId}`);
+    await rooms.get(id).fetch("https://room.internal/internal/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-avalon-workspace-id": workspaceId,
+        "x-avalon-workstream-id": workstreamId,
+      },
+      body: JSON.stringify({ event, audienceUserId: userId }),
+    });
+  } catch {
+    // Personal realtime delivery is recoverable from the canonical preference endpoint.
   }
 }
 

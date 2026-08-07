@@ -264,16 +264,20 @@ export async function claimHarnessAttempt(
             OR lease_expires_at IS NULL
             OR lease_expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
           )
-          AND NOT EXISTS (
-            SELECT 1
-              FROM harness_runs active
-             WHERE active.workspace_id = ?2
-               AND active.workstream_id = ?3
-               AND active.id != ?1
-               AND active.parent_tool_call_id IS NULL
-               AND active.status = 'running'
-               AND active.terminalized_at IS NULL
-               AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          AND (
+            harness_runs.origin = 'hypersight_block'
+            OR NOT EXISTS (
+              SELECT 1
+                FROM harness_runs active
+               WHERE active.workspace_id = ?2
+                 AND active.workstream_id = ?3
+                 AND active.id != ?1
+                 AND active.origin != 'hypersight_block'
+                 AND active.parent_tool_call_id IS NULL
+                 AND active.status = 'running'
+                 AND active.terminalized_at IS NULL
+                 AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            )
           )`,
     ).bind(
       input.harnessRunId,
@@ -357,6 +361,7 @@ export async function claimHarnessAttempt(
             (SELECT MAX(active.lease_expires_at)
                FROM harness_runs active
               WHERE active.workspace_id = ?2 AND active.workstream_id = ?3
+                AND (harness_runs.origin = 'hypersight_block' OR active.origin != 'hypersight_block')
                 AND active.parent_tool_call_id IS NULL
                 AND active.status = 'running' AND active.terminalized_at IS NULL)
               AS active_lease_expires_at
@@ -830,10 +835,12 @@ export async function terminalizeQueuedHarnessRun(
           AND NOT EXISTS (
             SELECT 1 FROM harness_runs active
              WHERE active.workspace_id = ?3 AND active.workstream_id = ?2
-               AND active.id != ?4 AND active.status = 'running'
+               AND active.id != ?4
+               AND active.origin != 'hypersight_block'
                AND active.parent_tool_call_id IS NULL
+               AND active.status IN ('scheduled', 'running')
                AND active.terminalized_at IS NULL
-               AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+               AND active.cancellation_requested_at IS NULL
           )`,
     ).bind(
       now,
@@ -2242,6 +2249,16 @@ export async function terminalizeHarnessAttempt(
              WHERE id = ?5 AND attempt_id = ?6 AND terminalized_at = ?2
                AND parent_tool_call_id IS NULL
                AND origin != 'hypersight_block'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM harness_runs active
+             WHERE active.workspace_id = ?4 AND active.workstream_id = ?3
+               AND active.id != ?5
+               AND active.origin != 'hypersight_block'
+               AND active.parent_tool_call_id IS NULL
+               AND active.status IN ('scheduled', 'running')
+               AND active.terminalized_at IS NULL
+               AND active.cancellation_requested_at IS NULL
           )`,
     ).bind(
       workstreamStatus,
@@ -2385,6 +2402,7 @@ export async function reapStaleHarnessRuns(
               SELECT 1 FROM harness_runs active
                WHERE active.workspace_id = ?3 AND active.workstream_id = ?2
                  AND active.id != ?4 AND active.status = 'running'
+                 AND active.origin != 'hypersight_block'
                  AND active.parent_tool_call_id IS NULL
                  AND active.terminalized_at IS NULL
                  AND active.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -2414,6 +2432,7 @@ export async function reapStaleHarnessRuns(
                WHERE id = ?4 AND workstream_id = ?2 AND workspace_id = ?3
                  AND terminalized_at = ?1 AND status = 'failed'
                  AND parent_tool_call_id IS NULL
+                 AND origin != 'hypersight_block'
             )`,
       ).bind(now, row.workstream_id, row.workspace_id, row.id),
       db.prepare(

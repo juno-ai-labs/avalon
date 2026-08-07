@@ -11,6 +11,7 @@ import {
 import {
   consumeSocketTicket,
   distinctNonParticipantViewers,
+  isPersonalEventAudience,
   planSocketReplay,
   workstreamRoomName,
 } from "../src/durable-objects/workstream-room";
@@ -38,6 +39,11 @@ describe("runtime component invariants", () => {
       "eu:workspace-id:workstream-id"
     );
     expect(workspaceSchedulerName("global", "workspace-id")).toBe("global:workspace-id");
+  });
+
+  it("delivers personal room events only to the authenticated target user", () => {
+    expect(isPersonalEventAudience("user-one", "user-one")).toBe(true);
+    expect(isPersonalEventAudience("user-two", "user-one")).toBe(false);
   });
 
   it("pins EU Durable Object IDs to the EU jurisdiction namespace", () => {

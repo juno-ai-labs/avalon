@@ -122,6 +122,7 @@ export class SlackWorkspaceWorkstreamService {
       triggerMessageId: persisted.message.id,
       origin: "slack_workspace_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+      supersedeActiveRun: true,
     });
     return { message: persisted.message, harnessRunId };
   }
