@@ -12,6 +12,7 @@ import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot } from '../co
 
 interface CreateWorkstreamInput {
   attachmentIds: string[];
+  attachmentLocalIds: string[];
   attachments: MessageAttachment[];
   openingMessage: string;
   participantIds: string[];
@@ -82,7 +83,6 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const { api } = useAppSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const [message, setMessage] = useState('');
@@ -160,7 +160,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
-      attachmentDraft.consume();
+      attachmentDraft.consume(input.attachmentLocalIds);
       void navigate(`/workstreams/${created.workstream.id}`);
     },
   });
@@ -172,10 +172,10 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     submittingRef.current = true;
     const participantIds = selectedMembers.map((member) => member.id);
     setMessage('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     const createdAt = new Date().toISOString();
     create.mutate({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
+      attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
       attachments: readyAttachments.map((attachment) => ({
         id: attachment.resource!.id,
         fileName: attachment.file.name,
@@ -250,7 +250,6 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           onSubmit={submit}
           onValueChange={setMessage}
           placeholder="Describe a task or ask a question…"
-          ref={textareaRef}
           rows={2}
           submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || create.isPending || submittingRef.current}
           submitLabel="Create work stream"

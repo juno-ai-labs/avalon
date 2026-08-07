@@ -61,7 +61,6 @@ describe("boundary contracts", () => {
   it("allows a new work stream to start with text, attachments, or both", () => {
     const base = {
       clientMessageId: id,
-      objective: "Review the attached files",
       participantUserIds: [],
     };
     expect(CreateWorkstreamRequestSchema.parse({
@@ -74,6 +73,11 @@ describe("boundary contracts", () => {
       openingMessage: "",
       attachmentIds: [],
     }).success).toBe(false);
+    expect(CreateWorkstreamRequestSchema.parse({
+      ...base,
+      openingMessage: "",
+      attachmentIds: [id],
+    }).objective).toBeUndefined();
   });
 
   it("defaults inference logging off and accepts only explicit workspace preference updates", () => {
