@@ -1,12 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
 import { AppSessionProvider, useAppSession } from './app-session';
+import type { AvalonApi } from './api';
 import { readDevicePreferences } from './device-preferences';
 
 let deepLinkListener: ((url: string) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
+let observedApi: AvalonApi | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -53,7 +55,8 @@ const globalIdentitySession: DesktopSession = {
 };
 
 function SessionProbe(): React.JSX.Element {
-  const { booting, deepLinkError, invitationApi, pendingInvitation, region, session } = useAppSession();
+  const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = useAppSession();
+  observedApi = api;
   return (
     <>
       <output>
@@ -61,26 +64,34 @@ function SessionProbe(): React.JSX.Element {
       </output>
       <output data-testid="invitation-api">{invitationApi?.baseUrl ?? 'none'}</output>
       <output data-testid="session-email">{session?.user.email ?? 'none'}</output>
+      <output data-testid="session-token">{session?.accessToken ?? 'none'}</output>
+      <output data-testid="session-role">{session?.workspace?.role ?? 'none'}</output>
       <output data-testid="deep-link-error">{deepLinkError ?? 'none'}</output>
     </>
   );
 }
 
-function renderProvider(): void {
+function renderProvider(): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <AppSessionProvider><SessionProbe /></AppSessionProvider>
     </QueryClientProvider>,
   );
+  return client;
 }
 
 describe('single-platform desktop identity routing', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
     deepLinkListener = null;
     sessionListener = null;
+    observedApi = null;
     bridge.getRuntimeConfig.mockResolvedValue({
       appVersion: 'test',
       isPackaged: true,
@@ -219,15 +230,121 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('replaces or clears the provider session when another native window changes it', async () => {
-    renderProvider();
+    const client = renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
     await waitFor(() => expect(sessionListener).not.toBeNull());
+    const signedOutApi = observedApi;
 
+    client.setQueryData(['private-workspace-data'], 'signed-out-cache');
     act(() => sessionListener?.(euSession));
     expect(await screen.findByText('eu:European Research')).toBeVisible();
+    expect(client.getQueryData(['private-workspace-data'])).toBeUndefined();
+    expect(observedApi).not.toBe(signedOutApi);
 
+    const signedInApi = observedApi;
+    client.setQueryData(['private-workspace-data'], 'signed-in-cache');
     act(() => sessionListener?.(null));
     expect(await screen.findByText('global:signed-out')).toBeVisible();
+    expect(client.getQueryData(['private-workspace-data'])).toBeUndefined();
+    expect(observedApi).not.toBe(signedInApi);
+  });
+
+  it('preserves cached and transient API state across routine access-token rotation', async () => {
+    bridge.getSession.mockResolvedValueOnce(euSession);
+    const client = renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+    const initialApi = observedApi;
+    client.setQueryData(['private-workspace-data'], 'still-mounted');
+
+    const refreshedSession: DesktopSession = {
+      ...euSession,
+      accessToken: 'rotated-access-token-longer-than-twenty-characters',
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    };
+    act(() => sessionListener?.(refreshedSession));
+
+    expect(await screen.findByTestId('session-token')).toHaveTextContent(refreshedSession.accessToken);
+    expect(client.getQueryData(['private-workspace-data'])).toBe('still-mounted');
+    expect(observedApi).toBe(initialApi);
+
+    const fetchRequest = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ items: [] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    await observedApi!.getWorkspaceMembers();
+    expect(new Headers(fetchRequest.mock.calls[0]?.[1]?.headers).get('authorization'))
+      .toBe(`Bearer ${refreshedSession.accessToken}`);
+    fetchRequest.mockRestore();
+  });
+
+  it('preserves cached and transient API state across scheduled session refresh', async () => {
+    vi.useFakeTimers();
+    const now = new Date('2026-08-07T12:00:00.000Z');
+    vi.setSystemTime(now);
+    const initialSession: DesktopSession = {
+      ...euSession,
+      accessToken: 'initial-scheduled-access-token-longer-than-twenty-characters',
+      expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(),
+    };
+    const refreshedSession: DesktopSession = {
+      ...initialSession,
+      accessToken: 'scheduled-rotated-access-token-longer-than-twenty-characters',
+      expiresAt: new Date(now.getTime() + 30 * 60_000).toISOString(),
+    };
+    bridge.getSession.mockResolvedValueOnce(initialSession);
+    bridge.refreshSession.mockResolvedValueOnce(refreshedSession);
+    const client = renderProvider();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText('eu:European Research')).toBeVisible();
+    const initialApi = observedApi;
+    client.setQueryDefaults(['private-workspace-data'], { gcTime: Infinity });
+    client.setQueryData(['private-workspace-data'], 'still-mounted');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(14 * 60_000);
+    });
+
+    expect(bridge.refreshSession).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('session-token')).toHaveTextContent(refreshedSession.accessToken);
+    expect(client.getQueryData(['private-workspace-data'])).toBe('still-mounted');
+    expect(observedApi).toBe(initialApi);
+
+    const fetchRequest = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(
+      JSON.stringify({ items: [] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    await observedApi!.getWorkspaceMembers();
+    expect(new Headers(fetchRequest.mock.calls[0]?.[1]?.headers).get('authorization'))
+      .toBe(`Bearer ${refreshedSession.accessToken}`);
+    fetchRequest.mockRestore();
+  });
+
+  it('clears cached data and replaces the API client after a role-only demotion', async () => {
+    const adminSession: DesktopSession = {
+      ...euSession,
+      workspace: { ...euSession.workspace!, role: 'admin' },
+    };
+    bridge.getSession.mockResolvedValueOnce(adminSession);
+    const client = renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+    expect(screen.getByTestId('session-role')).toHaveTextContent('admin');
+    const adminApi = observedApi;
+    client.setQueryData(['admin-only-data'], 'private');
+
+    act(() => sessionListener?.({
+      ...adminSession,
+      accessToken: 'demoted-access-token-longer-than-twenty-characters',
+      workspace: { ...adminSession.workspace!, role: 'member' },
+    }));
+
+    expect(await screen.findByTestId('session-role')).toHaveTextContent('member');
+    expect(client.getQueryData(['admin-only-data'])).toBeUndefined();
+    expect(observedApi).not.toBe(adminApi);
   });
 
   it('refreshes connector data immediately when native OAuth completes', async () => {
@@ -243,6 +360,7 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(
       `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
@@ -284,6 +402,7 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(
       'avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
