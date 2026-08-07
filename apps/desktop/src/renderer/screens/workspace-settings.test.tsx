@@ -648,4 +648,37 @@ describe('Workspace settings', () => {
     await waitFor(() => expect(setLockdownMode).toHaveBeenCalledWith(false));
     expect(toggle).not.toBeChecked();
   });
+
+  it('shows the automatic off state when the operating-system keystore is unavailable', async () => {
+    getApplicationSettings.mockResolvedValue({ lockdownMode: false, lockdownAvailable: false });
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeDisabled();
+    expect(screen.getByText('Lockdown mode is off because this Mac’s keystore is unavailable.'))
+      .toBeVisible();
+  });
+
+  it('still allows an in-app off transition from a stale unavailable-keystore state', async () => {
+    getApplicationSettings.mockResolvedValue({ lockdownMode: true, lockdownAvailable: false });
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setLockdownMode).toHaveBeenCalledWith(false));
+  });
+
+  it('shows application-setting load failures inline', async () => {
+    getApplicationSettings.mockRejectedValue(new Error('Application settings could not be read.'));
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByText('Application settings could not be read.')).toBeVisible();
+  });
 });

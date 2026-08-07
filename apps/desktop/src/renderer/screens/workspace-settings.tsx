@@ -851,7 +851,13 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy">
                       <strong>Lockdown mode</strong>
-                      <small>Protect the saved session with this Mac’s keystore instead of Avalon’s shared encryption key.</small>
+                      <small>
+                        {applicationSettings && !applicationSettings.lockdownAvailable
+                          ? applicationSettings.lockdownMode
+                            ? 'This Mac’s keystore is unavailable. Turn off Lockdown mode to keep using the loaded session.'
+                            : 'Lockdown mode is off because this Mac’s keystore is unavailable.'
+                          : 'Protect the saved session with this Mac’s keystore instead of Avalon’s shared encryption key.'}
+                      </small>
                     </span>
                     <span className="settings-toggle">
                       <input
@@ -859,8 +865,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         checked={applicationSettings?.lockdownMode ?? false}
                         disabled={
                           applicationSettings === null
-                          || !applicationSettings.lockdownAvailable
                           || updateLockdownMode.isPending
+                          || (!applicationSettings.lockdownAvailable && !applicationSettings.lockdownMode)
                         }
                         onChange={(event) => updateLockdownMode.mutate(event.currentTarget.checked)}
                         role="switch"
