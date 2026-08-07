@@ -19,6 +19,7 @@ The product includes:
 ```text
 apps/desktop           Electron main/preload and React renderer
 apps/api               Hono Cloudflare Worker and runtime components
+apps/release-retention Scheduled R2 desktop-release archival Worker
 packages/contracts     Shared Zod contracts
 packages/db            D1 migration, repositories, and explicit local seed
 packages/agent-harness Bind 10/OpenRouter adapter, prompts, classifiers, and tool execution
