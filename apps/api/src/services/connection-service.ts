@@ -28,6 +28,7 @@ import { decryptString, encryptString, openString, randomToken, sealString, sha2
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { LinearRoutingService } from "./linear-routing-service";
+import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
@@ -741,6 +742,15 @@ export class ConnectionService {
           `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
            WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
         ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
+        throw error;
+      }
+      try {
+        await new SlackAgentService(this.env).schedulePublicChannelSync(connectionId);
+      } catch (error) {
+        await this.env.DB.prepare(
+          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
+        ).bind(JSON.stringify({ code: "slack_channel_sync_schedule_failed", message: error instanceof Error ? error.message : "Slack public-channel sync could not be scheduled", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
         throw error;
       }
     }

@@ -41,6 +41,8 @@ export {
 export {
   callSlackMcp,
   createSlackConnector,
+  joinAllSlackPublicChannels,
+  joinSlackPublicChannel,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
@@ -56,6 +58,8 @@ export {
   type SlackConnectorConfig,
   type SlackIngressEnvelope,
   type SlackMcpTool,
+  type SlackPublicChannelJoinResult,
+  type SlackPublicChannelSyncResult,
   type SlackWebApiMethod,
 } from "./slack";
 export {

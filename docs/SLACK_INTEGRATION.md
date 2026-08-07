@@ -27,6 +27,7 @@ Global D1 stores only `team_id -> region/workspace/connection` routing metadata.
 Raw Slack APIs are the control plane:
 
 - OAuth installation and token rotation
+- public-channel discovery and bot membership
 - Events API and request signing
 - Agent messages, status, title, suggested prompts, and streaming
 - App Home (`views.publish`)
@@ -42,7 +43,7 @@ Personal authorization is incremental. **Slack knowledge** requests the read/sea
 
 ## Data behavior
 
-"Zero-copy" means Avalon does not scrape, poll, bulk export, mirror, or build a second index of Slack messages, threads, files, or canvases. It does not subscribe to broad channel message traffic.
+"Zero-copy" means Avalon does not scrape, poll, bulk export, mirror, or build a second index of Slack messages, threads, files, or canvases. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Avalon` is consistently available, but it does not subscribe to broad channel message traffic. Channel membership alone does not import channel history or ordinary messages.
 
 Normal product use can persist information in the resources that use it. A user prompt, Slack context used for the task, a model-authored summary, a workstream message, a tool receipt, an artifact, or an automation result may remain in Avalon. That is ordinary task history, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Avalon holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Avalon resources.
 
