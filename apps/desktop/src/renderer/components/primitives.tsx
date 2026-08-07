@@ -213,7 +213,7 @@ interface ModalProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
-  children: ReactNode;
+  children?: ReactNode;
   footer?: ReactNode;
 }
 
@@ -234,7 +234,7 @@ export function Modal({ open, onOpenChange, title, description, children, footer
               </IconButton>
             </Dialog.Close>
           </header>
-          <div className="dialog-body">{children}</div>
+          {children != null && <div className="dialog-body">{children}</div>}
           {footer && <footer className="dialog-footer">{footer}</footer>}
         </Dialog.Content>
       </Dialog.Portal>
