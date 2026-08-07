@@ -10,6 +10,21 @@ function testEnv(region: "global" | "eu"): Env {
   } as Env;
 }
 
+function authenticatedTestEnv(): Env {
+  const statement = {
+    bind: () => statement,
+    first: async () => ({ role: "owner" }),
+  };
+  return {
+    ...testEnv("global"),
+    APP_ENV: "development",
+    AVALON_DEV_AUTH: "true",
+    DB: {
+      prepare: () => statement,
+    } as unknown as D1Database,
+  } as Env;
+}
+
 async function expectSafeInvalidRequest(response: Response, requestId: string): Promise<void> {
   expect(response.status).toBe(400);
   expect(response.headers.get("x-request-id")).toBe(requestId);
@@ -76,6 +91,26 @@ describe("public validation errors", () => {
         body: "{",
       },
       testEnv("global"),
+    );
+
+    await expectSafeInvalidRequest(response, requestId);
+  });
+
+  it("rejects personal X connections at the public API boundary", async () => {
+    const requestId = "validation-personal-x";
+    const response = await createApp().request(
+      "https://api.example.com/connections/x",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": requestId,
+          "x-avalon-dev-user-id": "user-x",
+          "x-avalon-dev-workspace-id": "workspace-x",
+        },
+        body: JSON.stringify({ scope: "personal", capabilities: ["x.read"] }),
+      },
+      authenticatedTestEnv(),
     );
 
     await expectSafeInvalidRequest(response, requestId);
