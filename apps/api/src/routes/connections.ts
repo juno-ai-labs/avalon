@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
-import { desktopHandoffUrl } from "../lib/desktop-handoff";
+import { connectorAttemptTarget, desktopHandoffUrl } from "../lib/desktop-handoff";
 import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
 import {
@@ -146,6 +146,27 @@ export const connectionCallbackRoutes = new Hono<HonoAppEnv>();
 
 type CallbackContext = Context<HonoAppEnv>;
 
+async function recoverConnectorCallback(
+  c: CallbackContext,
+  provider: ConnectorOAuthProvider,
+  errorCode: string,
+  recover: () => Promise<string>,
+): Promise<string> {
+  try {
+    return await recover();
+  } catch (recoveryError) {
+    logEvent(c, "error", "connector_oauth_recovery_failed", {
+      provider,
+      code: recoveryError instanceof ApiError ? recoveryError.code : "connector_oauth_recovery_failed",
+    });
+    return connectorAttemptTarget(c.env, {
+      provider,
+      status: "failed",
+      errorCode,
+    });
+  }
+}
+
 async function connectorCallback(
   c: CallbackContext,
   provider: ConnectorOAuthProvider,
@@ -165,7 +186,12 @@ async function connectorCallback(
       provider,
       code: errorCode,
     });
-    const target = await service.failProviderAttempt(provider, query.state, errorCode);
+    const target = await recoverConnectorCallback(
+      c,
+      provider,
+      errorCode,
+      () => service.failProviderAttempt(provider, query.state, errorCode),
+    );
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   }
 }
@@ -188,9 +214,9 @@ connectionCallbackRoutes.get("/github/setup", zValidator("query", githubSetup), 
     logEvent(c, error instanceof ApiError ? "warn" : "error", "github_oauth_setup_failed", {
       code: errorCode,
     });
-    const target = sharedIngress
-      ? await new GitHubRoutingService(c.env).failGitHubSetup(query.state, errorCode)
-      : await new ConnectionService(c.env).failProviderAttempt("github", query.state, errorCode);
+    const target = await recoverConnectorCallback(c, "github", errorCode, () => sharedIngress
+      ? new GitHubRoutingService(c.env).failGitHubSetup(query.state, errorCode)
+      : new ConnectionService(c.env).failProviderAttempt("github", query.state, errorCode));
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   }
 });

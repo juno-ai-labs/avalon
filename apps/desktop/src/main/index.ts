@@ -804,12 +804,15 @@ function sendDeepLink(rawUrl: string): void {
         && deepLink.pathname === '/complete';
       if (!isAuthCompletion) return false;
       const legacySuccess = connectionId !== null
-        && /^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(connectionId)
+        && IdSchema.safeParse(connectionId).success
         && deepLink.searchParams.get('status') === 'connected';
       const provider = deepLink.searchParams.get('provider');
       const status = deepLink.searchParams.get('status');
       const providerResult = ['google', 'github', 'linear', 'notion', 'slack'].includes(provider ?? '')
-        && ['connected', 'denied', 'failed'].includes(status ?? '');
+        && (
+          (status === 'connected' && connectionId !== null && IdSchema.safeParse(connectionId).success)
+          || ((status === 'denied' || status === 'failed') && connectionId === null)
+        );
       return legacySuccess || providerResult;
     } catch {
       return false;

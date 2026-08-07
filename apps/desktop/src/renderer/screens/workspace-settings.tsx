@@ -311,8 +311,9 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
       const authorization: ConnectorOAuthStart = await api!.reconnectConnection(connection.id);
+      const attempt = await api!.getConnectorOAuthAttempt(authorization.attemptId);
       await desktopBridge().openExternal(authorization.url);
-      return { authorization, provider: connection.connectorType as ConnectorOAuthProvider };
+      return { authorization, provider: attempt.provider };
     },
     onMutate: () => {
       setConnectorOAuthMessage(null);
