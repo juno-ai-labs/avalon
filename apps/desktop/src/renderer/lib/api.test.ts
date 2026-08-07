@@ -389,7 +389,7 @@ describe('Avalon API wire adapter', () => {
     });
   });
 
-  it('replaces a durable open elicitation message with its later answered response', () => {
+  it('replaces a durable open elicitation message with its answered response regardless of order', () => {
     const elicitation = {
       id: taskId,
       workstreamId,
@@ -441,6 +441,10 @@ describe('Avalon API wire adapter', () => {
 
     expect(messagesWithTransientBlocks(
       [openQuestion, answeredResponse],
+      mapWorkstreamDetail(detail),
+    )).toEqual([answeredResponse]);
+    expect(messagesWithTransientBlocks(
+      [answeredResponse, openQuestion],
       mapWorkstreamDetail(detail),
     )).toEqual([answeredResponse]);
   });
