@@ -1,20 +1,26 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-export function useFileDrop(onFiles: (files: FileList) => void) {
+export function useFileDrop(onFiles: (files: FileList) => void, disabled = false) {
   const depth = useRef(0);
   const [dragging, setDragging] = useState(false);
+  useEffect(() => {
+    if (!disabled) return;
+    depth.current = 0;
+    setDragging(false);
+  }, [disabled]);
   return useMemo(() => ({
     dragging,
     onDragEnter: (event: React.DragEvent<HTMLElement>) => {
       if (!event.dataTransfer.types.includes('Files')) return;
       event.preventDefault();
+      if (disabled) return;
       depth.current += 1;
       setDragging(true);
     },
     onDragOver: (event: React.DragEvent<HTMLElement>) => {
       if (!event.dataTransfer.types.includes('Files')) return;
       event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
+      event.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
     },
     onDragLeave: (event: React.DragEvent<HTMLElement>) => {
       if (!event.dataTransfer.types.includes('Files')) return;
@@ -27,7 +33,7 @@ export function useFileDrop(onFiles: (files: FileList) => void) {
       event.preventDefault();
       depth.current = 0;
       setDragging(false);
-      onFiles(event.dataTransfer.files);
+      if (!disabled) onFiles(event.dataTransfer.files);
     },
-  }), [dragging, onFiles]);
+  }), [disabled, dragging, onFiles]);
 }

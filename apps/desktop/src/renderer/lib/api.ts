@@ -94,6 +94,7 @@ interface RequestOptions<T> {
 }
 
 interface DraftState {
+  attachmentIds: string[];
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   draft: WireAutomationDraft | null;
 }
@@ -823,15 +824,15 @@ export class AvalonApi {
     return mapWorkstreamSummary(workstream);
   }
 
-  async createWorkstream(input: { openingMessage: string; participantIds: string[] }): Promise<CreatedWorkstream> {
+  async createWorkstream(input: { openingMessage: string; participantIds: string[]; attachmentIds?: string[] }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
     const response = await this.request('/workstreams', {
       method: 'POST',
       body: {
-        objective: input.openingMessage,
         openingMessage: input.openingMessage,
         participantUserIds: input.participantIds,
         clientMessageId,
+        attachmentIds: input.attachmentIds ?? [],
       },
       schema: createWorkstreamResponseSchema,
     });
@@ -1148,19 +1149,25 @@ export class AvalonApi {
   }
 
   async compileAutomation(
-    input: { message: string; draftId?: string; templateId?: string },
+    input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
     const draftId = input.draftId ?? crypto.randomUUID();
-    const previous = this.drafts.get(draftId) ?? { messages: [], draft: null };
+    const previous = this.drafts.get(draftId) ?? { attachmentIds: [], messages: [], draft: null };
     const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
+    const attachmentIds = [...new Set([...previous.attachmentIds, ...(input.attachmentIds ?? [])])];
     const response = await this.execute('/automations/draft/stream', {
       method: 'POST',
       headers: {
         Accept: 'text/event-stream',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ draftId, messages, currentDraft: previous.draft }),
+      body: JSON.stringify({
+        draftId,
+        messages,
+        currentDraft: previous.draft,
+        attachmentIds,
+      }),
     });
     if (!response.ok) return this.throwResponseError(response);
     const streamState: {
@@ -1200,6 +1207,7 @@ export class AvalonApi {
     const raw = WireAutomationDraftSchema.parse(completed.draft);
     const assistantMessage = completed.assistantMessage;
     this.drafts.set(draftId, {
+      attachmentIds,
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });

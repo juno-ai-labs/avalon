@@ -9,7 +9,10 @@ import { NewAutomationScreen } from './new-automation';
 const api = vi.hoisted(() => ({
   compileAutomation: vi.fn(),
   createAutomation: vi.fn(),
+  deleteDraftResource: vi.fn(),
   getConnections: vi.fn(),
+  getResourceContent: vi.fn(),
+  uploadResource: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
 
@@ -54,6 +57,71 @@ describe('New automation composer', () => {
       },
     });
     api.createAutomation.mockResolvedValue({ id: 'automation-1' });
+    api.deleteDraftResource.mockResolvedValue(undefined);
+    api.getResourceContent.mockResolvedValue(new Blob(['notes'], { type: 'text/plain' }));
+    api.uploadResource.mockResolvedValue({
+      id: 'resource-notes',
+      title: 'notes.txt',
+      resourceType: 'uploaded_file',
+      provider: 'avalon_upload',
+      mimeType: 'text/plain',
+      watchEnabled: false,
+      watchStatus: 'unsupported',
+      contentAvailable: true,
+      sizeBytes: 5,
+    });
+  });
+
+  it('uses the shared connection, attachment, and dictation controls', () => {
+    renderScreen();
+
+    expect(screen.getByRole('button', { name: 'Mention a connection' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Click or hold to dictate' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a connection' }));
+    expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('@');
+  });
+
+  it('keeps Enter from submitting a connection mention and dismisses it with Escape', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: 'connection-slack',
+      modelPluginId: 'plugin_slack',
+      connectorType: 'slack',
+      displayName: 'Slack',
+      scope: 'workspace',
+      status: 'healthy',
+      capabilities: [],
+    }]);
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mention a connection' }));
+    const composer = screen.getByRole('textbox', { name: 'Describe an automation' });
+    fireEvent.change(composer, { target: { value: '@sla' } });
+    expect(await screen.findByRole('listbox', { name: 'Connections' })).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    expect(api.compileAutomation).not.toHaveBeenCalled();
+    fireEvent.keyDown(composer, { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
+  });
+
+  it('keeps successful compile attachments available in the transcript', async () => {
+    renderScreen();
+
+    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [file] } });
+    await waitFor(() => expect(api.uploadResource).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({
+      message: '',
+      attachmentIds: ['resource-notes'],
+    }, expect.any(Function)));
+    expect(await screen.findByRole('button', { name: 'notes.txt' })).toBeInTheDocument();
+    expect(api.deleteDraftResource).not.toHaveBeenCalled();
   });
 
   it('collapses to its default height after a successful send', async () => {
