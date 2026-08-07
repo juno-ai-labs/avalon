@@ -390,6 +390,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const readAckTimerRef = useRef<number | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
   const activeWorkstreamIdRef = useRef(id);
+  const reconnectAbortControllerRef = useRef<AbortController | null>(null);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const attachmentDraft = useFileAttachments(api);
@@ -401,6 +402,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
 
   useEffect(() => () => closeRail(), [closeRail, id]);
+
+  useEffect(() => () => {
+    reconnectAbortControllerRef.current?.abort();
+    reconnectAbortControllerRef.current = null;
+  }, [id]);
 
   useEffect(() => {
     activeWorkstreamIdRef.current = id;
@@ -622,15 +628,22 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const reconnect = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
-      const authorization = await api!.reconnectConnection(connection.id);
-      await desktopBridge().openExternal(authorization.url);
-      const attempt = await api!.waitForConnectorOAuthAttempt(authorization.attemptId);
-      if (attempt.status !== 'succeeded') {
-        throw new Error(
-          attempt.status === 'denied'
-            ? 'Connector authorization was cancelled.'
-            : 'The connector could not be reconnected. Try again.',
-        );
+      reconnectAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      reconnectAbortControllerRef.current = controller;
+      try {
+        const authorization = await api!.reconnectConnection(connection.id);
+        await desktopBridge().openExternal(authorization.url);
+        const attempt = await api!.waitForConnectorOAuthAttempt(authorization.attemptId, controller.signal);
+        if (attempt.status !== 'succeeded') {
+          throw new Error(
+            attempt.status === 'denied'
+              ? 'Connector authorization was cancelled.'
+              : 'The connector could not be reconnected. Try again.',
+          );
+        }
+      } finally {
+        if (reconnectAbortControllerRef.current === controller) reconnectAbortControllerRef.current = null;
       }
     },
     onSuccess: () => void Promise.all([

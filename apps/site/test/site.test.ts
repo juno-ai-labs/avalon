@@ -306,6 +306,8 @@ describe('public Avalon site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}&extra=value`))).toBeNull();
     expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&provider=linear')))
       .toBe('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&provider=linear');
+    expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=eu&provider=linear')))
+      .toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?provider=unknown&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`https://with-avalon.com/?ticket=${ticket}&region=global&attempt=${attempt}`))).toBeNull();
