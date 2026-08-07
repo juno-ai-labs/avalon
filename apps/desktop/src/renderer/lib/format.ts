@@ -56,20 +56,20 @@ const hourInMilliseconds = 3_600_000;
 const dayInMilliseconds = 24 * hourInMilliseconds;
 const weekInMilliseconds = 7 * dayInMilliseconds;
 
-function activityTimestamp(stream: WorkstreamSummary): number {
-  const timestamp = new Date(stream.lastActivityAt).getTime();
+function activityTimestamp(item: { lastActivityAt: string }): number {
+  const timestamp = new Date(item.lastActivityAt).getTime();
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
-export function groupWorkstreams(
-  streams: WorkstreamSummary[],
+export function groupActivityItems<T extends { lastActivityAt: string }>(
+  items: T[],
   now = new Date(),
-): Array<{ label: RecencyGroup; streams: WorkstreamSummary[] }> {
-  const groups = new Map<RecencyGroup, WorkstreamSummary[]>();
+): Array<{ label: RecencyGroup; streams: T[] }> {
+  const groups = new Map<RecencyGroup, T[]>();
   const nowTimestamp = now.getTime();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
-  const ordered = [...streams].sort(
+  const ordered = [...items].sort(
     (a, b) => activityTimestamp(b) - activityTimestamp(a),
   );
 
@@ -95,4 +95,11 @@ export function groupWorkstreams(
     const grouped = groups.get(label);
     return grouped?.length ? [{ label, streams: grouped }] : [];
   });
+}
+
+export function groupWorkstreams(
+  streams: WorkstreamSummary[],
+  now = new Date(),
+): Array<{ label: RecencyGroup; streams: WorkstreamSummary[] }> {
+  return groupActivityItems(streams, now);
 }

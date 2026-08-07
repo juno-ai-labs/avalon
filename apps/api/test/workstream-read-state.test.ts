@@ -1,9 +1,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
+import { loadVisibleWorkstreamRoomResources } from "../src/durable-objects/workstream-room";
 import { WorkstreamService } from "../src/services/workstream-service";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
@@ -99,6 +100,92 @@ function service(env: Env, userId: string): WorkstreamService {
 }
 
 describe("per-user work-stream read state", () => {
+  it("hides private note metadata from non-owners in REST and realtime resource snapshots", async () => {
+    const { database, env } = fixture();
+    const resourceId = "00000000-0000-4000-8000-000000000005";
+    const noteId = "00000000-0000-4000-8000-000000000006";
+    database.exec(`
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, provider_resource_id, title,
+         mime_type, metadata_json, created_at, updated_at)
+      VALUES
+        ('${resourceId}', '${WORKSPACE_ID}', 'note', 'avalon_note', '${noteId}',
+         'Public planning note', 'text/markdown', '{}',
+         '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
+      INSERT INTO notes
+        (id, workspace_id, owner_user_id, resource_id, scope, title,
+         last_activity_at, created_at, updated_at)
+      VALUES
+        ('${noteId}', '${WORKSPACE_ID}', '${USER_ONE_ID}', '${resourceId}', 'workspace',
+         'Public planning note', '2026-02-01T00:00:00.000Z',
+         '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
+      INSERT INTO workstream_resources
+        (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+      VALUES
+        ('${WORKSTREAM_ID}', '${resourceId}', '${USER_ONE_ID}', 0, 'context',
+         '2026-02-01T00:00:00.000Z');
+    `);
+    const owner = service(env, USER_ONE_ID);
+    const participant = service(env, USER_TWO_ID);
+
+    await expect(owner.get(WORKSTREAM_ID)).resolves.toMatchObject({
+      resources: [{ id: resourceId, title: "Public planning note" }],
+    });
+    await expect(participant.get(WORKSTREAM_ID)).resolves.toMatchObject({
+      resources: [{ id: resourceId, title: "Public planning note" }],
+    });
+
+    database.prepare(
+      "UPDATE notes SET scope = 'personal', title = 'Renamed private planning note', updated_at = ? WHERE id = ?",
+    ).run("2026-02-02T00:00:00.000Z", noteId);
+    database.prepare("UPDATE resources SET title = ?, updated_at = ? WHERE id = ?").run(
+      "Renamed private planning note",
+      "2026-02-02T00:00:00.000Z",
+      resourceId,
+    );
+
+    await expect(owner.get(WORKSTREAM_ID)).resolves.toMatchObject({
+      resources: [{ id: resourceId, title: "Renamed private planning note" }],
+    });
+    await expect(participant.get(WORKSTREAM_ID)).resolves.toMatchObject({ resources: [] });
+    await expect(loadVisibleWorkstreamRoomResources(
+      env,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      USER_ONE_ID,
+    )).resolves.toEqual([expect.objectContaining({ id: resourceId, title: "Renamed private planning note" })]);
+    await expect(loadVisibleWorkstreamRoomResources(
+      env,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      USER_TWO_ID,
+    )).resolves.toEqual([]);
+
+    const roomFetch = vi.fn(async () => Response.json({ accepted: true }, { status: 202 }));
+    Object.assign(env, {
+      AVALON_REGION: "global",
+      WORKSTREAM_ROOMS: {
+        idFromName: () => ({ toString: () => "room-id" }),
+        get: () => ({ fetch: roomFetch }),
+      },
+    });
+    database.prepare(
+      "DELETE FROM workstream_resources WHERE workstream_id = ? AND resource_id = ?",
+    ).run(WORKSTREAM_ID, resourceId);
+    await expect(owner.attachResource(WORKSTREAM_ID, resourceId)).resolves.toMatchObject({
+      id: resourceId,
+      title: "Renamed private planning note",
+    });
+    expect(roomFetch).not.toHaveBeenCalled();
+
+    database.prepare("UPDATE notes SET scope = 'workspace' WHERE id = ?").run(noteId);
+    database.prepare(
+      "DELETE FROM workstream_resources WHERE workstream_id = ? AND resource_id = ?",
+    ).run(WORKSTREAM_ID, resourceId);
+    await owner.attachResource(WORKSTREAM_ID, resourceId);
+    expect(roomFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps cursors independent and protects manual unread from stale device acknowledgements", async () => {
     const { env } = fixture();
     const userOne = service(env, USER_ONE_ID);

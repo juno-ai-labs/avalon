@@ -11,6 +11,9 @@ import {
   ElicitationSchema as WireElicitationSchema,
   HyperSightPreferenceSchema as WireHyperSightPreferenceSchema,
   HyperSightSchema as WireHyperSightSchema,
+  NoteDetailSchema as WireNoteDetailSchema,
+  NoteSummarySchema as WireNoteSummarySchema,
+  NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
   MessageSchema as WireMessageSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
@@ -59,6 +62,9 @@ import type {
   HyperSightPreference,
   Message,
   MessagePage,
+  NoteDetail,
+  NoteSummary,
+  NoteTranscriptSegment,
   Participant,
   Region,
   SocketTicket,
@@ -186,6 +192,7 @@ const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
   newerCursor: z.string().nullable().default(null),
 });
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema);
+const wireNotePageSchema = z.object({ items: z.array(WireNoteSummarySchema) });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
 const wireInvitationPageSchema = z.object({ items: z.array(WireWorkspaceInvitationSchema) });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
@@ -820,6 +827,68 @@ export class AvalonApi {
     return page.items.map(mapWorkstreamSummary);
   }
 
+  async getNotes(signal?: AbortSignal): Promise<NoteSummary[]> {
+    const page = await this.request('/notes?limit=250', { schema: wireNotePageSchema, signal });
+    return page.items;
+  }
+
+  createNote(id: string, title: string): Promise<NoteDetail> {
+    return this.request('/notes', {
+      method: 'POST',
+      body: { id, title, scope: 'personal' },
+      schema: WireNoteDetailSchema,
+    });
+  }
+
+  getNote(id: string, signal?: AbortSignal): Promise<NoteDetail> {
+    return this.request(`/notes/${encodeURIComponent(id)}`, { schema: WireNoteDetailSchema, signal });
+  }
+
+  updateNote(
+    id: string,
+    input: {
+      title?: string;
+      manualNotes?: string;
+      scope?: 'personal' | 'workspace';
+      recordingStatus?: 'idle' | 'recording' | 'complete';
+      recordedMs?: number;
+      startedAt?: string | null;
+      endedAt?: string | null;
+    },
+  ): Promise<NoteDetail> {
+    return this.request(`/notes/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: input,
+      schema: WireNoteDetailSchema,
+    });
+  }
+
+  appendNoteTranscriptSegment(
+    id: string,
+    input: {
+      clientSegmentId: string;
+      startOffsetMs: number;
+      endOffsetMs: number;
+      capturedAt: string;
+      speakerLabel?: string | null;
+      text: string;
+    },
+  ): Promise<NoteTranscriptSegment> {
+    return this.request(`/notes/${encodeURIComponent(id)}/segments`, {
+      method: 'POST',
+      body: { ...input, speakerLabel: input.speakerLabel ?? null },
+      schema: WireNoteTranscriptSegmentSchema,
+    });
+  }
+
+  generateNoteNotes(id: string): Promise<NoteDetail> {
+    return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
+      method: 'POST',
+      body: {},
+      schema: WireNoteDetailSchema,
+    });
+  }
+
   async renameWorkstream(id: string, title: string): Promise<WorkstreamSummary> {
     const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
       method: 'PATCH',
@@ -1312,6 +1381,7 @@ export class AvalonApi {
   async createAutomation(
     draftId: string,
     defaultPluginIds: string[],
+    resourceIds: string[],
     slackDeliveryConnectionId?: string,
   ): Promise<AutomationDetail> {
     const state = this.drafts.get(draftId);
@@ -1322,6 +1392,7 @@ export class AvalonApi {
         draft: state.draft,
         scope: state.draft.suggestedScope,
         defaultPluginIds,
+        resourceIds,
         deliveryTargets: slackDeliveryConnectionId
           ? [{ type: 'slack_agent_dm', connectionId: slackDeliveryConnectionId }]
           : [],

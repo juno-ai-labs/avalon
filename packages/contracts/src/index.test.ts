@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ActivityQueueMessageSchema,
   AnswerElicitationRequestSchema,
+  AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
   ClientSocketEventSchema,
@@ -9,6 +10,7 @@ import {
   CreateAutomationRequestSchema,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
+  GenerateMeetingNotesRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
@@ -16,6 +18,7 @@ import {
   HyperSightPreferenceSchema,
   MessageSchema,
   MentionSchema,
+  NoteDetailSchema,
   RefreshRequestSchema,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
@@ -30,6 +33,60 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("keeps timestamped transcript segments separate from editable note text", () => {
+    const segment = AppendNoteTranscriptSegmentRequestSchema.parse({
+      clientSegmentId: id,
+      startOffsetMs: 1_250,
+      endOffsetMs: 4_750,
+      capturedAt: "2026-08-07T18:00:04.750Z",
+      text: "  A finalized transcript segment.  ",
+    });
+    expect(segment).toMatchObject({
+      startOffsetMs: 1_250,
+      endOffsetMs: 4_750,
+      speakerLabel: null,
+      text: "A finalized transcript segment.",
+    });
+    expect(AppendNoteTranscriptSegmentRequestSchema.safeParse({
+      ...segment,
+      startOffsetMs: 5_000,
+      endOffsetMs: 4_000,
+    }).success).toBe(false);
+    expect(NoteDetailSchema.parse({
+      id,
+      workspaceId: id,
+      resourceId: id,
+      ownerUserId: id,
+      scope: "personal",
+      title: "Typed notes",
+      recordingStatus: "idle",
+      manualNotes: "Pasted text",
+      liveNotes: "",
+      notesThroughSequence: 0,
+      segments: [],
+      recordedMs: 0,
+      startedAt: null,
+      endedAt: null,
+      generatedAt: null,
+      lastActivityAt: "2026-08-07T18:00:00.000Z",
+      createdAt: "2026-08-07T18:00:00.000Z",
+      updatedAt: "2026-08-07T18:00:00.000Z",
+      archivedAt: null,
+    }).manualNotes).toBe("Pasted text");
+  });
+
+  it("bounds and normalizes live meeting-note refreshes", () => {
+    expect(GenerateMeetingNotesRequestSchema.parse({ transcript: "  New decision  " })).toEqual({
+      transcript: "New decision",
+      previousNotes: "",
+    });
+    expect(GenerateMeetingNotesRequestSchema.safeParse({ transcript: "   " }).success).toBe(false);
+    expect(GenerateMeetingNotesRequestSchema.safeParse({
+      transcript: "valid",
+      previousNotes: "x".repeat(50_001),
+    }).success).toBe(false);
+  });
+
   it("represents provider members as external actors without manufacturing Avalon users", () => {
     const message = MessageSchema.parse({
       id,
@@ -202,11 +259,13 @@ describe("boundary contracts", () => {
     });
 
     expect(draft.recommendedPlugins).toHaveLength(25);
-    expect(CreateAutomationRequestSchema.parse({
+    const request = CreateAutomationRequestSchema.parse({
       draft,
       scope: "workspace",
       defaultPluginIds: recommendations.map((plugin) => plugin.pluginId),
-    }).defaultPluginIds).toHaveLength(25);
+    });
+    expect(request.defaultPluginIds).toHaveLength(25);
+    expect(request.resourceIds).toEqual([]);
     const activity = AutomationDraftStreamEventSchema.parse({
       type: "tool",
       toolCallId: "tool-1",

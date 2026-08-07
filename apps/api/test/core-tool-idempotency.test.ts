@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { WorkstreamWorkflowInput } from "@avalon/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import { NoteService } from "../src/services/note-service";
 
 const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const USER_ID = "00000000-0000-4000-8000-000000000000";
@@ -73,6 +74,15 @@ class MemoryBucket {
       this.failAfterNextPut = false;
       throw new DOMException("The storage request timed out", "TimeoutError");
     }
+  }
+
+  async get(key: string): Promise<{ text: () => Promise<string> } | null> {
+    const value = this.objects.get(key);
+    return value === undefined ? null : { text: async () => value };
+  }
+
+  async delete(key: string): Promise<void> {
+    this.objects.delete(key);
   }
 }
 
@@ -145,6 +155,60 @@ function context(providerIdempotencyKey?: string) {
 }
 
 describe("Avalon core write-tool idempotency", () => {
+  it("revokes private note access from workspace-principal resource tools", async () => {
+    const { database, env } = fixture();
+    const noteService = new NoteService(env, {
+      sessionId: "note-owner-session",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    });
+    const note = await noteService.create({
+      id: "00000000-0000-4000-8000-000000000010",
+      title: "Sensitive note",
+      scope: "personal",
+    });
+    database.prepare(
+      `INSERT INTO workstream_resources
+       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+       VALUES (?, ?, ?, 0, 'context', ?)`,
+    ).run(WORKSTREAM_ID, note.resourceId, USER_ID, "2026-08-07T18:00:00.000Z");
+    const workspaceInput = workflowInput();
+    workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
+    const tools = __integrationTesting.createAvalonTools(env, workspaceInput);
+    const read = tools.find((tool) => tool.definition.name === "read")!;
+    const readResource = tools.find((tool) => tool.definition.name === "read_resource")!;
+
+    await expect(read.execute({}, context())).resolves.toMatchObject({
+      output: { attachedResources: [] },
+    });
+    await expect(readResource.execute({ resourceId: note.resourceId }, context()))
+      .rejects.toThrow("Attached resource content is not hydrated");
+
+    await noteService.update(note.id, { scope: "workspace" });
+    const visible = await read.execute({}, context());
+    expect(visible.output).toMatchObject({
+      attachedResources: [expect.objectContaining({ id: note.resourceId, title: "Sensitive note" })],
+    });
+    await expect(readResource.execute({ resourceId: note.resourceId }, context()))
+      .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
+
+    await noteService.update(note.id, { scope: "personal" });
+    await expect(readResource.execute({ resourceId: note.resourceId }, context()))
+      .rejects.toThrow("Attached resource content is not hydrated");
+
+    const ownerReadResource = __integrationTesting.createAvalonTools(env, workflowInput())
+      .find((tool) => tool.definition.name === "read_resource")!;
+    await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
+      .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
+
+    database.prepare("UPDATE notes SET archived_at = ? WHERE id = ?")
+      .run("2026-08-07T19:00:00.000Z", note.id);
+    await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
+      .rejects.toThrow("Attached resource content is not hydrated");
+  });
+
   it("returns easy-English current time in the user's configured timezone", async () => {
     const { database, env } = fixture();
     database.prepare("UPDATE users SET timezone = ? WHERE id = ?")

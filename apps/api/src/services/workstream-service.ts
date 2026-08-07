@@ -65,6 +65,13 @@ const WORKSTREAM_RESOURCES_SQL = `SELECT r.*,
    AND rw.resource_id = wr.resource_id
    AND rw.enabled = 1
   WHERE wr.workstream_id = ?
+    AND (r.provider != 'avalon_note' OR EXISTS (
+      SELECT 1 FROM notes visible_note
+      WHERE visible_note.resource_id = r.id
+        AND visible_note.workspace_id = r.workspace_id
+        AND visible_note.archived_at IS NULL
+        AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
+    ))
   ORDER BY wr.attached_at DESC`;
 
 const WORKSTREAM_ARTIFACTS_SQL = `SELECT * FROM artifacts
@@ -615,8 +622,10 @@ export class WorkstreamService {
     // share it with another work stream.
     await new ResourceService(this.env, this.auth).get(resourceId);
     const resource = await this.env.DB.prepare(
-      `SELECT r.*, c.scope AS connection_scope, c.owner_user_id
+      `SELECT r.*, c.scope AS connection_scope, c.owner_user_id,
+          note.scope AS note_scope
        FROM resources r LEFT JOIN connector_connections c ON c.id = r.connection_id
+       LEFT JOIN notes note ON note.resource_id = r.id AND note.archived_at IS NULL
        WHERE r.id = ? AND r.workspace_id = ?`,
     ).bind(resourceId, this.auth.workspaceId).first<Record<string, unknown>>();
     if (!resource) throw new ApiError(404, "resource_not_found", "Resource not found");
@@ -627,7 +636,12 @@ export class WorkstreamService {
       ATTACH_RESOURCE_SQL,
     ).bind(id, resourceId, this.auth.userId, nowIso()).run();
     const attached = (await this.loadResources(id)).find((item) => item.id === resourceId);
-    if (attached) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
+    // A private note is only visible to its creator. The attaching request
+    // returns refreshed canonical state to that user, but broadcasting the
+    // resource would expose its title to every socket in a shared work stream.
+    if (attached && resource.note_scope !== "personal") {
+      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
+    }
     return attached;
   }
 
@@ -1133,7 +1147,7 @@ export class WorkstreamService {
   private async loadResources(id: string) {
     const result = await this.env.DB.prepare(
       WORKSTREAM_RESOURCES_SQL,
-    ).bind(id).all<Record<string, unknown>>();
+    ).bind(id, this.auth.userId).all<Record<string, unknown>>();
     return (result.results ?? []).map((row) => ({
       id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
       resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),

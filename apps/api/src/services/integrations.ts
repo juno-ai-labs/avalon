@@ -4235,6 +4235,9 @@ function createAvalonWebPlugin(tools: HarnessTool[]): HarnessPlugin | null {
 }
 
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
+  const principalUserId = input.executionPrincipal.type === "user"
+    ? input.executionPrincipal.userId
+    : null;
   const tools: HarnessTool[] = [
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
@@ -4278,9 +4281,16 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
              FROM workstream_resources wr
              JOIN resources r ON r.id = wr.resource_id AND r.workspace_id = ?
              WHERE wr.workstream_id = ?
+               AND (r.provider != 'avalon_note' OR EXISTS (
+                 SELECT 1 FROM notes visible_note
+                 WHERE visible_note.resource_id = r.id
+                   AND visible_note.workspace_id = r.workspace_id
+                   AND visible_note.archived_at IS NULL
+                   AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
+               ))
              ORDER BY wr.attached_at DESC
              LIMIT 50`,
-          ).bind(input.workspaceId, input.workstreamId).all<Record<string, unknown>>(),
+          ).bind(input.workspaceId, input.workstreamId, principalUserId).all<Record<string, unknown>>(),
         ]);
         if (!row) throw new Error("Work stream not found");
         return {
@@ -4304,10 +4314,20 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       execute: async (raw) => {
         const args = z.object({ resourceId: z.string().uuid() }).parse(raw);
         const row = await env.DB.prepare(
-          `SELECT r.title, r.mime_type, r.content_ref FROM resources r
+          `SELECT r.title,
+                  COALESCE(r.model_mime_type, r.mime_type) AS mime_type,
+                  COALESCE(r.model_content_ref, r.content_ref) AS content_ref
+           FROM resources r
            JOIN workstream_resources wr ON wr.resource_id = r.id
-           WHERE r.id = ? AND wr.workstream_id = ? AND r.workspace_id = ?`,
-        ).bind(args.resourceId, input.workstreamId, input.workspaceId).first<{ title: string; mime_type: string | null; content_ref: string | null }>();
+           WHERE r.id = ? AND wr.workstream_id = ? AND r.workspace_id = ?
+             AND (r.provider != 'avalon_note' OR EXISTS (
+               SELECT 1 FROM notes visible_note
+               WHERE visible_note.resource_id = r.id
+                 AND visible_note.workspace_id = r.workspace_id
+                 AND visible_note.archived_at IS NULL
+                 AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
+             ))`,
+        ).bind(args.resourceId, input.workstreamId, input.workspaceId, principalUserId).first<{ title: string; mime_type: string | null; content_ref: string | null }>();
         if (!row?.content_ref) throw new Error("Attached resource content is not hydrated");
         if (row.mime_type && !row.mime_type.startsWith("text/") && row.mime_type !== "application/json") {
           throw new Error("This resource must be exported to readable text before use");
