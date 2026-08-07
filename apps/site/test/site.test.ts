@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import {
@@ -45,8 +45,9 @@ describe('public Avalon site', () => {
       expect(script).toContain(`"${theme}"`);
       expect(styles).toContain(`html[data-theme='${theme}']`);
     }
-    expect(script).toContain('Math.random()');
-    expect(script).toContain('requestedTheme : randomTheme()');
+    expect(page).toContain('data-theme-panel="runway" data-active aria-hidden="false"');
+    expect(page).toContain('data-theme-select="runway" aria-label="Use Warp design" aria-pressed="true"');
+    expect(script).toContain('root.dataset.themeReady = ""');
     expect(styles).toContain("url('/concepts/biomes/high-desert.webp')");
     expect(styles).toContain("url('/concepts/biomes/boreal-wetland.webp')");
     expect(styles).toContain("url('/concepts/biomes/volcanic-coast.webp')");
@@ -93,7 +94,35 @@ describe('public Avalon site', () => {
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/og.png', import.meta.url))).toBe(true);
-    expect(existsSync(new URL('../public/og-2026.png', import.meta.url))).toBe(true);
+    const socialCard = new URL('../public/og-2026.jpg', import.meta.url);
+    expect(existsSync(socialCard)).toBe(true);
+    expect(statSync(socialCard).size).toBeLessThan(200_000);
+  });
+
+  it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {
+    const styles = readProjectFile('src/styles.css');
+
+    for (const selector of [
+      '.button-arrow',
+      '.not-found',
+      '.invite-page',
+      '.invite-shell',
+      '.invite-card',
+      '.invite-brand',
+      '.invite-open',
+      '.invite-help',
+      '.invite-error',
+    ]) {
+      expect(styles).toContain(selector);
+    }
+    expect(styles).toContain(".invite-open[aria-disabled='true']");
+    expect(styles).toContain('pointer-events: none');
+  });
+
+  it('keeps internal landing-page studies out of search indexes', () => {
+    for (const path of ['concepts/index.html', 'concepts/horizon/index.html']) {
+      expect(readProjectFile(path)).toContain('<meta name="robots" content="noindex, nofollow" />');
+    }
   });
 
   it('uses the same recency-only work-stream heading as the desktop sidebar', () => {

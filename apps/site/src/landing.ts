@@ -6,7 +6,7 @@ const header = document.querySelector<HTMLElement>(".site-header");
 const panels = document.querySelectorAll<HTMLElement>("[data-theme-panel]");
 const themeButtons = document.querySelectorAll<HTMLButtonElement>("[data-theme-select]");
 
-function isTheme(value: string | null): value is Theme {
+function isTheme(value: string | null | undefined): value is Theme {
   return themes.some((theme) => theme === value);
 }
 
@@ -26,11 +26,13 @@ function setTheme(theme: Theme): void {
 
 function randomTheme(except?: Theme): Theme {
   const available = except ? themes.filter((theme) => theme !== except) : themes;
-  return available[Math.floor(Math.random() * available.length)];
+  const fallback = available[0] ?? "runway";
+  return available[Math.floor(Math.random() * available.length)] ?? fallback;
 }
 
 const requestedTheme = new URLSearchParams(window.location.search).get("theme");
 setTheme(isTheme(requestedTheme) ? requestedTheme : randomTheme());
+root.dataset.themeReady = "";
 
 themeButtons.forEach((button) => {
   button.addEventListener("click", () => {
@@ -40,7 +42,8 @@ themeButtons.forEach((button) => {
 });
 
 document.querySelector<HTMLButtonElement>("[data-shuffle-theme]")?.addEventListener("click", () => {
-  const current = isTheme(root.dataset.theme ?? null) ? root.dataset.theme : undefined;
+  const selectedTheme = root.dataset.theme;
+  const current = isTheme(selectedTheme) ? selectedTheme : undefined;
   setTheme(randomTheme(current));
 });
 

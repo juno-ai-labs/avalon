@@ -13,14 +13,14 @@
     <meta property="og:title" content="Avalon — a place for work to move" />
     <meta property="og:description" content="People, context, agent work, and outcomes—together in one durable work stream." />
     <meta property="og:url" content="https://with-avalon.com/" />
-    <meta property="og:image" content="https://with-avalon.com/og-2026.png" />
+    <meta property="og:image" content="https://with-avalon.com/og-2026.jpg" />
     <meta property="og:image:alt" content="Avalon — Give every outcome a place to run." />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Avalon — a place for work to move" />
     <meta name="twitter:description" content="People, context, agent work, and outcomes—together in one durable work stream." />
-    <meta name="twitter:image" content="https://with-avalon.com/og-2026.png" />
+    <meta name="twitter:image" content="https://with-avalon.com/og-2026.jpg" />
     <meta name="twitter:image:alt" content="Avalon — Give every outcome a place to run." />
     <link rel="canonical" href="https://with-avalon.com/" />
     <link rel="stylesheet" href="/src/styles.css" />
@@ -51,7 +51,7 @@
         <div class="hero-landscape" aria-hidden="true"></div>
         <div class="hero-grain" aria-hidden="true"></div>
 
-        <article class="hero-story hero-runway" data-theme-panel="runway">
+        <article class="hero-story hero-runway" data-theme-panel="runway" data-active aria-hidden="false">
           <div class="hero-copy">
             <p class="eyebrow"><span>01</span> Warp · Desktop preview for macOS</p>
             <h1>Give every outcome<br /><em>a place to run.</em></h1>
@@ -71,7 +71,7 @@
           </aside>
         </article>
 
-        <article class="hero-story hero-valley" data-theme-panel="valley">
+        <article class="hero-story hero-valley" data-theme-panel="valley" aria-hidden="true">
           <div class="hero-copy">
             <p class="eyebrow"><span>02</span> Mesh · Desktop preview for macOS</p>
             <h1>Talk with people.<br /><em>Hand work to Avalon.</em></h1>
@@ -90,7 +90,7 @@
           </div>
         </article>
 
-        <article class="hero-story hero-proof" data-theme-panel="proof">
+        <article class="hero-story hero-proof" data-theme-panel="proof" aria-hidden="true">
           <div class="hero-copy">
             <p class="eyebrow"><span>03</span> Trace · Desktop preview for macOS</p>
             <h1>See the work.<br /><em>Not just the answer.</em></h1>
@@ -109,7 +109,7 @@
           </aside>
         </article>
 
-        <article class="hero-story hero-afterlight" data-theme-panel="afterlight">
+        <article class="hero-story hero-afterlight" data-theme-panel="afterlight" aria-hidden="true">
           <div class="hero-copy">
             <p class="eyebrow"><span>04</span> Orbit · Desktop preview for macOS</p>
             <h1>Set the work in motion.<br /><em>Every run leaves a trail.</em></h1>
@@ -128,10 +128,10 @@
 
         <div class="theme-picker" aria-label="Landing page art direction">
           <span>Design</span>
-          <button type="button" data-theme-select="runway" aria-label="Use Warp design"><b>Warp</b></button>
-          <button type="button" data-theme-select="valley" aria-label="Use Mesh design"><b>Mesh</b></button>
-          <button type="button" data-theme-select="proof" aria-label="Use Trace design"><b>Trace</b></button>
-          <button type="button" data-theme-select="afterlight" aria-label="Use Orbit design"><b>Orbit</b></button>
+          <button type="button" data-theme-select="runway" aria-label="Use Warp design" aria-pressed="true"><b>Warp</b></button>
+          <button type="button" data-theme-select="valley" aria-label="Use Mesh design" aria-pressed="false"><b>Mesh</b></button>
+          <button type="button" data-theme-select="proof" aria-label="Use Trace design" aria-pressed="false"><b>Trace</b></button>
+          <button type="button" data-theme-select="afterlight" aria-label="Use Orbit design" aria-pressed="false"><b>Orbit</b></button>
           <button class="shuffle-button" type="button" data-shuffle-theme aria-label="Shuffle art direction">↻</button>
         </div>
         <div class="hero-foot"><span><i></i> Private preview · Apple silicon</span><span>Scroll to follow the work ↓</span></div>
@@ -173,7 +173,7 @@
             <div class="workspace-grid">
               <aside class="workspace-nav" aria-hidden="true">
                 <div class="workspace-brand"><img src="/brand/avalon-mark.png" width="18" height="18" alt="" /><strong>Avalon</strong></div>
-                <button type="button">＋ New work stream</button>
+                <button type="button" tabindex="-1">＋ New work stream</button>
                 <div class="nav-group"><p>Automations</p><span>◌ Weekly changelog</span><span>◌ Customer signal watch</span></div>
                 <div class="nav-group"><p>Last hour</p><span>● Research onboarding gaps</span><span class="selected">● Plan the August launch</span><span>● Update pricing narrative</span><span>◌ Partner follow-up</span></div>
                 <div class="workspace-account"><i>AJ</i><strong>Adam</strong><span>⌄</span></div>
@@ -188,7 +188,7 @@
                   <div class="waiting-card"><i class="status-blue"></i><span><strong>Ready</strong><b>Update pricing narrative</b><small>Draft is ready for review</small></span><time>18m</time></div>
                   <div class="waiting-card quiet"><i></i><span><strong>Waiting</strong><b>Research onboarding gaps</b><small>Maya is adding interview notes</small></span><time>1h</time></div>
                 </div>
-                <div class="composer"><div class="participants"><span><i>AJ</i> Adam ×</span><span><i>ML</i> Maya ×</span><button type="button" aria-label="Add participant">＋</button></div><p>Ask Avalon or update the work stream <b>↵</b></p></div>
+                <div class="composer"><div class="participants"><span><i>AJ</i> Adam ×</span><span><i>ML</i> Maya ×</span><button type="button" tabindex="-1" aria-label="Add participant">＋</button></div><p>Ask Avalon or update the work stream <b>↵</b></p></div>
               </div>
 
               <aside class="task-rail" aria-hidden="true">
