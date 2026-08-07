@@ -83,7 +83,7 @@ const slackStart = z.discriminatedUnion("scope", [
   }),
 ]);
 const xCreate = z.object({
-  scope: ScopeSchema,
+  scope: z.literal("workspace"),
   capabilities: z.array(z.literal("x.read")).min(1),
 });
 const githubSetup = z.object({

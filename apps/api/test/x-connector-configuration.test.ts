@@ -21,7 +21,9 @@ describe("X connector configuration", () => {
   it("registers the complete X read surface when configured", () => {
     const input = env({ TWITTER_API_IO_API_KEY: "  x-api-key  " });
     expect(xConnectorConfig(input)).toEqual({ apiKey: "x-api-key" });
-    expect(connectorRegistryForEnv(input).get("x").manifest.tools.map((tool) => tool.name)).toEqual([
+    const manifest = connectorRegistryForEnv(input).get("x").manifest;
+    expect(manifest.supportedScopes).toEqual(["workspace"]);
+    expect(manifest.tools.map((tool) => tool.name)).toEqual([
       "get_user_timeline",
       "get_tweet_thread_context",
       "get_tweet_replies_v2",
