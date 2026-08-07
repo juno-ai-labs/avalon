@@ -46,6 +46,44 @@ describe("X connector", () => {
     expect(Object.fromEntries(requested[2]!.searchParams)).toEqual({ listId: "103", cursor: "list-next" });
   });
 
+  it("resolves an X handle before reading its numeric-ID timeline", async () => {
+    const requested: URL[] = [];
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      requested.push(url);
+      if (url.pathname === "/twitter/user/info") {
+        expect(url.searchParams.get("userName")).toBe("nasa");
+        return jsonResponse({ status: "success", data: { id: "104", userName: "nasa" } });
+      }
+      expect(url.pathname).toBe("/twitter/user/tweet_timeline");
+      expect(url.searchParams.get("userId")).toBe("104");
+      return jsonResponse({ tweets: [{ id: "105" }], has_next_page: false });
+    };
+    const result = await execute(xAdapter(fetcher), "get_user_timeline", { userName: "@nasa" });
+    expect(result.summary).toBe("Read the X timeline for @nasa");
+    expect(requested.map((url) => url.pathname)).toEqual([
+      "/twitter/user/info",
+      "/twitter/user/tweet_timeline",
+    ]);
+  });
+
+  it("bounds provider values before returning them to the model", async () => {
+    let nested: Record<string, unknown> = { value: "leaf" };
+    for (let depth = 0; depth < 10; depth += 1) nested = { child: nested };
+    const result = await execute(xAdapter(async () => jsonResponse({
+      tweets: [{
+        id: "106",
+        text: "x".repeat(25_000),
+        media: Array.from({ length: 60 }, (_, index) => ({ id: index })),
+        nested,
+      }],
+    })), "list_timeline", { listId: "107" });
+    const tweet = (result.output as { tweets: Array<Record<string, unknown>> }).tweets[0]!;
+    expect(tweet.text).toBe("x".repeat(20_000));
+    expect(tweet.media).toHaveLength(50);
+    expect(JSON.stringify(tweet.nested)).toContain("[truncated]");
+  });
+
   it("adds the original post when thread context omits it", async () => {
     const requested: URL[] = [];
     const fetcher: FetchLike = async (input) => {
@@ -91,6 +129,39 @@ describe("X connector", () => {
     expect(calls).toBe(1);
   });
 
+  it("prioritizes a conversation root over an earlier non-reply post", async () => {
+    let calls = 0;
+    const fetcher: FetchLike = async () => {
+      calls += 1;
+      return jsonResponse({
+        replies: [
+          { id: "399", conversationId: "398", isReply: false },
+          { id: "400", conversationId: "400", isReply: false },
+        ],
+      });
+    };
+    const result = await execute(xAdapter(fetcher), "get_tweet_thread_context", { tweetId: "401" });
+    expect(result.output).toMatchObject({ original_tweet: { id: "400" } });
+    expect(calls).toBe(1);
+  });
+
+  it("does not repeat original-post enrichment on cursor pages", async () => {
+    let calls = 0;
+    const fetcher: FetchLike = async (input) => {
+      calls += 1;
+      const url = requestUrl(input);
+      expect(url.pathname).toBe("/twitter/tweet/thread_context");
+      expect(url.searchParams.get("cursor")).toBe("next-thread-page");
+      return jsonResponse({ replies: [{ id: "403", conversationId: "400", isReply: true }] });
+    };
+    const result = await execute(xAdapter(fetcher), "get_tweet_thread_context", {
+      tweetId: "403",
+      cursor: "next-thread-page",
+    });
+    expect(result.output).not.toHaveProperty("original_tweet");
+    expect(calls).toBe(1);
+  });
+
   it("discovers the original ID from the requested post when thread context is empty", async () => {
     const requested: URL[] = [];
     const fetcher: FetchLike = async (input) => {
@@ -112,6 +183,20 @@ describe("X connector", () => {
     await expect(execute(adapter, "list_timeline", { listId: "500" })).rejects.toThrow("Quota exhausted");
   });
 
+  it("validates configured access during health checks", async () => {
+    const requested: URL[] = [];
+    const healthy = xAdapter(async (input) => {
+      const url = requestUrl(input);
+      requested.push(url);
+      return jsonResponse({ recharge_credits: 123 });
+    });
+    await expect(healthy.healthCheck()).resolves.toEqual({ ok: true, message: "X access is healthy" });
+    expect(requested[0]?.pathname).toBe("/oapi/my/info");
+
+    const rejected = xAdapter(async () => jsonResponse({ message: "Invalid API key" }, 401));
+    await expect(rejected.healthCheck()).resolves.toEqual({ ok: false, message: "Invalid API key" });
+  });
+
   it("enforces principal and granted-capability boundaries", async () => {
     const adapter = xAdapter(async () => jsonResponse({ tweets: [] }));
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
@@ -124,6 +209,22 @@ describe("X connector", () => {
       principal: { type: "user", userId: "another-user" },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/another principal/u);
+
+    await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
+      connection: xConnection([XCapabilities.read], "workspace"),
+      principal: { type: "workspace", workspaceId: "avalon-workspace" },
+      signal: AbortSignal.timeout(1_000),
+    })).resolves.toMatchObject({ summary: "Read the X timeline for user 600" });
+    await expect(adapter.executeTool("unknown_tool", {}, {
+      connection: xConnection([XCapabilities.read]),
+      principal: { type: "user", userId: "avalon-user" },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toThrow(/has not granted unknown_tool/u);
+  });
+
+  it("rejects unsafe API origins", () => {
+    expect(() => createXConnector({ apiKey: "secret-key", apiBaseUrl: "http://api.example.test" })).toThrow(/HTTPS origin/u);
+    expect(() => createXConnector({ apiKey: "secret-key", apiBaseUrl: "https://api.example.test/nested" })).toThrow(/HTTPS origin/u);
   });
 });
 
@@ -143,12 +244,15 @@ async function execute(
   });
 }
 
-function xConnection(grantedScopes: string[]): ConnectorConnectionContext {
+function xConnection(
+  grantedScopes: string[],
+  scope: "personal" | "workspace" = "personal",
+): ConnectorConnectionContext {
   return {
     id: "x-connection",
     workspaceId: "avalon-workspace",
-    scope: "personal",
-    ownerUserId: "avalon-user",
+    scope,
+    ownerUserId: scope === "personal" ? "avalon-user" : null,
     grantedScopes,
     credentials: {},
     cursor: {},
