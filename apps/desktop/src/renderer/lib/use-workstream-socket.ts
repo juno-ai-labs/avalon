@@ -289,10 +289,12 @@ export function replaceWithCanonicalTranscript(previous: Message[] | undefined, 
 
 /**
  * A canonical request can race a newer socket frame. In that case the cached
- * version must win for duplicate identities and every unmatched realtime row
- * must survive until the immediately-following canonical retry completes.
+ * version wins for duplicate identities and every unmatched realtime row
+ * survives until the immediately-following canonical retry completes. The
+ * shared upsert makes one monotonic exception: a cached open elicitation cannot
+ * replace an answered canonical elicitation.
  */
-function mergeCanonicalTranscriptAfterConcurrentEvent(
+export function mergeCanonicalTranscriptAfterConcurrentEvent(
   previous: Message[] | undefined,
   canonical: Message[],
 ): Message[] {
