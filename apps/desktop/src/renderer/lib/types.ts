@@ -122,6 +122,19 @@ export interface WorkstreamConnection {
   capabilities?: string[];
 }
 
+export interface SlackAgentPolicySettings {
+  allowUnlinkedWorkspaceTasks: boolean;
+  publicChannelMode: 'all_invited' | 'allowlist' | 'disabled';
+  privateChannelMode: 'allowlist' | 'disabled';
+  allowDirectMessages: boolean;
+  allowCommands: boolean;
+  allowShortcuts: boolean;
+  allowlistedChannels: Array<{
+    channelId: string;
+    channelType: 'public' | 'private';
+  }>;
+}
+
 export interface ToolEventData {
   id: string;
   name: string;

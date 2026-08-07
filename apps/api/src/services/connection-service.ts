@@ -31,6 +31,7 @@ import { decryptString, encryptString, openString, randomToken, sealString, sha2
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
+import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { LinearRoutingService } from "./linear-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
@@ -68,6 +69,19 @@ interface ConnectorOAuthAttemptRow {
   connection_id: string | null;
   error_code: string | null;
   expires_at: string;
+}
+
+export interface SlackAgentPolicySettings {
+  allowUnlinkedWorkspaceTasks: boolean;
+  publicChannelMode: "all_invited" | "allowlist" | "disabled";
+  privateChannelMode: "allowlist" | "disabled";
+  allowDirectMessages: boolean;
+  allowCommands: boolean;
+  allowShortcuts: boolean;
+  allowlistedChannels: Array<{
+    channelId: string;
+    channelType: "public" | "private";
+  }>;
 }
 
 export interface GitHubSetupResult {
@@ -753,6 +767,10 @@ export class ConnectionService {
       }
     }
     if (provider === "slack" && stateData.scope === "workspace") {
+      await this.env.DB.prepare(
+        `INSERT INTO slack_agent_policies (connection_id, updated_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?) ON CONFLICT(connection_id) DO NOTHING`,
+      ).bind(connectionId, row.user_id, at, at).run();
       try {
         await new SlackRoutingService(this.env).registerConnection({
           teamId: providerAccountId,
@@ -941,10 +959,22 @@ export class ConnectionService {
   async test(id: string) {
     const connection = await this.loadAuthorized(id);
     const context = await this.context(connection);
-    const before = JSON.stringify(context.credentials);
+    const adapter = this.registry().get(connection.connector_type);
+    let before = JSON.stringify(context.credentials);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
     try {
-      result = await this.registry().get(connection.connector_type).healthCheck(context);
+      if (connection.status === "healthy") {
+        await ensureFreshConnectorCredentials(
+          this.env,
+          context,
+          adapter,
+          AbortSignal.timeout(10_000),
+        );
+        // The refresh coordinator persists rotating credentials itself. Only
+        // persist mutations made by the health check below a second time.
+        before = JSON.stringify(context.credentials);
+      }
+      result = await adapter.healthCheck(context);
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
       result = { ok: false, message: error.message, reconnectRequired: true };
@@ -997,6 +1027,87 @@ export class ConnectionService {
       id,
     ).run();
     return result;
+  }
+
+  async getSlackAgentPolicy(id: string): Promise<SlackAgentPolicySettings> {
+    const connection = await this.loadAuthorized(id);
+    this.assertSlackWorkspaceConnection(connection);
+    const [policy, channels] = await Promise.all([
+      this.env.DB.prepare(
+        `SELECT allow_unlinked_workspace_tasks, public_channel_mode, private_channel_mode,
+                allow_direct_messages, allow_commands, allow_shortcuts
+         FROM slack_agent_policies WHERE connection_id = ?`,
+      ).bind(id).first<Record<string, unknown>>(),
+      this.env.DB.prepare(
+        `SELECT slack_channel_id, channel_type FROM slack_agent_channel_allowlist
+         WHERE connection_id = ? AND enabled = 1 ORDER BY slack_channel_id`,
+      ).bind(id).all<{ slack_channel_id: string; channel_type: "public" | "private" }>(),
+    ]);
+    return {
+      allowUnlinkedWorkspaceTasks: policy?.allow_unlinked_workspace_tasks == null
+        ? true
+        : Number(policy.allow_unlinked_workspace_tasks) === 1,
+      publicChannelMode: policy?.public_channel_mode === "allowlist" || policy?.public_channel_mode === "disabled"
+        ? policy.public_channel_mode
+        : "all_invited",
+      privateChannelMode: policy?.private_channel_mode === "allowlist" ? "allowlist" : "disabled",
+      allowDirectMessages: policy?.allow_direct_messages == null ? true : Number(policy.allow_direct_messages) === 1,
+      allowCommands: policy?.allow_commands == null ? true : Number(policy.allow_commands) === 1,
+      allowShortcuts: policy?.allow_shortcuts == null ? true : Number(policy.allow_shortcuts) === 1,
+      allowlistedChannels: (channels.results ?? []).map((channel) => ({
+        channelId: channel.slack_channel_id,
+        channelType: channel.channel_type,
+      })),
+    };
+  }
+
+  async updateSlackAgentPolicy(id: string, input: SlackAgentPolicySettings): Promise<SlackAgentPolicySettings> {
+    const auth = this.requireAuth();
+    const connection = await this.loadAuthorized(id);
+    this.assertSlackWorkspaceConnection(connection);
+    const at = nowIso();
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO slack_agent_policies
+         (connection_id, allow_unlinked_workspace_tasks, public_channel_mode, private_channel_mode,
+          allow_direct_messages, allow_commands, allow_shortcuts, updated_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(connection_id) DO UPDATE SET
+           allow_unlinked_workspace_tasks = excluded.allow_unlinked_workspace_tasks,
+           public_channel_mode = excluded.public_channel_mode,
+           private_channel_mode = excluded.private_channel_mode,
+           allow_direct_messages = excluded.allow_direct_messages,
+           allow_commands = excluded.allow_commands,
+           allow_shortcuts = excluded.allow_shortcuts,
+           updated_by_user_id = excluded.updated_by_user_id,
+           updated_at = excluded.updated_at`,
+      ).bind(
+        id,
+        input.allowUnlinkedWorkspaceTasks ? 1 : 0,
+        input.publicChannelMode,
+        input.privateChannelMode,
+        input.allowDirectMessages ? 1 : 0,
+        input.allowCommands ? 1 : 0,
+        input.allowShortcuts ? 1 : 0,
+        auth.userId,
+        at,
+        at,
+      ),
+      this.env.DB.prepare("DELETE FROM slack_agent_channel_allowlist WHERE connection_id = ?").bind(id),
+      ...input.allowlistedChannels.map((channel) => this.env.DB.prepare(
+        `INSERT INTO slack_agent_channel_allowlist
+         (connection_id, slack_channel_id, channel_type, enabled, created_by_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, 1, ?, ?, ?)`,
+      ).bind(id, channel.channelId, channel.channelType, auth.userId, at, at)),
+    ]);
+    await this.recordConnectionAudit(
+      connection.workspace_id,
+      auth.userId,
+      "connector.slack_agent_policy_updated",
+      id,
+      { ...input, allowlistedChannelCount: input.allowlistedChannels.length },
+    );
+    return this.getSlackAgentPolicy(id);
   }
 
   async disable(id: string): Promise<void> {
@@ -1555,6 +1666,12 @@ export class ConnectionService {
       throw new ApiError(403, "workspace_admin_required", "Only administrators can modify workspace connections");
     }
     return row;
+  }
+
+  private assertSlackWorkspaceConnection(connection: StoredConnection): void {
+    if (connection.connector_type !== "slack" || connection.scope !== "workspace") {
+      throw new ApiError(422, "slack_workspace_connection_required", "Slack Agent policy requires a workspace Slack connection");
+    }
   }
 
   private async context(row: StoredConnection): Promise<ConnectorConnectionContext> {
