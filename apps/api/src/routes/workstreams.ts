@@ -7,6 +7,10 @@ import {
   CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
   IdSchema,
+  HyperSightPreferenceSchema,
+  HyperSightSchema,
+  UpdateHyperSightPreferenceRequestSchema,
+  UpdateHyperSightRequestSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamDetailSchema,
 } from "@avalon/contracts";
@@ -14,6 +18,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
+import { HyperSightService } from "../services/hypersight-service";
 
 const idParam = z.object({ id: IdSchema });
 const participantParam = z.object({ id: IdSchema, userId: IdSchema });
@@ -44,6 +49,31 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
 );
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id)),
+);
+workstreamRoutes.get("/:id/hypersight", zValidator("param", idParam), async (c) =>
+  c.json(HyperSightSchema.parse(await new HyperSightService(c.env, getAuth(c)).get(c.req.valid("param").id))),
+);
+workstreamRoutes.get("/:id/hypersight/preference", zValidator("param", idParam), async (c) =>
+  c.json(HyperSightPreferenceSchema.parse(
+    await new HyperSightService(c.env, getAuth(c)).getPreference(c.req.valid("param").id),
+  )),
+);
+workstreamRoutes.put(
+  "/:id/hypersight/preference",
+  zValidator("param", idParam),
+  zValidator("json", UpdateHyperSightPreferenceRequestSchema),
+  async (c) => c.json(HyperSightPreferenceSchema.parse(
+    await new HyperSightService(c.env, getAuth(c)).updatePreference(
+      c.req.valid("param").id,
+      c.req.valid("json"),
+    ),
+  )),
+);
+workstreamRoutes.put("/:id/hypersight", zValidator("param", idParam), zValidator("json", UpdateHyperSightRequestSchema), async (c) =>
+  c.json(HyperSightSchema.parse(await new HyperSightService(c.env, getAuth(c)).update(
+    c.req.valid("param").id,
+    c.req.valid("json"),
+  ))),
 );
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const detail = await new WorkstreamService(c.env, getAuth(c)).get(c.req.valid("param").id);

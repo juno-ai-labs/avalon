@@ -6,7 +6,7 @@ import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { logStructuredEvent } from "../observability/logger";
 
-type AgentInferenceSource = "workstream" | "automation_compiler" | "inline_child";
+type AgentInferenceSource = "workstream" | "automation_compiler" | "inline_child" | "hypersight";
 
 export interface AgentInferenceLogContext {
   workspaceId: string;

@@ -421,6 +421,62 @@ export const ActivitySuggestionSchema = z.object({
   resolvedAt: TimestampSchema.nullable()
 });
 
+export const HyperSightBlockRunStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "stopped"
+]);
+export const HyperSightBlockRunSchema = z.object({
+  id: IdSchema,
+  blockId: IdSchema,
+  configurationVersionId: IdSchema,
+  status: HyperSightBlockRunStatusSchema,
+  markdown: z.string().nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable(),
+  createdAt: TimestampSchema,
+  startedAt: TimestampSchema.nullable(),
+  completedAt: TimestampSchema.nullable()
+});
+export const HyperSightBlockSchema = z.object({
+  id: IdSchema,
+  prompt: z.string().max(12_000),
+  latestRun: HyperSightBlockRunSchema.nullable()
+});
+export const HyperSightSchema = z.object({
+  versionId: IdSchema.nullable(),
+  versionNumber: z.number().int().nonnegative(),
+  blocks: z.array(HyperSightBlockSchema).max(24),
+  updatedAt: TimestampSchema.nullable()
+});
+export const HyperSightPreferenceSchema = z.object({
+  visible: z.boolean(),
+  updatedAt: TimestampSchema.nullable()
+});
+export const UpdateHyperSightPreferenceRequestSchema = z.object({
+  visible: z.boolean()
+}).strict();
+export const UpdateHyperSightRequestSchema = z.object({
+  expectedVersionNumber: z.number().int().nonnegative(),
+  blocks: z.array(z.object({
+    id: IdSchema,
+    prompt: z.string().max(12_000)
+  }).strict()).max(24)
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.blocks.forEach((block, index) => {
+    if (seen.has(block.id)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "HyperSight block IDs must be unique",
+        path: ["blocks", index, "id"]
+      });
+    }
+    seen.add(block.id);
+  });
+});
+
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   participants: z.array(ParticipantSchema),
   viewers: z.array(ViewerSchema),
@@ -779,6 +835,13 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({
+    type: z.literal("hypersight_preference_updated"),
+    userId: IdSchema,
+    preference: HyperSightPreferenceSchema
+  }),
+  ServerEventBaseSchema.extend({ type: z.literal("hypersight_configuration_updated"), hypersight: HyperSightSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("hypersight_block_run_updated"), run: HyperSightBlockRunSchema }),
+  ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "sequence_ahead"]),
     latestSequence: z.number().int().nonnegative()
@@ -1130,6 +1193,12 @@ export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
+export type HyperSight = z.infer<typeof HyperSightSchema>;
+export type HyperSightBlock = z.infer<typeof HyperSightBlockSchema>;
+export type HyperSightBlockRun = z.infer<typeof HyperSightBlockRunSchema>;
+export type HyperSightPreference = z.infer<typeof HyperSightPreferenceSchema>;
+export type UpdateHyperSightPreferenceRequest = z.infer<typeof UpdateHyperSightPreferenceRequestSchema>;
+export type UpdateHyperSightRequest = z.infer<typeof UpdateHyperSightRequestSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;

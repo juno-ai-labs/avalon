@@ -804,6 +804,29 @@ describe('Avalon API wire adapter', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
   });
 
+  it('loads and updates the personal HyperSight visibility preference', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ visible: false, updatedAt: null }))
+      .mockResolvedValueOnce(json({ visible: true, updatedAt: timestamp }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getHyperSightPreference(workstreamId)).resolves.toEqual({
+      visible: false,
+      updatedAt: null,
+    });
+    await expect(api.updateHyperSightPreference(workstreamId, true)).resolves.toEqual({
+      visible: true,
+      updatedAt: timestamp,
+    });
+
+    const preferenceUrl = `https://api.avalon.test/workstreams/${workstreamId}/hypersight/preference`;
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(preferenceUrl);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(preferenceUrl);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'PUT' });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ visible: true });
+  });
+
   it('uses the template, watch, and detach service contracts without inventing response fields', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ templateId: '00000000-0000-7000-8000-000000000007' }, { status: 201 }))

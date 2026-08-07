@@ -177,6 +177,36 @@ export interface ActivitySuggestionData {
   status: 'pending' | 'accepted' | 'dismissed';
 }
 
+export interface HyperSightBlockRun {
+  id: string;
+  blockId: string;
+  configurationVersionId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+  markdown: string | null;
+  error: { code: string; message: string } | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface HyperSightBlock {
+  id: string;
+  prompt: string;
+  latestRun: HyperSightBlockRun | null;
+}
+
+export interface HyperSight {
+  versionId: string | null;
+  versionNumber: number;
+  blocks: HyperSightBlock[];
+  updatedAt: string | null;
+}
+
+export interface HyperSightPreference {
+  visible: boolean;
+  updatedAt: string | null;
+}
+
 export interface MessageMention {
   type: 'person' | 'connector';
   personId?: string;

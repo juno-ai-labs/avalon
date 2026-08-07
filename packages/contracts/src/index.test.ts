@@ -13,10 +13,13 @@ import {
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
+  HyperSightPreferenceSchema,
   MessageSchema,
   MentionSchema,
   RefreshRequestSchema,
   ServerSocketEventSchema,
+  UpdateHyperSightPreferenceRequestSchema,
+  UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkstreamArtifactSchema,
@@ -269,6 +272,43 @@ describe("boundary contracts", () => {
         afterSequence: 42
       })
     ).toEqual({ type: "subscribe", afterSequence: 42 });
+  });
+
+  it("bounds HyperSight configuration and preserves unique block identities", () => {
+    expect(UpdateHyperSightRequestSchema.parse({
+      expectedVersionNumber: 3,
+      blocks: [{ id, prompt: "Give me the last five to-do items" }],
+    })).toEqual({
+      expectedVersionNumber: 3,
+      blocks: [{ id, prompt: "Give me the last five to-do items" }],
+    });
+    expect(UpdateHyperSightRequestSchema.safeParse({
+      expectedVersionNumber: 3,
+      blocks: [{ id, prompt: "First" }, { id, prompt: "Duplicate" }],
+    }).success).toBe(false);
+    expect(UpdateHyperSightRequestSchema.safeParse({
+      expectedVersionNumber: 3,
+      blocks: Array.from({ length: 25 }, (_, index) => ({
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        prompt: "Too many",
+      })),
+    }).success).toBe(false);
+  });
+
+  it("validates personal HyperSight visibility preferences and their realtime updates", () => {
+    expect(UpdateHyperSightPreferenceRequestSchema.parse({ visible: true })).toEqual({ visible: true });
+    expect(UpdateHyperSightPreferenceRequestSchema.safeParse({ visible: true, shared: true }).success).toBe(false);
+    const preference = HyperSightPreferenceSchema.parse({
+      visible: true,
+      updatedAt: "2026-08-07T20:00:00.000Z",
+    });
+    expect(ServerSocketEventSchema.parse({
+      type: "hypersight_preference_updated",
+      sequence: 44,
+      occurredAt: "2026-08-07T20:00:00.000Z",
+      userId: id,
+      preference,
+    })).toMatchObject({ type: "hypersight_preference_updated", userId: id, preference });
   });
 
   it("keeps room replay sequence separate from Bind stream epochs", () => {

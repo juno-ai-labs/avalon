@@ -257,6 +257,54 @@ describe("durable harness attempt runtime", () => {
     ).get(WORKSTREAM_ID)).toEqual({ harness_status: "running" });
   });
 
+  it("terminalizes a HyperSight result without a transcript message or workstream status change", async () => {
+    const sqlite = fixture();
+    openDatabases.push(sqlite.database);
+    sqlite.database.exec(`
+      DELETE FROM harness_runs WHERE id = '${RUN_TWO}';
+      UPDATE harness_runs
+         SET origin = 'hypersight_block', status = 'scheduled', model = 'x-ai/grok-4.3'
+       WHERE id = '${RUN_ONE}';
+      UPDATE workstreams SET harness_status = 'completed' WHERE id = '${WORKSTREAM_ID}';
+      INSERT INTO hypersight_configuration_versions
+        (id, workspace_id, workstream_id, version_number, blocks_json,
+         created_by_user_id, created_at)
+      VALUES ('hypersight-runtime-version', '${WORKSPACE_ID}', '${WORKSTREAM_ID}', 1,
+              '[{"id":"block-runtime","prompt":"Summarize"}]', 'user-runtime', '2026-08-03');
+      INSERT INTO hypersight_block_runs
+        (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
+         trigger_sequence, harness_run_id, status, created_at)
+      VALUES ('hypersight-runtime-run', '${WORKSPACE_ID}', '${WORKSTREAM_ID}',
+              'hypersight-runtime-version', 'block-runtime', 'Summarize', 12,
+              '${RUN_ONE}', 'queued', '2026-08-03');
+    `);
+
+    const claim = await claimHarnessAttempt(sqlite.binding, input(RUN_ONE), {
+      attemptId: "attempt-hypersight",
+      owner: "owner-hypersight",
+    });
+    if (claim.state !== "claimed") throw new Error("expected claimed HyperSight attempt");
+    expect(sqlite.database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "completed" });
+    sqlite.database.prepare(
+      "UPDATE hypersight_block_runs SET status = 'completed', markdown = '# Current view' WHERE harness_run_id = ?",
+    ).run(RUN_ONE);
+
+    await expect(terminalizeHarnessAttempt(
+      sqlite.binding,
+      input(RUN_ONE),
+      claim.lease,
+      { status: "completed" },
+    )).resolves.toBe("terminalized");
+    expect(sqlite.database.prepare(
+      "SELECT status, final_message_id FROM harness_runs WHERE id = ?",
+    ).get(RUN_ONE)).toEqual({ status: "completed", final_message_id: null });
+    expect(sqlite.database.prepare(
+      "SELECT harness_status FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toEqual({ harness_status: "completed" });
+  });
+
   it("fences final-message writes and recovers a final persisted before terminalization", async () => {
     const sqlite = fixture();
     openDatabases.push(sqlite.database);

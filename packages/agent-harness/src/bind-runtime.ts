@@ -462,12 +462,41 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         const receiptId = position
           ? `${input.harnessRunId}:turn:${position.turn}:tool:${position.index}`
           : `${input.harnessRunId}:tool:${toolCall.function.name}:${inputHash.slice(0, 32)}`;
-        await requiredPort("Tool authorization revalidation failed", () => input.beforeToolCall?.({
+        let beforeToolCallDecision;
+        try {
+          beforeToolCallDecision = await input.beforeToolCall?.({
             pluginId: dispatched.pluginId,
             toolName: dispatched.tool.definition.name,
             inputHash,
+            policy,
             signal,
-          }));
+          });
+        } catch (error) {
+          throw new FatalHarnessPortError("Tool authorization revalidation failed", error);
+        }
+        if (beforeToolCallDecision?.allowed === false) {
+          await emit({
+            type: "tool_failed",
+            toolCallId: receiptId,
+            toolName: toolCall.function.name,
+            pluginId: dispatched.pluginId,
+            policy,
+            error: beforeToolCallDecision.message,
+            phase: "validation",
+            outcome: "definitive_failure",
+          });
+          await input.onToolCallRejected?.({
+            toolCallId: receiptId,
+            code: beforeToolCallDecision.code,
+          });
+          return {
+            toolMessage: toolResultMessage(toolCall.id, {
+              success: false,
+              kind: "authz",
+              error: beforeToolCallDecision.message,
+            }),
+          };
+        }
         const completed = await requiredPort(
           "Tool receipt lookup failed",
           () => input.findCompletedToolResult?.(receiptId, inputHash, {
