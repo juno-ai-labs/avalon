@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   callSlackMcp,
   createSlackConnector,
+  joinAllSlackPublicChannels,
+  joinSlackPublicChannel,
   parseSlackAgentInvocation,
   slackApi,
   SlackCapabilities,
@@ -110,7 +112,110 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).toContain("users:read.email");
     expect(SlackWorkspaceBotScopes).toContain("users:read");
     expect(SlackWorkspaceBotScopes).toContain("channels:read");
+    expect(SlackWorkspaceBotScopes).toContain("channels:join");
     expect(SlackWorkspaceBotScopes).toContain("groups:read");
+  });
+
+  it("paginates through and joins all active public Slack channels idempotently", async () => {
+    const requests: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ method, body });
+      if (method === "conversations.list" && !body.cursor) return json({
+        ok: true,
+        channels: [
+          { id: "CJOIN", is_private: false, is_archived: false, is_member: false },
+          { id: "CMEMBER", is_private: false, is_archived: false, is_member: true },
+          { id: "CARCHIVED", is_private: false, is_archived: true, is_member: false },
+        ],
+        response_metadata: { next_cursor: "next-page" },
+      });
+      if (method === "conversations.list") return json({
+        ok: true,
+        channels: [
+          { id: "CFULL", is_private: false, is_archived: false, is_member: false },
+          { id: "CALREADY", is_private: false, is_archived: false, is_member: false },
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+      if (body.channel === "CJOIN") return json({ ok: true, channel: { id: "CJOIN" } });
+      if (body.channel === "CFULL") return json({ ok: false, error: "too_many_members" });
+      if (body.channel === "CALREADY") return json({
+        ok: true,
+        channel: { id: "CALREADY" },
+        warning: "already_in_channel",
+      });
+      throw new Error(`Unexpected Slack request ${method}`);
+    });
+
+    await expect(joinAllSlackPublicChannels(
+      "xoxb-test",
+      AbortSignal.timeout(1_000),
+      fetcher,
+    )).resolves.toEqual({ joined: 1, alreadyMember: 2, skipped: 2, complete: true });
+    expect(requests.filter(({ method }) => method === "conversations.list")).toEqual([
+      { method: "conversations.list", body: { exclude_archived: true, limit: 200, types: "public_channel" } },
+      { method: "conversations.list", body: { exclude_archived: true, limit: 200, types: "public_channel", cursor: "next-page" } },
+    ]);
+    expect(requests.filter(({ method }) => method === "conversations.join").map(({ body }) => body.channel))
+      .toEqual(["CJOIN", "CFULL", "CALREADY"]);
+  });
+
+  it("returns a resumable partial sync when Slack rate-limits a channel join", async () => {
+    const fetcher: FetchLike = vi.fn(async (input) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("conversations.list")) return json({
+        ok: true,
+        channels: [{ id: "CNEW", is_private: false, is_archived: false, is_member: false }],
+        response_metadata: { next_cursor: "" },
+      });
+      return json({ error: "ratelimited" }, { "retry-after": "9" }, 429);
+    });
+
+    await expect(joinAllSlackPublicChannels(
+      "xoxb-test",
+      AbortSignal.timeout(1_000),
+      fetcher,
+    )).resolves.toEqual({
+      joined: 0,
+      alreadyMember: 0,
+      skipped: 0,
+      complete: false,
+      retryAfterMs: 9_000,
+    });
+  });
+
+  it("uses a conservative continuation delay for Slack's API-level rate-limit error", async () => {
+    const fetcher: FetchLike = vi.fn(async () => json({ ok: false, error: "ratelimited" }));
+    await expect(joinAllSlackPublicChannels(
+      "xoxb-test",
+      AbortSignal.timeout(1_000),
+      fetcher,
+    )).resolves.toMatchObject({ complete: false, retryAfterMs: 60_000 });
+  });
+
+  it("quietly skips channels until older installations grant the join scope", async () => {
+    for (const error of ["missing_scope", "restricted_action"]) {
+      const fetcher: FetchLike = vi.fn(async () => json({ ok: false, error }));
+      await expect(joinSlackPublicChannel(
+        "xoxb-test",
+        "CNEW",
+        AbortSignal.timeout(1_000),
+        fetcher,
+      )).resolves.toBe("skipped");
+    }
+  });
+
+  it("propagates transient join failures to the ingress retry loop", async () => {
+    const fetcher: FetchLike = vi.fn(async () => json({ ok: false, error: "internal_error" }));
+    await expect(joinSlackPublicChannel(
+      "xoxb-test",
+      "CNEW",
+      AbortSignal.timeout(1_000),
+      fetcher,
+    )).rejects.toMatchObject({ code: "provider_error", message: "internal_error" });
   });
 
   it("discovers the hosted MCP tool name before invoking it", async () => {
