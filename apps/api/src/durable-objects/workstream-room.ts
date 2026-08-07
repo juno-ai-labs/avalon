@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { connectionFromRow } from "../mappers/connection";
+import { launchHyperSightRefresh } from "../services/hypersight-service";
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
@@ -27,8 +28,30 @@ const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSch
 const SOCKET_TICKET_PREFIX = "socket-ticket:";
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
+const HYPERSIGHT_DEBOUNCE_MS = 1_200;
+const HYPERSIGHT_MAX_DEBOUNCE_MS = 5_000;
+const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
+  "message_created",
+  "stream_completed",
+  "participant_added",
+  "participant_removed",
+  "resource_attached",
+  "resource_updated",
+  "elicitation_created",
+  "elicitation_answered",
+  "activity_suggestion_created",
+  "activity_suggestion_resolved",
+  "hypersight_configuration_updated",
+]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+
+interface PendingHyperSightRefresh {
+  workspaceId: string;
+  workstreamId: string;
+  triggerSequence: number;
+  firstQueuedAt: number;
+}
 
 interface WorkstreamRow {
   id: string;
@@ -255,6 +278,33 @@ export class WorkstreamRoom {
     );
   }
 
+  async alarm(): Promise<void> {
+    const pending = await this.state.storage.get<PendingHyperSightRefresh>("pendingHyperSightRefresh");
+    if (!pending) return;
+    await this.state.storage.delete("pendingHyperSightRefresh");
+    try {
+      const runs = await launchHyperSightRefresh(
+        this.env,
+        pending.workspaceId,
+        pending.workstreamId,
+        pending.triggerSequence,
+      );
+      for (const run of runs) {
+        const event = ServerSocketEventSchema.parse({
+          type: "hypersight_block_run_updated",
+          sequence: await this.allocateSequence(),
+          occurredAt: new Date().toISOString(),
+          run,
+        });
+        this.recordRecentEvent(event);
+        this.broadcast(event);
+      }
+    } catch {
+      await this.state.storage.put("pendingHyperSightRefresh", pending);
+      await this.state.storage.setAlarm(Date.now() + HYPERSIGHT_DEBOUNCE_MS);
+    }
+  }
+
   async webSocketClose(
     socket: WebSocket,
     code: number,
@@ -414,9 +464,45 @@ export class WorkstreamRoom {
       );
     }
 
+    const requestIdentity = RoomIdentitySchema.safeParse({
+      workspaceId: request.headers.get("x-avalon-workspace-id"),
+      workstreamId: request.headers.get("x-avalon-workstream-id"),
+    });
+    if (requestIdentity.success) {
+      const storedIdentity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
+      if (!storedIdentity.success) {
+        await this.state.storage.put("roomIdentity", requestIdentity.data);
+      } else if (
+        storedIdentity.data.workspaceId !== requestIdentity.data.workspaceId
+        || storedIdentity.data.workstreamId !== requestIdentity.data.workstreamId
+      ) {
+        return jsonResponse({ error: "room_identity_mismatch" }, 409);
+      }
+    }
+
     this.recordRecentEvent(event.data);
     this.broadcast(event.data);
+    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.data.type)) {
+      await this.scheduleHyperSightRefresh(event.data.sequence);
+    }
     return jsonResponse({ accepted: true, sequence: event.data.sequence }, 202);
+  }
+
+  private async scheduleHyperSightRefresh(triggerSequence: number): Promise<void> {
+    const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
+    if (!identity.success) return;
+    const now = Date.now();
+    const existing = await this.state.storage.get<PendingHyperSightRefresh>("pendingHyperSightRefresh");
+    const pending: PendingHyperSightRefresh = {
+      ...identity.data,
+      triggerSequence: Math.max(existing?.triggerSequence ?? 0, triggerSequence),
+      firstQueuedAt: existing?.firstQueuedAt ?? now,
+    };
+    await this.state.storage.put("pendingHyperSightRefresh", pending);
+    await this.state.storage.setAlarm(Math.min(
+      now + HYPERSIGHT_DEBOUNCE_MS,
+      pending.firstQueuedAt + HYPERSIGHT_MAX_DEBOUNCE_MS,
+    ));
   }
 
   private async fulfillSubscription(
@@ -571,6 +657,7 @@ export class WorkstreamRoom {
         this.env.DB.prepare(
           `SELECT id FROM harness_runs
             WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
+              AND origin != 'hypersight_block'
             ORDER BY started_at DESC LIMIT 1`
         )
           .bind(workstreamId)

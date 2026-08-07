@@ -9,6 +9,8 @@ import {
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
   CursorPageSchema,
   ElicitationSchema as WireElicitationSchema,
+  HyperSightPreferenceSchema as WireHyperSightPreferenceSchema,
+  HyperSightSchema as WireHyperSightSchema,
   MessageSchema as WireMessageSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
@@ -53,6 +55,8 @@ import type {
   CreatedWorkstream,
   ElicitationData,
   HarnessStatus,
+  HyperSight,
+  HyperSightPreference,
   Message,
   MessagePage,
   Participant,
@@ -108,7 +112,7 @@ function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
 }
 
 interface RequestOptions<T> {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   headers?: HeadersInit;
   schema: ZodType<T>;
@@ -869,6 +873,39 @@ export class AvalonApi {
   async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamDetail> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamDetailSchema, signal });
     return mapWorkstreamDetail(raw);
+  }
+
+  async getHyperSight(id: string, signal?: AbortSignal): Promise<HyperSight> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight`, {
+      schema: WireHyperSightSchema,
+      signal,
+    });
+  }
+
+  async getHyperSightPreference(id: string, signal?: AbortSignal): Promise<HyperSightPreference> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight/preference`, {
+      schema: WireHyperSightPreferenceSchema,
+      signal,
+    });
+  }
+
+  async updateHyperSightPreference(id: string, visible: boolean): Promise<HyperSightPreference> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight/preference`, {
+      method: 'PUT',
+      body: { visible },
+      schema: WireHyperSightPreferenceSchema,
+    });
+  }
+
+  async updateHyperSight(
+    id: string,
+    input: { expectedVersionNumber: number; blocks: Array<{ id: string; prompt: string }> },
+  ): Promise<HyperSight> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/hypersight`, {
+      method: 'PUT',
+      body: input,
+      schema: WireHyperSightSchema,
+    });
   }
 
   async getWorkstreamContext(

@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonApi } from './api';
-import type { Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import {
   applyStreamingSocketEvent,
   insertMessage,
@@ -85,6 +85,110 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
+  it('applies shared HyperSight updates and ignores runs from an older configuration', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000301';
+    const versionId = '00000000-0000-7000-8000-000000000302';
+    const blockId = '00000000-0000-7000-8000-000000000303';
+    const initial: HyperSight = {
+      versionId,
+      versionNumber: 1,
+      blocks: [{ id: blockId, prompt: 'Summarize', latestRun: null }],
+      updatedAt: '2026-08-07T12:00:00.000Z',
+    };
+    queryClient.setQueryData(['hypersight', workstreamId], initial);
+    queryClient.setQueryData<HyperSightPreference>(['hypersight-preference', workstreamId], {
+      visible: false,
+      updatedAt: null,
+    });
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+    } as unknown as AvalonApi;
+    const currentUserId = '00000000-0000-7000-8000-000000000307';
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true, currentUserId), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'hypersight_block_run_updated',
+      sequence: 1,
+      occurredAt: '2026-08-07T12:00:01.000Z',
+      run: {
+        id: '00000000-0000-7000-8000-000000000304',
+        blockId,
+        configurationVersionId: versionId,
+        status: 'completed',
+        markdown: '- First result',
+        error: null,
+        createdAt: '2026-08-07T12:00:01.000Z',
+        startedAt: '2026-08-07T12:00:02.000Z',
+        completedAt: '2026-08-07T12:00:03.000Z',
+      },
+    }));
+    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun)
+      .toMatchObject({ status: 'completed', markdown: '- First result' });
+
+    act(() => socket.message({
+      type: 'hypersight_block_run_updated',
+      sequence: 2,
+      occurredAt: '2026-08-07T12:00:04.000Z',
+      run: {
+        id: '00000000-0000-7000-8000-000000000305',
+        blockId,
+        configurationVersionId: '00000000-0000-7000-8000-000000000399',
+        status: 'completed',
+        markdown: 'Stale result',
+        error: null,
+        createdAt: '2026-08-07T12:00:01.000Z',
+        startedAt: '2026-08-07T12:00:02.000Z',
+        completedAt: '2026-08-07T12:00:04.000Z',
+      },
+    }));
+    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
+      .toBe('- First result');
+
+    const next: HyperSight = {
+      versionId: '00000000-0000-7000-8000-000000000306',
+      versionNumber: 2,
+      blocks: [{ id: blockId, prompt: 'List decisions', latestRun: null }],
+      updatedAt: '2026-08-07T12:00:05.000Z',
+    };
+    act(() => socket.message({
+      type: 'hypersight_configuration_updated',
+      sequence: 3,
+      occurredAt: '2026-08-07T12:00:05.000Z',
+      hypersight: next,
+    }));
+    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])).toEqual(next);
+
+    act(() => socket.message({
+      type: 'hypersight_preference_updated',
+      sequence: 4,
+      occurredAt: '2026-08-07T12:00:06.000Z',
+      userId: currentUserId,
+      preference: { visible: true, updatedAt: '2026-08-07T12:00:06.000Z' },
+    }));
+    expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId]))
+      .toEqual({ visible: true, updatedAt: '2026-08-07T12:00:06.000Z' });
+
+    act(() => socket.message({
+      type: 'hypersight_preference_updated',
+      sequence: 5,
+      occurredAt: '2026-08-07T12:00:07.000Z',
+      userId: '00000000-0000-7000-8000-000000000308',
+      preference: { visible: false, updatedAt: '2026-08-07T12:00:07.000Z' },
+    }));
+    expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId])?.visible)
+      .toBe(true);
+  });
+
   it('jitters heartbeat and exponential reconnect timing within bounded windows', () => {
     expect(socketHeartbeatDelay(() => 0)).toBe(45_000);
     expect(socketHeartbeatDelay(() => 0.999)).toBeGreaterThanOrEqual(54_000);
