@@ -1,9 +1,17 @@
-import type { AutomationPluginActivity } from '@avalon/contracts';
+import type {
+  AutomationPluginActivity,
+  NoteDetail as ContractNoteDetail,
+  NoteSummary as ContractNoteSummary,
+  NoteTranscriptSegment as ContractNoteTranscriptSegment,
+} from '@avalon/contracts';
 
 export type Region = 'global' | 'eu';
 export type Scope = 'you' | 'workspace';
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed';
 export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
+export type NoteSummary = ContractNoteSummary;
+export type NoteDetail = ContractNoteDetail;
+export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
 
 export interface WorkspaceMember {
   id: string;

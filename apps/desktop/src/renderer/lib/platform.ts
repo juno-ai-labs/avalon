@@ -302,6 +302,15 @@ const browserBridge: AvalonDesktopBridge = {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;
   },
+  async openMeetingNotes(noteId) {
+    const target = new URL(window.location.href);
+    target.search = new URLSearchParams({
+      surface: 'meeting',
+      noteId: noteId ?? crypto.randomUUID(),
+    }).toString();
+    target.hash = '/meeting';
+    window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
+  },
   onSettingsSectionRequested() {
     return () => undefined;
   },

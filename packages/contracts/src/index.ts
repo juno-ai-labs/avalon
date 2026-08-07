@@ -216,6 +216,78 @@ export const ResourceSchema = z.object({
   sizeBytes: z.number().int().nonnegative().default(0),
 });
 
+export const NoteRecordingStatusSchema = z.enum(["idle", "recording", "complete"]);
+
+export const NoteTranscriptSegmentSchema = z.object({
+  id: IdSchema,
+  noteId: IdSchema,
+  sequenceNumber: z.number().int().positive(),
+  startOffsetMs: z.number().int().nonnegative(),
+  endOffsetMs: z.number().int().nonnegative(),
+  capturedAt: TimestampSchema,
+  speakerLabel: z.string().trim().min(1).max(120).nullable(),
+  text: z.string().trim().min(1).max(80_000),
+  createdAt: TimestampSchema,
+}).refine((segment) => segment.endOffsetMs >= segment.startOffsetMs, {
+  message: "Segment end time must not precede its start time",
+  path: ["endOffsetMs"],
+});
+
+export const NoteSummarySchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  resourceId: IdSchema,
+  ownerUserId: IdSchema,
+  scope: ScopeSchema,
+  title: z.string().trim().min(1).max(180),
+  recordingStatus: NoteRecordingStatusSchema,
+  recordedMs: z.number().int().nonnegative(),
+  startedAt: TimestampSchema.nullable(),
+  endedAt: TimestampSchema.nullable(),
+  generatedAt: TimestampSchema.nullable(),
+  lastActivityAt: TimestampSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  archivedAt: TimestampSchema.nullable(),
+});
+
+export const NoteDetailSchema = NoteSummarySchema.extend({
+  manualNotes: z.string().max(200_000),
+  liveNotes: z.string().max(50_000),
+  notesThroughSequence: z.number().int().nonnegative(),
+  segments: z.array(NoteTranscriptSegmentSchema),
+});
+
+export const CreateNoteRequestSchema = z.object({
+  id: IdSchema,
+  title: z.string().trim().min(1).max(180),
+  scope: ScopeSchema.default("personal"),
+}).strict();
+
+export const UpdateNoteRequestSchema = z.object({
+  title: z.string().trim().min(1).max(180).optional(),
+  manualNotes: z.string().max(200_000).optional(),
+  scope: ScopeSchema.optional(),
+  recordingStatus: NoteRecordingStatusSchema.optional(),
+  recordedMs: z.number().int().nonnegative().optional(),
+  startedAt: TimestampSchema.nullable().optional(),
+  endedAt: TimestampSchema.nullable().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "At least one note field is required");
+
+export const AppendNoteTranscriptSegmentRequestSchema = z.object({
+  clientSegmentId: IdSchema,
+  startOffsetMs: z.number().int().nonnegative(),
+  endOffsetMs: z.number().int().nonnegative(),
+  capturedAt: TimestampSchema,
+  speakerLabel: z.string().trim().min(1).max(120).nullable().default(null),
+  text: z.string().trim().min(1).max(80_000),
+}).strict().refine((segment) => segment.endOffsetMs >= segment.startOffsetMs, {
+  message: "Segment end time must not precede its start time",
+  path: ["endOffsetMs"],
+});
+
+export const GenerateNoteNotesRequestSchema = z.object({}).strict();
+
 export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
@@ -759,6 +831,7 @@ export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
+  resourceIds: z.array(IdSchema).max(20).default([]),
   deliveryTargets: z.array(z.object({
     type: z.literal("slack_agent_dm"),
     connectionId: IdSchema,
@@ -853,6 +926,16 @@ export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
     preference: HyperSightPreferenceSchema
   })
 ]);
+
+export const GenerateMeetingNotesRequestSchema = z.object({
+  transcript: z.string().trim().min(1).max(80_000),
+  previousNotes: z.string().max(50_000).default("")
+}).strict();
+
+export const MeetingNotesResponseSchema = z.object({
+  notes: z.string().trim().min(1).max(50_000),
+  generatedAt: TimestampSchema
+});
 
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
@@ -1192,6 +1275,13 @@ export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
+export type NoteRecordingStatus = z.infer<typeof NoteRecordingStatusSchema>;
+export type NoteTranscriptSegment = z.infer<typeof NoteTranscriptSegmentSchema>;
+export type NoteSummary = z.infer<typeof NoteSummarySchema>;
+export type NoteDetail = z.infer<typeof NoteDetailSchema>;
+export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
+export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
+export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
@@ -1221,6 +1311,8 @@ export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
+export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;
+export type MeetingNotesResponse = z.infer<typeof MeetingNotesResponseSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;

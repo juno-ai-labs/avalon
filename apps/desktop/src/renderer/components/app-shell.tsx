@@ -3,6 +3,7 @@ import type { CSSProperties, PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
+import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import type { Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
@@ -33,6 +34,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
+  const notes = useQuery({
+    queryKey: ['notes'],
+    queryFn: ({ signal }) => api!.getNotes(signal),
+    enabled: Boolean(api),
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+  });
 
   const shellStyle = {
     '--rail-width': `${railExpanded ? Math.max(520, railWidth) : railWidth}px`,
@@ -43,7 +51,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     <div className={railOpen ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
       <Sidebar
         automations={automations.data ?? []}
-        loading={automations.isLoading || workstreams.isLoading}
+        loading={automations.isLoading || workstreams.isLoading || notes.isLoading}
+        notes={notes.data ?? []}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);
@@ -71,6 +80,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           await queryClient.invalidateQueries({ queryKey: ['workstreams'] });
           void navigate(`/workstreams/${workstream.id}`);
         }}
+        onOpenMeetingNotes={(noteId) => desktopBridge().openMeetingNotes(noteId)}
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}
@@ -84,14 +94,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             <button onClick={clearDeepLinkError} type="button">Dismiss</button>
           </div>
         )}
-        {(automations.error || workstreams.error) && (
+        {(automations.error || workstreams.error || notes.error) && (
           <div className="connection-banner" role="status">
             <span>
               {automations.error instanceof ApiError && automations.error.status === 0
                 ? 'Regional service offline. Existing views may be stale.'
                 : 'Some navigation data could not be refreshed.'}
             </span>
-            <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch()])} type="button">Retry</button>
+            <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch(), notes.refetch()])} type="button">Retry</button>
           </div>
         )}
         {children}
