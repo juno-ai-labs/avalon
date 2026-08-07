@@ -220,7 +220,7 @@ describe('Avalon API wire adapter', () => {
     const streamed: unknown[] = [];
 
     const result = await api.compileAutomation(
-      { message: 'Check this blog every 24 hours.' },
+      { message: 'Check this blog every 24 hours.', attachmentIds: [resourceId] },
       (event) => streamed.push(event),
     );
     expect(result).toMatchObject({
@@ -239,6 +239,17 @@ describe('Avalon API wire adapter', () => {
       draftId: result.draftId,
       messages: [{ role: 'user', content: 'Check this blog every 24 hours.' }],
       currentDraft: null,
+      attachmentIds: [resourceId],
+    });
+
+    await api.compileAutomation({ message: 'Only report meaningful changes.', draftId: result.draftId });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      attachmentIds: [resourceId],
+      messages: [
+        { role: 'user', content: 'Check this blog every 24 hours.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+        { role: 'user', content: 'Only report meaningful changes.' },
+      ],
     });
   });
 
@@ -725,6 +736,29 @@ describe('Avalon API wire adapter', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.avalon.test/workstreams/${workstreamId}`);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ title: 'Launch planning' });
+  });
+
+  it('creates an attachment-only work stream with its draft resource IDs', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      workstream: detail,
+      messageId,
+      harnessRunId: null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.createWorkstream({
+      openingMessage: '',
+      participantIds: [],
+      attachmentIds: [resourceId],
+    })).resolves.toMatchObject({ messageId, workstream: { id: workstreamId } });
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      openingMessage: '',
+      participantUserIds: [],
+      clientMessageId: expect.any(String),
+      attachmentIds: [resourceId],
+    });
   });
 
   it('acknowledges visible messages and marks a work stream unread through durable read-state endpoints', async () => {

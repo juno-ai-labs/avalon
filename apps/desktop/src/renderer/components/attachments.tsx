@@ -32,7 +32,8 @@ function ProgressRing({ progress }: { progress: number }): React.JSX.Element {
   );
 }
 
-export function PendingAttachmentTile({ attachment, onOpen, onRemove, onRetry }: {
+export function PendingAttachmentTile({ actionsDisabled = false, attachment, onOpen, onRemove, onRetry }: {
+  actionsDisabled?: boolean;
   attachment: PendingAttachment;
   onOpen: (preview: AttachmentPreview) => void;
   onRemove: () => void;
@@ -52,9 +53,9 @@ export function PendingAttachmentTile({ attachment, onOpen, onRemove, onRetry }:
       </button>
       {attachment.status === 'uploading' && <ProgressRing progress={attachment.progress} />}
       {attachment.status === 'failed' && (
-        <button aria-label={`Retry ${attachment.file.name}`} className="attachment-retry" onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
+        <button aria-label={`Retry ${attachment.file.name}`} className="attachment-retry" disabled={actionsDisabled} onClick={onRetry} title={attachment.error} type="button"><RefreshCcw size={14} /></button>
       )}
-      <button aria-label={`Remove ${attachment.file.name}`} className="attachment-remove" onClick={onRemove} type="button"><X size={13} /></button>
+      <button aria-label={`Remove ${attachment.file.name}`} className="attachment-remove" disabled={actionsDisabled} onClick={onRemove} type="button"><X size={13} /></button>
     </div>
   );
 }
