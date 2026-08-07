@@ -639,7 +639,7 @@ export const UpdateWorkspaceRequestSchema = z.object({
 
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
-  objective: z.string().min(1).max(4000),
+  objective: z.string().trim().min(1).max(4000).optional(),
   participantUserIds: z.array(IdSchema).max(25).default([]),
   openingMessage: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),

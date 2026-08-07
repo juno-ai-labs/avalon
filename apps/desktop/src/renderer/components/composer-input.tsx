@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type Ref,
   useCallback,
+  useLayoutEffect,
   useRef,
 } from 'react';
 import type { AvalonApi } from '../lib/api';
@@ -90,16 +91,24 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dictationBaseRef = useRef('');
   const microphonePressRef = useRef<{ startedAt: number; startedRecording: boolean } | undefined>(undefined);
-  const drop = useFileDrop(onAttach);
-  const resizeTextarea = useCallback((): void => {
+  const attachFiles = useCallback((files: FileList | File[]): void => {
+    if (!submitting) onAttach(files);
+  }, [onAttach, submitting]);
+  const drop = useFileDrop((files) => attachFiles(files), submitting);
+  const resizeTextarea = useCallback((nextValue?: string): void => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    if ((nextValue ?? textarea.value).length > 0) {
+      textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+    }
   }, [maxHeight]);
+  useLayoutEffect(() => {
+    resizeTextarea(value);
+  }, [resizeTextarea, value]);
   const dictation = useRealtimeDictation(api, (transcript) => {
     onValueChange(appendDictationTranscript(dictationBaseRef.current, transcript));
-    requestAnimationFrame(resizeTextarea);
+    requestAnimationFrame(() => resizeTextarea());
   });
   const dictationActive = !['idle', 'error'].includes(dictation.state);
   const dictationBlocking = ['requesting', 'connecting', 'listening'].includes(dictation.state);
@@ -138,6 +147,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           <div className="composer-attachments" aria-label="Attachments">
             {attachments.map((attachment) => (
               <PendingAttachmentTile
+                actionsDisabled={submitting}
                 attachment={attachment}
                 key={attachment.localId}
                 onOpen={onOpenAttachment}
@@ -153,7 +163,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           onChange={(event) => {
             if (dictation.state === 'transcribing') void dictation.stop();
             onValueChange(event.target.value);
-            resizeTextarea();
+            resizeTextarea(event.target.value);
           }}
           onKeyDown={(event) => {
             onKeyDown?.(event);
@@ -178,17 +188,17 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <IconButton disabled={dictationBlocking || mentionDisabled} label={mentionLabel} onClick={beginMention}>
+            <IconButton disabled={submitting || dictationBlocking || mentionDisabled} label={mentionLabel} onClick={beginMention}>
               <AtSign size={15} />
             </IconButton>
-            <IconButton label="Attach a file" onClick={() => fileInputRef.current?.click()}>
+            <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
               {uploading ? <LoaderCircle className="spin" size={15} /> : <Paperclip size={15} />}
             </IconButton>
             <div className={clsx('microphone-control', dictation.state === 'listening' && 'is-listening')}>
               <IconButton
                 aria-pressed={dictationActive}
                 className="dictation-button"
-                disabled={!api}
+                disabled={!api || submitting}
                 label={dictation.state === 'transcribing'
                   ? 'Cancel dictation'
                   : dictationActive ? 'Stop dictation' : 'Click or hold to dictate'}
@@ -224,7 +234,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               </IconButton>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
-                  <IconButton className="microphone-menu-trigger" disabled={dictationBlocking} label="Choose microphone">
+                  <IconButton className="microphone-menu-trigger" disabled={submitting || dictationBlocking} label="Choose microphone">
                     <ChevronDown size={14} />
                   </IconButton>
                 </DropdownMenu.Trigger>
@@ -264,9 +274,10 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
       )}
       <input
         className="sr-only"
+        disabled={submitting}
         multiple
         onChange={(event) => {
-          if (event.target.files?.length) onAttach(event.target.files);
+          if (event.target.files?.length) attachFiles(event.target.files);
           event.target.value = '';
         }}
         ref={fileInputRef}

@@ -241,6 +241,16 @@ describe('Avalon API wire adapter', () => {
       currentDraft: null,
       attachmentIds: [resourceId],
     });
+
+    await api.compileAutomation({ message: 'Only report meaningful changes.', draftId: result.draftId });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      attachmentIds: [resourceId],
+      messages: [
+        { role: 'user', content: 'Check this blog every 24 hours.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+        { role: 'user', content: 'Only report meaningful changes.' },
+      ],
+    });
   });
 
   it('maps representative work-stream and message wire records into renderer models', () => {
@@ -744,7 +754,6 @@ describe('Avalon API wire adapter', () => {
     })).resolves.toMatchObject({ messageId, workstream: { id: workstreamId } });
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      objective: 'Review the attached files',
       openingMessage: '',
       participantUserIds: [],
       clientMessageId: expect.any(String),
