@@ -1,0 +1,19 @@
+{
+  "name": "@avalon/release-retention",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --config wrangler.jsonc --outdir dist",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "dev:dry-run": "wrangler dev --test-scheduled --config wrangler.dry-run.jsonc --port 8799",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260804.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "4.118.0"
+  }
+}

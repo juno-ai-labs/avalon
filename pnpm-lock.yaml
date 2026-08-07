@@ -252,6 +252,21 @@ importers:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.1.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@7.3.6(@types/node@26.1.2)(jiti@1.21.7)(lightningcss@1.33.0)(tsx@4.23.5))
 
+  apps/release-retention:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260804.1
+        version: 5.20260804.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 4.1.10(@types/node@26.1.2)(jsdom@30.0.1(@noble/hashes@2.2.0))(vite@8.2.0(@types/node@26.1.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.5))
+      wrangler:
+        specifier: 4.118.0
+        version: 4.118.0(@cloudflare/workers-types@5.20260804.1)
+
   apps/site:
     devDependencies:
       typescript:

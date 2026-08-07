@@ -134,52 +134,87 @@ objects:
 `stable/darwin/arm64/latest-mac.yml` are mutable channel pointers, not releases.
 They must always remain in the public bucket.
 
-Perform retention in a release-free maintenance window:
+Production retention is automated by the private `avalon-release-retention`
+Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
+URL, or application secret. Its only capabilities are bindings to the active and
+archive release buckets. Deploy it from the repository root with:
 
-1. List every object under `stable/darwin/arm64/` through Cloudflare's R2 object
-   API, paging until the inventory is complete. Extract the single semantic
-   version from each immutable key, sort versions semantically in descending
-   order, and select everything after the first five. Abort if any selected or
-   retained release is incomplete, a key maps to more than one version, or an
-   unversioned key is not one of the two mutable pointers above.
-2. Copy the selected objects to the archive bucket without deleting the source.
-   For a large retention run, use a short-lived authenticated Worker bound to
-   the two buckets so bytes stay inside Cloudflare. Restrict it to the exact
-   precomputed key allowlist and give it no delete operation. Preserve the
-   source object's metadata and explicitly select Infrequent Access:
+```text
+pnpm deploy:release-retention
+```
 
-   ```js
-   const source = await env.SOURCE.get(key);
-   if (source === null) throw new Error(`Missing source object: ${key}`);
-   await env.ARCHIVE.put(key, source.body, {
-     httpMetadata: source.httpMetadata,
-     customMetadata: source.customMetadata,
-     storageClass: "InfrequentAccess",
-   });
-   ```
+Cloudflare Cron Triggers execute in UTC. The checked-in configuration therefore
+fires at both `0 9 * * *` and `0 10 * * *`, while the handler admits only the
+invocation whose scheduled time is 02:00 in `America/Los_Angeles`. This produces
+one run at 02:00 Pacific under both PST and PDT. On the spring-forward night,
+when 02:00 does not exist, the 10:00 UTC invocation runs once at 03:00 Pacific.
+The other daily invocation logs `desktop_release_retention_skipped` and exits.
+Do not replace the two expressions with one fixed UTC hour. Cron changes can
+take up to 15 minutes to propagate. See Cloudflare's
+[Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+documentation.
 
-3. Re-list both buckets and verify every candidate before deletion. Source and
-   archive must have the same key, size, ETag, HTTP metadata values, and custom
-   metadata values, and the archive object must report `InfrequentAccess`.
-   Compare metadata by value rather than JSON field order. If the transfer path
-   changes ETags, perform a full SHA-256 comparison instead. Verify the archive
-   bucket itself still defaults to Infrequent Access and remains private.
-4. Re-list the public bucket immediately before deletion and recompute the five
-   retained versions. If the inventory or keep set changed, a release may have
-   raced the migration; do not delete anything and restart from step 1.
-5. Delete only the exact, fully verified candidate-key allowlist from the public
-   bucket. Run deletion from the trusted local operator, separately from the
-   copy-only Worker. A failed or interrupted deletion is safe to retry after
-   repeating step 3.
-6. Confirm that the public bucket contains five complete releases plus only
-   `Avalon.dmg` and `latest-mac.yml`, and that the archive contains every moved
-   key in Infrequent Access. Prove one moved key returns 404 from the public
-   bucket and 200 from the archive API, and prove one retained key has the
-   inverse result.
-7. Fetch the public `latest-mac.yml`, confirm its version is the highest retained
-   version, and require successful HEAD requests for both the manifest and
-   `Avalon.dmg` through `https://downloads.with-avalon.com/`. Remove the
-   temporary Worker, its secret, and all local migration scaffolding.
+Each admitted invocation performs this fail-closed transaction:
+
+1. Page through every active object under `stable/darwin/arm64/`. Parse and sort
+   semantic versions, require all five immutable objects for every release, and
+   require the two mutable pointers. An unexpected, duplicate, or incomplete
+   key aborts the run before any copy or deletion.
+2. Select all versions older than the highest five. For each exact candidate
+   key, stream the source object into the archive with its HTTP and custom
+   metadata and `InfrequentAccess`. A matching existing archive object is reused
+   without another write, which keeps retries idempotent and avoids resetting
+   the archive storage-duration clock.
+3. Before deleting anything, require the archive copy to have the same key,
+   size, ETag, HTTP metadata values, and custom metadata values as the source,
+   and require its storage class to be `InfrequentAccess`.
+4. Re-list the active bucket immediately before deletion. Abort without deleting
+   if any key, metadata, ETag, release grouping, or retained-version decision
+   changed while copies were in progress. This protects a release that races the
+   nightly job.
+5. Delete only the computed, verified candidate-key array. Re-list both sides,
+   require exactly five complete releases plus `Avalon.dmg` and
+   `latest-mac.yml` in active storage, prove every candidate is absent from the
+   active bucket, and prove its verified archive copy remains present.
+
+The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
+retry after a partial failure; the next nightly invocation safely reuses any
+verified archive copies. A successful admitted run logs
+`desktop_release_retention_completed` with its plan and copy/delete counts. An
+exception is a failed Cron event and must be investigated before manually
+deleting any object.
+
+Before deploying a change, run:
+
+```text
+pnpm --filter @avalon/release-retention test
+pnpm --filter @avalon/release-retention typecheck
+pnpm --filter @avalon/release-retention build
+```
+
+Exercise the real scheduled handler against the remote buckets without writes
+by starting Wrangler with the dedicated `wrangler.dry-run.jsonc` configuration.
+That configuration pins `RETENTION_DRY_RUN=true` and is the only checked-in
+configuration whose development bindings access the remote buckets:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/release-retention dev:dry-run
+curl "http://localhost:8799/cdn-cgi/handler/scheduled?cron=0+9+*+*+*&time=1786093200000&format=json"
+```
+
+The timestamp above simulates 02:00 PDT on 2026-08-07. Require an `ok` outcome
+and a structured completion log with `dryRun: true`. After deployment, preserve
+the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
+`avalon-release-retention` → Cron Events after the next window. Alert on failed
+events, unexpected `dry-run` production reports, a non-five retained set, or any
+copy/delete count that does not match the plan.
+
+For a one-off repair, set `RETENTION_DRY_RUN` to `true` in the checked-in Worker
+configuration, deploy, and inspect one scheduled plan before authorizing live
+mode. Do not run ad hoc deletion commands while the scheduled Worker is enabled.
+If manual copying is unavoidable, preserve metadata and explicitly set
+`InfrequentAccess`, verify the exact objects as described above, and disable the
+Cron Triggers for the whole maintenance window.
 
 R2 aggregate object-count and bucket-size counters can lag object operations.
 Use successful object-list, HEAD, and GET checks as the completion authority;
@@ -197,7 +232,7 @@ ordering and cache-purge safeguards.
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](DESKTOP_ICONS.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site and both regional APIs are deployed, migrations through `0026_bind_runtime_durability.sql` are live in both D1 databases, and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
+Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0026_bind_runtime_durability.sql` are live in both D1 databases, and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
