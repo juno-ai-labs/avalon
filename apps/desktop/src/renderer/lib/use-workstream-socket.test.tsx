@@ -85,7 +85,7 @@ afterEach(() => {
 });
 
 describe('useWorkstreamSocket', () => {
-  it('applies shared HyperSight updates and ignores runs from an older configuration', async () => {
+  it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000301';
@@ -108,8 +108,7 @@ describe('useWorkstreamSocket', () => {
         ticket: 'socket-ticket',
       })),
     } as unknown as AvalonApi;
-    const currentUserId = '00000000-0000-7000-8000-000000000307';
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true, currentUserId), {
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: createWrapper(queryClient),
     });
 
@@ -124,6 +123,7 @@ describe('useWorkstreamSocket', () => {
         id: '00000000-0000-7000-8000-000000000304',
         blockId,
         configurationVersionId: versionId,
+        triggerSequence: 1,
         status: 'completed',
         markdown: '- First result',
         error: null,
@@ -142,17 +142,55 @@ describe('useWorkstreamSocket', () => {
       run: {
         id: '00000000-0000-7000-8000-000000000305',
         blockId,
-        configurationVersionId: '00000000-0000-7000-8000-000000000399',
+        configurationVersionId: versionId,
+        triggerSequence: 3,
         status: 'completed',
-        markdown: 'Stale result',
+        markdown: 'Newest result',
         error: null,
-        createdAt: '2026-08-07T12:00:01.000Z',
-        startedAt: '2026-08-07T12:00:02.000Z',
+        createdAt: '2026-08-07T12:00:03.000Z',
+        startedAt: '2026-08-07T12:00:03.000Z',
         completedAt: '2026-08-07T12:00:04.000Z',
       },
     }));
+    act(() => socket.message({
+      type: 'hypersight_block_run_updated',
+      sequence: 3,
+      occurredAt: '2026-08-07T12:00:05.000Z',
+      run: {
+        id: '00000000-0000-7000-8000-000000000309',
+        blockId,
+        configurationVersionId: versionId,
+        triggerSequence: 2,
+        status: 'completed',
+        markdown: 'Late stale result',
+        error: null,
+        createdAt: '2026-08-07T12:00:02.000Z',
+        startedAt: '2026-08-07T12:00:03.000Z',
+        completedAt: '2026-08-07T12:00:05.000Z',
+      },
+    }));
     expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
-      .toBe('- First result');
+      .toBe('Newest result');
+
+    act(() => socket.message({
+      type: 'hypersight_block_run_updated',
+      sequence: 4,
+      occurredAt: '2026-08-07T12:00:05.000Z',
+      run: {
+        id: '00000000-0000-7000-8000-000000000310',
+        blockId,
+        configurationVersionId: '00000000-0000-7000-8000-000000000399',
+        triggerSequence: 4,
+        status: 'completed',
+        markdown: 'Other configuration result',
+        error: null,
+        createdAt: '2026-08-07T12:00:04.000Z',
+        startedAt: '2026-08-07T12:00:04.000Z',
+        completedAt: '2026-08-07T12:00:05.000Z',
+      },
+    }));
+    expect(queryClient.getQueryData<HyperSight>(['hypersight', workstreamId])?.blocks[0]?.latestRun?.markdown)
+      .toBe('Newest result');
 
     const next: HyperSight = {
       versionId: '00000000-0000-7000-8000-000000000306',
@@ -162,7 +200,7 @@ describe('useWorkstreamSocket', () => {
     };
     act(() => socket.message({
       type: 'hypersight_configuration_updated',
-      sequence: 3,
+      sequence: 5,
       occurredAt: '2026-08-07T12:00:05.000Z',
       hypersight: next,
     }));
@@ -170,23 +208,12 @@ describe('useWorkstreamSocket', () => {
 
     act(() => socket.message({
       type: 'hypersight_preference_updated',
-      sequence: 4,
       occurredAt: '2026-08-07T12:00:06.000Z',
-      userId: currentUserId,
       preference: { visible: true, updatedAt: '2026-08-07T12:00:06.000Z' },
     }));
     expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId]))
       .toEqual({ visible: true, updatedAt: '2026-08-07T12:00:06.000Z' });
 
-    act(() => socket.message({
-      type: 'hypersight_preference_updated',
-      sequence: 5,
-      occurredAt: '2026-08-07T12:00:07.000Z',
-      userId: '00000000-0000-7000-8000-000000000308',
-      preference: { visible: false, updatedAt: '2026-08-07T12:00:07.000Z' },
-    }));
-    expect(queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', workstreamId])?.visible)
-      .toBe(true);
   });
 
   it('jitters heartbeat and exponential reconnect timing within bounded windows', () => {
@@ -837,6 +864,8 @@ describe('useWorkstreamSocket', () => {
       toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'completed' },
     };
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
+    queryClient.setQueryData(['hypersight', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
+    queryClient.setQueryData(['hypersight-preference', workstreamId], { visible: false, updatedAt: null });
     const api = {
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
@@ -859,6 +888,8 @@ describe('useWorkstreamSocket', () => {
 
     expect(api.getMessages).toHaveBeenCalledOnce();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
+    expect(queryClient.getQueryState(['hypersight', workstreamId])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['hypersight-preference', workstreamId])?.isInvalidated).toBe(true);
   });
 
   it('refreshes run metadata when a new run starts in another client', async () => {

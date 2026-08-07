@@ -432,6 +432,7 @@ export const HyperSightBlockRunSchema = z.object({
   id: IdSchema,
   blockId: IdSchema,
   configurationVersionId: IdSchema,
+  triggerSequence: z.number().int().nonnegative(),
   status: HyperSightBlockRunStatusSchema,
   markdown: z.string().nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
@@ -834,11 +835,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: ResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
-  ServerEventBaseSchema.extend({
-    type: z.literal("hypersight_preference_updated"),
-    userId: IdSchema,
-    preference: HyperSightPreferenceSchema
-  }),
   ServerEventBaseSchema.extend({ type: z.literal("hypersight_configuration_updated"), hypersight: HyperSightSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("hypersight_block_run_updated"), run: HyperSightBlockRunSchema }),
   ServerEventBaseSchema.extend({
@@ -847,6 +843,15 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     latestSequence: z.number().int().nonnegative()
   }),
   ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
+]);
+
+/** Events delivered to one authenticated user and intentionally excluded from room replay sequencing. */
+export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("hypersight_preference_updated"),
+    occurredAt: TimestampSchema,
+    preference: HyperSightPreferenceSchema
+  })
 ]);
 
 export const NormalizedActivitySchema = z.object({
@@ -1215,6 +1220,7 @@ export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
+export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;

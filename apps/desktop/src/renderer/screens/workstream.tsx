@@ -539,7 +539,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     api,
     id,
     workstream.isSuccess && messages.isSuccess,
-    session?.user.id,
   );
   const transcript = messages.data ?? [];
   const transcriptVirtualizer = useVirtualizer({

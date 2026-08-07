@@ -12,7 +12,11 @@ import { newId, nowIso } from "@avalon/db";
 
 import { HYPERSIGHT_MODEL, type AuthContext, type Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { publishWorkstreamEvent, startWorkstreamWorkflow } from "./integrations";
+import {
+  publishPersonalWorkstreamEvent,
+  publishWorkstreamEvent,
+  startWorkstreamWorkflow,
+} from "./integrations";
 
 interface ConfigurationRow {
   id: string;
@@ -30,6 +34,7 @@ export interface HyperSightBlockRunRow {
   id: string;
   block_id: string;
   configuration_version_id: string;
+  trigger_sequence: number;
   status: HyperSightBlockRun["status"];
   markdown: string | null;
   error_json: string | null;
@@ -70,6 +75,7 @@ export function hyperSightBlockRunFromRow(row: HyperSightBlockRunRow): HyperSigh
     id: row.id,
     blockId: row.block_id,
     configurationVersionId: row.configuration_version_id,
+    triggerSequence: Number(row.trigger_sequence),
     status: row.status,
     markdown: row.markdown,
     error: parseRunError(row.error_json),
@@ -100,10 +106,10 @@ async function latestRunForBlock(
   block: BlockSnapshot,
 ): Promise<HyperSightBlockRun | null> {
   const row = await env.DB.prepare(
-    `SELECT id, block_id, configuration_version_id, status, markdown, error_json, created_at, started_at, completed_at
-       FROM hypersight_block_runs
+    `SELECT id, block_id, configuration_version_id, trigger_sequence, status, markdown, error_json, created_at, started_at, completed_at
+      FROM hypersight_block_runs
       WHERE workspace_id = ? AND workstream_id = ? AND block_id = ? AND prompt = ?
-      ORDER BY created_at DESC
+      ORDER BY trigger_sequence DESC, created_at DESC
       LIMIT 1`,
   ).bind(workspaceId, workstreamId, block.id, block.prompt).first<HyperSightBlockRunRow>();
   return row ? hyperSightBlockRunFromRow(row) : null;
@@ -196,9 +202,8 @@ export class HyperSightService {
       updatedAt,
     ).run();
     const preference = HyperSightPreferenceSchema.parse({ visible: input.visible, updatedAt });
-    await publishWorkstreamEvent(this.env, this.auth.workspaceId, workstreamId, {
+    await publishPersonalWorkstreamEvent(this.env, this.auth.workspaceId, workstreamId, this.auth.userId, {
       type: "hypersight_preference_updated",
-      userId: this.auth.userId,
       preference,
     });
     return preference;
@@ -310,6 +315,7 @@ export async function launchHyperSightRefresh(
         id: blockRunId,
         blockId: block.id,
         configurationVersionId: configuration.id,
+        triggerSequence,
         status: "queued",
         markdown: null,
         error: null,
@@ -339,6 +345,7 @@ export async function launchHyperSightRefresh(
         id: blockRunId,
         blockId: block.id,
         configurationVersionId: configuration.id,
+        triggerSequence,
         status: "failed",
         markdown: null,
         error: failure,

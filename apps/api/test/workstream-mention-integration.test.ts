@@ -61,6 +61,72 @@ describe("work-stream addressing", () => {
     expect(startWorkstreamWorkflow).toHaveBeenCalledOnce();
   });
 
+  it("supersedes the active interactive turn without cancelling background HyperSight work", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    database.exec(`
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-000000000091', '${workspaceId}', '${workstreamId}',
+         'human_message', '{"type":"user","userId":"${authorId}"}', 'running', '2026-08-07T12:00:00.000Z'),
+        ('00000000-0000-7000-8000-000000000092', '${workspaceId}', '${workstreamId}',
+         'hypersight_block', '{"type":"workspace","workspaceId":"${workspaceId}"}', 'running', '2026-08-07T12:00:00.000Z');
+    `);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const result = await service.createMessage(workstreamId, {
+      text: "Use this newer direction",
+      clientMessageId: "superseding-follow-up",
+      mentions: [],
+      confirmedParticipantUserIds: [],
+      attachmentIds: [],
+    });
+
+    expect(result.agentInvoked).toBe(true);
+    expect(database.prepare(
+      "SELECT cancellation_reason FROM harness_runs WHERE id = ?",
+    ).get("00000000-0000-7000-8000-000000000091")).toEqual({
+      cancellation_reason: "superseded_by_follow_up",
+    });
+    expect(database.prepare(
+      "SELECT cancellation_requested_at FROM harness_runs WHERE id = ?",
+    ).get("00000000-0000-7000-8000-000000000092")).toEqual({
+      cancellation_requested_at: null,
+    });
+    expect(database.prepare(
+      "SELECT cancellation_requested_at FROM harness_runs WHERE id = ?",
+    ).get(result.harnessRunId!)).toEqual({ cancellation_requested_at: null });
+  });
+
+  it("keeps HyperSight running when the user stops the interactive agent", async () => {
+    const database = migratedDatabase();
+    seed(database, false);
+    database.exec(`
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-000000000093', '${workspaceId}', '${workstreamId}',
+         'human_message', '{"type":"user","userId":"${authorId}"}', 'running', '2026-08-07T12:00:00.000Z'),
+        ('00000000-0000-7000-8000-000000000094', '${workspaceId}', '${workstreamId}',
+         'hypersight_block', '{"type":"workspace","workspaceId":"${workspaceId}"}', 'running', '2026-08-07T12:00:00.000Z');
+    `);
+    const service = new WorkstreamService(environment(database), auth());
+
+    await service.stop(workstreamId);
+
+    expect(database.prepare(
+      "SELECT cancellation_reason FROM harness_runs WHERE id = ?",
+    ).get("00000000-0000-7000-8000-000000000093")).toEqual({
+      cancellation_reason: "stopped_by_user",
+    });
+    expect(database.prepare(
+      "SELECT cancellation_requested_at FROM harness_runs WHERE id = ?",
+    ).get("00000000-0000-7000-8000-000000000094")).toEqual({
+      cancellation_requested_at: null,
+    });
+  });
+
   it("keeps multiplayer classification when more than one participant is active", async () => {
     const database = migratedDatabase();
     seed(database);
