@@ -56,6 +56,27 @@ describe("database migrations", () => {
     expect(database.prepare(
       "SELECT connector_type, model_plugin_id FROM connector_connections WHERE id = 'connection-x'",
     ).get()).toEqual({ connector_type: "x", model_plugin_id: "plugin_x" });
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-personal-duplicate', 'workspace-x', 'x', 'personal', 'user-x', 'X',
+              '["x.read"]', 'plugin_x_personal_duplicate', '2026-01-01', '2026-01-01');
+    `)).toThrow(/UNIQUE constraint failed/);
+    database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-workspace', 'workspace-x', 'x', 'workspace', NULL, 'X',
+              '["x.read"]', 'plugin_x_workspace', '2026-01-01', '2026-01-01');
+    `);
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-workspace-duplicate', 'workspace-x', 'x', 'workspace', NULL, 'X',
+              '["x.read"]', 'plugin_x_workspace_duplicate', '2026-01-01', '2026-01-01');
+    `)).toThrow(/UNIQUE constraint failed/);
     expect(database.prepare(
       "SELECT context_json FROM slack_agent_contexts WHERE connection_id = 'connection-before-x'",
     ).get()).toEqual({ context_json: '{"retained":true}' });

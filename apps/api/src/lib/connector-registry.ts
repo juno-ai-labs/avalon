@@ -67,8 +67,9 @@ export function slackConnectorConfig(env: Env): SlackConnectorConfig | null {
 }
 
 export function xConnectorConfig(env: Env): XConnectorConfig | null {
-  if (!env.X_API_KEY) return null;
-  return { apiKey: env.X_API_KEY };
+  const apiKey = env.X_API_KEY?.trim();
+  if (!apiKey) return null;
+  return { apiKey };
 }
 
 export function connectorRegistryForEnv(env: Env) {
