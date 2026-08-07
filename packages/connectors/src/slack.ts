@@ -11,6 +11,7 @@ import {
 } from "./provider-utils";
 import {
   assertPrincipalAccess,
+  connectorRetryAfterMs,
   ConnectorError,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
@@ -51,6 +52,7 @@ export const SlackCapabilities = {
 export const SlackWorkspaceBotScopes = [
   "assistant:write",
   "app_mentions:read",
+  "channels:join",
   "channels:read",
   "chat:write",
   "commands",
@@ -164,6 +166,11 @@ const SlackConversationSchema = SlackChannelSchema.extend({
   is_private: z.boolean(),
   is_im: z.boolean().optional(),
   is_mpim: z.boolean().optional(),
+});
+const SlackListedPublicChannelSchema = SlackChannelSchema.extend({
+  is_archived: z.boolean().optional(),
+  is_member: z.boolean().optional(),
+  is_private: z.boolean().optional(),
 });
 const SlackMessageResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
 const SlackStreamResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
@@ -285,6 +292,25 @@ const SlackWebApiSchemas = {
   "conversations.info": {
     request: z.object({ channel: SlackIdSchema }).strict(),
     response: SlackOkSchema.extend({ channel: SlackConversationSchema }),
+  },
+  "conversations.join": {
+    request: z.object({ channel: SlackIdSchema }).strict(),
+    response: SlackOkSchema.extend({
+      channel: SlackChannelSchema,
+      warning: z.string().optional(),
+    }),
+  },
+  "conversations.list": {
+    request: z.object({
+      cursor: z.string().min(1).optional(),
+      exclude_archived: z.boolean().optional(),
+      limit: z.number().int().min(1).max(999).optional(),
+      types: z.literal("public_channel").optional(),
+    }).strict(),
+    response: SlackOkSchema.extend({
+      channels: z.array(SlackListedPublicChannelSchema),
+      response_metadata: z.object({ next_cursor: z.string().optional() }).passthrough().optional(),
+    }),
   },
   "team.billing.info": { request: z.object({}).strict(), response: SlackOkSchema.extend({ plan: z.string().min(1) }) },
   "users.lookupByEmail": {
@@ -482,6 +508,116 @@ export async function slackApi<M extends SlackWebApiMethod>(
     throw new ConnectorError("provider_error", `Slack ${method} returned a malformed response`, response.error.flatten());
   }
   return response.data as SlackApiResponse<M>;
+}
+
+export type SlackPublicChannelJoinResult = "joined" | "already_member" | "skipped";
+
+export interface SlackPublicChannelSyncResult {
+  joined: number;
+  alreadyMember: number;
+  skipped: number;
+  complete: boolean;
+  retryAfterMs?: number;
+}
+
+const SlackUnjoinablePublicChannelErrors = new Set([
+  "access_denied",
+  "channel_not_found",
+  "enterprise_is_restricted",
+  "is_archived",
+  "method_not_supported_for_channel_type",
+  "missing_scope",
+  "no_permission",
+  "restricted_action",
+  "too_many_members",
+  "user_is_restricted",
+]);
+
+function slackProviderErrorCode(error: unknown): string | null {
+  return error instanceof ConnectorError
+    && error.details
+    && typeof error.details === "object"
+    && typeof (error.details as { error?: unknown }).error === "string"
+    ? String((error.details as { error: string }).error)
+    : null;
+}
+
+function slackRateLimitRetryAfterMs(error: unknown): number | null {
+  if (!(error instanceof ConnectorError) || !error.details || typeof error.details !== "object") return null;
+  const status = (error.details as { status?: unknown }).status;
+  if (status !== 429 && slackProviderErrorCode(error) !== "ratelimited") return null;
+  return connectorRetryAfterMs(error) ?? 60_000;
+}
+
+/** Join one public channel, while treating channel-specific policy failures as terminal. */
+export async function joinSlackPublicChannel(
+  token: string,
+  channelId: string,
+  signal: AbortSignal,
+  fetcher: FetchLike = fetch,
+): Promise<SlackPublicChannelJoinResult> {
+  try {
+    const response = await slackApi(token, "conversations.join", { channel: channelId }, signal, fetcher);
+    return response.warning === "already_in_channel" ? "already_member" : "joined";
+  } catch (error) {
+    const providerCode = slackProviderErrorCode(error);
+    if (providerCode && SlackUnjoinablePublicChannelErrors.has(providerCode)) return "skipped";
+    throw error;
+  }
+}
+
+/** Enumerate and join every visible, active public channel with cursor-safe retries. */
+export async function joinAllSlackPublicChannels(
+  token: string,
+  signal: AbortSignal,
+  fetcher: FetchLike = fetch,
+): Promise<SlackPublicChannelSyncResult> {
+  const summary = { joined: 0, alreadyMember: 0, skipped: 0 };
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    let page: SlackApiResponse<"conversations.list">;
+    try {
+      page = await slackApi(token, "conversations.list", {
+        exclude_archived: true,
+        limit: 200,
+        types: "public_channel",
+        ...(cursor ? { cursor } : {}),
+      }, signal, fetcher);
+    } catch (error) {
+      const retryAfterMs = slackRateLimitRetryAfterMs(error);
+      if (retryAfterMs != null) return { ...summary, complete: false, retryAfterMs };
+      throw error;
+    }
+    for (const channel of page.channels) {
+      if (channel.is_archived || channel.is_private) {
+        summary.skipped += 1;
+        continue;
+      }
+      if (channel.is_member) {
+        summary.alreadyMember += 1;
+        continue;
+      }
+      let result: SlackPublicChannelJoinResult;
+      try {
+        result = await joinSlackPublicChannel(token, channel.id, signal, fetcher);
+      } catch (error) {
+        const retryAfterMs = slackRateLimitRetryAfterMs(error);
+        if (retryAfterMs != null) return { ...summary, complete: false, retryAfterMs };
+        throw error;
+      }
+      if (result === "joined") summary.joined += 1;
+      else if (result === "already_member") summary.alreadyMember += 1;
+      else summary.skipped += 1;
+    }
+    const nextCursor = page.response_metadata?.next_cursor?.trim() || undefined;
+    if (nextCursor && seenCursors.has(nextCursor)) {
+      throw new ConnectorError("provider_error", "Slack returned a repeated public-channel cursor");
+    }
+    if (nextCursor) seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  } while (cursor);
+  return { ...summary, complete: true };
 }
 
 export async function callSlackMcp(

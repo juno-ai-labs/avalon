@@ -28,6 +28,7 @@ import { decryptString, encryptString, openString, randomToken, sealString, sha2
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { LinearRoutingService } from "./linear-routing-service";
+import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
@@ -742,6 +743,16 @@ export class ConnectionService {
            WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
         ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
         throw error;
+      }
+      try {
+        await new SlackAgentService(this.env).schedulePublicChannelSync(connectionId);
+      } catch (error) {
+        // Auto-join is recoverable and must not invalidate otherwise healthy
+        // Slack credentials or routing after the OAuth state is consumed.
+        console.warn("Slack public-channel sync could not be scheduled", {
+          connection_id: connectionId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
       }
     }
     await this.recordConnectionAudit(
