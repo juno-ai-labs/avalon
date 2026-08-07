@@ -51,12 +51,15 @@ export const SlackCapabilities = {
 export const SlackWorkspaceBotScopes = [
   "assistant:write",
   "app_mentions:read",
+  "channels:read",
   "chat:write",
   "commands",
+  "groups:read",
   "im:history",
   "im:write",
   "links:read",
   "links:write",
+  "mpim:read",
   "search:read.files",
   "search:read.public",
   "search:read.users",
@@ -157,6 +160,11 @@ const SlackBlockSchema = z.record(z.string(), z.unknown());
 const SlackViewSchema = z.record(z.string(), z.unknown()).refine((view) => typeof view.type === "string", "Slack view type is required");
 const SlackOkSchema = z.object({ ok: z.literal(true) }).passthrough();
 const SlackChannelSchema = z.object({ id: SlackIdSchema }).passthrough();
+const SlackConversationSchema = SlackChannelSchema.extend({
+  is_private: z.boolean(),
+  is_im: z.boolean().optional(),
+  is_mpim: z.boolean().optional(),
+});
 const SlackMessageResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
 const SlackStreamResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
 const SlackSearchMessageSchema = z.object({
@@ -273,6 +281,10 @@ const SlackWebApiSchemas = {
   "conversations.open": {
     request: z.object({ users: SlackIdSchema }).strict(),
     response: SlackOkSchema.extend({ channel: SlackChannelSchema }),
+  },
+  "conversations.info": {
+    request: z.object({ channel: SlackIdSchema }).strict(),
+    response: SlackOkSchema.extend({ channel: SlackConversationSchema }),
   },
   "team.billing.info": { request: z.object({}).strict(), response: SlackOkSchema.extend({ plan: z.string().min(1) }) },
   "users.lookupByEmail": {

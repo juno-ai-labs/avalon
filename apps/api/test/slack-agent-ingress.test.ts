@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { SlackAgentService } from "../src/services/slack-agent-service";
+import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 interface Job {
   id: string;
@@ -50,6 +55,38 @@ class IngressDatabase {
 }
 
 describe("Slack Agent durable ingress", () => {
+  it("resolves modern private channels from conversations.info instead of ID prefixes", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      channel: { id: "CPRIVATE", is_private: true, is_im: false, is_mpim: false },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(__slackAgentTesting.resolveSlackChannelType(
+      "xoxb-test",
+      "CPRIVATE",
+      "channel",
+    )).resolves.toBe("private");
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(__slackAgentTesting.slackChannelType("CPRIVATE")).toBe("unknown");
+  });
+
+  it("fails closed when Slack channel privacy or modal source metadata is unknown", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      error: "missing_scope",
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+
+    await expect(__slackAgentTesting.resolveSlackChannelType(
+      "xoxb-test",
+      "CUNKNOWN",
+      "channel",
+    )).resolves.toBe("unknown");
+    expect(__slackAgentTesting.modalPromptSource(undefined)).toBeNull();
+    expect(__slackAgentTesting.modalPromptSource("not-json")).toBeNull();
+  });
+
   it("returns modal field errors synchronously", async () => {
     const service = new SlackAgentService({ AVALON_REGION: "global" } as Env);
     await expect(service.processInteraction({
@@ -64,6 +101,23 @@ describe("Slack Agent durable ingress", () => {
     }, "body-hash")).resolves.toEqual({
       response_action: "errors",
       errors: { prompt: "Describe what Avalon should do." },
+    });
+  });
+
+  it("rejects a start-task modal whose signed source metadata is missing", async () => {
+    const service = new SlackAgentService({ AVALON_REGION: "global" } as Env);
+    await expect(service.processInteraction({
+      type: "view_submission",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      view: {
+        id: "V1",
+        callback_id: "avalon_start_task_submit",
+        state: { values: { prompt: { value: { value: "Investigate this" } } } },
+      },
+    }, "body-hash")).resolves.toEqual({
+      response_action: "errors",
+      errors: { prompt: "This Slack task context expired. Close this window and start the task again." },
     });
   });
 
