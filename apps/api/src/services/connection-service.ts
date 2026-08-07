@@ -747,11 +747,12 @@ export class ConnectionService {
       try {
         await new SlackAgentService(this.env).schedulePublicChannelSync(connectionId);
       } catch (error) {
-        await this.env.DB.prepare(
-          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
-        ).bind(JSON.stringify({ code: "slack_channel_sync_schedule_failed", message: error instanceof Error ? error.message : "Slack public-channel sync could not be scheduled", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
-        throw error;
+        // Auto-join is recoverable and must not invalidate otherwise healthy
+        // Slack credentials or routing after the OAuth state is consumed.
+        console.warn("Slack public-channel sync could not be scheduled", {
+          connection_id: connectionId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
       }
     }
     await this.recordConnectionAudit(
