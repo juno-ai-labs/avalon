@@ -19,6 +19,9 @@ const api = vi.hoisted(() => ({
 }));
 const copyText = vi.hoisted(() => vi.fn());
 const openExternal = vi.hoisted(() => vi.fn());
+const getApplicationIcon = vi.hoisted(() => vi.fn());
+const setApplicationIcon = vi.hoisted(() => vi.fn());
+const resetApplicationIcon = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
@@ -41,6 +44,10 @@ vi.mock('../lib/app-session', () => ({
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
+    getApplicationIcon,
+    setApplicationIcon,
+    resetApplicationIcon,
+    onApplicationIconChanged: () => () => undefined,
     openExternal,
     onSettingsSectionRequested: (listener: (section: string) => void) => {
       settingsSectionRequest.listener = listener;
@@ -108,6 +115,13 @@ describe('Workspace settings', () => {
     }));
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
+    getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
+    setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
+      activeIcon,
+      isAutomatic: false,
+      supported: true,
+    }));
+    resetApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
   });
 
   it('lets workspace admins enable full agent inference logging', async () => {
@@ -460,5 +474,23 @@ describe('Workspace settings', () => {
 
     fireEvent.change(search, { target: { value: 'does not exist' } });
     expect(screen.getByText('No settings found')).toBeVisible();
+  });
+
+  it('selects a macOS app icon with an immediate jump state', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const ruby = await screen.findByRole('button', { name: 'Ruby app icon' });
+    expect(screen.getByRole('button', { name: 'Dark app icon' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(ruby);
+
+    expect(ruby).toHaveClass('is-jumping');
+    expect(ruby).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('ruby'));
+    expect(await screen.findByText('Ruby is selected.')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
+    await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Using dark automatically with the system appearance.')).toBeVisible();
   });
 });
