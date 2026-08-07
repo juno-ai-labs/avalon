@@ -15,6 +15,7 @@ export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
 
 let browserSession: DesktopSession | null = null;
 let browserRefreshToken: string | null = null;
+const browserApplicationSettings = { lockdownMode: false, lockdownAvailable: false };
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
 const browserAuthAttempts = new Map<string, {
   apiBaseUrl: string;
@@ -170,6 +171,16 @@ const browserBridge: AvalonDesktopBridge = {
       },
       devAuthEnabled: import.meta.env.DEV,
     } as RuntimeConfig;
+  },
+  async getApplicationSettings() {
+    return browserApplicationSettings;
+  },
+  async setLockdownMode(enabled) {
+    if (enabled) throw new Error('Lockdown mode is available only in the Avalon desktop app.');
+    return browserApplicationSettings;
+  },
+  onApplicationSettingsChanged() {
+    return () => undefined;
   },
   async getApplicationIcon() {
     return {

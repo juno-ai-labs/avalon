@@ -11,6 +11,7 @@ import {
   GitBranch,
   Globe2,
   HardDrive,
+  LockKeyhole,
   LoaderCircle,
   LogOut,
   MailPlus,
@@ -33,6 +34,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@avalon/contracts';
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
+import type { DesktopApplicationSettings } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { useAppSession } from '../lib/app-session';
@@ -76,7 +78,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
@@ -254,6 +256,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [userTimezone, setUserTimezone] = useState(workspace.currentUser.timezone);
   const [workspaceTimezone, setWorkspaceTimezone] = useState(workspace.timezone);
   const [logAgentInference, setLogAgentInference] = useState(workspace.logAgentInference);
+  const [applicationSettings, setApplicationSettings] = useState<DesktopApplicationSettings | null>(null);
+  const [applicationSettingsLoadError, setApplicationSettingsLoadError] = useState<string | null>(null);
   const [pendingConnectorOAuth, setPendingConnectorOAuth] = useState<PendingConnectorOAuth | null>(null);
   const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
   const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
@@ -360,6 +364,10 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     onSuccess: (updated) => setLogAgentInference(updated.logAgentInference),
     onError: (_error, attemptedValue) => setLogAgentInference(!attemptedValue),
   });
+  const updateLockdownMode = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setLockdownMode(enabled),
+    onSuccess: setApplicationSettings,
+  });
   const pendingInvitations = useMemo(
     () => (invitations.data ?? []).filter((invitation) => invitation.status === 'pending'),
     [invitations.data],
@@ -402,6 +410,28 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     setNavigationQuery('');
     setActiveSection(nextSection);
   }), [bridge]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void bridge.getApplicationSettings().then((settings) => {
+      if (cancelled) return;
+      setApplicationSettings(settings);
+      setApplicationSettingsLoadError(null);
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setApplicationSettingsLoadError(
+          error instanceof Error ? error.message : 'Application settings could not be loaded.',
+        );
+      }
+    });
+    const unsubscribe = bridge.onApplicationSettingsChanged((settings) => {
+      if (!cancelled) setApplicationSettings(settings);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [bridge]);
 
   useEffect(() => {
     if (!api || !pendingConnectorOAuth) return;
@@ -815,7 +845,35 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
 
             {activeSection === 'application' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                <div className="settings-pane-heading"><h2>Security</h2><p>Choose how Avalon protects the saved authentication session on this Mac.</p></div>
+                <div className="settings-list-card">
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><LockKeyhole aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>Lockdown mode</strong>
+                      <small>Protect the saved session with this Mac’s keystore instead of Avalon’s shared encryption key.</small>
+                    </span>
+                    <span className="settings-toggle">
+                      <input
+                        aria-label="Lockdown mode"
+                        checked={applicationSettings?.lockdownMode ?? false}
+                        disabled={
+                          applicationSettings === null
+                          || !applicationSettings.lockdownAvailable
+                          || updateLockdownMode.isPending
+                        }
+                        onChange={(event) => updateLockdownMode.mutate(event.currentTarget.checked)}
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span aria-hidden="true" />
+                    </span>
+                  </label>
+                </div>
+                {(applicationSettingsLoadError || updateLockdownMode.error) && (
+                  <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
+                )}
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
                 <ApplicationIconPicker />
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">

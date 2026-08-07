@@ -36,6 +36,11 @@ export interface DesktopAuthAttempt {
   codeChallenge: string;
 }
 
+export interface DesktopApplicationSettings {
+  lockdownMode: boolean;
+  lockdownAvailable: boolean;
+}
+
 export interface DesktopWorkspaceSummary {
   id: string;
   name: string;
@@ -63,6 +68,9 @@ export interface DesktopWorkspaceOnboardingState {
 
 export interface AvalonDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
+  getApplicationSettings: () => Promise<DesktopApplicationSettings>;
+  setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  onApplicationSettingsChanged: (listener: (settings: DesktopApplicationSettings) => void) => () => void;
   getApplicationIcon: () => Promise<DesktopApplicationIconState>;
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;
   resetApplicationIcon: () => Promise<DesktopApplicationIconState>;
