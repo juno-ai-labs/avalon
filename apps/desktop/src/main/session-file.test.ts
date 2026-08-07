@@ -9,6 +9,7 @@ import {
   readStoredAuthFile,
   readStoredProfileFile,
   readStoredSessionFile,
+  removeStoredCredentialFiles,
   removeStoredStateFiles,
   removeStoredSessionFiles,
   storedAuthFilePath,
@@ -110,6 +111,20 @@ describe('desktop session file', () => {
     await expect(readStoredAuthFile(userDataDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readStoredProfileFile(userDataDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readStoredSessionFile(userDataDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('removes only credential-bearing files when a Lockdown transition requires re-login', async () => {
+    const userDataDirectory = await temporaryUserDataDirectory();
+    await writeStoredAuthFile(userDataDirectory, Buffer.from('auth'));
+    await writeStoredProfileFile(userDataDirectory, Buffer.from('profile'));
+    await writeStoredSessionFile(userDataDirectory, Buffer.from('session'));
+    await writeFile(legacyStoredSessionFilePath(userDataDirectory), Buffer.from('legacy'), { mode: 0o600 });
+
+    await removeStoredCredentialFiles(userDataDirectory);
+
+    await expect(readStoredAuthFile(userDataDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readStoredSessionFile(userDataDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readStoredProfileFile(userDataDirectory)).resolves.toEqual(Buffer.from('profile'));
   });
 
   it('can invalidate every credential location when deletion is blocked', async () => {
