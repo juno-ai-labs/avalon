@@ -21,8 +21,20 @@
 /site.webmanifest
   Cache-Control: public, max-age=86400
 
+/landing-init.js
+  Cache-Control: public, max-age=86400
+
 /og.png
   Cache-Control: public, max-age=86400
+
+/og-2026.jpg
+  Cache-Control: public, max-age=86400
+
+/concepts/biomes/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/concepts/horizon-organic-panorama.webp
+  Cache-Control: public, max-age=31536000, immutable
 
 /auth/desktop/*
   Cache-Control: no-store
