@@ -285,6 +285,76 @@ describe("Slack workspace workstream assignment", () => {
   });
 });
 
+describe("Slack public channel membership", () => {
+  it("durably schedules a full public-channel sync after workspace authorization", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    const send = vi.fn(async () => undefined);
+    const env = slackMembershipEnvironment(database, credentialsKey, send);
+
+    await new SlackAgentService(env).schedulePublicChannelSync("11111111-1111-4111-8111-111111111111");
+
+    const job = database.prepare(
+      "SELECT id, team_id, kind, payload_json, status FROM slack_ingress_jobs",
+    ).get() as Record<string, unknown>;
+    expect(job).toMatchObject({ team_id: "T123", kind: "event", status: "queued" });
+    expect(JSON.parse(String(job.payload_json))).toMatchObject({
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event: { type: "avalon_public_channel_sync" },
+    });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "slack_ingress",
+      region: "global",
+      workspaceId: "22222222-2222-4222-8222-222222222222",
+      jobId: job.id,
+    }));
+  });
+
+  it("joins a newly created public channel from its durable Slack event", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      `INSERT INTO slack_ingress_jobs
+       (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
+        status, attempt_count, received_at, updated_at)
+       VALUES (?, '22222222-2222-4222-8222-222222222222',
+               '11111111-1111-4111-8111-111111111111', 'T123', 'hash', 'event', ?,
+               'queued', 0, '2026-01-01', '2026-01-01')`,
+    ).run("event:EvChannelCreated", JSON.stringify({
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event_id: "EvChannelCreated",
+      event: { type: "channel_created", channel: { id: "CNEW", name: "new-channel" } },
+    }));
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      expect(url.pathname).toBe("/api/conversations.join");
+      expect(JSON.parse(String(init?.body))).toEqual({ channel: "CNEW" });
+      return new Response(JSON.stringify({ ok: true, channel: { id: "CNEW" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:EvChannelCreated");
+
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(database.prepare(
+      "SELECT status, payload_json, completed_at FROM slack_ingress_jobs WHERE id = 'event:EvChannelCreated'",
+    ).get()).toMatchObject({ status: "completed", payload_json: null });
+  });
+});
+
 function seedElicitationRetry(
   database: DatabaseSync,
   authorType: "human" | "system",
@@ -333,6 +403,53 @@ function seedElicitationRetry(
      VALUES ('message-retry', 'event:retry', 'workspace-slack', 'workstream-retry', ?, ?,
              'elicitation', '', NULL, 1, '2026-01-01', ?)`,
   ).run(authorType, authorUserId, externalActorJson);
+}
+
+async function seedSlackInstallation(database: DatabaseSync, credentialsKey: string): Promise<void> {
+  const encrypted = await encryptString(
+    JSON.stringify({ botAccessToken: "xoxb-test" }),
+    credentialsKey,
+    "11111111-1111-4111-8111-111111111111",
+  );
+  database.exec(`
+    INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');
+    INSERT INTO workspaces
+      (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES ('22222222-2222-4222-8222-222222222222', 'Slack Workspace', 'slack-workspace', 'global',
+            'user-owner', '2026-01-01', '2026-01-01');
+    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES ('22222222-2222-4222-8222-222222222222', 'user-owner', 'owner', 'active', '2026-01-01');
+    INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+       display_name, encrypted_credentials, credential_iv, credential_key_version,
+       granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+       model_plugin_id)
+    VALUES ('11111111-1111-4111-8111-111111111111',
+            '22222222-2222-4222-8222-222222222222', 'slack', 'workspace', NULL, 'T123',
+            'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+            '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+            'plugin_slack_workspace');
+  `);
+}
+
+function slackMembershipEnvironment(
+  database: DatabaseSync,
+  credentialsKey: string,
+  send: (body: unknown) => Promise<void>,
+): Env {
+  return {
+    DB: sqliteD1(database),
+    ACTIVITY_QUEUE: { send } as unknown as Queue,
+    AVALON_REGION: "global",
+    CONNECTOR_CREDENTIALS_KEY: credentialsKey,
+    CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    PUBLIC_API_BASE_URL: "https://api.with-avalon.test",
+    SLACK_APP_ID: "A1",
+    SLACK_CLIENT_ID: "client",
+    SLACK_CLIENT_SECRET: "secret",
+    SLACK_SIGNING_SECRET: "signing",
+  } as unknown as Env;
 }
 
 function migratedDatabase(): DatabaseSync {
