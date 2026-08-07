@@ -21,7 +21,6 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
-  SlidersHorizontal,
   Trash2,
   UserRound,
   Users,
@@ -82,9 +81,8 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Settings',
     items: [
-      { id: 'general', label: 'General', searchTerms: 'region data residency organization', icon: SlidersHorizontal },
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
-      { id: 'workspace', label: 'Workspace', searchTerms: 'organization members invitations invite roles', icon: Users },
+      { id: 'workspace', label: 'Workspace', searchTerms: 'region data residency organization members invitations invite roles', icon: Users },
       { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack x integrations', icon: Plug },
     ],
   },
@@ -251,7 +249,7 @@ function initialSettingsSection(): SettingsSection {
   );
   if (nativeSection) return nativeSection;
   const hashQuery = window.location.hash.split('?', 2)[1];
-  return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'general';
+  return parseDesktopSettingsSection(new URLSearchParams(hashQuery ?? '').get('section')) ?? 'account';
 }
 
 export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
@@ -561,38 +559,6 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
             </button>
           </header>
           <div className="settings-content-scroll">
-            {activeSection === 'general' && (
-              <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading">
-                  <h2>Workspace preferences</h2>
-                  <p>Review the permanent data location and service boundary for this workspace.</p>
-                </div>
-                <div className="settings-list-card">
-                  <div className="settings-preference-row">
-                    <span className="settings-row-icon">
-                      {workspace.region === 'eu' ? <ShieldCheck aria-hidden="true" size={18} /> : <Globe2 aria-hidden="true" size={18} />}
-                    </span>
-                    <span className="settings-row-copy">
-                      <strong>Data region</strong>
-                      <small>All workspace data, sessions, and requests remain pinned to this regional service.</small>
-                    </span>
-                    <span className="settings-row-value">
-                      <strong>{workspace.region === 'eu' ? 'European Union' : 'Global'}</strong>
-                      <Badge>Locked</Badge>
-                    </span>
-                  </div>
-                  <div className="settings-preference-row">
-                    <span className="settings-row-icon"><Building2 aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy">
-                      <strong>Organization</strong>
-                      <small>The shared Avalon workspace active in this desktop app.</small>
-                    </span>
-                    <span className="settings-row-value"><strong>{workspace.name}</strong></span>
-                  </div>
-                </div>
-              </section>
-            )}
-
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
                 <div className="settings-pane-heading"><h2>Profile</h2><p>Your Avalon identity and access in this workspace.</p></div>
@@ -633,8 +599,29 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
 
             {activeSection === 'workspace' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Defaults shared by workspace automations.</p></div>
+                <div className="settings-pane-heading"><h2>Workspace preferences</h2><p>Review workspace details and defaults shared by workspace automations.</p></div>
                 <div className="settings-list-card">
+                  <div className="settings-preference-row">
+                    <span className="settings-row-icon">
+                      {workspace.region === 'eu' ? <ShieldCheck aria-hidden="true" size={18} /> : <Globe2 aria-hidden="true" size={18} />}
+                    </span>
+                    <span className="settings-row-copy">
+                      <strong>Data region</strong>
+                      <small>All workspace data, sessions, and requests remain pinned to this regional service.</small>
+                    </span>
+                    <span className="settings-row-value">
+                      <strong>{workspace.region === 'eu' ? 'European Union' : 'Global'}</strong>
+                      <Badge>Locked</Badge>
+                    </span>
+                  </div>
+                  <div className="settings-preference-row">
+                    <span className="settings-row-icon"><Building2 aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>Organization</strong>
+                      <small>The shared Avalon workspace active in this desktop app.</small>
+                    </span>
+                    <span className="settings-row-value"><strong>{workspace.name}</strong></span>
+                  </div>
                   <label className="settings-preference-row">
                     <span className="settings-row-icon"><Clock3 aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy"><strong>Default timezone</strong><small>Used when a workspace automation does not specify a timezone.</small></span>
