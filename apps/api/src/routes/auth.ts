@@ -5,6 +5,7 @@ import { DesktopExchangeRequestSchema, RefreshRequestSchema, RefreshTokenSchema 
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
+import { desktopHandoffUrl } from "../lib/desktop-handoff";
 import { AuthService, verifyAccessToken } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
 
@@ -60,26 +61,21 @@ authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c)
     target.searchParams.set("region", c.env.AVALON_REGION);
     return target;
   };
-  const handoffTarget = (target: URL): string => {
-    const handoff = new URL("/auth/desktop/", c.env.PUBLIC_WEB_BASE_URL);
-    handoff.hash = new URLSearchParams({ target: target.toString() }).toString();
-    return handoff.toString();
-  };
   c.header("Cache-Control", "no-store");
   if (query.error) {
     try {
       const denied = new URL(await new AuthService(c.env).consumeIdentityDenial(query.state));
-      return c.redirect(handoffTarget(denied), 302);
+      return c.redirect(desktopHandoffUrl(c.env, denied), 302);
     } catch (error) {
-      if (error instanceof ApiError) return c.redirect(handoffTarget(desktopTarget(error.code)), 302);
+      if (error instanceof ApiError) return c.redirect(desktopHandoffUrl(c.env, desktopTarget(error.code)), 302);
       throw error;
     }
   }
   try {
     const redirect = new URL(await new AuthService(c.env).consumeIdentityCallback(query.code!, query.state));
-    return c.redirect(handoffTarget(redirect), 302);
+    return c.redirect(desktopHandoffUrl(c.env, redirect), 302);
   } catch (error) {
-    if (error instanceof ApiError) return c.redirect(handoffTarget(desktopTarget(error.code)), 302);
+    if (error instanceof ApiError) return c.redirect(desktopHandoffUrl(c.env, desktopTarget(error.code)), 302);
     throw error;
   }
 });

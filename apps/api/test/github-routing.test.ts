@@ -324,6 +324,20 @@ describe("shared GitHub App routing", () => {
     expect(bucket.values.size).toBe(0);
   });
 
+  it("routes an intermediate setup failure back to the owning regional OAuth attempt", async () => {
+    const database = new FakeDatabase();
+    const bucket = new FakeBucket();
+    const failSetupInRegion = vi.fn(async () =>
+      `avalon://auth/complete?provider=github&region=eu&status=failed&error=github_setup_failed`);
+    const service = new GitHubRoutingService(environment(database, bucket), {
+      failSetupInRegion,
+    });
+    const state = `eu.${"x".repeat(32)}`;
+
+    await expect(service.failGitHubSetup(state, "github_setup_failed")).resolves.toContain("provider=github");
+    expect(failSetupInRegion).toHaveBeenCalledWith("eu", state, "github_setup_failed");
+  });
+
   it("fans out installation deliveries and disables every route after deletion", async () => {
     const database = new FakeDatabase();
     database.routes.push(

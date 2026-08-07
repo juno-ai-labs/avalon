@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import type {
   GitHubRegionalSetupInput,
+  GitHubRegionalSetupFailureInput,
   GitHubRegionalWebhookInput,
 } from "./services/github-routing-service";
 import { serializeGitHubRegionalRpcResult } from "./services/github-routing-service";
@@ -19,6 +20,15 @@ export class GitHubRegionalBridge extends WorkerEntrypoint<Env> {
       new ConnectionService(this.env).setupGitHub(
         input.installationId,
         input.state,
+      ));
+  }
+
+  failGitHubSetup(input: GitHubRegionalSetupFailureInput) {
+    return serializeGitHubRegionalRpcResult(() =>
+      new ConnectionService(this.env).failProviderAttempt(
+        "github",
+        input.state,
+        input.errorCode,
       ));
   }
 

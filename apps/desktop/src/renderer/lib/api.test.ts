@@ -956,4 +956,57 @@ describe('Avalon API wire adapter', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('after=4'))).toBe(true);
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/workstreams/${workstreamId}`))).toBe(false);
   });
+
+  it('starts and reconciles a durable connector OAuth attempt', async () => {
+    const attemptId = 'a'.repeat(43);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({
+        url: 'https://linear.app/oauth/authorize?state=opaque',
+        attemptId,
+      }))
+      .mockResolvedValueOnce(json({
+        attemptId,
+        provider: 'linear',
+        status: 'succeeded',
+        connectionId,
+        errorCode: null,
+        expiresAt: timestamp,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.startProviderConnection('linear', 'you', ['linear.read'])).resolves.toEqual({
+      url: 'https://linear.app/oauth/authorize?state=opaque',
+      attemptId,
+    });
+    await expect(api.waitForConnectorOAuthAttempt(attemptId)).resolves.toMatchObject({
+      status: 'succeeded',
+      connectionId,
+    });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `https://api.avalon.test/connections/oauth-attempts/${attemptId}`,
+    );
+  });
+
+  it('cancels durable connector OAuth polling through its abort signal', async () => {
+    const attemptId = 'b'.repeat(43);
+    const fetchMock = vi.fn().mockResolvedValue(json({
+      attemptId,
+      provider: 'linear',
+      status: 'pending',
+      connectionId: null,
+      errorCode: null,
+      expiresAt: timestamp,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const controller = new AbortController();
+
+    const polling = api.waitForConnectorOAuthAttempt(attemptId, controller.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    controller.abort();
+
+    await expect(polling).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
 });

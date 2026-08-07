@@ -31,9 +31,11 @@ const bridge = vi.hoisted(() => ({
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge as unknown as AvalonDesktopBridge }));
 
+const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
+
 const euSession: DesktopSession = {
   accessToken: 'access-token-longer-than-twenty-characters',
-  expiresAt: '2026-08-02T00:00:00.000Z',
+  expiresAt: futureExpiry,
   apiBaseUrl: 'https://eu.api.with-avalon.com',
   user: { id: 'user-1', email: 'invitee@example.com', name: 'Invitee' },
   workspace: {
@@ -243,7 +245,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
     act(() => deepLinkListener?.(
-      'avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected',
+      `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     ));
 
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['connections'] }));
@@ -253,10 +255,66 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
+  it('accepts a regional server-owned connector result and surfaces denial', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...euSession,
+      expiresAt: futureExpiry,
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
+
+    act(() => deepLinkListener?.(
+      `avalon://auth/complete?provider=linear&region=eu&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
+    ));
+
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('Linear authorization was cancelled');
+  });
+
+  it('rejects malformed connector UUIDs in legacy and server-owned completion links', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      expiresAt: futureExpiry,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    act(() => deepLinkListener?.(
+      'avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
+    ));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+
+    act(() => deepLinkListener?.(
+      `avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+    ));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+  });
+
+  it('rejects a connector result from a different regional server', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...euSession,
+      expiresAt: futureExpiry,
+    });
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+
+    act(() => deepLinkListener?.(
+      `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
+    ));
+
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+  });
+
   it('consumes a Slack link token only through the authenticated regional session', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...euSession,
-      expiresAt: '2030-08-02T00:00:00.000Z',
+      expiresAt: futureExpiry,
     });
     bridge.openSettings.mockResolvedValueOnce(undefined);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -294,7 +352,7 @@ describe('single-platform desktop identity routing', () => {
   it('does not consume a Slack link token when the user rejects its identity preview', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...euSession,
-      expiresAt: '2030-08-02T00:00:00.000Z',
+      expiresAt: futureExpiry,
     });
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const fetchRequest = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response(JSON.stringify({

@@ -5,9 +5,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { IdSchema } from '@avalon/contracts';
 import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
 import { AvalonApi } from './api';
 import {
@@ -17,6 +19,14 @@ import {
 } from './device-preferences';
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
 import type { Region } from './types';
+
+const connectorProviderNames = {
+  google: 'Google',
+  github: 'GitHub',
+  linear: 'Linear',
+  notion: 'Notion',
+  slack: 'Slack',
+} as const;
 
 export interface PendingInvitation {
   token: string;
@@ -65,6 +75,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   const [booting, setBooting] = useState(true);
   const [exchangingTicket, setExchangingTicket] = useState(false);
   const [deepLinkError, setDeepLinkError] = useState<string | null>(null);
+  const sessionRef = useRef<DesktopSession | null>(null);
+  sessionRef.current = session;
   const bridge = useMemo(() => desktopBridge(), []);
   const queryClient = useQueryClient();
 
@@ -324,8 +336,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       const connectionId = deepLink.searchParams.get('connection');
-      if (connectionId && deepLink.searchParams.get('status') === 'connected') {
-        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(connectionId)) {
+      const connectorProvider = deepLink.searchParams.get('provider');
+      const activeSession = sessionRef.current;
+      if (connectionId && deepLink.searchParams.get('status') === 'connected' && connectorProvider === null) {
+        const legacyEntries = [...deepLink.searchParams.entries()];
+        if (
+          !activeSession?.workspace
+          || !IdSchema.safeParse(connectionId).success
+          || legacyEntries.length !== 2
+          || legacyEntries.some(([name]) => name !== 'connection' && name !== 'status')
+          || deepLink.searchParams.getAll('connection').length !== 1
+          || deepLink.searchParams.getAll('status').length !== 1
+        ) {
           setDeepLinkError('Avalon received an invalid connector completion link.');
           return;
         }
@@ -335,6 +357,56 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           queryClient.invalidateQueries({ queryKey: ['workstream'] }),
           queryClient.invalidateQueries({ queryKey: ['automation'] }),
         ]);
+        return;
+      }
+      const connectorName = connectorProvider && connectorProvider in connectorProviderNames
+        ? connectorProviderNames[connectorProvider as keyof typeof connectorProviderNames]
+        : null;
+      const connectorStatus = deepLink.searchParams.get('status');
+      if (connectionId || connectorProvider || connectorStatus) {
+        const entries = [...deepLink.searchParams.entries()];
+        const hasSingleValue = (name: string): boolean => deepLink.searchParams.getAll(name).length === 1;
+        const callbackRegion = deepLink.searchParams.get('region');
+        const attemptId = deepLink.searchParams.get('attempt');
+        const connectorError = deepLink.searchParams.get('error');
+        const validSuccess =
+          entries.length >= 4
+          && entries.length <= 5
+          && entries.every(([name]) => ['connection', 'status', 'region', 'attempt', 'provider'].includes(name))
+          && ['connection', 'status', 'region', 'provider'].every(hasSingleValue)
+          && connectorStatus === 'connected'
+          && connectionId !== null
+          && IdSchema.safeParse(connectionId).success
+          && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)))
+          && connectorError === null;
+        const validFailure =
+          entries.length >= 4
+          && entries.length <= 5
+          && entries.every(([name]) => ['status', 'error', 'region', 'attempt', 'provider'].includes(name))
+          && ['status', 'error', 'region', 'provider'].every(hasSingleValue)
+          && (connectorStatus === 'denied' || connectorStatus === 'failed')
+          && connectionId === null
+          && connectorError !== null
+          && /^[a-z0-9_-]{1,100}$/u.test(connectorError)
+          && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)));
+        if (!activeSession?.workspace || !connectorName || callbackRegion !== activeSession.workspace.region || (!validSuccess && !validFailure)) {
+          setDeepLinkError('Avalon received an invalid connector completion link.');
+          return;
+        }
+        if (validSuccess) {
+          setDeepLinkError(null);
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['connections'] }),
+            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+            queryClient.invalidateQueries({ queryKey: ['automation'] }),
+          ]);
+        } else {
+          setDeepLinkError(
+            connectorStatus === 'denied'
+              ? `${connectorName} authorization was cancelled.`
+              : `${connectorName} could not be connected. Try again from Connections.`,
+          );
+        }
         return;
       }
       const connectionError = deepLink.searchParams.get('error');
