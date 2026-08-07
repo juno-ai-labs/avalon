@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, Message, WorkstreamResource } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import { useUiStore } from '../lib/ui-store';
 import {
   AddResourceDialog,
   highestVisibleAttentionSequence,
@@ -11,9 +12,82 @@ import {
   manualElicitationResponse,
   mergeBackgroundTasks,
   RunFailureNotice,
+  WorkstreamHeader,
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
+
+const headerWorkstream: WorkstreamDetail = {
+  id: 'workstream-header',
+  title: 'Daily product brief',
+  origin: 'automation',
+  automationName: 'Daily monitor',
+  harnessStatus: 'completed',
+  lastActivityAt: '2026-08-07T12:00:00.000Z',
+  latestAttentionSequenceNumber: 0,
+  readThroughSequenceNumber: 0,
+  manualUnreadFromSequenceNumber: null,
+  manualUnreadGeneration: 0,
+  hasUnread: false,
+  firstUnreadSequenceNumber: null,
+  createdAt: '2026-08-07T12:00:00.000Z',
+  participants: [],
+  viewers: [],
+  resources: [],
+  connections: [],
+  artifacts: [],
+  backgroundTasks: [],
+  automationRuns: [],
+};
+
+function renderWorkstreamHeader(workstream = headerWorkstream): ReturnType<typeof render> {
+  return render(
+    <Tooltip.Provider>
+      <WorkstreamHeader
+        hypersightOpen={false}
+        hypersightPreferencePending={false}
+        onAddParticipant={vi.fn()}
+        onToggleHyperSight={vi.fn()}
+        socketState="connected"
+        workstream={workstream}
+      />
+    </Tooltip.Provider>,
+  );
+}
+
+describe('WorkstreamHeader origin affordances', () => {
+  beforeEach(() => {
+    useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
+  });
+
+  it('removes origin icons while preserving automation runs in the More menu', async () => {
+    renderWorkstreamHeader();
+
+    expect(document.querySelector('.header-origin-icon')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Automation runs' })).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const runsItem = await screen.findByRole('menuitem', { name: 'Automation runs' });
+    expect(runsItem.querySelector('svg')).toBeNull();
+
+    fireEvent.click(runsItem);
+    expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'runs' });
+  });
+
+  it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {
+    renderWorkstreamHeader({ ...headerWorkstream, origin: 'ad_hoc' });
+
+    expect(document.querySelector('.header-origin-icon')).toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(screen.queryByRole('menuitem', { name: 'Automation runs' })).not.toBeInTheDocument();
+  });
+});
 
 const transcript: Message[] = [
   {

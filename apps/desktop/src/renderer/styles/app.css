@@ -570,15 +570,6 @@ pre {
   justify-content: center;
 }
 
-.sidebar-automation-marker {
-  align-items: center;
-  color: #b18af3;
-  display: inline-flex;
-  height: 16px;
-  justify-content: center;
-  width: 16px;
-}
-
 .sidebar-row-main {
   display: flex;
   flex: 1;
