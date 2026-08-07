@@ -100,6 +100,99 @@ expected `Strict-Transport-Security` header over HTTPS.
 
 Every new Avalon release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Immediately after a verified publication, move the root and desktop package versions to the next minor development version. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
 
+### Desktop release retention
+
+Keep the five highest semantic versions in the public `avalon-desktop-releases`
+R2 bucket. Move every older complete release to the private
+`avalon-desktop-releases-archive` bucket in the same WNAM location. The archive
+bucket's default storage class is `InfrequentAccess`; keep its `r2.dev` URL
+disabled and do not attach a custom domain. Infrequent Access has retrieval
+charges and a 30-day minimum storage duration, so it is appropriate only for
+release artifacts that are rarely restored. See Cloudflare's
+[storage-class](https://developers.cloudflare.com/r2/buckets/storage-classes/)
+and [pricing](https://developers.cloudflare.com/r2/pricing/) documentation.
+
+Create the archive bucket only if it does not already exist:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler r2 bucket create avalon-desktop-releases-archive --location wnam --storage-class InfrequentAccess
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler r2 bucket info avalon-desktop-releases-archive
+```
+
+Use the live R2 inventory as the retention authority. Do not derive the keep set
+from Git tags, `apps/site/release.config.json`, upload timestamps, or local
+release directories; any of those can lag a completed publication. Under
+`stable/darwin/arm64/`, one complete release currently has five immutable
+objects:
+
+- A versioned DMG
+- A versioned ZIP
+- The DMG and ZIP blockmaps
+- `<version>/SHA256SUMS`
+
+`stable/darwin/arm64/Avalon.dmg` and
+`stable/darwin/arm64/latest-mac.yml` are mutable channel pointers, not releases.
+They must always remain in the public bucket.
+
+Perform retention in a release-free maintenance window:
+
+1. List every object under `stable/darwin/arm64/` through Cloudflare's R2 object
+   API, paging until the inventory is complete. Extract the single semantic
+   version from each immutable key, sort versions semantically in descending
+   order, and select everything after the first five. Abort if any selected or
+   retained release is incomplete, a key maps to more than one version, or an
+   unversioned key is not one of the two mutable pointers above.
+2. Copy the selected objects to the archive bucket without deleting the source.
+   For a large retention run, use a short-lived authenticated Worker bound to
+   the two buckets so bytes stay inside Cloudflare. Restrict it to the exact
+   precomputed key allowlist and give it no delete operation. Preserve the
+   source object's metadata and explicitly select Infrequent Access:
+
+   ```js
+   const source = await env.SOURCE.get(key);
+   if (source === null) throw new Error(`Missing source object: ${key}`);
+   await env.ARCHIVE.put(key, source.body, {
+     httpMetadata: source.httpMetadata,
+     customMetadata: source.customMetadata,
+     storageClass: "InfrequentAccess",
+   });
+   ```
+
+3. Re-list both buckets and verify every candidate before deletion. Source and
+   archive must have the same key, size, ETag, HTTP metadata values, and custom
+   metadata values, and the archive object must report `InfrequentAccess`.
+   Compare metadata by value rather than JSON field order. If the transfer path
+   changes ETags, perform a full SHA-256 comparison instead. Verify the archive
+   bucket itself still defaults to Infrequent Access and remains private.
+4. Re-list the public bucket immediately before deletion and recompute the five
+   retained versions. If the inventory or keep set changed, a release may have
+   raced the migration; do not delete anything and restart from step 1.
+5. Delete only the exact, fully verified candidate-key allowlist from the public
+   bucket. Run deletion from the trusted local operator, separately from the
+   copy-only Worker. A failed or interrupted deletion is safe to retry after
+   repeating step 3.
+6. Confirm that the public bucket contains five complete releases plus only
+   `Avalon.dmg` and `latest-mac.yml`, and that the archive contains every moved
+   key in Infrequent Access. Prove one moved key returns 404 from the public
+   bucket and 200 from the archive API, and prove one retained key has the
+   inverse result.
+7. Fetch the public `latest-mac.yml`, confirm its version is the highest retained
+   version, and require successful HEAD requests for both the manifest and
+   `Avalon.dmg` through `https://downloads.with-avalon.com/`. Remove the
+   temporary Worker, its secret, and all local migration scaffolding.
+
+R2 aggregate object-count and bucket-size counters can lag object operations.
+Use successful object-list, HEAD, and GET checks as the completion authority;
+do not repeat a migration merely because `wrangler r2 bucket info` has stale
+totals.
+
+To restore an archived release, copy its five objects back to the public bucket
+as `Standard` storage while preserving metadata, then repeat the key, size,
+ETag/hash, and public HEAD verification. Restoring immutable objects does not
+change the update channel. Change `latest-mac.yml` or `Avalon.dmg` only as a
+separate, explicitly approved release rollback using the normal publisher's
+ordering and cache-purge safeguards.
+
 ### Desktop icon release gate
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](DESKTOP_ICONS.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.

@@ -256,11 +256,34 @@ export function HyperSightPanel({
 }
 
 export function HyperSightResizeHandle({ onResize }: { onResize: (height: number) => void }): React.JSX.Element {
+  const dragRef = useRef<{
+    maximum: number;
+    minimum: number;
+    pointerId: number;
+    startHeight: number;
+    startY: number;
+  } | null>(null);
+
+  const finishDrag = (element?: HTMLDivElement): void => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    if (element?.hasPointerCapture?.(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
+    document.body.classList.remove('is-resizing-hypersight');
+  };
+
+  useEffect(() => () => {
+    dragRef.current = null;
+    document.body.classList.remove('is-resizing-hypersight');
+  }, []);
+
   return (
     <div
       aria-label="Resize HyperSight"
       aria-orientation="horizontal"
       className="hypersight-resizer"
+      onLostPointerCapture={(event) => finishDrag(event.currentTarget)}
+      onPointerCancel={(event) => finishDrag(event.currentTarget)}
       onPointerDown={(event) => {
         event.preventDefault();
         const startY = event.clientY;
@@ -271,17 +294,21 @@ export function HyperSightResizeHandle({ onResize }: { onResize: (height: number
         const screenHeight = screen instanceof HTMLElement ? screen.getBoundingClientRect().height : window.innerHeight;
         const minimum = screenHeight * 0.18;
         const maximum = screenHeight * 0.58;
-        const onMove = (moveEvent: PointerEvent): void => {
-          onResize(Math.min(maximum, Math.max(minimum, startHeight + moveEvent.clientY - startY)));
-        };
-        const onUp = (): void => {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-          document.body.classList.remove('is-resizing-hypersight');
-        };
+        finishDrag(event.currentTarget);
+        dragRef.current = { maximum, minimum, pointerId: event.pointerId, startHeight, startY };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         document.body.classList.add('is-resizing-hypersight');
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp, { once: true });
+      }}
+      onPointerMove={(event) => {
+        const drag = dragRef.current;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        onResize(Math.min(
+          drag.maximum,
+          Math.max(drag.minimum, drag.startHeight + event.clientY - drag.startY),
+        ));
+      }}
+      onPointerUp={(event) => {
+        if (event.pointerId === dragRef.current?.pointerId) finishDrag(event.currentTarget);
       }}
       role="separator"
     >
