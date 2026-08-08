@@ -16,11 +16,11 @@ permissions:
 
 concurrency:
   # Signing, mutable channel promotion, and the landing-site deployment form
-  # one release transaction. Queue every tag and manual dispatch globally so
-  # separate versions cannot overlap any part of that transaction.
+  # one release transaction. Serialize every tag and manual dispatch globally;
+  # while one runs, keep only the newest pending release.
   group: desktop-macos-release
   cancel-in-progress: false
-  queue: max
+  queue: single
 
 jobs:
   release:
