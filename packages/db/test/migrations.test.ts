@@ -231,7 +231,109 @@ describe("database migrations", () => {
       UPDATE connector_connections SET status = 'healthy'
       WHERE id = 'connection-x-personal-legacy';
     `)).toThrow(/X connections must use workspace scope/u);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
 
+  it("stores one Granola API key connection per workspace and one MCP connection per user", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-granola', 'google-granola', 'granola@example.com', 'Granola User',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-granola', 'Granola Workspace', 'granola-workspace', 'global',
+              'user-granola', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES
+        ('connection-granola-workspace', 'workspace-granola', 'granola', 'workspace', NULL,
+         'Granola workspace', '["granola.workspace.read"]', 'plugin_granola',
+         '2026-01-01', '2026-01-01'),
+        ('connection-granola-personal', 'workspace-granola', 'granola', 'personal', 'user-granola',
+         'Granola personal', '["granola.personal.read"]', 'plugin_granola_2',
+         '2026-01-01', '2026-01-01');
+      INSERT INTO connector_oauth_attempts
+        (id, region, provider, user_id, workspace_id, status, expires_at, created_at, updated_at)
+      VALUES ('granola-attempt', 'global', 'granola', 'user-granola', 'workspace-granola',
+              'pending', '2026-01-02', '2026-01-01', '2026-01-01');
+    `);
+    expect(database.prepare(
+      "SELECT connector_type, scope FROM connector_connections WHERE connector_type = 'granola' ORDER BY scope",
+    ).all()).toEqual([
+      { connector_type: "granola", scope: "personal" },
+      { connector_type: "granola", scope: "workspace" },
+    ]);
+    expect(database.prepare(
+      "SELECT provider FROM connector_oauth_attempts WHERE id = 'granola-attempt'",
+    ).get()).toEqual({ provider: "granola" });
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-granola-workspace-two', 'workspace-granola', 'granola', 'workspace', NULL,
+              'Duplicate', '[]', 'plugin_granola_3', '2026-01-01', '2026-01-01');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-granola-personal-two', 'workspace-granola', 'granola', 'personal',
+              'user-granola', 'Duplicate', '[]', 'plugin_granola_4',
+              '2026-01-01', '2026-01-01');
+    `)).toThrow(/UNIQUE constraint failed/u);
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-x-personal-after-granola', 'workspace-granola', 'x', 'personal',
+              'user-granola', 'X', '["x.read"]', 'plugin_x_after_granola',
+              '2026-01-01', '2026-01-01');
+    `)).toThrow(/X connections must use workspace scope/u);
+    expect(database.prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'index' AND name = 'connector_connections_x_personal_active_user_uq'`,
+    ).get()).toBeUndefined();
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
+  it("preserves Slack pending prompts while adding Granola", () => {
+    const database = migrateDatabaseThrough("0047_slack_thread_followups.sql");
+    database.exec(`
+      INSERT INTO users
+        (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-granola-migrate', 'google-granola-migrate',
+              'granola-migrate@example.com', 'Granola Migration User',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-granola-migrate', 'Granola Migration', 'granola-migrate', 'global',
+              'user-granola-migrate', '2026-01-01', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, model_plugin_id, created_at, updated_at)
+      VALUES ('connection-slack-before-granola', 'workspace-granola-migrate', 'slack',
+              'workspace', NULL, 'T_GRANOLA', 'Slack', '["slack.agent"]',
+              'plugin_slack_before_granola', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_agent_pending_prompts
+        (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
+         denial_reason, expires_at, created_at, updated_at)
+      VALUES ('connection-slack-before-granola', 'C_GRANOLA', '1000.0001', 'U_GRANOLA',
+              'Retry this prompt', 'connection', '2026-01-02', '2026-01-01', '2026-01-01');
+    `);
+
+    database.exec("BEGIN");
+    database.exec(readFileSync(new URL("../migrations/0048_granola_connector.sql", import.meta.url), "utf8"));
+    database.exec("COMMIT");
+
+    expect(database.prepare(
+      `SELECT prompt, denial_reason FROM slack_agent_pending_prompts
+       WHERE connection_id = 'connection-slack-before-granola'`,
+    ).get()).toEqual({ prompt: "Retry this prompt", denial_reason: "connection" });
     expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });

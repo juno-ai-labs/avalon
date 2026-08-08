@@ -24,6 +24,7 @@ import type { Region } from './types';
 const connectorProviderNames = {
   google: 'Google',
   github: 'GitHub',
+  granola: 'Granola',
   linear: 'Linear',
   notion: 'Notion',
   slack: 'Slack',

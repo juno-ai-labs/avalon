@@ -1,5 +1,6 @@
 import {
   createConnectorRegistry,
+  type GranolaConnectorConfig,
   type GitHubConnectorConfig,
   type LinearConnectorConfig,
   type NotionConnectorConfig,
@@ -24,6 +25,12 @@ export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
     webhookSecret: env.GITHUB_WEBHOOK_SECRET,
     redirectUri: new URL("/connections/github/callback", env.PUBLIC_API_BASE_URL).toString(),
     ...(env.GITHUB_APP_SLUG ? { appSlug: env.GITHUB_APP_SLUG } : {}),
+  };
+}
+
+export function granolaConnectorConfig(env: Env): GranolaConnectorConfig {
+  return {
+    redirectUri: new URL("/connections/granola/callback", env.PUBLIC_API_BASE_URL).toString(),
   };
 }
 
@@ -73,6 +80,7 @@ export function xConnectorConfig(env: Env): XConnectorConfig | null {
 }
 
 export function connectorRegistryForEnv(env: Env) {
+  const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
   const notion = notionConnectorConfig(env);
@@ -80,6 +88,7 @@ export function connectorRegistryForEnv(env: Env) {
   const slack = slackConnectorConfig(env);
   const x = xConnectorConfig(env);
   return createConnectorRegistry({
+    granola,
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),
     ...(linear ? { linear } : {}),
