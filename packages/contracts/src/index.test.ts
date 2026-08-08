@@ -427,6 +427,62 @@ describe("boundary contracts", () => {
     expect(result.success).toBe(false);
   });
 
+  it("bounds Slack-origin context carried into a work-stream run", () => {
+    const parsed = WorkstreamWorkflowInputSchema.parse({
+      region: "global",
+      workspaceId: id,
+      workstreamId: id,
+      harnessRunId: id,
+      triggerMessageId: id,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "workspace", workspaceId: id },
+      slackOrigin: {
+        teamId: "TACME",
+        channelId: "CIDEAS",
+        channelName: "thinking-outloud",
+        threadTs: "1786130000.000100",
+        invocationType: "app_mention",
+        channelType: "public",
+        matchedAvalonUserId: id,
+        nearbyMessagesStatus: "available",
+        nearbyMessages: [{
+          timestamp: "1786129999.000100",
+          userId: "UALEX",
+          text: "Latest business idea",
+          attachments: [],
+        }],
+        attachments: [],
+      },
+      slackSearchAuthorization: {
+        actionToken: "1786130000.abcdef.event-token",
+      },
+      reason: "slack_workspace_opening_message",
+    });
+
+    expect(parsed.slackOrigin).toMatchObject({
+      teamId: "TACME",
+      channelId: "CIDEAS",
+      invocationType: "app_mention",
+      matchedAvalonUserId: id,
+    });
+    expect(parsed.slackSearchAuthorization).toEqual({
+      actionToken: "1786130000.abcdef.event-token",
+    });
+    expect(WorkstreamWorkflowInputSchema.safeParse({
+      ...parsed,
+      slackOrigin: {
+        ...parsed.slackOrigin,
+        nearbyMessages: Array.from({ length: 9 }, (_, index) => ({
+          timestamp: String(index),
+          userId: null,
+          text: "message",
+          attachments: [],
+        })),
+      },
+    }).success).toBe(false);
+  });
+
   it("exposes bounded harness-run metadata for the contextual rail", () => {
     expect(HarnessRunMetadataSchema.parse({
       id,

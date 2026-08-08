@@ -132,6 +132,18 @@ describe("Slack workspace workstream assignment", () => {
         },
         text: "stale answer",
         clientMessageId: "event:retry",
+        slackOrigin: {
+          teamId: "T123",
+          channelId: "C123",
+          channelName: "general",
+          threadTs: "123.456",
+          invocationType: "app_mention",
+          channelType: "public",
+          matchedAvalonUserId: null,
+          nearbyMessagesStatus: "available",
+          nearbyMessages: [],
+          attachments: [],
+        },
       },
     )).resolves.toEqual({ elicitation: null, harnessRunId: null });
 
