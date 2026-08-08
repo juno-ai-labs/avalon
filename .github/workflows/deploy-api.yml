@@ -12,8 +12,25 @@ name: Deploy Avalon API
 # Prerequisites this workflow does not perform (one-time, per the runbook):
 # regional resource creation, confirming each configured D1 ID belongs to its
 # intended region, and setting the regional Worker secrets.
+#
+# Merging to main deploys both regions and applies pending migrations without a
+# human in the loop. The api-production environment exists to scope the
+# Cloudflare token to this job, not to gate it: adding required reviewers to
+# that environment would turn every merge into a queued approval.
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      # Everything the Worker bundle or its schema is built from. A merge that
+      # touches only docs, the desktop app, or the site does not redeploy.
+      - "apps/api/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/deploy-api.yml"
+      - "scripts/check-regional-health.mjs"
   workflow_dispatch:
     inputs:
       ref:
@@ -50,8 +67,10 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      DEPLOY_EU: ${{ inputs.regions != 'global' }}
-      DEPLOY_GLOBAL: ${{ inputs.regions != 'eu' }}
+      # A push carries no inputs, so it takes the full both-regions path.
+      DEPLOY_EU: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'global' }}
+      DEPLOY_GLOBAL: ${{ github.event_name != 'workflow_dispatch' || inputs.regions != 'eu' }}
+      APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_migrations }}
 
     steps:
       - name: Check out the revision being deployed
@@ -101,11 +120,11 @@ jobs:
         run: pnpm --filter @avalon/api db:migrate:remote:list
 
       - name: Apply the remote D1 migrations to EU
-        if: inputs.apply_migrations && env.DEPLOY_EU == 'true'
+        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_EU == 'true'
         run: pnpm --filter @avalon/api db:migrate:remote:eu
 
       - name: Apply the remote D1 migrations to Global
-        if: inputs.apply_migrations && env.DEPLOY_GLOBAL == 'true'
+        if: env.APPLY_MIGRATIONS == 'true' && env.DEPLOY_GLOBAL == 'true'
         run: pnpm --filter @avalon/api db:migrate:remote
 
       # EU precedes Global because Global binds named EU entrypoints.
@@ -132,8 +151,9 @@ jobs:
             echo "### Avalon API deployed"
             echo ""
             echo "- Revision: \`${{ inputs.ref || github.ref_name }}\` (${GITHUB_SHA})"
-            echo "- Regions: \`${{ inputs.regions }}\`"
-            echo "- Remote migrations applied: \`${{ inputs.apply_migrations }}\`"
+            echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
+            echo "- Regions: EU \`${DEPLOY_EU}\`, Global \`${DEPLOY_GLOBAL}\`"
+            echo "- Remote migrations applied: \`${APPLY_MIGRATIONS}\`"
             echo ""
             echo "Remaining human acceptance gates from docs/RUNBOOK.md (steps 8-13):"
             echo ""
