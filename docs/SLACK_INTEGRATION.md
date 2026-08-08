@@ -3,14 +3,15 @@
 ## Product boundary
 
 Every configured bot and personal OAuth scope, including its concrete Avalon
-use, is listed in [Slack permissions](SLACK_PERMISSIONS.md).
+use and model-tool mapping, is listed in
+[Slack permissions](SLACK_PERMISSIONS.md).
 
 Avalon uses one public Slack Marketplace app for two related but separate connections:
 
 1. A **workspace installation** gives Avalon a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/avalon`, modals, unfurls, streaming replies, and proactive automation results.
-2. An optional **personal connection** gives Avalon's MCP client a Slack user token. It makes Slack search/read/write tools available only to that Avalon user and preserves that user's Slack visibility and attribution.
+2. An optional **personal connection** gives Avalon's MCP client a Slack user token. It preserves that user's broader private-channel, DM, MPIM, canvas, visibility, and user attribution.
 
-The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required to chat with Avalon in Slack. When a Slack-originated prompt needs immediate Slack context, Avalon can instead use the event's short-lived `action_token` with `assistant.search.context`; broader Slack work initiated in Avalon uses the personal MCP connection.
+The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required to chat with Avalon in Slack. Every Slack-originated run receives bounded source provenance (team, channel, thread, invocation and channel types, and any matched Avalon member), plus up to eight nearby messages and attachment metadata when the bot can read them. Nearby Slack content is model-visible as explicitly labelled untrusted evidence rather than system instructions. The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; Avalon carries that token as hidden run authorization and never adds it to prompts or model tool arguments. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
 
 This split follows Slack's July 2026 Agent model. New apps use `features.agent_view`, the normal Messages tab, and threaded replies. The older `assistant_view` is not configured.
 
@@ -27,7 +28,7 @@ Global D1 stores only `team_id -> region/workspace/connection` routing metadata.
 
 ## API versus MCP
 
-Raw Slack APIs are the control plane:
+Raw Slack APIs are the workspace Agent and workspace-tool plane:
 
 - OAuth installation and token rotation
 - public-channel discovery and bot membership
@@ -39,10 +40,13 @@ Raw Slack APIs are the control plane:
 - modals
 - link unfurls
 - deterministic scheduled-result delivery
+- Real-time Search API message discovery for a triggering Slack user
+- bounded conversation, thread, message-context, file, user, and member reads
+- bot-authored message, reaction, and conversation writes
 
 Slack's hosted MCP server is the user tool plane. Avalon initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered tool and its input contract, invokes `tools/call`, and closes the session when Slack assigns one. SSE responses are rejected because Slack does not support them. The static connector capabilities constrain which discovered tools can be offered to the model. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target.
 
-Personal authorization is incremental. **Slack knowledge** requests the read/search capabilities; **Slack actions** requests user-attributed writes. Adding the second preset expands the existing personal Slack connection instead of replacing its earlier grants. Workspace Agent scopes remain a separate administrator-controlled installation.
+Personal authorization is incremental. **Slack knowledge** requests the read/search capabilities; **Slack actions** requests user-attributed writes. Adding the second preset expands the existing personal Slack connection instead of replacing its earlier grants. Workspace Agent scopes remain a separate administrator-controlled installation with one reviewed capability bundle. Existing workspace installations must reconnect after the workspace-tool scope expansion before health checks and tool calls succeed.
 
 ## Data behavior
 
@@ -51,6 +55,8 @@ Personal authorization is incremental. **Slack knowledge** requests the read/sea
 When a prompt is denied because the workspace connection, channel classification, or Agent policy needs attention, Avalon retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
 
 Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Avalon OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Avalon's routing and retention restrictions above remain narrower than the provider grant.
+
+Real-time Search API responses are transient context for the active model turn. Avalon stores only the generic tool-completion summary for replay, not the retrieved search payload, and disables optional inference-payload logging after a Slack search result enters the model context. The event `action_token` remains hidden runtime authorization and is not copied into the work-stream transcript, Slack session context, tool input, tool output, or inference payload log.
 
 Normal product use can persist information in the resources that use it. A user prompt, Slack context used for the task, a model-authored summary, a workstream message, a tool receipt, an artifact, or an automation result may remain in Avalon. That is ordinary task history, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Avalon holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Avalon resources.
 
@@ -155,11 +161,11 @@ As a linked member, I can DM Avalon, mention it, invoke a shortcut on a message,
 
 ### Bring Slack context into Avalon
 
-As a user with a personal Slack connection, I can ask Avalon to search messages/files, read a channel or thread, inspect a file or canvas, or read user context. The hosted MCP server applies my Slack permissions.
+From a user-initiated Slack DM or app mention, I can ask Avalon to search public-channel messages using Slack's event-scoped authorization. With the workspace installation, I can also find visible users and conversations, read bounded channel/thread/message context, inspect bounded textual file content, and list conversation members. A personal Slack connection adds user-authorized private search, DMs, MPIMs, canvases, and the hosted MCP tool surface.
 
-### Act as the user
+### Act in Slack
 
-As a user with the appropriate personal grants, I can ask Avalon to send a message, create a conversation, add a reaction, or create/update a canvas. Existing confirmation and external-write receipt policies still apply.
+With the workspace installation, I can ask Avalon to send a bot-authored message, create or open a conversation, or add a bot reaction. A personal connection continues to support user-attributed actions and canvas writes. Existing confirmation and external-write receipt policies still apply.
 
 ### Connect several Slack workspaces
 
@@ -264,15 +270,15 @@ databases, and configure the same four Slack secrets in both Workers.
 
 Run the acceptance matrix in `docs/E2E.md`, beginning with App Home/linking,
 Agent DM and thread continuation, mention, both shortcuts, `/avalon`, signature
-replay, personal MCP authorization, multi-workspace routing, and the Gmail
+replay, workspace search/read/write tools, personal MCP authorization, multi-workspace routing, and the Gmail
 briefing's three/one/zero-result cases.
 
 ## Deployment and Marketplace gates
 
 1. Set `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` in both regional Workers. Keep the public app identity identical.
-2. Deploy migration `0039` and both Workers, including the Global/EU Slack service bindings and `slack.with-avalon.com` custom domain.
+2. Deploy migrations through `0046` and both Workers, including the Global/EU Slack service bindings and `slack.with-avalon.com` custom domain.
 3. Run `slack manifest validate`; then create/update the Marketplace app from `config/provider-apps/slack.json`.
-4. Install into test workspaces and exercise the acceptance cases in `docs/E2E.md`.
+4. Reconnect existing Slack workspace installations so Slack grants the expanded bot scopes, then exercise the acceptance cases in `docs/E2E.md`.
 5. Confirm paid-plan eligibility for Agent/automation features and document the `team.billing:read` use in review materials.
 6. Provide working privacy, support, installation landing, pricing, AI disclosure, data-use, and deletion pages. Respond to support within two business days.
 7. Before submission, meet Slack's active-workspace and weekly-active-user thresholds, complete preliminary review, and budget for functional review.

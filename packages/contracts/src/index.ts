@@ -994,6 +994,44 @@ export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("workspace"), workspaceId: IdSchema })
 ]);
 
+export const SlackOriginAttachmentSchema = z.object({
+  id: z.string().min(1).max(255).nullable(),
+  name: z.string().min(1).max(500),
+  title: z.string().max(500).nullable(),
+  mimeType: z.string().max(255).nullable(),
+  fileType: z.string().max(120).nullable(),
+  permalink: z.string().url().max(2000).nullable()
+}).strict();
+
+export const SlackOriginNearbyMessageSchema = z.object({
+  timestamp: z.string().min(1).max(80),
+  userId: z.string().min(1).max(255).nullable(),
+  text: z.string().max(2000),
+  attachments: z.array(SlackOriginAttachmentSchema).max(10)
+}).strict();
+
+export const SlackOriginContextSchema = z.object({
+  teamId: z.string().min(1).max(255),
+  channelId: z.string().min(1).max(255).nullable(),
+  channelName: z.string().min(1).max(255).nullable(),
+  threadTs: z.string().min(1).max(80).nullable(),
+  invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
+  channelType: z.enum(["public", "private", "im", "unknown"]),
+  matchedAvalonUserId: IdSchema.nullable(),
+  nearbyMessagesStatus: z.enum(["available", "unavailable", "not_applicable"]),
+  nearbyMessages: z.array(SlackOriginNearbyMessageSchema).max(8),
+  attachments: z.array(SlackOriginAttachmentSchema).max(10)
+}).strict();
+
+/**
+ * Short-lived Slack authorization attached to a user-initiated Events API
+ * delivery. This is runtime-only credential material: it must never be
+ * rendered into model instructions, messages, tool arguments, or logs.
+ */
+export const SlackSearchAuthorizationSchema = z.object({
+  actionToken: z.string().min(1).max(4096)
+}).strict();
+
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
@@ -1003,6 +1041,8 @@ export const WorkstreamWorkflowInputSchema = z.object({
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
   executionPrincipal: ExecutionPrincipalSchema,
+  slackOrigin: SlackOriginContextSchema.optional(),
+  slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   reason: z.string().min(1).max(500)
 });
 export const ConnectorPollWorkflowInputSchema = z.object({
@@ -1327,7 +1367,11 @@ export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;
 export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;
+export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
+export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
+export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
 export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;
