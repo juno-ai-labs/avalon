@@ -55,6 +55,14 @@ const notionStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.enum(["notion.read", "notion.insert", "notion.update", "notion.comment.read", "notion.comment.insert"])).min(1),
 });
+const granolaStart = z.object({
+  scope: z.literal("personal"),
+  capabilities: z.array(z.literal("granola.personal.read")).length(1),
+});
+const granolaWorkspace = z.object({
+  apiKey: z.string().trim().regex(/^grn_[\x21-\x7E]{1,508}$/u),
+  capabilities: z.array(z.literal("granola.workspace.read")).length(1),
+});
 const githubStart = z.object({
   scope: ScopeSchema,
   capabilities: z.array(z.enum([
@@ -115,6 +123,12 @@ connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c
 );
 connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("notion", c.req.valid("json"))),
+);
+connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("granola", c.req.valid("json"))),
+);
+connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).createGranolaWorkspace(c.req.valid("json")), 201),
 );
 connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json"))),
@@ -239,6 +253,10 @@ connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallb
   const query = c.req.valid("query");
   return connectorCallback(c, "notion", query, (service, code, state) => service.completeProvider("notion", code, state));
 });
+connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  return connectorCallback(c, "granola", query, (service, code, state) => service.completeProvider("granola", code, state));
+});
 connectionCallbackRoutes.get("/slack/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "slack", query, (service, code, state) => service.completeProvider("slack", code, state));
@@ -267,6 +285,18 @@ webhookIngestionRoutes.post("/notion", async (c) => {
     new Uint8Array(await c.req.arrayBuffer()),
     c.req.raw.headers,
     c.req.query("setup") ?? null,
+  );
+  return c.json(result, result.duplicate ? 200 : 202);
+});
+webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
+  const result = await new ConnectionService(c.env).ingestGranolaWebhook(
+    c.req.valid("param").id,
+    new Uint8Array(await c.req.arrayBuffer()),
+    {
+      webhookId: c.req.header("webhook-id") ?? null,
+      webhookTimestamp: c.req.header("webhook-timestamp") ?? null,
+      webhookSignature: c.req.header("webhook-signature") ?? null,
+    },
   );
   return c.json(result, result.duplicate ? 200 : 202);
 });

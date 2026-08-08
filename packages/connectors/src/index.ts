@@ -15,6 +15,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "./types";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
+import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
 import { createSlackConnector, type SlackConnectorConfig } from "./slack";
@@ -72,6 +73,20 @@ export {
   type SlackPublicChannelSyncResult,
   type SlackWebApiMethod,
 } from "./slack";
+export {
+  callGranolaMcp,
+  createGranolaConnector,
+  createGranolaWebhookEndpoint,
+  deleteGranolaWebhookEndpoint,
+  verifyGranolaWebhook,
+  GranolaAgentPluginDescriptor,
+  GranolaCapabilities,
+  granolaTools,
+  type GranolaConnectorConfig,
+  type GranolaMcpTool,
+  type GranolaWebhookEndpoint,
+  type VerifiedGranolaWebhook,
+} from "./granola";
 export {
   createGitHubConnector,
   createGitHubAppJwt,
@@ -3051,6 +3066,7 @@ export function connectorSupportsSurface(
 }
 
 export function createConnectorRegistry(input: {
+  granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
   github?: GitHubConnectorConfig;
   linear?: LinearConnectorConfig;
@@ -3059,6 +3075,7 @@ export function createConnectorRegistry(input: {
   x?: XConnectorConfig;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
+  if (input.granola) adapters.push(createGranolaConnector(input.granola));
   if (input.google) adapters.push(createGoogleConnector(input.google));
   if (input.github) adapters.push(createGitHubConnector(input.github));
   if (input.linear) adapters.push(createLinearConnector(input.linear));

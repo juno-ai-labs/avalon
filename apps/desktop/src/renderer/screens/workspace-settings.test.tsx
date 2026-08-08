@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  createGranolaWorkspaceConnection: vi.fn(),
   createXConnection: vi.fn(),
   getConnectorOAuthAttempt: vi.fn(),
   startProviderConnection: vi.fn(),
@@ -121,6 +122,14 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.createGranolaWorkspaceConnection.mockResolvedValue({
+      id: '00000000-0000-7000-8000-000000000018',
+      connectorType: 'granola',
+      scope: 'workspace',
+      displayName: 'Granola workspace',
+      capabilities: ['granola.workspace.read'],
+      status: 'healthy',
+    });
     api.startProviderConnection.mockResolvedValue({
       url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
       attemptId: 'a'.repeat(43),
@@ -445,6 +454,45 @@ describe('Workspace settings', () => {
 
     await screen.findByText('Slack · Avalon');
     expect(screen.queryByRole('button', { name: 'Policy' })).not.toBeInTheDocument();
+  });
+
+  it('offers personal Granola MCP and submits a workspace API key only through the secure setup dialog', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const granolaCard = (await screen.findByText('Granola')).closest('article');
+    expect(granolaCard).not.toBeNull();
+
+    fireEvent.click(within(granolaCard!).getByRole('button', { name: 'Connect for me' }));
+    await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(
+      'granola',
+      'you',
+      ['granola.personal.read'],
+    ));
+
+    await waitFor(() => expect(within(granolaCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    fireEvent.click(within(granolaCard!).getByRole('button', { name: 'Connect workspace' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Connect Granola workspace' });
+    expect(within(dialog).getByRole('heading', { name: 'Generate the key in Granola' })).toBeVisible();
+    expect(within(dialog).getByText('Open the Granola desktop app as a workspace administrator.')).toBeVisible();
+    expect(within(dialog).getByText('Go to Settings → Connectors → Workspace API keys.')).toBeVisible();
+    expect(within(dialog).getByText('Choose Create new key.')).toBeVisible();
+    expect(within(dialog).getByText('Copy the new key, then paste it below.')).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Open Granola’s API key guide ↗' }));
+    expect(openExternal).toHaveBeenLastCalledWith('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
+    const apiKeyInput = within(dialog).getByLabelText('Workspace API key');
+    expect(apiKeyInput).toHaveAttribute('type', 'password');
+    expect(dialog).toHaveAccessibleDescription(
+      'A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key.',
+    );
+
+    const apiKey = `grn_${'a'.repeat(24)}`;
+    fireEvent.change(apiKeyInput, { target: { value: apiKey } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect workspace' }));
+
+    await waitFor(() => expect(api.createGranolaWorkspaceConnection).toHaveBeenCalledWith(apiKey));
+    expect(await screen.findByText('No connections yet')).toBeVisible();
   });
 
   it('offers the read-only X connector only at workspace scope', async () => {

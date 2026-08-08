@@ -52,6 +52,7 @@ interface PendingConnectorOAuth {
 const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
   google: 'Google',
   github: 'GitHub',
+  granola: 'Granola',
   linear: 'Linear',
   notion: 'Notion',
   slack: 'Slack',
@@ -60,6 +61,7 @@ const connectorProviderName: Record<ConnectorOAuthProvider, string> = {
 const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   'google',
   'github',
+  'granola',
   'linear',
   'notion',
   'slack',
@@ -83,7 +85,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
     items: [
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
       { id: 'workspace', label: 'Workspace', searchTerms: 'region data residency organization members invitations invite roles', icon: Users },
-      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github linear notion slack x integrations', icon: Plug },
+      { id: 'connections', label: 'Connections', searchTerms: 'connectors google github granola meetings notes linear notion slack x integrations', icon: Plug },
     ],
   },
   {
@@ -126,6 +128,16 @@ const connectorProviders = [
     icon: GitBranch,
     scopes: ['you', 'workspace'] as const,
     capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
+  },
+  {
+    id: 'granola' as const,
+    provider: 'granola' as const,
+    name: 'Granola',
+    description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',
+    icon: FileText,
+    scopes: ['you', 'workspace'] as const,
+    personalCapabilities: ['granola.personal.read'],
+    capabilities: ['granola.workspace.read'],
   },
   {
     id: 'linear' as const,
@@ -226,7 +238,7 @@ function providerHasActivePersonalConnection(
   provider: (typeof connectorProviders)[number],
   connections: WorkstreamConnection[],
 ): boolean {
-  return provider.provider === 'x' && connections.some((connection) =>
+  return (provider.provider === 'x' || provider.provider === 'granola') && connections.some((connection) =>
     connection.connectorType === provider.provider &&
     connection.scope === 'you' &&
     connection.status !== 'disabled',
@@ -273,6 +285,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [reconnectTarget, setReconnectTarget] = useState<WorkstreamConnection | null>(null);
   const [connectorOAuthMessage, setConnectorOAuthMessage] = useState<string | null>(null);
   const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
+  const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
+  const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -299,7 +313,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     staleTime: 5_000,
   });
   const connectProvider = useMutation({
-    mutationFn: async (input: { provider: 'google' | 'github' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
+    mutationFn: async (input: { provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
       if (input.provider === 'x') {
         await api!.createXConnection(input.capabilities);
         return { kind: 'direct' as const };
@@ -322,6 +336,14 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
         provider: result.provider,
         startedAt: Date.now(),
       });
+    },
+  });
+  const createGranolaWorkspaceConnection = useMutation({
+    mutationFn: () => api!.createGranolaWorkspaceConnection(granolaWorkspaceApiKey.trim()),
+    onSuccess: () => {
+      setGranolaWorkspaceApiKey('');
+      setGranolaWorkspaceModalOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
   });
   const reconnectConnection = useMutation({
@@ -760,7 +782,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       <span><strong>{connection.displayName}</strong><small>{connection.scope === 'you' ? 'Personal' : 'Workspace'} · {connection.capabilities?.length ?? 0} capabilities</small></span>
                       <Badge>{connection.status === 'reconnect_required' ? 'Reconnect required' : connection.status}</Badge>
                       <Button disabled={testConnection.isPending} onClick={() => testConnection.mutate(connection.id)}>Test</Button>
-                      {reconnectableConnectorTypes.has(connection.connectorType) && (
+                      {reconnectableConnectorTypes.has(connection.connectorType)
+                        && !(connection.connectorType === 'granola' && connection.scope === 'workspace') && (
                         <button
                           aria-label={`Reconnect ${connection.displayName}`}
                           className="settings-icon-action"
@@ -797,11 +820,16 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
                       const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
                       const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
-                      const personalConnectDisabled = connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectionStateUnavailable = provider.provider === 'granola' && (connections.isLoading || connections.isError);
+                      const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
-                        : undefined;
-                      const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                        : provider.provider === 'granola' && connections.isLoading
+                          ? 'Checking installed personal connections…'
+                          : provider.provider === 'granola' && connections.isError
+                            ? 'Installed personal connections could not be loaded.'
+                            : undefined;
+                      const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
                         ? `${provider.provider === 'x' ? 'An' : 'A'} ${provider.name} workspace connection is already installed. Manage it above.`
                         : connections.isLoading
@@ -827,7 +855,13 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                             {provider.scopes.includes('workspace' as never) && isAdmin && (
                               <Button
                                 disabled={workspaceConnectDisabled}
-                                onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') })}
+                                onClick={() => {
+                                  if (provider.provider === 'granola') {
+                                    setGranolaWorkspaceModalOpen(true);
+                                    return;
+                                  }
+                                  connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
+                                }}
                                 title={workspaceConnectTitle}
                               >
                                 Connect workspace
@@ -841,8 +875,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   </div>
                 </div>
                 {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
-                {(connectorOAuthError || connections.error || connectProvider.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
-                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectProvider.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                {(connectorOAuthError || connections.error || connectProvider.error || createGranolaWorkspaceConnection.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
+                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
                 )}
               </section>
             )}
@@ -897,6 +931,63 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
             )}
           </div>
         </main>
+        <Modal
+          description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
+          footer={(
+            <>
+              <Button onClick={() => setGranolaWorkspaceModalOpen(false)}>Cancel</Button>
+              <Button
+                className="button-primary"
+                disabled={!/^grn_[\x21-\x7E]{1,508}$/u.test(granolaWorkspaceApiKey.trim()) || createGranolaWorkspaceConnection.isPending}
+                onClick={() => createGranolaWorkspaceConnection.mutate()}
+              >
+                {createGranolaWorkspaceConnection.isPending ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : <LockKeyhole aria-hidden="true" size={14} />}
+                Connect workspace
+              </Button>
+            </>
+          )}
+          onOpenChange={(open) => {
+            setGranolaWorkspaceModalOpen(open);
+            if (!open && !createGranolaWorkspaceConnection.isPending) setGranolaWorkspaceApiKey('');
+          }}
+          open={granolaWorkspaceModalOpen}
+          title="Connect Granola workspace"
+        >
+          <section aria-labelledby="granola-key-guide-title" className="granola-key-guide">
+            <h3 id="granola-key-guide-title">Generate the key in Granola</h3>
+            <ol>
+              <li>Open the Granola desktop app as a workspace administrator.</li>
+              <li>Go to Settings → Connectors → Workspace API keys.</li>
+              <li>Choose Create new key.</li>
+              <li>Copy the new key, then paste it below.</li>
+            </ol>
+            <p>Workspace API keys require a Business or Enterprise plan. They can read public notes and spaces where Granola API access is enabled, but not other private notes.</p>
+            <button
+              className="granola-key-guide-link"
+              onClick={() => void bridge.openExternal('https://docs.granola.ai/help-center/sharing/integrations/granola-api')}
+              type="button"
+            >
+              Open Granola’s API key guide ↗
+            </button>
+          </section>
+          <label className="form-field" htmlFor="granola-workspace-api-key">
+            <span>Workspace API key</span>
+            <input
+              aria-label="Workspace API key"
+              autoComplete="off"
+              autoFocus
+              className="granola-key-input"
+              id="granola-workspace-api-key"
+              onChange={(event) => setGranolaWorkspaceApiKey(event.currentTarget.value)}
+              placeholder="grn_…"
+              spellCheck={false}
+              type="password"
+              value={granolaWorkspaceApiKey}
+            />
+            <small>Avalon sends the key once to your regional API, encrypts it at rest, never returns it to the desktop, and registers a signed note-events webhook.</small>
+          </label>
+          {createGranolaWorkspaceConnection.error && <InlineError>{createGranolaWorkspaceConnection.error.message}</InlineError>}
+        </Modal>
         <Modal
           description="You’ll be sent to the provider to authorize this connection again."
           footer={(
