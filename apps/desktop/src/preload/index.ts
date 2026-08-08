@@ -3,6 +3,7 @@ import type {
   AvalonDesktopBridge,
   DesktopApplicationSettings,
   DesktopAuthAttempt,
+  DesktopMeetingAudioPermissions,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
@@ -88,6 +89,12 @@ const bridge: AvalonDesktopBridge = {
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
   closeMeetingNotes: () => ipcRenderer.invoke('system:close-meeting-notes') as Promise<void>,
+  getMeetingAudioPermissions: () =>
+    ipcRenderer.invoke('meeting-audio:get-permissions') as Promise<DesktopMeetingAudioPermissions>,
+  prepareMeetingAudioPermissions: () =>
+    ipcRenderer.invoke('meeting-audio:prepare-permissions') as Promise<DesktopMeetingAudioPermissions>,
+  openMeetingAudioSettings: (permission) =>
+    ipcRenderer.invoke('meeting-audio:open-settings', permission) as Promise<void>,
   onMeetingCloseRequested: (listener) => {
     meetingCloseListeners.add(listener);
     if (meetingCloseQueued) {

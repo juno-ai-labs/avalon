@@ -314,6 +314,16 @@ const browserBridge: AvalonDesktopBridge = {
   async closeMeetingNotes() {
     window.close();
   },
+  async getMeetingAudioPermissions() {
+    return { microphone: 'unknown', systemAudio: 'unknown' };
+  },
+  async prepareMeetingAudioPermissions() {
+    return { microphone: 'unknown', systemAudio: 'unknown' };
+  },
+  async openMeetingAudioSettings() {
+    // Browser permission recovery is owned by the browser chrome rather than
+    // an operating-system settings pane Avalon can open directly.
+  },
   onMeetingCloseRequested() {
     return () => undefined;
   },

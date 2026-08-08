@@ -14,6 +14,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { UpdateNoteRequest } from '@avalon/contracts';
+import type {
+  DesktopMediaPermissionStatus,
+  DesktopMeetingAudioPermissions,
+  MeetingAudioPermissionKind,
+} from '../../common/desktop';
 import { Button, IconButton, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -82,6 +87,10 @@ function transcriptText(segments: NoteTranscriptSegment[], interim = ''): string
   return appendMeetingSegment(segments.map((segment) => segment.text).join('\n\n'), interim);
 }
 
+function permissionIsBlocked(status: DesktopMediaPermissionStatus | undefined): boolean {
+  return status === 'denied' || status === 'restricted';
+}
+
 export function MeetingNotesScreen(): React.JSX.Element {
   const { api, session } = useAppSession();
   const noteId = useMemo(currentNoteId, []);
@@ -100,6 +109,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [notesPending, setNotesPending] = useState(false);
   const [savePending, setSavePending] = useState(false);
   const [visibilityPending, setVisibilityPending] = useState(false);
+  const [permissionPreparing, setPermissionPreparing] = useState(false);
+  const [audioPermissions, setAudioPermissions] = useState<DesktopMeetingAudioPermissions>();
   const [notesError, setNotesError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [now, setNow] = useState(Date.now());
@@ -354,13 +365,23 @@ export function MeetingNotesScreen(): React.JSX.Element {
     if (!api || !noteRef.current || readOnly || recordingIntentRef.current || finalizationInFlightRef.current) return;
     recordingIntentRef.current = true;
     segmentBoundaryOffsetRef.current = null;
-    activeRecordingStartedAtRef.current = Date.now();
-    currentSegmentStartedOffsetRef.current = recordedMsRef.current;
-    setRecording(true);
-    const nextStartedAt = startedAt ?? new Date().toISOString();
-    setStartedAt(nextStartedAt);
+    setPermissionPreparing(true);
     setSavePending(true);
+    setSaveError(undefined);
     try {
+      const bridge = desktopBridge();
+      const permissions = await bridge.prepareMeetingAudioPermissions();
+      setAudioPermissions(permissions);
+      if (permissionIsBlocked(permissions.microphone) && permissionIsBlocked(permissions.systemAudio)) {
+        throw new Error(
+          'Microphone and computer audio access are blocked. Open System Settings, allow Avalon, then retry recording.',
+        );
+      }
+      activeRecordingStartedAtRef.current = Date.now();
+      currentSegmentStartedOffsetRef.current = recordedMsRef.current;
+      setRecording(true);
+      const nextStartedAt = startedAt ?? new Date().toISOString();
+      setStartedAt(nextStartedAt);
       const patch = {
         recordingStatus: 'recording',
         recordedMs: recordedMsRef.current,
@@ -374,6 +395,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         dictation.start(),
       ]);
       applyNotePatch(next, patch);
+      void bridge.getMeetingAudioPermissions().then(setAudioPermissions).catch(() => undefined);
     } catch (error) {
       recordingIntentRef.current = false;
       stopRecordingClock();
@@ -381,9 +403,19 @@ export function MeetingNotesScreen(): React.JSX.Element {
       await dictation.stop().catch(() => undefined);
       setSaveError(error instanceof Error ? error.message : 'Avalon could not start this recording.');
     } finally {
+      setPermissionPreparing(false);
       setSavePending(false);
     }
   }, [api, applyNotePatch, dictation.start, dictation.stop, noteId, readOnly, startedAt, stopRecordingClock]);
+
+  useEffect(() => {
+    if (readOnly) return undefined;
+    const refreshPermissions = (): void => {
+      void desktopBridge().getMeetingAudioPermissions().then(setAudioPermissions).catch(() => undefined);
+    };
+    window.addEventListener('focus', refreshPermissions);
+    return () => window.removeEventListener('focus', refreshPermissions);
+  }, [readOnly]);
 
   useEffect(() => {
     if (
@@ -495,6 +527,21 @@ export function MeetingNotesScreen(): React.JSX.Element {
   };
 
   const transcript = transcriptText(segments, interim);
+  const permissionRecoveryTarget: MeetingAudioPermissionKind | undefined = permissionIsBlocked(audioPermissions?.microphone)
+    || dictation.error?.includes('Microphone access is blocked')
+    ? 'microphone'
+    : permissionIsBlocked(audioPermissions?.systemAudio)
+      || dictation.warning?.includes('Computer audio access is blocked')
+      ? 'system-audio'
+      : undefined;
+  const openPermissionSettings = async (): Promise<void> => {
+    if (!permissionRecoveryTarget) return;
+    try {
+      await desktopBridge().openMeetingAudioSettings(permissionRecoveryTarget);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Avalon could not open System Settings.');
+    }
+  };
   useEffect(() => {
     const body = notesBodyRef.current;
     if (body) body.scrollTop = body.scrollHeight;
@@ -506,7 +553,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
 
   const statusLabel = finalizing || dictation.state === 'finalizing'
     ? 'Finalizing transcript…'
-    : dictation.state === 'requesting'
+    : permissionPreparing || dictation.state === 'requesting'
     ? 'Requesting audio access…'
     : dictation.state === 'connecting'
       ? 'Connecting transcription…'
@@ -624,6 +671,11 @@ export function MeetingNotesScreen(): React.JSX.Element {
             : dictation.warning
               ? <span className="meeting-control-warning" role="status">{dictation.warning}</span>
               : <span>Uses your default microphone and computer audio</span>}
+          {permissionRecoveryTarget && (
+            <button className="meeting-permission-settings" onClick={() => void openPermissionSettings()} type="button">
+              Open System Settings
+            </button>
+          )}
         </div>
         {recording || finalizing ? (
           <Button className="meeting-stop-button" disabled={finalizing} onClick={() => void stopRecording().catch(() => undefined)}>
@@ -633,10 +685,10 @@ export function MeetingNotesScreen(): React.JSX.Element {
         ) : (
           <Button
             className="meeting-start-button"
-            disabled={loading || !note || readOnly || finalizing || ['requesting', 'connecting', 'transcribing', 'finalizing'].includes(dictation.state)}
+            disabled={loading || !note || readOnly || finalizing || permissionPreparing || ['requesting', 'connecting', 'transcribing', 'finalizing'].includes(dictation.state)}
             onClick={() => void startRecording()}
           >
-            <span aria-hidden="true" className="meeting-start-dot" /> Start recording
+            <span aria-hidden="true" className="meeting-start-dot" /> {permissionRecoveryTarget ? 'Retry recording' : 'Start recording'}
           </Button>
         )}
         <span aria-hidden="true" />
