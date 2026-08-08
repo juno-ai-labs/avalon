@@ -1563,6 +1563,10 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
       allowRunningInsecureContent: false,
     },
   });
+  // BrowserWindow.webContents throws after Electron emits `closed`. Retain the
+  // WebContents object while the window is alive so native audio cleanup can
+  // still identify its owner during teardown.
+  const meetingContents = meetingWindow.webContents;
   meetingWindows.add(meetingWindow);
   installWindowDiagnostics(meetingWindow, 'meeting');
   meetingWindow.setMenuBarVisibility(false);
@@ -1570,10 +1574,10 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
   meetingWindow.on('close', (event) => {
     if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
     event.preventDefault();
-    meetingWindow.webContents.send('meeting:close-requested');
+    meetingContents.send('meeting:close-requested');
   });
   meetingWindow.on('closed', () => {
-    void nativeSystemAudioController.stop(meetingWindow.webContents).catch((error) => {
+    void nativeSystemAudioController.stop(meetingContents).catch((error) => {
       console.warn('[meeting] Failed to stop native computer audio after window close', error);
     });
     meetingWindows.delete(meetingWindow);
