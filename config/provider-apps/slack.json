@@ -73,9 +73,11 @@
         "app_mentions:read",
         "assistant:write",
         "channels:join",
+        "channels:history",
         "channels:read",
         "chat:write",
         "commands",
+        "groups:history",
         "groups:read",
         "im:history",
         "im:write",
@@ -129,6 +131,8 @@
         "app_uninstalled",
         "channel_created",
         "link_shared",
+        "message.channels",
+        "message.groups",
         "message.im",
         "tokens_revoked"
       ]
