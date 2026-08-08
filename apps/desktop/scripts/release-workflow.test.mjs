@@ -24,16 +24,16 @@ test('the macOS runner is only claimed once the plan job has approved a release'
   assert.match(workflow, /^ {2}release:\n {4}needs: plan\n {4}if: needs\.plan\.outputs\.should_release == 'true'$/mu);
 });
 
-test('the app is never released ahead of an in-flight API deployment', async () => {
+test('the app is health-gated against the regional APIs before it is distributed', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const releaseJobStart = workflow.indexOf('\n  release:');
-  const waitStep = workflow.indexOf('scripts/await-api-deployment.mjs');
+  const healthGate = workflow.indexOf('scripts/check-regional-health.mjs');
+  const published = workflow.indexOf('- name: Publish immutable payloads and promote the release manifest');
 
-  assert.notEqual(waitStep, -1, 'Release workflow must wait for API deployments');
-  // The wait belongs to the planning job, so a queued release does not hold a
-  // macOS runner idle while the Workers deploy.
-  assert.ok(waitStep < releaseJobStart, 'The API wait must run before the macOS release job');
-  assert.match(workflow, /^ {4}permissions:\n {6}contents: read\n {6}actions: read$/mu);
+  // Ordering between the API and desktop workflows is not coordinated between
+  // runners. This gate, not a wait, is what keeps a release from shipping
+  // against unhealthy regions.
+  assert.notEqual(healthGate, -1, 'Release workflow must check regional health');
+  assert.ok(healthGate < published, 'Regional health must be checked before anything is published');
 });
 
 test('tag pushes are never filtered by path', async () => {
