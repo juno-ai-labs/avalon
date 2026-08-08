@@ -15,8 +15,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-macos-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  # Signing, mutable channel promotion, and the landing-site deployment form
+  # one release transaction. Queue every tag and manual dispatch globally so
+  # separate versions cannot overlap any part of that transaction.
+  group: desktop-macos-release
   cancel-in-progress: false
+  queue: max
 
 jobs:
   release:
