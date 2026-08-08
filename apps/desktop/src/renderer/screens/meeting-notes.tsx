@@ -1,12 +1,13 @@
 import clsx from 'clsx';
+import { IconAirTrafficControl, IconWaveSine } from '@tabler/icons-react';
 import {
-  AudioLines,
   Copy,
   Globe2,
   LoaderCircle,
   Lock,
   Mic,
-  NotebookPen,
+  Pause,
+  Play,
   Square,
   WandSparkles,
 } from 'lucide-react';
@@ -506,6 +507,19 @@ export function MeetingNotesScreen(): React.JSX.Element {
     await finalizeRecording();
   };
 
+  const pauseRecording = async (): Promise<void> => {
+    if (!recording || finalizing || dictation.state !== 'listening') return;
+    await dictation.pause();
+    stopRecordingClock();
+  };
+
+  const resumeRecording = async (): Promise<void> => {
+    if (!recording || finalizing || dictation.state !== 'paused') return;
+    await dictation.resume();
+    activeRecordingStartedAtRef.current = Date.now();
+    setNow(Date.now());
+  };
+
   const copy = async (value: string): Promise<void> => {
     if (value) await desktopBridge().copyText(value);
   };
@@ -527,6 +541,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
   };
 
   const transcript = transcriptText(segments, interim);
+  const paused = dictation.state === 'paused';
   const permissionRecoveryTarget: MeetingAudioPermissionKind | undefined = permissionIsBlocked(audioPermissions?.microphone)
     || dictation.error?.includes('Microphone access is blocked')
     ? 'microphone'
@@ -559,6 +574,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
       ? 'Connecting transcription…'
       : dictation.state === 'transcribing'
         ? 'Updating notes…'
+        : paused
+          ? 'Paused'
         : recording
           ? 'Recording'
           : 'Ready';
@@ -567,12 +584,12 @@ export function MeetingNotesScreen(): React.JSX.Element {
     <div className="meeting-surface">
       <header className="meeting-titlebar window-drag">
         <div className="meeting-titlebar-copy window-no-drag">
-          <span className={clsx('meeting-recording-dot', recording && 'is-active')} aria-hidden="true" />
+          <span className={clsx('meeting-recording-dot', recording && !paused && 'is-active')} aria-hidden="true" />
           <span>{loading ? 'Opening note…' : statusLabel}</span>
           <span aria-label="Recording duration">{formatElapsed(
             meetingRecordedMs(
               recordedMs,
-              recording ? activeRecordingStartedAtRef.current : null,
+              recording && !paused ? activeRecordingStartedAtRef.current : null,
               now,
             ),
             Boolean(startedAt),
@@ -595,7 +612,9 @@ export function MeetingNotesScreen(): React.JSX.Element {
             <p>{finalizing
               ? 'Saving the final transcript and creating your meeting summary'
               : recording
-                ? dictation.warning ? 'Listening to your microphone' : 'Listening to your microphone and computer audio'
+                ? paused
+                  ? 'Audio capture paused'
+                  : dictation.warning ? 'Listening to your microphone' : 'Listening to your microphone and computer audio'
                 : 'Live meeting notes'}</p>
             <label className="meeting-visibility">
               {note?.scope === 'workspace' ? <Globe2 aria-hidden="true" size={13} /> : <Lock aria-hidden="true" size={13} />}
@@ -617,7 +636,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         <div className="meeting-stack">
           <section aria-labelledby="live-notes-heading" className="meeting-live-notes">
             <header>
-              <span><NotebookPen aria-hidden="true" size={17} /><h2 id="live-notes-heading">Control Tower</h2></span>
+              <span><IconAirTrafficControl aria-hidden="true" size={17} /><h2 id="live-notes-heading">Control Tower</h2></span>
               <IconButton disabled={!notes || notesPending} label="Copy Control Tower" onClick={() => void copy(notes)}>
                 <Copy size={15} />
               </IconButton>
@@ -644,7 +663,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
 
           <section aria-labelledby="live-transcript-heading" className="meeting-transcript-card">
             <header>
-              <span><AudioLines aria-hidden="true" size={18} /><h2 id="live-transcript-heading">Live transcript</h2></span>
+              <span><IconWaveSine aria-hidden="true" size={18} /><h2 id="live-transcript-heading">Live transcript</h2></span>
               <IconButton disabled={!transcript} label="Copy transcript" onClick={() => void copy(transcript)}>
                 <Copy size={15} />
               </IconButton>
@@ -678,10 +697,22 @@ export function MeetingNotesScreen(): React.JSX.Element {
           )}
         </div>
         {recording || finalizing ? (
-          <Button className="meeting-stop-button" disabled={finalizing} onClick={() => void stopRecording().catch(() => undefined)}>
-            {finalizing ? <LoaderCircle className="spin" size={14} /> : <Square fill="currentColor" size={12} />}
-            {finalizing ? 'Finalizing…' : 'Stop recording'}
-          </Button>
+          <div className="meeting-recording-actions">
+            {!finalizing && (
+              <Button
+                className="meeting-pause-button"
+                disabled={!['listening', 'paused'].includes(dictation.state)}
+                onClick={() => void (paused ? resumeRecording() : pauseRecording()).catch(() => undefined)}
+              >
+                {paused ? <Play fill="currentColor" size={12} /> : <Pause fill="currentColor" size={12} />}
+                {paused ? 'Resume' : 'Pause'}
+              </Button>
+            )}
+            <Button className="meeting-stop-button" disabled={finalizing} onClick={() => void stopRecording().catch(() => undefined)}>
+              {finalizing ? <LoaderCircle className="spin" size={14} /> : <Square fill="currentColor" size={12} />}
+              {finalizing ? 'Finalizing…' : 'End'}
+            </Button>
+          </div>
         ) : (
           <Button
             className="meeting-start-button"
