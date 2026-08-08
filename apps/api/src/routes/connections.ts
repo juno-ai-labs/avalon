@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
+import { classifyConnectorOAuthCallbackFailure } from "../lib/connector-oauth-error";
 import { connectorAttemptTarget, desktopHandoffUrl } from "../lib/desktop-handoff";
 import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
@@ -198,16 +199,17 @@ async function connectorCallback(
       : await complete(service, query.code!, query.state);
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   } catch (error) {
-    const errorCode = error instanceof ApiError ? error.code : "connector_oauth_failed";
-    logEvent(c, error instanceof ApiError ? "warn" : "error", "connector_oauth_callback_failed", {
+    const failure = classifyConnectorOAuthCallbackFailure(error);
+    logEvent(c, failure.level, "connector_oauth_callback_failed", {
       provider,
-      code: errorCode,
+      code: failure.errorCode,
+      ...failure.diagnostics,
     });
     const target = await recoverConnectorCallback(
       c,
       provider,
-      errorCode,
-      () => service.failProviderAttempt(provider, query.state, errorCode),
+      failure.errorCode,
+      () => service.failProviderAttempt(provider, query.state, failure.errorCode),
     );
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   }
