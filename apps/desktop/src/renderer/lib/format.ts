@@ -50,11 +50,9 @@ export const statusLabel: Record<HarnessStatus, string> = {
   failed: 'Needs intervention',
 };
 
-export type RecencyGroup = 'Last hour' | 'Last day' | 'Last week' | 'This month' | 'The rest';
+export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';
 
 const hourInMilliseconds = 3_600_000;
-const dayInMilliseconds = 24 * hourInMilliseconds;
-const weekInMilliseconds = 7 * dayInMilliseconds;
 
 function activityTimestamp(item: { lastActivityAt: string }): number {
   const timestamp = new Date(item.lastActivityAt).getTime();
@@ -67,6 +65,13 @@ export function groupActivityItems<T extends { lastActivityAt: string }>(
 ): Array<{ label: RecencyGroup; streams: T[] }> {
   const groups = new Map<RecencyGroup, T[]>();
   const nowTimestamp = now.getTime();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeek = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - now.getDay(),
+  ).getTime();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 
   const ordered = [...items].sort(
@@ -77,19 +82,21 @@ export function groupActivityItems<T extends { lastActivityAt: string }>(
     let label: RecencyGroup;
     const timestamp = activityTimestamp(stream);
     if (timestamp >= nowTimestamp - hourInMilliseconds) label = 'Last hour';
-    else if (timestamp >= nowTimestamp - dayInMilliseconds) label = 'Last day';
-    else if (timestamp >= nowTimestamp - weekInMilliseconds) label = 'Last week';
+    else if (timestamp >= startOfToday) label = 'Today';
+    else if (timestamp >= startOfYesterday) label = 'Yesterday';
+    else if (timestamp >= startOfWeek) label = 'This week';
     else if (timestamp >= startOfMonth) label = 'This month';
-    else label = 'The rest';
+    else label = 'Before this month';
     groups.set(label, [...(groups.get(label) ?? []), stream]);
   }
 
   const priority: RecencyGroup[] = [
     'Last hour',
-    'Last day',
-    'Last week',
+    'Today',
+    'Yesterday',
+    'This week',
     'This month',
-    'The rest',
+    'Before this month',
   ];
   return priority.flatMap((label) => {
     const grouped = groups.get(label);
