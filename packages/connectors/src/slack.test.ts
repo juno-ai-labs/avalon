@@ -6,6 +6,7 @@ import {
   joinSlackPublicChannel,
   parseSlackAgentInvocation,
   slackApi,
+  slackAgentActivationAcknowledgement,
   SlackCapabilities,
   SlackWorkspaceCapabilities,
   SlackWorkspaceBotScopes,
@@ -13,7 +14,11 @@ import {
   verifySlackRequest,
 } from "./slack";
 import type { FetchLike } from "./provider-utils";
-import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
+import {
+  acknowledgeConnectorAgentActivation,
+  connectorCapabilitySupportsScope,
+  type ConnectorConnectionContext,
+} from "./types";
 
 describe("Slack connector", () => {
   it("verifies exact signed bytes and rejects replayed timestamps", async () => {
@@ -832,6 +837,111 @@ describe("Slack connector", () => {
       kind: "command",
       payload: { team_id: "T1", user_id: "U1", command: "/avalon", text: "help", channel_id: "D1", trigger_id: "tr1", response_url: null },
     })).toMatchObject({ kind: "command", command: "/avalon", text: "help" });
+  });
+
+  it("plans and executes the shared activation acknowledgement idempotently", async () => {
+    let attempts = 0;
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      expect(url.pathname).toBe("/api/reactions.add");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        channel: "C1",
+        name: "eyes",
+        timestamp: "123.456",
+      });
+      attempts += 1;
+      return json(attempts === 1 ? { ok: true } : { ok: false, error: "already_reacted" });
+    });
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: fetcher,
+    });
+    const invocation = parseSlackAgentInvocation({
+      kind: "event",
+      envelope: {
+        type: "event_callback",
+        team_id: "T1",
+        event_id: "Ev1",
+        event: {
+          type: "app_mention",
+          user: "U1",
+          channel: "C1",
+          ts: "123.456",
+          thread_ts: "100.000",
+          text: "<@UBOT> investigate",
+        },
+      },
+    });
+    expect(slackAgentActivationAcknowledgement(invocation)).toEqual({
+      kind: "acknowledge",
+      channelId: "C1",
+      timestamp: "123.456",
+      reaction: "eyes",
+    });
+    const context = {
+      connection: slackWorkspaceConnection(),
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    await expect(acknowledgeConnectorAgentActivation(
+      adapter.messagingAgent!,
+      invocation,
+      context,
+    )).resolves.toEqual({ success: true, alreadyPresent: false });
+    await expect(acknowledgeConnectorAgentActivation(
+      adapter.messagingAgent!,
+      invocation,
+      context,
+    )).resolves.toEqual({ success: true, alreadyPresent: true });
+
+    const commandInvocation = parseSlackAgentInvocation({
+      kind: "command",
+      payload: {
+        team_id: "T1",
+        user_id: "U1",
+        command: "/avalon",
+        text: "investigate",
+        channel_id: "C1",
+        trigger_id: "tr1",
+        response_url: null,
+      },
+    });
+    expect(slackAgentActivationAcknowledgement(commandInvocation)).toBeNull();
+    await expect(acknowledgeConnectorAgentActivation(
+      adapter.messagingAgent!,
+      commandInvocation,
+      context,
+    )).resolves.toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    await expect(acknowledgeConnectorAgentActivation(
+      adapter.messagingAgent!,
+      invocation,
+      {
+        ...context,
+        connection: { ...context.connection, grantedScopes: [] },
+      },
+    )).rejects.toThrow(/has not granted slack\.agent/iu);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    const malformedSource = parseSlackAgentInvocation({
+      kind: "event",
+      envelope: {
+        type: "event_callback",
+        team_id: "T1",
+        event_id: "EvMalformed",
+        event: {
+          type: "app_mention",
+          user: "U1",
+          channel: { id: "C1" },
+          ts: 123.456,
+        },
+      },
+    });
+    expect(slackAgentActivationAcknowledgement(malformedSource)).toBeNull();
   });
 
   it("runtime-checks Slack Web API requests and success responses", async () => {

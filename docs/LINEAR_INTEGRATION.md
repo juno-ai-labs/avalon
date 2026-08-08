@@ -46,7 +46,7 @@ OAuth state sends each callback directly to the workspace's chosen regional Work
 | `linear.issue.create` | `issues:create` |
 | `linear.comment.create` | `comments:create` |
 | `linear.write` | `write` |
-| `linear.agent` | `app:assignable`, `app:mentionable` |
+| `linear.agent` | `app:assignable`, `app:mentionable`, `write` |
 
 ## Resource surface
 
@@ -78,6 +78,7 @@ Large raw deliveries are retained regionally in R2; D1 stores compact normalized
 - Resource deliveries use the ordinary regional activity pipeline.
 - Production resource webhooks currently route only to workspace app connections. Personal connections are fully usable for interactive tools and scheduled queries, but personal real-time fan-out remains disabled until access checks run through a durable inbox and owner-only activity routing is guaranteed. Never fan an organization webhook to a personal connection solely because its organization ID matches.
 - A production native-agent runtime must durably accept the invocation and acknowledge inside Linear's five-second deadline without waiting for the full agent run.
+- Once that durable admission succeeds, the host control plane—not the model—immediately creates a `👀` reaction on the triggering `sourceCommentId` before model or tool processing begins. Issue-only delegations without a source comment skip the reaction. This is supplemental to, and does not replace, Linear's first-activity deadline.
 
 ## Native-agent surface
 
@@ -100,7 +101,7 @@ Agent-session activation requires all of the following:
 1. A fast durable inbox that can meet the five-second webhook acknowledgement SLO.
 2. A unique session-to-Avalon-workspace/workstream/run mapping.
 3. A durable outbound activity outbox with stable provider activity IDs across retries.
-4. An immediate thought or external workstream URL inside ten seconds.
+4. A deterministic `👀` source-comment acknowledgement before processing, followed by an immediate thought or external workstream URL inside ten seconds.
 5. Prompt resumption based on immutable Agent Activity history.
 6. Stop-signal propagation that halts tools/model work immediately and emits exactly one final response or error.
 7. Auth and select elicitation/resumption behavior.

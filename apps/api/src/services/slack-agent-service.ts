@@ -1,10 +1,13 @@
 import {
+  acknowledgeConnectorAgentActivation,
   ConnectorError,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
+  type ConnectorConnectionContext,
+  type SlackAgentInvocation,
   type SlackIngressEnvelope,
 } from "@avalon/connectors";
 import {
@@ -34,6 +37,7 @@ interface SlackConnectionRow extends Record<string, unknown> {
   provider_account_id: string;
   encrypted_credentials: string;
   credential_iv: string;
+  granted_scopes_json: string;
   status: string;
 }
 
@@ -230,7 +234,8 @@ export class SlackAgentService {
     let afterId = "";
     while (true) {
       const page = await this.env.DB.prepare(
-        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+                granted_scopes_json, status
          FROM connector_connections
          WHERE connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy' AND id > ?
          ORDER BY id ASC LIMIT 100`,
@@ -667,7 +672,8 @@ export class SlackAgentService {
     ).bind(workspaceId, userId).first<{ active: number }>();
     if (!membership) return 0;
     const rawConnections = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+              granted_scopes_json, status
        FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
          AND status = 'healthy' ORDER BY id`,
@@ -1050,6 +1056,7 @@ export class SlackAgentService {
     }
     if (type !== "message" && type !== "app_mention") return;
     if (event.bot_id || event.subtype || !event.user || !event.channel || !event.ts) return;
+    const invocation = parseSlackAgentInvocation({ kind: "event", envelope });
     const slackUserId = String(event.user);
     const channelId = String(event.channel);
     const rootTs = typeof event.thread_ts === "string" ? event.thread_ts : String(event.ts);
@@ -1118,6 +1125,7 @@ export class SlackAgentService {
         attachments: slackOriginAttachments(event),
       },
       slackEventSearchAuthorization(event),
+      invocation,
     );
   }
 
@@ -1130,6 +1138,7 @@ export class SlackAgentService {
     clientMessageId: string,
     source: SlackPromptSource,
     slackSearchAuthorization?: SlackSearchAuthorization,
+    activationInvocation?: SlackAgentInvocation,
   ): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
@@ -1189,6 +1198,43 @@ export class SlackAgentService {
       );
       actor = externalIdentity.actor;
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
+    }
+    if (activationInvocation) {
+      const adapter = connectorRegistryForEnv(this.env).get("slack").messagingAgent;
+      if (!adapter) throw new ApiError(500, "slack_agent_adapter_missing", "Slack Agent is not configured");
+      const activationConnection: ConnectorConnectionContext = {
+        id: connection.id,
+        workspaceId: connection.workspace_id,
+        scope: "workspace",
+        ownerUserId: null,
+        grantedScopes: parseGrantedScopes(connection.granted_scopes_json),
+        credentials: { botAccessToken: token },
+        cursor: {},
+        config: {},
+      };
+      try {
+        await acknowledgeConnectorAgentActivation(adapter, activationInvocation, {
+          connection: activationConnection,
+          signal: AbortSignal.timeout(5_000),
+        });
+      } catch (error) {
+        // The host contract and capability checks remain fail-closed. Once the
+        // provider call begins, however, a supplemental reaction must not drop
+        // a durably accepted user request.
+        if (!(error instanceof ConnectorError)
+          || (error.code !== "provider_error" && error.code !== "unauthorized")) {
+          throw error;
+        }
+        if (slackReconnectRequired(error)) {
+          await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+        }
+        console.warn("Slack activation acknowledgement failed", {
+          connection_id: connection.id,
+          team_id: teamId,
+          event_id: activationInvocation.kind === "event" ? activationInvocation.eventId : null,
+          reason: slackErrorReason(error),
+        });
+      }
     }
     const slackOrigin = await this.slackOriginContext(
       token,
@@ -1895,7 +1941,8 @@ export class SlackAgentService {
   private async linkedAccount(teamId: string, slackUserId: string): Promise<SlackLinkedAccount | null> {
     const row = await this.env.DB.prepare(
       `SELECT l.user_id, l.workspace_id, l.connection_id, wm.role, wm.status AS member_status,
-              cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv, cc.status
+              cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv,
+              cc.granted_scopes_json, cc.status
        FROM slack_user_links l
        JOIN connector_connections cc ON cc.id = l.connection_id
        JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
@@ -1903,13 +1950,22 @@ export class SlackAgentService {
          AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
     ).bind(teamId, slackUserId).first<Record<string, unknown>>();
     if (!row || row.member_status !== "active") return null;
-    const connection: SlackConnectionRow = { id: String(row.connection_id), workspace_id: String(row.workspace_id), provider_account_id: String(row.provider_account_id), encrypted_credentials: String(row.encrypted_credentials), credential_iv: String(row.credential_iv), status: String(row.status) };
+    const connection: SlackConnectionRow = {
+      id: String(row.connection_id),
+      workspace_id: String(row.workspace_id),
+      provider_account_id: String(row.provider_account_id),
+      encrypted_credentials: String(row.encrypted_credentials),
+      credential_iv: String(row.credential_iv),
+      granted_scopes_json: String(row.granted_scopes_json),
+      status: String(row.status),
+    };
     return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: String(row.role) as AuthContext["role"] }, connection, slackUserId, teamId };
   }
 
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+              granted_scopes_json, status
        FROM connector_connections
        WHERE connector_type = 'slack' AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
     ).bind(teamId).first<SlackConnectionRow>();
@@ -1919,7 +1975,8 @@ export class SlackAgentService {
 
   private async connectionById(id: string): Promise<SlackConnectionRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+              granted_scopes_json, status
        FROM connector_connections WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
     ).bind(id).first<SlackConnectionRow>();
     if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
@@ -2594,6 +2651,14 @@ function slackReconnectRequired(error: unknown): boolean {
   return (error instanceof ConnectorError
       && ((error.code === "unauthorized" && reason !== "token_expired") || reason === "missing_scope"))
     || (error instanceof ApiError && error.status === 401);
+}
+
+function parseGrantedScopes(value: string): string[] {
+  try {
+    return z.array(z.string()).parse(JSON.parse(value));
+  } catch {
+    return [];
+  }
 }
 
 function slackIngressRetryable(error: unknown): boolean {

@@ -253,12 +253,16 @@ describe("API security utilities", () => {
   it("requires Linear to grant both resource and native-agent permissions", () => {
     expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
       ["linear.read", "linear.agent"],
-      { providerScopes: ["read", "app:assignable", "app:mentionable"] },
+      { providerScopes: ["read", "app:assignable", "app:mentionable", "write"] },
     )).not.toThrow();
     expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
       ["linear.read", "linear.agent"],
       { providerScopes: ["read", "app:assignable"] },
     )).toThrow(/app:mentionable/u);
+    expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
+      ["linear.read", "linear.agent"],
+      { providerScopes: ["read", "app:assignable", "app:mentionable"] },
+    )).toThrow(/write/u);
     expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
       ["linear.issue.create"],
       { providerScopes: ["read"] },
