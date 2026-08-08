@@ -451,6 +451,72 @@ describe("Slack public channel membership", () => {
     ).get()).toEqual({ status: "healthy" });
   });
 
+  it("accepts an unlinked private-channel task regardless of legacy policy rows", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      `INSERT INTO slack_agent_policies
+       (connection_id, allow_unlinked_workspace_tasks, public_channel_mode, private_channel_mode,
+        allow_direct_messages, allow_commands, allow_shortcuts, created_at, updated_at)
+       VALUES (?, 0, 'disabled', 'disabled', 0, 0, 0, '2026-01-01', '2026-01-01')`,
+    ).run("11111111-1111-4111-8111-111111111111");
+    const payload = appMention("EvWideLatitude");
+    (payload.event as Record<string, unknown>).channel_type = "group";
+    insertSlackEventJob(database, "event:wide-latitude", payload);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("conversations.info")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          channel: { id: "C123", name: "private-work", is_private: true, is_im: false, is_mpim: false },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname.endsWith("users.info")) {
+        return new Response(JSON.stringify({
+          ok: true,
+          user: {
+            id: "U456",
+            team_id: "T123",
+            deleted: false,
+            is_bot: false,
+            name: "adam",
+            profile: { display_name: "Adam", real_name: "Adam" },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname.endsWith("assistant.threads.setStatus")
+        || url.pathname.endsWith("assistant.threads.setTitle")) {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.pathname.endsWith("chat.startStream")) {
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:wide-latitude");
+
+    expect(database.prepare("SELECT title, objective FROM workstreams").get()).toEqual({
+      title: "investigate this",
+      objective: "investigate this",
+    });
+    expect(database.prepare("SELECT execution_scope, channel_type FROM slack_agent_sessions").get()).toEqual({
+      execution_scope: "workspace",
+      channel_type: "private",
+    });
+  });
+
   it("marks a missing channel-lookup scope for reconnect before unlinked dispatch", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
