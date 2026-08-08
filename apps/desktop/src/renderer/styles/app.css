@@ -2504,14 +2504,17 @@ pre {
 }
 .meeting-permission-settings:hover { color: var(--ink); }
 .meeting-controls .meeting-start-button,
+.meeting-controls .meeting-pause-button,
 .meeting-controls .meeting-stop-button {
   border-radius: 999px;
   font-weight: 570;
   min-height: 40px;
   padding: 7px 18px;
 }
+.meeting-recording-actions { display: flex; gap: 8px; }
 .meeting-controls .meeting-start-button { background: var(--ink); color: var(--canvas); }
 .meeting-controls .meeting-start-button:hover { background: #fff; color: var(--canvas); }
+.meeting-controls .meeting-pause-button { background: var(--raised); color: var(--ink-soft); }
 .meeting-controls .meeting-stop-button { background: rgba(216, 117, 111, .12); border-color: rgba(216, 117, 111, .28); color: #efaaa5; }
 
 @media (max-width: 860px) {

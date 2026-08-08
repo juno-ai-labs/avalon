@@ -76,4 +76,29 @@ describe('PCM16 capture worklet', () => {
     expect(emittedPcm(processor)).toHaveLength(2);
     expect(processor.port.postMessage).toHaveBeenCalledWith({ type: 'flushed' });
   });
+
+  it('discards microphone and computer audio while paused, then captures new audio after resume', () => {
+    const processor = new Processor({ processorOptions: { microphoneGain: 1, systemGain: 1 } });
+    processor.process([[new Float32Array([0.2])]], [[new Float32Array(1)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: 'pause' }));
+    expect(processor.port.postMessage).toHaveBeenCalledWith({ type: 'paused' });
+    processor.port.postMessage.mockClear();
+
+    processor.port.onmessage?.(new MessageEvent('message', {
+      data: {
+        buffer: new Float32Array([1, 1, 1, 1]).buffer,
+        sampleRate: 48_000,
+        type: 'system-audio',
+      },
+    }));
+    processor.process([[new Float32Array([0.9])]], [[new Float32Array(1)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: 'resume' }));
+    processor.process([[new Float32Array([0.25])]], [[new Float32Array(1)]]);
+    processor.port.onmessage?.(new MessageEvent('message', { data: 'flush' }));
+
+    expect(processor.port.postMessage).toHaveBeenCalledWith({ type: 'resumed' });
+    const pcm = emittedPcm(processor);
+    expect(pcm).toHaveLength(1);
+    expect(pcm[0]).toBeCloseTo(0.25 * 0x7fff, -1);
+  });
 });
