@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { ConnectorOAuthProviders } from "./connector-oauth-providers";
+
+export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 
 export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
@@ -758,7 +761,7 @@ export const DesktopExchangeRequestSchema = z.object({
   codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
   timezone: IanaTimezoneSchema.default("America/Los_Angeles")
 });
-export const ConnectorOAuthProviderSchema = z.enum(["google", "github", "granola", "linear", "notion", "slack"]);
+export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
 export const ConnectorOAuthStartSchema = z.object({
   url: z.string().url(),
