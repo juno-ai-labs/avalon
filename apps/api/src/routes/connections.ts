@@ -101,27 +101,6 @@ const googleCallback = z.object({
   error: z.string().min(1).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
 const slackLink = z.object({ token: z.string().min(20).max(500) });
-const slackAgentPolicy = z.object({
-  allowUnlinkedWorkspaceTasks: z.boolean(),
-  publicChannelMode: z.enum(["all_invited", "allowlist", "disabled"]),
-  privateChannelMode: z.enum(["allowlist", "disabled"]),
-  allowDirectMessages: z.boolean(),
-  allowCommands: z.boolean(),
-  allowShortcuts: z.boolean(),
-  allowlistedChannels: z.array(z.object({
-    channelId: z.string().trim().min(1).max(64),
-    channelType: z.enum(["public", "private"]),
-  }).strict()).max(200).superRefine((channels, ctx) => {
-    const seen = new Set<string>();
-    for (const [index, channel] of channels.entries()) {
-      if (seen.has(channel.channelId)) {
-        ctx.addIssue({ code: "custom", message: "A Slack channel can only be listed once", path: [index, "channelId"] });
-      }
-      seen.add(channel.channelId);
-    }
-  }),
-}).strict();
-
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
 connectionRoutes.get("/", async (c) => c.json({ items: await new ConnectionService(c.env, getAuth(c)).list() }));
@@ -157,15 +136,6 @@ connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) 
 );
 connectionRoutes.post("/:id/test", zValidator("param", idParam), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id)),
-);
-connectionRoutes.get("/:id/slack-agent-policy", zValidator("param", idParam), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).getSlackAgentPolicy(c.req.valid("param").id)),
-);
-connectionRoutes.patch("/:id/slack-agent-policy", zValidator("param", idParam), zValidator("json", slackAgentPolicy), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).updateSlackAgentPolicy(
-    c.req.valid("param").id,
-    c.req.valid("json"),
-  )),
 );
 connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ConnectionService(c.env, getAuth(c)).disable(c.req.valid("param").id);
