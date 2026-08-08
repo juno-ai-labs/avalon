@@ -135,7 +135,9 @@ Global and EU use the same public Slack Marketplace app identity and request-sig
 - OAuth callbacks are regional. Events, interactivity, commands, and unfurls use `https://slack.with-avalon.com` and the opaque team router.
 - Do not create separate regional Slack apps: that would split Marketplace/MCP identity and break team-route uniqueness.
 
-See `docs/SLACK_INTEGRATION.md` for scope rationale, user linking, App Home, zero-copy behavior, automation delivery, review evidence, and acceptance tests.
+See `docs/SLACK_PERMISSIONS.md` for the exact scope-to-tool mapping and
+`docs/SLACK_INTEGRATION.md` for scope rationale, user linking, App Home,
+zero-copy behavior, automation delivery, review evidence, and acceptance tests.
 
 Global and EU each need region-specific values for:
 

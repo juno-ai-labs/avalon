@@ -18,6 +18,7 @@ import {
   memberSafeHarnessFailureMessage,
   renderTriggerActivityMessage,
   renderUntrustedInboundEmailMessage,
+  renderUntrustedSlackOriginMessage,
   renderWorkstreamSystemPrompt,
   rejectToolModesBeforeCall,
   runHarness,
@@ -305,11 +306,13 @@ function createConnectorToolContext(
   principal: ExecutionPrincipal,
   signal: AbortSignal,
   providerIdempotencyKey?: string,
+  invocationAuthorization?: ConnectorToolContext["invocationAuthorization"],
 ): ConnectorToolContext {
   return {
     connection,
     principal,
     ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
+    ...(invocationAuthorization ? { invocationAuthorization } : {}),
     signal,
   };
 }
@@ -1385,6 +1388,7 @@ export async function runWorkstreamHarness(
   });
   let lastStopCheck = 0;
   let ambiguousToolOutcome = false;
+  let suppressInferencePayloadLogging = false;
   const runLimits = {
     maxIterations: numericEnv(env, "HARNESS_MAX_MODEL_ITERATIONS", 8),
     maxToolCalls: numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24),
@@ -1661,7 +1665,9 @@ export async function runWorkstreamHarness(
         completedAt,
       });
     },
-    onInferenceRequest: inferenceLogger.onRequest,
+    onInferenceRequest: (request) => suppressInferencePayloadLogging
+      ? undefined
+      : inferenceLogger.onRequest(request),
     onTranscriptIssues: (issues) => {
       if (issues.length === 0) return;
       logStructuredEvent(env, "warn", "harness_transcript_healed", {
@@ -1867,12 +1873,18 @@ export async function runWorkstreamHarness(
             pluginId: event.pluginId,
             ...event.policy,
           }, harnessTools);
+          const transientSlackSearch = receiptPolicy.definition.capability === "slack.search";
+          if (transientSlackSearch) suppressInferencePayloadLogging = true;
           const plannedInvocation = await loadToolInvocation(env, input.harnessRunId, event.toolCallId);
           if (!plannedInvocation) throw new Error("tool_execution_plan_missing");
           await persistSuccessfulToolResult(env, input, liveness.lease, {
             invocationId: plannedInvocation.id,
             toolCallId: event.toolCallId,
-            output: event.result.output,
+            output: durableToolReplayOutput(
+              receiptPolicy.definition.capability,
+              event.result.output,
+              event.result.summary,
+            ),
             outputSummary: event.result.summary,
             ...(event.result.providerOperationId
               ? { providerOperationId: event.result.providerOperationId }
@@ -2420,6 +2432,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
       } = childHarnessTools;
 
       let childOutcome: InlineChildResult;
+      let suppressChildInferencePayloadLogging = false;
       // Do not start a renewable child lease until the fallible surface setup
       // has completed. Otherwise an adapter/setup exception can escape the
       // try/finally below and leave a timer renewing a run that will never end.
@@ -2591,7 +2604,9 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
               summary: row.output_summary ?? "Completed",
             };
           },
-          onInferenceRequest: childInferenceLogger.onRequest,
+          onInferenceRequest: (request) => suppressChildInferencePayloadLogging
+            ? undefined
+            : childInferenceLogger.onRequest(request),
           onInferenceAttempt: async (attempt) => {
             await childInferenceLogger.onAttempt(attempt);
             await recordOpenRouterInferenceAttempt(
@@ -2703,6 +2718,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 if (receiptPolicy.definition.mode !== "read") {
                   throw new ConnectorError("unauthorized", "Child write tool rejected");
                 }
+                const transientSlackSearch = receiptPolicy.definition.capability === "slack.search";
+                if (transientSlackSearch) suppressChildInferencePayloadLogging = true;
                 const invocation = await loadToolInvocation(
                   options.env,
                   childInput.harnessRunId,
@@ -2712,7 +2729,11 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                 await persistSuccessfulToolResult(options.env, childInput, childLiveness.lease, {
                   invocationId: invocation.id,
                   toolCallId: event.toolCallId,
-                  output: event.result.output,
+                  output: durableToolReplayOutput(
+                    receiptPolicy.definition.capability,
+                    event.result.output,
+                    event.result.summary,
+                  ),
                   outputSummary: event.result.summary,
                   memberSafePayload: { toolName: event.toolName },
                 }, assertChildOwned);
@@ -2949,6 +2970,7 @@ async function loadRunPromptContext(
     };
   }
   const additionalMessages: ModelMessage[] = [];
+  if (input.slackOrigin) additionalMessages.push(renderUntrustedSlackOriginMessage(input.slackOrigin));
   const memoryQueryParts: string[] = [workstream.title, workstream.objective];
   if (automationContext) memoryQueryParts.push(JSON.stringify(automationContext));
   if (input.triggerMessageId) {
@@ -3009,6 +3031,7 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
+      ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),
     additionalMessages,
@@ -3102,6 +3125,15 @@ function serializeToolReplayOutput(output: unknown): string {
     });
   }
   return serialized;
+}
+
+function durableToolReplayOutput(capability: string, output: unknown, summary: string): unknown {
+  // Slack's Real-time Search API is a transient context API. Keep the result
+  // available to the current model turn, but never copy its retrieved payload
+  // into Avalon's durable tool-replay object.
+  return capability === "slack.search"
+    ? { transient: true, summary }
+    : output;
 }
 
 async function persistSuccessfulToolResult(
@@ -3580,7 +3612,19 @@ async function executeAuthorizedConnectorTool(
     const result = await adapter.executeTool(
       toolName,
       toolInput,
-      createConnectorToolContext(connection, effectivePrincipal, signal, providerIdempotencyKey),
+      createConnectorToolContext(
+        connection,
+        effectivePrincipal,
+        signal,
+        providerIdempotencyKey,
+        frozen.connectorType === "slack"
+          && input.slackSearchAuthorization
+          && input.slackOrigin
+          && (connection.config.providerAccountId === input.slackOrigin.teamId
+            || connection.credentials.teamId === input.slackOrigin.teamId)
+          ? { slackActionToken: input.slackSearchAuthorization.actionToken }
+          : undefined,
+      ),
     );
     await ownershipGuard?.();
     return result;
@@ -5085,6 +5129,7 @@ export const __integrationTesting = {
   projectElicitationResponseMessage,
   renderElicitationResponseMessage,
   serializeToolReplayOutput,
+  durableToolReplayOutput,
   toolReplayOutputKey,
   persistSuccessfulToolResult,
   persistToolTranscriptMessage,

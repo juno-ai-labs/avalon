@@ -1,4 +1,9 @@
-import { ExternalActorSchema, type ExternalActor } from "@avalon/contracts";
+import {
+  ExternalActorSchema,
+  type ExternalActor,
+  type SlackOriginContext,
+  type SlackSearchAuthorization,
+} from "@avalon/contracts";
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 
@@ -23,6 +28,8 @@ type SlackExternalMessageInput = {
   actor: ExternalActor;
   text: string;
   clientMessageId: string;
+  slackOrigin: SlackOriginContext;
+  slackSearchAuthorization?: SlackSearchAuthorization;
 };
 
 /**
@@ -90,6 +97,10 @@ export class SlackWorkspaceWorkstreamService {
       triggerMessageId: created.messageId,
       origin: "slack_workspace_opening_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+      slackOrigin: input.slackOrigin,
+      ...(input.slackSearchAuthorization
+        ? { slackSearchAuthorization: input.slackSearchAuthorization }
+        : {}),
     });
     return { ...created, harnessRunId };
   }
@@ -122,6 +133,10 @@ export class SlackWorkspaceWorkstreamService {
       triggerMessageId: persisted.message.id,
       origin: "slack_workspace_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+      slackOrigin: input.slackOrigin,
+      ...(input.slackSearchAuthorization
+        ? { slackSearchAuthorization: input.slackSearchAuthorization }
+        : {}),
       supersedeActiveRun: true,
     });
     return { message: persisted.message, harnessRunId };
@@ -231,6 +246,10 @@ export class SlackWorkspaceWorkstreamService {
           triggerMessageId: responseMessageId,
           origin: "slack_workspace_elicitation_answer",
           executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+          slackOrigin: input.slackOrigin,
+          ...(input.slackSearchAuthorization
+            ? { slackSearchAuthorization: input.slackSearchAuthorization }
+            : {}),
           parentHarnessRunId: elicitation.harness_run_id,
         })
       : null;
