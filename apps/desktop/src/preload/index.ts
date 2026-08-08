@@ -5,6 +5,7 @@ import type {
   DesktopAuthAttempt,
   DesktopMeetingAudioPermissions,
   DesktopSession,
+  DesktopSystemAudioCaptureInfo,
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
@@ -93,6 +94,19 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.invoke('meeting-audio:get-permissions') as Promise<DesktopMeetingAudioPermissions>,
   prepareMeetingAudioPermissions: () =>
     ipcRenderer.invoke('meeting-audio:prepare-permissions') as Promise<DesktopMeetingAudioPermissions>,
+  startMeetingSystemAudioCapture: () =>
+    ipcRenderer.invoke('meeting-audio:start-system-capture') as Promise<DesktopSystemAudioCaptureInfo>,
+  stopMeetingSystemAudioCapture: () =>
+    ipcRenderer.invoke('meeting-audio:stop-system-capture') as Promise<void>,
+  onMeetingSystemAudioData: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, rawData: unknown, rawSampleRate: unknown): void => {
+      if (!(rawData instanceof Uint8Array) || typeof rawSampleRate !== 'number') return;
+      const data = rawData.buffer.slice(rawData.byteOffset, rawData.byteOffset + rawData.byteLength) as ArrayBuffer;
+      listener(data, rawSampleRate);
+    };
+    ipcRenderer.on('meeting-audio:data', handler);
+    return () => ipcRenderer.removeListener('meeting-audio:data', handler);
+  },
   openMeetingAudioSettings: (permission) =>
     ipcRenderer.invoke('meeting-audio:open-settings', permission) as Promise<void>,
   onMeetingCloseRequested: (listener) => {

@@ -235,6 +235,13 @@ verifyNestedComponent(
   'Avalon Dock tile plugin',
   { expectEntitlements: false },
 );
+const systemAudioTapPath = join(resourcesDirectory, 'native/system-audio-tap.node');
+verifyNestedComponent(
+  systemAudioTapPath,
+  systemAudioTapPath,
+  'Avalon Core Audio tap',
+  { expectEntitlements: false },
+);
 
 if (mode === 'release') {
   const updateConfigPath = join(appPath, 'Contents/Resources/app-update.yml');
