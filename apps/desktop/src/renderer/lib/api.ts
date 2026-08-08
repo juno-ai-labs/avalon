@@ -68,7 +68,6 @@ import type {
   Participant,
   Region,
   SocketTicket,
-  SlackAgentPolicySettings,
   ToolEventData,
   Workspace,
   WorkspaceInvitation,
@@ -83,19 +82,6 @@ import type {
   WorkstreamResource,
   WorkstreamSummary,
 } from './types';
-
-const slackAgentPolicySchema = z.object({
-  allowUnlinkedWorkspaceTasks: z.boolean(),
-  publicChannelMode: z.enum(['all_invited', 'allowlist', 'disabled']),
-  privateChannelMode: z.enum(['allowlist', 'disabled']),
-  allowDirectMessages: z.boolean(),
-  allowCommands: z.boolean(),
-  allowShortcuts: z.boolean(),
-  allowlistedChannels: z.array(z.object({
-    channelId: z.string(),
-    channelType: z.enum(['public', 'private']),
-  })),
-});
 
 export class ApiError extends Error {
   readonly status: number;
@@ -1514,21 +1500,6 @@ export class AvalonApi {
     return this.request(`/connections/${encodeURIComponent(id)}/test`, {
       method: 'POST',
       schema: z.object({ ok: z.boolean(), message: z.string() }),
-    });
-  }
-
-  async getSlackAgentPolicy(id: string, signal?: AbortSignal): Promise<SlackAgentPolicySettings> {
-    return this.request(`/connections/${encodeURIComponent(id)}/slack-agent-policy`, {
-      schema: slackAgentPolicySchema,
-      signal,
-    });
-  }
-
-  async updateSlackAgentPolicy(id: string, policy: SlackAgentPolicySettings): Promise<SlackAgentPolicySettings> {
-    return this.request(`/connections/${encodeURIComponent(id)}/slack-agent-policy`, {
-      method: 'PATCH',
-      body: policy,
-      schema: slackAgentPolicySchema,
     });
   }
 

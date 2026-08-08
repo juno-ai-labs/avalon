@@ -1330,28 +1330,6 @@ pre {
 .connection-provider-dot.healthy { background: var(--green); }
 .connection-provider-dot.reconnect_required { background: var(--yellow); }
 
-.slack-policy-form { display: grid; gap: 14px; }
-.slack-policy-form > label { display: grid; gap: 6px; }
-.slack-policy-form label > span,
-.slack-policy-form label > small { color: var(--muted); font-size: 10px; line-height: 1.45; }
-.slack-policy-form label > span { color: var(--text); }
-.slack-policy-form select,
-.slack-policy-form textarea {
-  background: #191a17;
-  border: 1px solid #3b3c36;
-  border-radius: 6px;
-  color: var(--text);
-  font: inherit;
-  padding: 8px 9px;
-  resize: vertical;
-}
-.slack-policy-check { align-items: start; display: flex !important; gap: 9px !important; }
-.slack-policy-check input { margin-top: 2px; }
-.slack-policy-check > span { display: grid; gap: 2px; }
-.slack-policy-check strong { font-size: 11px; }
-.slack-policy-check small { color: var(--muted); }
-.slack-policy-surfaces { display: flex; flex-wrap: wrap; gap: 14px; }
-
 .invite-form {
   align-items: end;
   background: #232420;
