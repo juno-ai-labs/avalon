@@ -10,6 +10,7 @@ import {
   CreateAutomationRequestSchema,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
+  GenerateNoteNotesRequestSchema,
   GenerateMeetingNotesRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
@@ -77,8 +78,20 @@ describe("boundary contracts", () => {
 
   it("bounds and normalizes live meeting-note refreshes", () => {
     expect(GenerateMeetingNotesRequestSchema.parse({ transcript: "  New decision  " })).toEqual({
+      mode: "live",
+      meetingTitle: "Meeting notes",
       transcript: "New decision",
+      recentTranscript: "",
       previousNotes: "",
+      userNotes: "",
+      startedAt: null,
+      endedAt: null,
+      transcriptStatus: "partial",
+    });
+    expect(GenerateNoteNotesRequestSchema.parse({})).toEqual({ mode: "live", transcriptStatus: "partial" });
+    expect(GenerateNoteNotesRequestSchema.parse({ mode: "final", transcriptStatus: "complete" })).toEqual({
+      mode: "final",
+      transcriptStatus: "complete",
     });
     expect(GenerateMeetingNotesRequestSchema.safeParse({ transcript: "   " }).success).toBe(false);
     expect(GenerateMeetingNotesRequestSchema.safeParse({

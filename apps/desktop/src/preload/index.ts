@@ -15,6 +15,8 @@ const deepLinkListeners = new Set<(url: string) => void>();
 const queuedDeepLinks: string[] = [];
 const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
 let queuedSettingsSection: DesktopSettingsSection | null = null;
+const meetingCloseListeners = new Set<() => void>();
+let meetingCloseQueued = false;
 
 // Install the privileged listener before React starts. Session changes can
 // briefly replace the renderer callback; a native OAuth/invitation callback
@@ -40,6 +42,14 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
     return;
   }
   for (const listener of settingsSectionListeners) listener(section);
+});
+
+ipcRenderer.on('meeting:close-requested', () => {
+  if (meetingCloseListeners.size === 0) {
+    meetingCloseQueued = true;
+    return;
+  }
+  for (const listener of meetingCloseListeners) listener();
 });
 
 const bridge: AvalonDesktopBridge = {
@@ -77,6 +87,17 @@ const bridge: AvalonDesktopBridge = {
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
+  closeMeetingNotes: () => ipcRenderer.invoke('system:close-meeting-notes') as Promise<void>,
+  onMeetingCloseRequested: (listener) => {
+    meetingCloseListeners.add(listener);
+    if (meetingCloseQueued) {
+      meetingCloseQueued = false;
+      queueMicrotask(() => {
+        if (meetingCloseListeners.has(listener)) listener();
+      });
+    }
+    return () => meetingCloseListeners.delete(listener);
+  },
   onSettingsSectionRequested: (listener) => {
     settingsSectionListeners.add(listener);
     const pending = queuedSettingsSection;
