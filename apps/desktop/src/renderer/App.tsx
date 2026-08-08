@@ -9,6 +9,7 @@ import { ApiError } from './lib/api';
 import { AppSessionProvider, useAppSession } from './lib/app-session';
 import { AutomationOverviewScreen } from './screens/automation-overview';
 import { MeetingNotesScreen } from './screens/meeting-notes';
+import { NoteDetailScreen } from './screens/note-detail';
 import { NewAutomationScreen } from './screens/new-automation';
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
@@ -162,6 +163,7 @@ function WorkspaceApp(): React.JSX.Element {
           <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
           <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
           <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+          <Route element={<NoteDetailScreen />} path="/notes/:id" />
           <Route element={<NewAutomationScreen />} path="/automations/new" />
           <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
           <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />

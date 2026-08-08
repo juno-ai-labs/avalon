@@ -215,9 +215,12 @@ function WorkstreamRow({
   );
 }
 
-function NoteRow({ note, onOpen }: { note: NoteSummary; onOpen: (noteId: string) => void }): React.JSX.Element {
+function NoteRow({ note }: { note: NoteSummary }): React.JSX.Element {
   return (
-    <button className="sidebar-row note-row" onClick={() => onOpen(note.id)} type="button">
+    <NavLink
+      className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
+      to={`/notes/${note.id}`}
+    >
       <span className="sidebar-row-icon">
         <span aria-label="Note" className="sidebar-note-marker" role="img">
           <NotebookText aria-hidden="true" size={15} strokeWidth={1.8} />
@@ -232,7 +235,7 @@ function NoteRow({ note, onOpen }: { note: NoteSummary; onOpen: (noteId: string)
           <Lock aria-hidden="true" className="sidebar-note-privacy-lock" size={8} strokeWidth={2.2} />
         </span>
       )}
-    </button>
+    </NavLink>
   );
 }
 
@@ -376,7 +379,6 @@ export function Sidebar({
                       <NoteRow
                         key={item.id}
                         note={item.note}
-                        onOpen={(noteId) => void onOpenMeetingNotes(noteId).catch(() => undefined)}
                       />
                     ) : (
                       <WorkstreamRow

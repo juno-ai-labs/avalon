@@ -16,6 +16,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -26,6 +27,7 @@ import {
   safeStorage,
   session as electronSession,
   shell,
+  webContents as electronWebContents,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
@@ -62,7 +64,11 @@ import {
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { LockdownModeController } from './lockdown-mode';
-import { allowsTrustedAudioCapture } from './media-permission';
+import {
+  allowsTrustedAudioCapture,
+  allowsTrustedDisplayCapturePermission,
+  allowsTrustedMeetingDisplayCapture,
+} from './media-permission';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -1464,12 +1470,12 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
 
 async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promise<void> {
   const meetingWindow = new BrowserWindow({
-    width: 1120,
-    height: 820,
-    minWidth: 760,
-    minHeight: 600,
+    width: 720,
+    height: 860,
+    minWidth: 540,
+    minHeight: 640,
     show: false,
-    backgroundColor: '#f5f4ef',
+    backgroundColor: '#1d1e1b',
     title: 'Meeting notes — Avalon',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 18, y: 17 },
@@ -1598,20 +1604,67 @@ function installContentSecurityPolicy(): void {
   });
 
   electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const trustedRenderer = rendererNavigationAllowed(details.requestingUrl);
     callback(allowsTrustedAudioCapture({
       isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
-      trustedRenderer: rendererNavigationAllowed(details.requestingUrl),
+      trustedRenderer,
+    }) || allowsTrustedDisplayCapturePermission({
+      isMeetingWindow: isMeetingWindowContents(webContents),
+      permission,
+      trustedRenderer,
     }));
   });
-  electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
-    allowsTrustedAudioCapture({
+  electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const trustedRenderer = rendererNavigationAllowed(requestingOrigin);
+    return allowsTrustedAudioCapture({
       isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
-      trustedRenderer: rendererNavigationAllowed(requestingOrigin),
-    }));
+      trustedRenderer,
+    }) || allowsTrustedDisplayCapturePermission({
+      isMeetingWindow: isMeetingWindowContents(webContents),
+      permission,
+      trustedRenderer,
+    });
+  });
+
+  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    const frame = request.frame;
+    const contents = frame ? electronWebContents.fromFrame(frame) : undefined;
+    const allowed = Boolean(contents) && allowsTrustedMeetingDisplayCapture({
+      audioRequested: request.audioRequested,
+      isMainFrame: frame?.parent === null,
+      isMeetingWindow: contents ? isMeetingWindowContents(contents) : false,
+      trustedRenderer: rendererNavigationAllowed(request.securityOrigin) && rendererNavigationAllowed(frame?.url ?? ''),
+      videoRequested: request.videoRequested,
+    });
+    if (!allowed || !contents || !frame) {
+      callback({});
+      return;
+    }
+
+    void desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 0, height: 0 },
+    }).then((sources) => {
+      const source = sources[0];
+      const stillTrusted = electronWebContents.fromFrame(frame) === contents
+        && isMeetingWindowContents(contents)
+        && rendererNavigationAllowed(frame.url);
+      if (!source || !stillTrusted) {
+        callback({});
+        return;
+      }
+      // The renderer retains the low-rate video track only because Chromium's
+      // display-capture API requires one. Avalon never reads or transmits pixels.
+      callback({ audio: 'loopback', video: source });
+    }).catch((error: unknown) => {
+      console.warn('[avalon] system audio capture could not enumerate a display', error);
+      callback({});
+    });
+  });
 }
 
 const singleInstanceLock = app.requestSingleInstanceLock();

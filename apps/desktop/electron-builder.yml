@@ -33,6 +33,7 @@ mac:
   category: public.app-category.productivity
   extendInfo:
     NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation or meeting notes.
+    NSAudioCaptureUsageDescription: Avalon captures computer audio only when you record meeting notes.
     NSDockTilePlugIn: AvalonDockTilePlugin.docktileplugin
   hardenedRuntime: true
   forceCodeSigning: true

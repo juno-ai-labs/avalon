@@ -151,7 +151,10 @@ function installSocketRuntime(upstream: FakeSocket): { pairs: Array<{ client: Fa
   return { pairs };
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("realtime transcription proxy", () => {
   it("opens the Azure upgrade over HTTPS and releases the lease when the client closes", async () => {
@@ -222,6 +225,25 @@ describe("realtime transcription proxy", () => {
       expect(server.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
       expect(upstream.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
       expect(database.activeSessions()).toBe(0);
+    } finally {
+      database.database.close();
+    }
+  });
+
+  it("does not close a healthy transcription session after the former five-minute limit", async () => {
+    vi.useFakeTimers();
+    const database = new SqliteD1Database();
+    const upstream = new FakeSocket();
+    const { pairs } = installSocketRuntime(upstream);
+    const environment = env(database);
+    const ticket = await issueTranscriptionSocketTicket(environment, auth);
+
+    try {
+      await new RealtimeTranscriptionService(environment).upgrade(ticket, request());
+      await vi.advanceTimersByTimeAsync(6 * 60 * 1_000);
+
+      expect(pairs[0]!.server.closes).toEqual([]);
+      expect(upstream.closes).toEqual([]);
     } finally {
       database.database.close();
     }
