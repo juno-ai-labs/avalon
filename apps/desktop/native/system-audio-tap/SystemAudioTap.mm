@@ -293,7 +293,9 @@ napi_value Start(napi_env env, napi_callback_info info) {
     ThrowError(env, "Computer audio capture is already active.");
     return nullptr;
   }
-  if (!__builtin_available(macOS 14.2, *)) {
+  bool supported = false;
+  if (@available(macOS 14.2, *)) supported = true;
+  if (!supported) {
     ThrowError(env, "Computer audio recording requires macOS 14.2 or later.");
     return nullptr;
   }
