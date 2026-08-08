@@ -604,24 +604,30 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       if (input.connectionScope !== "personal") {
         throw new ConnectorError("invalid_configuration", "Granola MCP OAuth callback requires a personal connection");
       }
-      const authorizationState = parseOAuthState(input.authorizationState);
-      const token = await exchangeToken(fetcher, authorizationState, {
+      const authorizationState = await granolaOAuthCallbackStage(
+        "state_validation",
+        () => parseOAuthState(input.authorizationState),
+      );
+      const token = await granolaOAuthCallbackStage("token_exchange", () => exchangeToken(fetcher, authorizationState, {
         grant_type: "authorization_code",
         code: String(input.code ?? ""),
         code_verifier: String(input.codeVerifier ?? ""),
         redirect_uri: redirectUri,
         resource: authorizationState.resource,
-      }, AbortSignal.timeout(15_000));
-      const accountResult = await callGranolaMcp(
+      }, AbortSignal.timeout(15_000)));
+      const accountResult = await granolaOAuthCallbackStage("mcp_account_lookup", () => callGranolaMcp(
         token.access_token,
         "get_account_info",
         {},
         AbortSignal.timeout(15_000),
         fetcher,
         mcpUrl,
-      );
-      const account = extractAccountInfo(accountResult);
-      const providerAccountId = `granola:${(await sha256Hex(`${account.email.toLowerCase()}\n${account.workspaceIdentity}`)).slice(0, 32)}`;
+      ));
+      const { account, providerAccountId } = await granolaOAuthCallbackStage("account_identity", async () => {
+        const account = extractAccountInfo(accountResult);
+        const digest = await sha256Hex(`${account.email.toLowerCase()}\n${account.workspaceIdentity}`);
+        return { account, providerAccountId: `granola:${digest.slice(0, 32)}` };
+      });
       return {
         providerAccountId,
         providerAccountName: account.email,
@@ -752,6 +758,39 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       }
     },
   };
+}
+
+async function granolaOAuthCallbackStage<T>(
+  oauthStage: "state_validation" | "token_exchange" | "mcp_account_lookup" | "account_identity",
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ConnectorError) {
+      const details = isRecord(error.details) ? error.details : {};
+      throw new ConnectorError(error.code, error.message, { ...details, oauthStage });
+    }
+    if (error instanceof z.ZodError) {
+      throw new ConnectorError(
+        "provider_error",
+        "Granola returned an unexpected OAuth or MCP response",
+        { oauthStage, responseInvalid: true },
+      );
+    }
+    if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
+      throw new ConnectorError(
+        "provider_error",
+        "Granola did not complete the authorization request in time",
+        { oauthStage, timedOut: true },
+      );
+    }
+    throw new ConnectorError(
+      "provider_error",
+      "Granola could not complete the authorization request",
+      { oauthStage },
+    );
+  }
 }
 
 async function granolaApi(

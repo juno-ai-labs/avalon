@@ -378,6 +378,52 @@ describe("Granola connector", () => {
     });
   });
 
+  it("preserves secret-safe OAuth callback stages for provider and schema failures", async () => {
+    const authorizationState = {
+      resource: "https://mcp.granola.ai/mcp",
+      authorizationEndpoint: "https://mcp-auth.granola.ai/oauth2/authorize",
+      tokenEndpoint: "https://mcp-auth.granola.ai/oauth2/token",
+      clientId: "dynamic-client",
+      clientSecret: "dynamic-secret",
+      tokenEndpointAuthMethod: "client_secret_post" as const,
+      scope: "mcp offline_access",
+    };
+    const callback = {
+      connectionScope: "personal" as const,
+      code: "authorization-code",
+      codeVerifier: "pkce-verifier",
+      authorizationState,
+    };
+    const tokenFailure = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+      fetch: async () => jsonResponse({ error: "invalid_grant" }, 401),
+    });
+    await expect(tokenFailure.handleAuthorizationCallback!(callback)).rejects.toMatchObject({
+      code: "unauthorized",
+      details: { oauthStage: "token_exchange", status: 401 },
+    });
+
+    const schemaFailure = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+      fetch: async () => jsonResponse({ access_token: 123, token_type: "Bearer" }),
+    });
+    await expect(schemaFailure.handleAuthorizationCallback!(callback)).rejects.toMatchObject({
+      code: "provider_error",
+      details: { oauthStage: "token_exchange", responseInvalid: true },
+    });
+
+    const mcpFailure = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+      fetch: async (input) => requestUrl(input).pathname === "/oauth2/token"
+        ? jsonResponse({ access_token: "personal-token", token_type: "Bearer" })
+        : jsonResponse({ error: "not_authorized" }, 401),
+    });
+    await expect(mcpFailure.handleAuthorizationCallback!(callback)).rejects.toMatchObject({
+      code: "unauthorized",
+      details: { oauthStage: "mcp_account_lookup", status: 401 },
+    });
+  });
+
   it("enforces the personal/workspace capability boundary", async () => {
     const adapter = createGranolaConnector({
       redirectUri: "https://api.example.test/connections/granola/callback",
