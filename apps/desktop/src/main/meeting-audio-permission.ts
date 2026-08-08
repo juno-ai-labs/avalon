@@ -6,9 +6,7 @@ import type {
 
 interface MeetingAudioPermissionDependencies {
   askForMicrophoneAccess: () => Promise<boolean>;
-  getMediaAccessStatus: (permission: 'microphone' | 'screen') => string;
-  platform: NodeJS.Platform;
-  requestSystemAudioAccess: () => Promise<void>;
+  getMicrophoneAccessStatus: () => string;
 }
 
 const MEDIA_PERMISSION_STATUSES = new Set<DesktopMediaPermissionStatus>([
@@ -21,10 +19,9 @@ const MEDIA_PERMISSION_STATUSES = new Set<DesktopMediaPermissionStatus>([
 
 function permissionStatus(
   dependencies: MeetingAudioPermissionDependencies,
-  permission: 'microphone' | 'screen',
 ): DesktopMediaPermissionStatus {
   try {
-    const status = dependencies.getMediaAccessStatus(permission) as DesktopMediaPermissionStatus;
+    const status = dependencies.getMicrophoneAccessStatus() as DesktopMediaPermissionStatus;
     return MEDIA_PERMISSION_STATUSES.has(status) ? status : 'unknown';
   } catch {
     return 'unknown';
@@ -35,8 +32,10 @@ export function meetingAudioPermissions(
   dependencies: MeetingAudioPermissionDependencies,
 ): DesktopMeetingAudioPermissions {
   return {
-    microphone: permissionStatus(dependencies, 'microphone'),
-    systemAudio: permissionStatus(dependencies, 'screen'),
+    microphone: permissionStatus(dependencies),
+    // Core Audio exposes no permission preflight API. AudioDeviceStart is the
+    // permission request and its first successful IO callback is the grant.
+    systemAudio: 'unknown',
   };
 }
 
@@ -52,16 +51,6 @@ export async function prepareMeetingAudioPermissions(
       // path will surface any platform-specific error if macOS did not decide.
     }
   }
-  if (dependencies.platform === 'darwin' && initial.systemAudio === 'not-determined') {
-    try {
-      // Electron has no askForMediaAccess('screen'). Enumerating the source is
-      // the supported ScreenCaptureKit operation that presents macOS's native
-      // Screen & System Audio Recording prompt for the signed Avalon bundle.
-      await dependencies.requestSystemAudioAccess();
-    } catch {
-      // Denial is reflected by getMediaAccessStatus and handled in the UI.
-    }
-  }
   return meetingAudioPermissions(dependencies);
 }
 
@@ -72,5 +61,7 @@ export function meetingAudioSettingsUrl(
   if (platform !== 'darwin') return undefined;
   return permission === 'microphone'
     ? 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+    // macOS presents Screen Recording and System Audio Recording Only in one
+    // privacy pane even though Avalon's Core Audio tap never requests screen.
     : 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
 }
