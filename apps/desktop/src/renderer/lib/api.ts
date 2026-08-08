@@ -1441,7 +1441,7 @@ export class AvalonApi {
   }
 
   async startProviderConnection(
-    provider: 'google' | 'github' | 'linear' | 'notion' | 'slack',
+    provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack',
     scope: 'you' | 'workspace',
     capabilities: string[],
   ): Promise<ConnectorOAuthStart> {
@@ -1458,6 +1458,15 @@ export class AvalonApi {
     const response = await this.request('/connections/x', {
       method: 'POST',
       body: { scope: 'workspace', capabilities },
+      schema: z.object({ connection: WireConnectionSchema }),
+    });
+    return mapConnection(response.connection);
+  }
+
+  async createGranolaWorkspaceConnection(apiKey: string): Promise<WorkstreamConnection> {
+    const response = await this.request('/connections/granola/workspace', {
+      method: 'POST',
+      body: { apiKey, capabilities: ['granola.workspace.read'] },
       schema: z.object({ connection: WireConnectionSchema }),
     });
     return mapConnection(response.connection);

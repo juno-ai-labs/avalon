@@ -1,14 +1,18 @@
 import {
   ConnectorError,
   connectorCapabilitySupportsScope,
+  createGranolaWebhookEndpoint,
   createWebhookSecret,
+  deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
   GoogleCapabilityScopes,
+  GranolaCapabilities,
   LinearCapabilityScopes,
   SlackCapabilityScopes,
   SlackWorkspaceCapabilities,
   verifyGenericWebhook,
+  verifyGranolaWebhook,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
@@ -78,6 +82,10 @@ export interface GitHubSetupResult {
 }
 
 const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, readonly string[]>> = {
+  granola: {
+    [GranolaCapabilities.personalRead]: ["mcp", "offline_access"],
+    [GranolaCapabilities.workspaceRead]: [],
+  },
   linear: LinearCapabilityScopes,
   notion: {
     "notion.read": ["notion.read"],
@@ -291,6 +299,13 @@ export class ConnectionService {
     const state = randomToken(32);
     const attemptId = randomToken(32);
     const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const authorization = await adapter.beginAuthorization?.({
+      state,
+      codeChallenge: challenge,
+      connectionScope: input.scope,
+      scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
+    });
+    if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
     const statePayload = await sealString(JSON.stringify({
       provider,
       attemptId,
@@ -298,6 +313,7 @@ export class ConnectionService {
       scope: input.scope,
       capabilities,
       connectionId: input.connectionId ?? null,
+      authorizationState: authorization.state ?? null,
     }), this.env.OAUTH_STATE_ENCRYPTION_KEY);
     await this.persistOAuthStart({
       attemptId,
@@ -307,13 +323,6 @@ export class ConnectionService {
       auth,
       expiresAt,
     });
-    const authorization = await adapter.beginAuthorization?.({
-      state,
-      codeChallenge: challenge,
-      connectionScope: input.scope,
-      scopes: capabilities.flatMap((capability) => providerCapabilityScopes[provider][capability] ?? []),
-    });
-    if (!authorization) throw new ApiError(503, "connector_oauth_unavailable", `${adapter.manifest.displayName} authorization is unavailable`);
     return { url: authorization.url, attemptId };
   }
 
@@ -576,7 +585,7 @@ export class ConnectionService {
     const row = await this.consumeProviderState(provider, state, "connector");
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
-    ) as { provider: OAuthConnectorProvider; attemptId?: unknown; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
+    ) as { provider: OAuthConnectorProvider; attemptId?: unknown; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null; authorizationState?: unknown };
     const attemptId = oauthAttemptIdValue(stateData.attemptId);
     if (stateData.provider !== provider) throw new ApiError(401, "invalid_oauth_state", "The connector provider does not match this authorization");
     await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
@@ -593,6 +602,7 @@ export class ConnectionService {
       code,
       codeVerifier: stateData.verifier,
       connectionScope: stateData.scope,
+      authorizationState: stateData.authorizationState,
     });
     if (!incomingCredentials) throw new ApiError(502, "connector_token_exchange_failed", `${adapter.manifest.displayName} did not return connector credentials`);
     if (provider === "linear") {
@@ -927,7 +937,12 @@ export class ConnectionService {
         connectionId: id,
       });
     }
-    if (connection.connector_type === "linear" || connection.connector_type === "notion" || connection.connector_type === "slack") {
+    if (
+      connection.connector_type === "linear"
+      || connection.connector_type === "notion"
+      || connection.connector_type === "slack"
+      || (connection.connector_type === "granola" && connection.scope === "personal")
+    ) {
       return this.beginProvider(connection.connector_type, {
         scope: connection.scope,
         capabilities: parseJson(connection.granted_scopes_json, []),
@@ -1192,6 +1207,194 @@ export class ConnectionService {
     const connection = (await this.list()).find((item) => item.id === id);
     if (!connection) throw new ApiError(500, "connection_write_failed", "The X connection could not be loaded");
     return { connection };
+  }
+
+  async createGranolaWorkspace(input: { apiKey: string; capabilities: string[] }) {
+    const auth = this.requireAuth();
+    this.assertScopeAllowed("workspace");
+    const capabilities = [...new Set(input.capabilities)];
+    if (capabilities.length !== 1 || capabilities[0] !== GranolaCapabilities.workspaceRead) {
+      throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace read capability");
+    }
+    const existing = await this.env.DB.prepare(
+      `SELECT id FROM connector_connections
+       WHERE workspace_id = ? AND connector_type = 'granola' AND scope = 'workspace'
+         AND status <> 'disabled' LIMIT 1`,
+    ).bind(auth.workspaceId).first<{ id: string }>();
+    if (existing) throw new ApiError(409, "granola_workspace_connection_exists", "A Granola workspace connection already exists");
+
+    const id = newId();
+    const apiKey = input.apiKey.trim();
+    const webhookUrl = new URL(`/ingest/granola/${id}`, this.env.PUBLIC_API_BASE_URL).toString();
+    const webhook = await createGranolaWebhookEndpoint(
+      apiKey,
+      webhookUrl,
+      AbortSignal.timeout(15_000),
+    );
+    try {
+      const credentials = {
+        apiKey,
+        webhookEndpointId: webhook.id,
+        webhookSigningSecret: webhook.signingSecret,
+      };
+      const encrypted = await encryptString(
+        JSON.stringify(credentials),
+        this.env.CONNECTOR_CREDENTIALS_KEY,
+        id,
+      );
+      const providerAccountId = `workspace:${(await sha256(apiKey)).slice(0, 32)}`;
+      const at = nowIso();
+      const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "granola");
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `INSERT INTO connector_connections
+           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+            display_name, encrypted_credentials, credential_iv, credential_key_version,
+            granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
+            created_at, updated_at)
+           VALUES (?, ?, 'granola', 'workspace', NULL, ?, 'Granola workspace', ?, ?, ?, ?, ?,
+                   'healthy', '{}', '{}', ?, ?)`,
+        ).bind(
+          id,
+          auth.workspaceId,
+          providerAccountId,
+          encrypted.ciphertext,
+          encrypted.iv,
+          Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+          JSON.stringify(capabilities),
+          modelPluginId,
+          at,
+          at,
+        ),
+        this.env.DB.prepare(
+          `INSERT INTO audit_events
+           (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
+           VALUES (?, ?, 'user', ?, 'connector.authorized', 'connector_connection', ?, ?, ?)`,
+        ).bind(
+          newId(),
+          auth.workspaceId,
+          auth.userId,
+          id,
+          JSON.stringify({ provider: "granola", scope: "workspace", capabilities }),
+          at,
+        ),
+      ]);
+    } catch (error) {
+      try {
+        await deleteGranolaWebhookEndpoint(apiKey, webhook.id, AbortSignal.timeout(10_000));
+      } catch {
+        // The original persistence error is authoritative. Granola admins can
+        // remove a rare orphaned endpoint from connector settings.
+      }
+      throw error;
+    }
+    const connection = (await this.list()).find((item) => item.id === id);
+    if (!connection) throw new ApiError(500, "connection_write_failed", "The Granola connection could not be loaded");
+    return { connection };
+  }
+
+  async ingestGranolaWebhook(
+    connectionId: string,
+    rawBody: Uint8Array,
+    headers: {
+      webhookId: string | null;
+      webhookTimestamp: string | null;
+      webhookSignature: string | null;
+    },
+  ) {
+    if (rawBody.byteLength > numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000)) {
+      throw new ApiError(413, "webhook_too_large", "Granola webhook payload exceeds the configured limit");
+    }
+    const connection = await this.env.DB.prepare(
+      `SELECT * FROM connector_connections
+       WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status = 'healthy'`,
+    ).bind(connectionId).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Granola webhook connection not found");
+    const context = await this.context(connection);
+    const signingSecret = stringField(context.credentials, "webhookSigningSecret");
+    if (!signingSecret) throw new ApiError(401, "webhook_secret_unavailable", "Granola webhook verification is unavailable");
+    const verified = await verifyGranolaWebhook({
+      signingSecret,
+      rawBody,
+      webhookId: headers.webhookId,
+      webhookTimestamp: headers.webhookTimestamp,
+      webhookSignature: headers.webhookSignature,
+      replayWindowSeconds: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300),
+    });
+    const receivedAt = nowIso();
+    const rawBodyText = new TextDecoder().decode(rawBody);
+    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/granola-${verified.event_id}.json`;
+    await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
+    const activityId = newId();
+    const receiptId = newId();
+    const eventTitle = {
+      "note.access_granted": "Granola note access granted",
+      "note.edited": "Granola note edited",
+      "note.generated": "Granola note generated",
+      "note.regenerated": "Granola note regenerated",
+    }[verified.event_type];
+    const results = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
+         VALUES (?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
+      ).bind(
+        receiptId,
+        connection.id,
+        verified.signatureHash,
+        receivedAt,
+        new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
+      ),
+      this.env.DB.prepare(
+        `INSERT INTO activities
+         (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
+          provider, provider_event_id, event_type, resource_type, provider_resource_id,
+          actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
+          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+          processing_status, metadata_json)
+         VALUES (?, ?, ?, 'workspace', NULL, 'granola', ?, ?, 'granola_note', ?,
+                 '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, 'pending', ?)
+         ON CONFLICT DO NOTHING`,
+      ).bind(
+        activityId,
+        connection.workspace_id,
+        connection.id,
+        verified.event_id,
+        verified.event_type,
+        verified.note_id,
+        JSON.stringify({ id: verified.note_id, type: "granola_note" }),
+        verified.occurred_at,
+        receivedAt,
+        eventTitle,
+        payloadKey,
+        JSON.stringify({ scope: "workspace", ownerUserId: null }),
+        JSON.stringify([`granola:note:${verified.note_id}`]),
+        verified.event_id,
+        await sha256(rawBodyText),
+        JSON.stringify({ changedFields: verified.data?.changed_fields ?? [] }),
+      ),
+    ]);
+    const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
+    const canonical = insertedActivity
+      ? { id: activityId }
+      : await this.env.DB.prepare(
+          `SELECT id FROM activities
+           WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
+           ORDER BY received_at DESC LIMIT 1`,
+        ).bind(connection.id, verified.event_id, verified.event_type).first<{ id: string }>();
+    if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
+    // Re-enqueue the canonical row on retries as crash-window recovery. If a
+    // previous request committed D1 but failed before queue delivery, Granola's
+    // retry must still make the durable activity visible to the consumer.
+    await this.env.ACTIVITY_QUEUE.send({
+      region: this.env.AVALON_REGION,
+      workspaceId: connection.workspace_id,
+      activityId: canonical.id,
+      attempt: 0,
+    });
+    return {
+      duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
+      activityId: canonical.id,
+    };
   }
 
   async ingestWebhook(connectionId: string, rawBody: string, signatureHeader: string | null) {
