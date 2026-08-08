@@ -895,10 +895,14 @@ export class AvalonApi {
     });
   }
 
-  generateNoteNotes(id: string): Promise<NoteDetail> {
+  generateNoteNotes(
+    id: string,
+    mode: 'live' | 'final' = 'live',
+    transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
+  ): Promise<NoteDetail> {
     return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
       method: 'POST',
-      body: {},
+      body: { mode, transcriptStatus },
       schema: WireNoteDetailSchema,
     });
   }

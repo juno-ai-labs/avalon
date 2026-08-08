@@ -96,6 +96,8 @@ export interface AvalonDesktopBridge {
   openExternal: (url: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
+  closeMeetingNotes: () => Promise<void>;
+  onMeetingCloseRequested: (listener: () => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   consumePendingDeepLinks: () => Promise<string[]>;
   onDeepLink: (listener: (url: string) => void) => () => void;

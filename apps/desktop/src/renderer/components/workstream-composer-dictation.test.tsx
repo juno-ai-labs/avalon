@@ -8,7 +8,7 @@ import type { WorkstreamDetail } from '../lib/types';
 const dictationHarness = vi.hoisted(() => ({
   emit: undefined as ((transcript: string) => void) | undefined,
   setError: undefined as ((error: string | undefined) => void) | undefined,
-  setState: undefined as ((state: 'idle' | 'listening' | 'transcribing') => void) | undefined,
+  setState: undefined as ((state: 'idle' | 'listening' | 'transcribing' | 'finalizing') => void) | undefined,
   start: vi.fn(),
   stop: vi.fn(),
 }));
@@ -22,7 +22,7 @@ vi.mock('../lib/use-realtime-dictation', async (importOriginal) => {
       _api: unknown,
       onTranscript: (transcript: string) => void,
     ) => {
-      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing'>('idle');
+      const [state, setState] = React.useState<'idle' | 'listening' | 'transcribing' | 'finalizing'>('idle');
       const [error, setError] = React.useState<string>();
       dictationHarness.emit = onTranscript;
       dictationHarness.setError = setError;
@@ -164,6 +164,41 @@ describe('WorkstreamComposer live dictation', () => {
     fireEvent.change(input, { target: { value: 'Edited partial transcript' } });
     await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
     expect(input).toHaveValue('Edited partial transcript');
+  });
+
+  it('keeps the draft read-only while final audio is pending and finalizes before sending', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          api={{ getTranscriptionSocketTicket: vi.fn() }}
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={() => undefined}
+          onOpenAttachment={() => undefined}
+          onRemoveAttachment={() => undefined}
+          onRetryAttachment={() => undefined}
+          onSend={onSend}
+          onStop={async () => undefined}
+          sending={false}
+          uploading={false}
+          workstream={workstream}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const input = screen.getByRole('textbox', { name: 'Message the work stream' });
+    fireEvent.change(input, { target: { value: 'Final dictated message' } });
+    act(() => dictationHarness.setState?.('finalizing'));
+
+    expect(input).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Finalizing dictation' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await waitFor(() => expect(dictationHarness.stop).toHaveBeenCalledOnce());
+    await waitFor(() => expect(onSend).toHaveBeenCalledOnce());
+    expect(dictationHarness.stop.mock.invocationCallOrder[0]).toBeLessThan(onSend.mock.invocationCallOrder[0]!);
   });
 
   it('supports pointer click-to-toggle without double stopping', async () => {

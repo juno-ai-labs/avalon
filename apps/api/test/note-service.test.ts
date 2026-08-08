@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { GenerateMeetingNotesRequest } from "@avalon/contracts";
 import type { AuthContext, Env } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
 import { processPendingNotePrivacyNotifications } from "../src/services/note-privacy-notification-service";
@@ -350,11 +351,11 @@ describe("NoteService", () => {
   it("keeps generated-note progress monotonic when two windows generate concurrently", async () => {
     const { auth, env } = fixture();
     const invocations: Array<{
-      input: { previousNotes: string; transcript: string };
+      input: GenerateMeetingNotesRequest;
       resolve: (value: { notes: string; generatedAt: string }) => void;
     }> = [];
     const generator = {
-      generate: vi.fn((input: { previousNotes: string; transcript: string }) =>
+      generate: vi.fn((input: GenerateMeetingNotesRequest) =>
         new Promise<{ notes: string; generatedAt: string }>((resolve) => invocations.push({ input, resolve }))),
     };
     const service = new NoteService(env, auth, generator);
@@ -388,6 +389,50 @@ describe("NoteService", () => {
     await expect(service.get(noteId)).resolves.toMatchObject({ liveNotes: "Newer summary", notesThroughSequence: 2 });
   });
 
+  it("retries a final summary that loses a race with a live Control Tower refresh", async () => {
+    const { auth, env } = fixture();
+    const invocations: Array<{
+      input: GenerateMeetingNotesRequest;
+      resolve: (value: { notes: string; generatedAt: string }) => void;
+    }> = [];
+    const service = new NoteService(env, auth, {
+      generate: vi.fn((input: GenerateMeetingNotesRequest) =>
+        new Promise<{ notes: string; generatedAt: string }>((resolve) => invocations.push({ input, resolve }))),
+    });
+    await service.create({ id: noteId, title: "Final summary race", scope: "personal" });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000232",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: null,
+      text: "The complete meeting transcript.",
+    });
+
+    const liveGeneration = service.generate(noteId, "request-live-race", "live", "partial");
+    await vi.waitFor(() => expect(invocations).toHaveLength(1));
+    const finalGeneration = service.generate(noteId, "request-final-race", "final", "complete");
+    await vi.waitFor(() => expect(invocations).toHaveLength(2));
+
+    invocations[0]!.resolve({ notes: "## Right now\n\nLive briefing", generatedAt: "2026-08-07T18:01:00.000Z" });
+    await expect(liveGeneration).resolves.toMatchObject({ liveNotes: expect.stringContaining("Live briefing") });
+    invocations[1]!.resolve({ notes: "## Action items\n\nOriginal final result", generatedAt: "2026-08-07T18:01:01.000Z" });
+    await vi.waitFor(() => expect(invocations).toHaveLength(3));
+
+    expect(invocations[2]!.input).toMatchObject({ mode: "final", transcriptStatus: "complete" });
+    expect(invocations[2]!.input.transcript).toContain("The complete meeting transcript.");
+    invocations[2]!.resolve({ notes: "## Action items\n\nRetried final summary", generatedAt: "2026-08-07T18:01:02.000Z" });
+
+    await expect(finalGeneration).resolves.toMatchObject({
+      liveNotes: "## Action items\n\nRetried final summary",
+      notesThroughSequence: 1,
+    });
+    await expect(service.get(noteId)).resolves.toMatchObject({
+      liveNotes: "## Action items\n\nRetried final summary",
+      notesThroughSequence: 1,
+    });
+  });
+
   it("validates note resources against automation scope and current visibility", async () => {
     const { auth, env } = fixture();
     const noteService = new NoteService(env, auth);
@@ -414,9 +459,9 @@ describe("NoteService", () => {
 
   it("bounds model context without silently cutting off either end", async () => {
     const { auth, database, env } = fixture();
-    let captured: { previousNotes: string; transcript: string } | undefined;
+    let captured: GenerateMeetingNotesRequest | undefined;
     const service = new NoteService(env, auth, {
-      generate: vi.fn(async (input: { previousNotes: string; transcript: string }) => {
+      generate: vi.fn(async (input: GenerateMeetingNotesRequest) => {
         captured = input;
         return { notes: "Bounded summary", generatedAt: "2026-08-07T18:01:00.000Z" };
       }),
@@ -438,15 +483,77 @@ describe("NoteService", () => {
     await service.generate(noteId, "request-bounded");
 
     expect(captured?.previousNotes.length).toBeLessThanOrEqual(50_000);
-    expect(captured?.previousNotes).toContain("manual-start");
-    expect(captured?.previousNotes).toContain("manual-end");
     expect(captured?.previousNotes).toContain("live-start");
     expect(captured?.previousNotes).toContain("live-end");
-    expect(captured?.previousNotes).toContain("content omitted");
-    expect(captured?.transcript.length).toBeLessThanOrEqual(80_000);
+    expect(captured?.userNotes).toBe(manualNotes);
+    expect(captured?.mode).toBe("live");
+    expect(captured?.transcript.length).toBeLessThanOrEqual(400_000);
     expect(captured?.transcript).toContain("segment-start");
     expect(captured?.transcript).toContain("segment-end");
-    expect(captured?.transcript).toContain("content omitted");
+    expect(captured?.recentTranscript).toContain("segment-start");
+    expect(captured?.recentTranscript).toContain("segment-end");
+  });
+
+  it("uses full history for live briefings and runs a separate final pass even with no pending segments", async () => {
+    const { auth, env } = fixture();
+    const inputs: GenerateMeetingNotesRequest[] = [];
+    const service = new NoteService(env, auth, {
+      generate: vi.fn(async (input: GenerateMeetingNotesRequest) => {
+        inputs.push(input);
+        return {
+          notes: input.mode === "final" ? "## Action items\n\nNo explicit action items captured." : "## Right now\n\nA live briefing.",
+          generatedAt: input.mode === "final" ? "2026-08-07T18:31:00.000Z" : "2026-08-07T18:30:00.000Z",
+        };
+      }),
+    });
+    await service.create({ id: noteId, title: "Whole meeting", scope: "personal" });
+    await service.update(noteId, {
+      manualNotes: "User context that should reach both passes.",
+      startedAt: "2026-08-07T18:00:00.000Z",
+    });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000230",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: "Maya",
+      text: "The original launch constraint.",
+    });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000231",
+      startOffsetMs: 11 * 60 * 1_000,
+      endOffsetMs: 11 * 60 * 1_000 + 1_000,
+      capturedAt: "2026-08-07T18:11:01.000Z",
+      speakerLabel: "Leo",
+      text: "The current launch question.",
+    });
+
+    await service.generate(noteId, "request-live", "live", "partial");
+    await service.generate(noteId, "request-final", "final", "complete");
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toMatchObject({
+      mode: "live",
+      meetingTitle: "Whole meeting",
+      userNotes: "User context that should reach both passes.",
+      transcriptStatus: "partial",
+    });
+    expect(inputs[0]!.transcript).toContain("The original launch constraint");
+    expect(inputs[0]!.transcript).toContain("The current launch question");
+    expect(inputs[0]!.recentTranscript).not.toContain("The original launch constraint");
+    expect(inputs[0]!.recentTranscript).toContain("The current launch question");
+    expect(inputs[1]).toMatchObject({
+      mode: "final",
+      previousNotes: "",
+      recentTranscript: "",
+      transcriptStatus: "complete",
+    });
+    expect(inputs[1]!.transcript).toContain("The original launch constraint");
+    expect(inputs[1]!.transcript).toContain("The current launch question");
+    await expect(service.get(noteId)).resolves.toMatchObject({
+      liveNotes: "## Action items\n\nNo explicit action items captured.",
+      notesThroughSequence: 2,
+    });
   });
 
   it("deletes the owned resource row when a note is deleted", async () => {
