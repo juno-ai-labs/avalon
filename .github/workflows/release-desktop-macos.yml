@@ -20,9 +20,9 @@ concurrency:
 
 jobs:
   release:
-    # Standard macos-15 is an Apple Silicon runner. Native arm64 execution is
+    # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     environment: desktop-release
     env:
