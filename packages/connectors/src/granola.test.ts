@@ -339,13 +339,15 @@ describe("Granola connector", () => {
         jsonrpc: "2.0",
         id,
         result: {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              email: "person@example.test",
-              workspace: { id: "granola-workspace-1", name: "Example workspace" },
-            }),
-          }],
+          structuredContent: {
+            accountInfo: {
+              emailAddress: "person@example.test",
+              activeWorkspace: {
+                workspaceId: "granola-workspace-1",
+                workspaceName: "Example workspace",
+              },
+            },
+          },
           isError: false,
         },
       });

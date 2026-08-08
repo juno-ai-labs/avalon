@@ -1000,22 +1000,73 @@ function extractAccountInfo(result: Record<string, unknown>): {
       }
     }
   }
-  for (const value of values) {
-    const account = isRecord(value.account) ? value.account : value;
-    const workspace = isRecord(account.workspace)
-      ? account.workspace
-      : isRecord(account.active_workspace)
-        ? account.active_workspace
-        : {};
-    const email = firstString(account, ["email", "account_email", "user_email"]);
-    const workspaceName = firstString(workspace, ["name", "title", "workspace_name"])
-      ?? firstString(account, ["workspace_name", "active_workspace_name"]);
-    const workspaceIdentity = firstString(workspace, ["id", "workspace_id", "slug"])
-      ?? firstString(account, ["workspace_id", "active_workspace_id"])
+  for (const root of values) {
+    const email = findNestedString(root, [
+      "email",
+      "email_address",
+      "account_email",
+      "user_email",
+    ], (candidate) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(candidate));
+    const workspaceValue = findNestedValue(root, [
+      "active_workspace",
+      "current_workspace",
+      "workspace",
+    ]);
+    const workspace = isRecord(workspaceValue) ? workspaceValue : null;
+    const workspaceName = (typeof workspaceValue === "string" ? nonEmptyString(workspaceValue) : null)
+      ?? (workspace ? findNestedString(workspace, ["name", "title", "display_name", "workspace_name"]) : null)
+      ?? findNestedString(root, ["active_workspace_name", "current_workspace_name", "workspace_name"]);
+    const workspaceIdentity = (workspace
+      ? findNestedString(workspace, ["id", "workspace_id", "slug"])
+      : null)
+      ?? findNestedString(root, ["active_workspace_id", "current_workspace_id", "workspace_id"])
       ?? workspaceName;
     if (email && workspaceName && workspaceIdentity) return { email, workspaceName, workspaceIdentity };
   }
   throw new ConnectorError("provider_error", "Granola MCP did not return the connected account and active workspace identity");
+}
+
+function findNestedString(
+  root: Record<string, unknown>,
+  keys: readonly string[],
+  accept: (value: string) => boolean = () => true,
+): string | null {
+  const value = findNestedValue(root, keys);
+  if (typeof value !== "string") return null;
+  const candidate = nonEmptyString(value);
+  return candidate && accept(candidate) ? candidate : null;
+}
+
+function findNestedValue(root: Record<string, unknown>, keys: readonly string[]): unknown {
+  const normalizedKeys = new Set(keys.map(normalizeResponseKey));
+  const queue: Array<{ value: Record<string, unknown>; depth: number }> = [{ value: root, depth: 0 }];
+  let visited = 0;
+  while (queue.length > 0 && visited < 100) {
+    const current = queue.shift()!;
+    visited += 1;
+    for (const [key, value] of Object.entries(current.value)) {
+      if (normalizedKeys.has(normalizeResponseKey(key))) return value;
+    }
+    if (current.depth >= 4) continue;
+    for (const value of Object.values(current.value)) {
+      if (isRecord(value)) queue.push({ value, depth: current.depth + 1 });
+      else if (Array.isArray(value)) {
+        for (const item of value.slice(0, 25)) {
+          if (isRecord(item)) queue.push({ value: item, depth: current.depth + 1 });
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function normalizeResponseKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, "");
+}
+
+function nonEmptyString(value: string): string | null {
+  const normalized = value.trim();
+  return normalized ? normalized : null;
 }
 
 function boundGranolaValue(value: unknown, depth = 0): unknown {
@@ -1097,11 +1148,6 @@ function expiresAt(expiresIn: number | undefined, now: number): string | null {
 
 function isPersonalMcpTool(name: string): name is GranolaMcpTool {
   return Object.prototype.hasOwnProperty.call(personalMcpInputSchemas, name);
-}
-
-function firstString(value: Record<string, unknown>, keys: string[]): string | null {
-  for (const key of keys) if (typeof value[key] === "string" && value[key]) return value[key];
-  return null;
 }
 
 function camelToSnake(value: string): string {
