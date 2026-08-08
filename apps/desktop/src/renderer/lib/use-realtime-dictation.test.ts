@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendDictationTranscript,
   isFinalTranscriptionEvent,
@@ -7,6 +7,21 @@ import {
   useRealtimeDictation,
 } from './use-realtime-dictation';
 import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
+
+const systemAudioBridge = vi.hoisted(() => ({
+  listener: undefined as ((data: ArrayBuffer, sampleRate: number) => void) | undefined,
+  start: vi.fn(),
+  stop: vi.fn(),
+  subscribe: vi.fn(),
+}));
+
+vi.mock('./platform', () => ({
+  desktopBridge: () => ({
+    onMeetingSystemAudioData: systemAudioBridge.subscribe,
+    startMeetingSystemAudioCapture: systemAudioBridge.start,
+    stopMeetingSystemAudioCapture: systemAudioBridge.stop,
+  }),
+}));
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -52,28 +67,13 @@ function mediaStream(trackStop = vi.fn()): MediaStream {
   } as unknown as MediaStream;
 }
 
-function displayMediaStream(
-  audioTrackStop = vi.fn(),
-  videoTrackStop = vi.fn(),
-  hasAudio = true,
-): MediaStream {
-  const audioTrack = { kind: 'audio', readyState: 'live', stop: audioTrackStop };
-  const videoTrack = { kind: 'video', readyState: 'live', stop: videoTrackStop };
-  return {
-    getAudioTracks: () => hasAudio ? [audioTrack] : [],
-    getTracks: () => hasAudio ? [audioTrack, videoTrack] : [videoTrack],
-  } as unknown as MediaStream;
-}
-
 function installMediaDevices(
   getUserMedia: ReturnType<typeof vi.fn>,
-  getDisplayMedia = vi.fn(),
 ): void {
   vi.stubGlobal('navigator', {
     mediaDevices: {
       addEventListener: vi.fn(),
       enumerateDevices: vi.fn(async () => []),
-      getDisplayMedia,
       getUserMedia,
       removeEventListener: vi.fn(),
     },
@@ -81,10 +81,25 @@ function installMediaDevices(
   vi.stubGlobal('WebSocket', FakeWebSocket);
 }
 
+beforeEach(() => {
+  systemAudioBridge.listener = undefined;
+  systemAudioBridge.start.mockReset().mockResolvedValue({ channels: 1, sampleRate: 48_000 });
+  systemAudioBridge.stop.mockReset().mockResolvedValue(undefined);
+  systemAudioBridge.subscribe.mockReset().mockImplementation(
+    (listener: (data: ArrayBuffer, sampleRate: number) => void) => {
+      systemAudioBridge.listener = listener;
+      return vi.fn(() => {
+        if (systemAudioBridge.listener === listener) systemAudioBridge.listener = undefined;
+      });
+    },
+  );
+});
+
 function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: ArrayBuffer } = {}): {
   contextCount: () => number;
   emitAudio: (buffer: ArrayBuffer) => void;
   acknowledgeFlush: () => void;
+  systemAudioMessages: () => unknown[];
 } {
   let createdContexts = 0;
   const workletNodes: FakeAudioWorkletNode[] = [];
@@ -102,7 +117,7 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
     }
     port = {
       onmessage: null as ((event: MessageEvent<{ buffer?: ArrayBuffer; type: string }>) => void) | null,
-      postMessage: vi.fn((message: string) => {
+      postMessage: vi.fn((message: unknown) => {
         if (message !== 'flush') return;
         if (options.flushBuffer) this.port.onmessage?.(new MessageEvent('message', {
           data: { buffer: options.flushBuffer, type: 'audio' },
@@ -136,6 +151,10 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
     emitAudio: (buffer) => workletNodes[0]?.port.onmessage?.(new MessageEvent('message', {
       data: { buffer, type: 'audio' },
     })),
+    systemAudioMessages: () => workletNodes[0]?.port.postMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message) => typeof message === 'object' && message !== null
+        && (message as { type?: unknown }).type === 'system-audio') ?? [],
   };
 }
 
@@ -193,33 +212,70 @@ describe('realtime dictation transcript', () => {
   it('requests and cleans up microphone and computer audio together', async () => {
     const ticket = deferred<{ url: string; ticket: string }>();
     const microphoneStop = vi.fn();
-    const computerAudioStop = vi.fn();
-    const displayVideoStop = vi.fn();
-    const getDisplayMedia = vi.fn(async () => displayMediaStream(computerAudioStop, displayVideoStop));
-    installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)), getDisplayMedia);
+    installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)));
     const api = { getTranscriptionSocketTicket: vi.fn(() => ticket.promise) };
     const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
 
     let start!: Promise<void>;
     act(() => { start = result.current.start(); });
-    await waitFor(() => expect(getDisplayMedia).toHaveBeenCalledOnce());
+    await waitFor(() => expect(systemAudioBridge.start).toHaveBeenCalledOnce());
     await act(async () => result.current.stop());
     ticket.resolve({ url: 'wss://example.test/system-audio', ticket: 'ticket' });
     await act(async () => start);
 
-    expect(getDisplayMedia).toHaveBeenCalledWith(expect.objectContaining({ audio: true, video: expect.any(Object) }));
     expect(microphoneStop).toHaveBeenCalled();
-    expect(computerAudioStop).toHaveBeenCalled();
-    expect(displayVideoStop).toHaveBeenCalled();
+    expect(systemAudioBridge.subscribe).toHaveBeenCalledOnce();
+    expect(systemAudioBridge.stop).toHaveBeenCalledOnce();
   });
 
-  it('keeps recording the microphone when display capture returns no computer audio track', async () => {
+  it('drains native computer audio before flushing and committing the final transcript', async () => {
+    const nativeDrain = deferred<void>();
+    systemAudioBridge.stop.mockReturnValue(nativeDrain.promise);
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audioGraph = installAudioGraph({ flushBuffer: new ArrayBuffer(480) });
+    const api = {
+      getTranscriptionSocketTicket: vi.fn(async () => ({
+        url: 'wss://example.test/native-drain',
+        ticket: 'ticket',
+      })),
+    };
+    const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
+
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'transcription_session.updated' }),
+    })));
+    await act(async () => start);
+
+    let stop!: Promise<void>;
+    act(() => { stop = result.current.stop(); });
+    await waitFor(() => expect(systemAudioBridge.stop).toHaveBeenCalledOnce());
+    act(() => systemAudioBridge.listener?.(new Float32Array([0.25, -0.25]).buffer, 48_000));
+    expect(audioGraph.systemAudioMessages()).toHaveLength(1);
+    expect(socket.send).not.toHaveBeenCalledWith(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+
+    nativeDrain.resolve(undefined);
+    await waitFor(() => expect(socket.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: 'input_audio_buffer.commit' }),
+    ));
+    act(() => socket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        transcript: 'Final native audio was preserved.',
+      }),
+    })));
+    await act(async () => stop);
+
+    expect(result.current.state).toBe('idle');
+  });
+
+  it('keeps recording the microphone when native computer audio is unavailable', async () => {
     const microphoneStop = vi.fn();
-    const displayTrackStop = vi.fn();
-    installMediaDevices(
-      vi.fn(async () => mediaStream(microphoneStop)),
-      vi.fn(async () => displayMediaStream(vi.fn(), displayTrackStop, false)),
-    );
+    systemAudioBridge.start.mockRejectedValue(new Error('Computer audio was not available.'));
+    installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)));
     const audioGraph = installAudioGraph();
     const api = {
       getTranscriptionSocketTicket: vi.fn(async () => ({
@@ -240,7 +296,7 @@ describe('realtime dictation transcript', () => {
     expect(result.current.state).toBe('listening');
     expect(result.current.error).toBeUndefined();
     expect(result.current.warning).toMatch(/recording microphone only.*computer audio was not available/i);
-    expect(displayTrackStop).toHaveBeenCalled();
+    expect(systemAudioBridge.stop).not.toHaveBeenCalled();
     expect(microphoneStop).not.toHaveBeenCalled();
     act(() => audioGraph.emitAudio(new ArrayBuffer(4_800)));
     expect(FakeWebSocket.instances[0]!.send).toHaveBeenCalledWith(expect.stringContaining('input_audio_buffer.append'));
@@ -249,10 +305,8 @@ describe('realtime dictation transcript', () => {
 
   it('keeps recording the microphone when computer-audio permission is denied', async () => {
     const microphoneStop = vi.fn();
-    installMediaDevices(
-      vi.fn(async () => mediaStream(microphoneStop)),
-      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
-    );
+    systemAudioBridge.start.mockRejectedValue(new Error('Computer audio access is blocked.'));
+    installMediaDevices(vi.fn(async () => mediaStream(microphoneStop)));
     const audioGraph = installAudioGraph();
     const api = {
       getTranscriptionSocketTicket: vi.fn(async () => ({
@@ -280,11 +334,7 @@ describe('realtime dictation transcript', () => {
   });
 
   it('keeps recording computer audio when microphone permission is denied', async () => {
-    const computerAudioStop = vi.fn();
-    installMediaDevices(
-      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
-      vi.fn(async () => displayMediaStream(computerAudioStop)),
-    );
+    installMediaDevices(vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }));
     const audioGraph = installAudioGraph();
     const api = {
       getTranscriptionSocketTicket: vi.fn(async () => ({
@@ -305,17 +355,15 @@ describe('realtime dictation transcript', () => {
     expect(result.current.state).toBe('listening');
     expect(result.current.error).toBeUndefined();
     expect(result.current.warning).toMatch(/recording computer audio only.*microphone access is blocked/i);
-    expect(computerAudioStop).not.toHaveBeenCalled();
+    expect(systemAudioBridge.stop).not.toHaveBeenCalled();
     act(() => audioGraph.emitAudio(new ArrayBuffer(4_800)));
     expect(FakeWebSocket.instances[0]!.send).toHaveBeenCalledWith(expect.stringContaining('input_audio_buffer.append'));
     unmount();
   });
 
   it('reports an error without opening a socket when all requested audio inputs are denied', async () => {
-    installMediaDevices(
-      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
-      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
-    );
+    systemAudioBridge.start.mockRejectedValue(new Error('Computer audio access is blocked.'));
+    installMediaDevices(vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }));
     const api = {
       getTranscriptionSocketTicket: vi.fn(async () => ({
         url: 'wss://example.test/all-audio-denied',
