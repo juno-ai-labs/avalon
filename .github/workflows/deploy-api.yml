@@ -55,6 +55,10 @@ on:
 permissions:
   contents: read
 
+# Deployments never overlap: GitHub holds at most one pending run per group, so
+# a burst of merges collapses to "the newest commit deploys" and the superseded
+# pending runs are dropped. cancel-in-progress stays false so a run that is
+# already applying migrations is never killed halfway through.
 concurrency:
   group: deploy-api
   cancel-in-progress: false
@@ -73,10 +77,12 @@ jobs:
       APPLY_MIGRATIONS: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_migrations }}
 
     steps:
+      # github.sha, not github.ref: a run that waited behind another must deploy
+      # the commit that triggered it, not whatever main has become since.
       - name: Check out the revision being deployed
         uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.sha }}
 
       - name: Require Cloudflare deployment credentials
         run: |
