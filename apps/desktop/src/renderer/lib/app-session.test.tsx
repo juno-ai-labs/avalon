@@ -550,6 +550,7 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(rawUrl));
 
