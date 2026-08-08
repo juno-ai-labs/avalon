@@ -279,6 +279,58 @@ describe('realtime dictation transcript', () => {
     unmount();
   });
 
+  it('keeps recording computer audio when microphone permission is denied', async () => {
+    const computerAudioStop = vi.fn();
+    installMediaDevices(
+      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
+      vi.fn(async () => displayMediaStream(computerAudioStop)),
+    );
+    const audioGraph = installAudioGraph();
+    const api = {
+      getTranscriptionSocketTicket: vi.fn(async () => ({
+        url: 'wss://example.test/microphone-denied',
+        ticket: 'ticket',
+      })),
+    };
+    const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
+
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => FakeWebSocket.instances[0]!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'transcription_session.updated' }),
+    })));
+    await act(async () => start);
+
+    expect(result.current.state).toBe('listening');
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.warning).toMatch(/recording computer audio only.*microphone access is blocked/i);
+    expect(computerAudioStop).not.toHaveBeenCalled();
+    act(() => audioGraph.emitAudio(new ArrayBuffer(4_800)));
+    expect(FakeWebSocket.instances[0]!.send).toHaveBeenCalledWith(expect.stringContaining('input_audio_buffer.append'));
+    unmount();
+  });
+
+  it('reports an error without opening a socket when all requested audio inputs are denied', async () => {
+    installMediaDevices(
+      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
+      vi.fn(async () => { throw new DOMException('Permission denied', 'NotAllowedError'); }),
+    );
+    const api = {
+      getTranscriptionSocketTicket: vi.fn(async () => ({
+        url: 'wss://example.test/all-audio-denied',
+        ticket: 'ticket',
+      })),
+    };
+    const { result } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
+
+    await act(async () => result.current.start());
+
+    expect(result.current.state).toBe('error');
+    expect(result.current.error).toMatch(/no audio input is available/i);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
   it('commits transcript segments without replacing the socket or audio capture', async () => {
     const getUserMedia = vi.fn(async () => mediaStream());
     installMediaDevices(getUserMedia);

@@ -2491,6 +2491,18 @@ pre {
 }
 .meeting-control-status > [role='alert'] { color: var(--red); }
 .meeting-control-warning { color: var(--yellow); }
+.meeting-permission-settings {
+  background: transparent;
+  border: 0;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font: inherit;
+  margin-left: 8px;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.meeting-permission-settings:hover { color: var(--ink); }
 .meeting-controls .meeting-start-button,
 .meeting-controls .meeting-stop-button {
   border-radius: 999px;

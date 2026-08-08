@@ -27,6 +27,7 @@ import {
   safeStorage,
   session as electronSession,
   shell,
+  systemPreferences,
   webContents as electronWebContents,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
@@ -35,6 +36,7 @@ import type {
   DesktopApplicationSettings,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
+  MeetingAudioPermissionKind,
   RuntimeConfig,
 } from '../common/desktop';
 import {
@@ -69,6 +71,11 @@ import {
   allowsTrustedDisplayCapturePermission,
   allowsTrustedMeetingDisplayCapture,
 } from './media-permission';
+import {
+  meetingAudioPermissions,
+  meetingAudioSettingsUrl,
+  prepareMeetingAudioPermissions,
+} from './meeting-audio-permission';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -1052,6 +1059,28 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!isMeetingWindowContents(event.sender)) {
+    throw new Error('Only a meeting-notes window can request recording permissions');
+  }
+}
+
+function meetingAudioPermissionDependencies() {
+  return {
+    askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
+    getMediaAccessStatus: (permission: 'microphone' | 'screen') =>
+      systemPreferences.getMediaAccessStatus(permission),
+    platform: process.platform,
+    requestSystemAudioAccess: async () => {
+      await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { height: 0, width: 0 },
+      });
+    },
+  };
+}
+
 function registerIpc(): void {
   ipcMain.handle('runtime:get-config', (event) => {
     assertTrustedIpcSender(event);
@@ -1186,6 +1215,23 @@ function registerIpc(): void {
       throw new Error('Invalid note ID');
     }
     await createMeetingWindow(rawNoteId as string | undefined);
+  });
+  ipcMain.handle('meeting-audio:get-permissions', (event) => {
+    assertMeetingIpcSender(event);
+    return meetingAudioPermissions(meetingAudioPermissionDependencies());
+  });
+  ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
+    assertMeetingIpcSender(event);
+    return prepareMeetingAudioPermissions(meetingAudioPermissionDependencies());
+  });
+  ipcMain.handle('meeting-audio:open-settings', async (event, rawPermission: unknown) => {
+    assertMeetingIpcSender(event);
+    if (rawPermission !== 'microphone' && rawPermission !== 'system-audio') {
+      throw new Error('Invalid meeting audio permission');
+    }
+    const url = meetingAudioSettingsUrl(rawPermission as MeetingAudioPermissionKind, process.platform);
+    if (!url) throw new Error('Open this platform’s privacy settings to change recording access.');
+    await shell.openExternal(url);
   });
   ipcMain.handle('system:close-meeting-notes', (event) => {
     assertTrustedIpcSender(event);
