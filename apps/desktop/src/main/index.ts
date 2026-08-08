@@ -109,6 +109,7 @@ import {
   legacyPackagedUserDataDirectory,
   userDataDirectoryForLaunch,
 } from './user-data-path';
+import { configureSystemAudioCapture } from './system-audio-capture';
 
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const executeFile = promisify(execFile);
@@ -123,6 +124,10 @@ const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
+// Chromium feature selection is fixed when Electron starts. Configure macOS
+// system-audio capture before app.whenReady() or any renderer is created.
+configureSystemAudioCapture(app.commandLine, process.platform);
+
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
 }
@@ -130,6 +135,7 @@ function isUuid(value: string): boolean {
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 const meetingWindows = new Set<BrowserWindow>();
+const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
 let rendererReady = false;
 let inMemoryAuth: StoredAuth | null = null;
 let inMemorySession: WireSession | null = null;
@@ -153,6 +159,12 @@ function avalonWindows(): BrowserWindow[] {
 function isMeetingWindowContents(contents: WebContents | null): boolean {
   if (!contents) return false;
   return [...meetingWindows].some((window) => !window.isDestroyed() && window.webContents === contents);
+}
+
+function forceCloseMeetingWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  meetingWindowsAllowedToClose.add(window);
+  window.close();
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -882,7 +894,7 @@ async function logout(): Promise<void> {
       failures.push(error);
     }
     settingsWindow?.close();
-    for (const window of meetingWindows) window.close();
+    for (const window of meetingWindows) forceCloseMeetingWindow(window);
     if (stored) {
       try {
         const apiBaseUrl = apiBaseForAuth(stored);
@@ -1174,6 +1186,12 @@ function registerIpc(): void {
       throw new Error('Invalid note ID');
     }
     await createMeetingWindow(rawNoteId as string | undefined);
+  });
+  ipcMain.handle('system:close-meeting-notes', (event) => {
+    assertTrustedIpcSender(event);
+    const meetingWindow = [...meetingWindows].find((window) => window.webContents === event.sender);
+    if (!meetingWindow) throw new Error('Only a meeting-notes window can close itself');
+    forceCloseMeetingWindow(meetingWindow);
   });
 }
 
@@ -1495,6 +1513,11 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
   installWindowDiagnostics(meetingWindow, 'meeting');
   meetingWindow.setMenuBarVisibility(false);
   meetingWindow.once('ready-to-show', () => meetingWindow.show());
+  meetingWindow.on('close', (event) => {
+    if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
+    event.preventDefault();
+    meetingWindow.webContents.send('meeting:close-requested');
+  });
   meetingWindow.on('closed', () => meetingWindows.delete(meetingWindow));
   try {
     await loadRenderer(
@@ -1503,7 +1526,7 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
       'meeting',
     );
   } catch (error) {
-    meetingWindow.close();
+    forceCloseMeetingWindow(meetingWindow);
     throw error;
   }
 }

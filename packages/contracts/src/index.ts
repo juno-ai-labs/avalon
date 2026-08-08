@@ -286,7 +286,10 @@ export const AppendNoteTranscriptSegmentRequestSchema = z.object({
   path: ["endOffsetMs"],
 });
 
-export const GenerateNoteNotesRequestSchema = z.object({}).strict();
+export const GenerateNoteNotesRequestSchema = z.object({
+  mode: z.enum(["live", "final"]).default("live"),
+  transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+}).strict();
 
 export const ConnectionSchema = z.object({
   id: IdSchema,
@@ -928,8 +931,15 @@ export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export const GenerateMeetingNotesRequestSchema = z.object({
-  transcript: z.string().trim().min(1).max(80_000),
-  previousNotes: z.string().max(50_000).default("")
+  mode: z.enum(["live", "final"]).default("live"),
+  meetingTitle: z.string().trim().min(1).max(180).default("Meeting notes"),
+  transcript: z.string().trim().min(1).max(400_000),
+  recentTranscript: z.string().max(100_000).default(""),
+  previousNotes: z.string().max(50_000).default(""),
+  userNotes: z.string().max(200_000).default(""),
+  startedAt: TimestampSchema.nullable().default(null),
+  endedAt: TimestampSchema.nullable().default(null),
+  transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
 }).strict();
 
 export const MeetingNotesResponseSchema = z.object({

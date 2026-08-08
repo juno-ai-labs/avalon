@@ -2490,6 +2490,7 @@ pre {
   white-space: nowrap;
 }
 .meeting-control-status > [role='alert'] { color: var(--red); }
+.meeting-control-warning { color: var(--yellow); }
 .meeting-controls .meeting-start-button,
 .meeting-controls .meeting-stop-button {
   border-radius: 999px;
@@ -2505,7 +2506,9 @@ pre {
   .meeting-layout { padding: 20px 18px 16px; }
   .meeting-titlebar { padding-right: 18px; }
   .meeting-titlebar > p { display: none; }
-  .meeting-control-status { visibility: hidden; }
+  .meeting-controls { gap: 12px; grid-template-columns: minmax(0, 1fr) auto; }
+  .meeting-controls > :last-child { display: none; }
+  .meeting-control-status > span { display: block; line-height: 1.3; white-space: normal; }
 }
 
 @media (max-width: 560px) {
