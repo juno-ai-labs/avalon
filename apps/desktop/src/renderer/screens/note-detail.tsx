@@ -63,8 +63,10 @@ export function NoteDetailScreen(): React.JSX.Element {
             ) : (
               <div className="note-detail-empty">
                 <NotebookText aria-hidden="true" size={22} />
-                <strong>{note.data.recordingStatus === 'recording' ? 'Summary is being prepared' : 'No summary yet'}</strong>
-                <p>Avalon’s AI summary will appear here as the note is recorded.</p>
+                <strong>{note.data.recordingStatus === 'recording' ? 'Control Tower is preparing your briefing' : 'No summary yet'}</strong>
+                <p>{note.data.recordingStatus === 'recording'
+                  ? 'Control Tower updates as the conversation develops.'
+                  : 'Avalon’s final meeting summary will appear here.'}</p>
               </div>
             )}
           </article>

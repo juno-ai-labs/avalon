@@ -13,8 +13,10 @@ import { MeetingNotesService } from "./meeting-notes-service";
 import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
 
 const MAX_NOTES_CONTEXT_CHARACTERS = 50_000;
-const MAX_TRANSCRIPT_CONTEXT_CHARACTERS = 80_000;
-const OMITTED_CONTEXT_MARKER = "\n\n[… content omitted to fit live-notes context …]\n\n";
+const MAX_TRANSCRIPT_CONTEXT_CHARACTERS = 400_000;
+const MAX_RECENT_TRANSCRIPT_CHARACTERS = 100_000;
+const RECENT_TRANSCRIPT_WINDOW_MS = 10 * 60 * 1_000;
+const OMITTED_CONTEXT_MARKER = "\n\n[… middle content omitted to fit model context …]\n\n";
 
 type MeetingNotesGenerator = Pick<MeetingNotesService, "generate">;
 
@@ -255,31 +257,56 @@ export class NoteService {
     return toSegment(created);
   }
 
-  async generate(id: string, requestId: string): Promise<NoteDetail> {
+  async generate(
+    id: string,
+    requestId: string,
+    mode: "live" | "final" = "live",
+    transcriptStatus: "complete" | "partial" = mode === "final" ? "complete" : "partial",
+  ): Promise<NoteDetail> {
+    return this.generateAttempt(id, requestId, mode, transcriptStatus, false);
+  }
+
+  private async generateAttempt(
+    id: string,
+    requestId: string,
+    mode: "live" | "final",
+    transcriptStatus: "complete" | "partial",
+    retriedFinalConflict: boolean,
+  ): Promise<NoteDetail> {
     const note = await this.requireNote(id, true);
     const startingSequence = Number(note.notes_through_sequence);
     const rows = await this.env.DB.prepare(
       `SELECT * FROM note_transcript_segments
-       WHERE note_id = ? AND sequence_number > ?
+       WHERE note_id = ?
        ORDER BY sequence_number ASC`,
-    ).bind(id, startingSequence).all<SegmentRow>();
-    const { pending, transcript } = transcriptContext(rows.results ?? []);
-    if (pending.length === 0) {
+    ).bind(id).all<SegmentRow>();
+    const allSegments = rows.results ?? [];
+    const pending = allSegments.filter((segment) => Number(segment.sequence_number) > startingSequence);
+    if (allSegments.length === 0 || (mode === "live" && pending.length === 0)) {
       await this.materialize(id);
       return this.get(id);
     }
+    const completeTranscript = boundedTranscript(allSegments, MAX_TRANSCRIPT_CONTEXT_CHARACTERS);
 
     const generated = await this.meetingNotesGenerator.generate({
-      previousNotes: previousNotesContext(note.manual_notes_markdown, note.live_notes_markdown),
-      transcript,
+      mode,
+      meetingTitle: note.title,
+      previousNotes: mode === "live" ? elideMiddle(note.live_notes_markdown.trim(), MAX_NOTES_CONTEXT_CHARACTERS) : "",
+      userNotes: note.manual_notes_markdown,
+      transcript: completeTranscript.transcript,
+      recentTranscript: mode === "live" ? recentTranscriptContext(allSegments) : "",
+      startedAt: note.started_at,
+      endedAt: mode === "final" ? note.ended_at ?? nowIso() : note.ended_at,
+      transcriptStatus: completeTranscript.omitted ? "partial" : transcriptStatus,
     }, requestId);
-    const throughSequence = Number(pending.at(-1)!.sequence_number);
+    const throughSequence = Number(allSegments.at(-1)!.sequence_number);
     const update = await this.env.DB.prepare(
       `UPDATE notes
        SET live_notes_markdown = ?, notes_through_sequence = ?, generated_at = ?,
            last_activity_at = ?, updated_at = ?
        WHERE id = ? AND workspace_id = ? AND owner_user_id = ?
-         AND notes_through_sequence = ?`,
+         AND notes_through_sequence = ?
+         AND ((generated_at IS NULL AND ? IS NULL) OR generated_at = ?)`,
     ).bind(
       generated.notes,
       throughSequence,
@@ -290,11 +317,19 @@ export class NoteService {
       this.auth.workspaceId,
       this.auth.userId,
       startingSequence,
+      note.generated_at,
+      note.generated_at,
     ).run();
     // Another window may have summarized a newer segment range while this
     // inference was running. Discard this stale result rather than rewinding
     // the cursor or overwriting the newer notes.
     if (!update.meta.changes) {
+      // A final whole-meeting summary must not be silently lost to a live
+      // Control Tower refresh. Re-read the complete transcript and retry once;
+      // a second conflict means another result is newer and should win.
+      if (mode === "final" && !retriedFinalConflict) {
+        return this.generateAttempt(id, requestId, mode, transcriptStatus, true);
+      }
       await this.materialize(id);
       return this.get(id);
     }
@@ -440,46 +475,19 @@ function elideMiddle(value: string, maximum: number): string {
   return `${value.slice(0, headLength)}${OMITTED_CONTEXT_MARKER}${value.slice(value.length - tailLength)}`;
 }
 
-function previousNotesContext(manualNotes: string, liveNotes: string): string {
-  const sections = [
-    manualNotes.trim() ? { label: "User-written notes (preserve as authoritative context):", value: manualNotes.trim() } : null,
-    liveNotes.trim() ? { label: "Existing generated notes:", value: liveNotes.trim() } : null,
-  ].filter((section): section is { label: string; value: string } => section !== null);
-  if (sections.length === 0) return "";
-  const fixedCharacters = sections.reduce((total, section) => total + section.label.length + 1, 0)
-    + Math.max(0, sections.length - 1) * 2;
-  const contentBudget = Math.max(0, MAX_NOTES_CONTEXT_CHARACTERS - fixedCharacters);
-  const perSection = Math.floor(contentBudget / sections.length);
-  const budgets = sections.map((section) => Math.min(section.value.length, perSection));
-  let remainder = contentBudget - budgets.reduce((total, budget) => total + budget, 0);
-  for (let index = 0; index < sections.length && remainder > 0; index += 1) {
-    const section = sections[index]!;
-    const available = section.value.length - budgets[index]!;
-    const added = Math.min(available, remainder);
-    budgets[index] = budgets[index]! + added;
-    remainder -= added;
-  }
-  return sections.map((section, index) => {
-    return `${section.label}\n${elideMiddle(section.value, budgets[index]!)}`;
-  }).join("\n\n");
+function boundedTranscript(rows: SegmentRow[], maximum: number): { omitted: boolean; transcript: string } {
+  const transcript = rows.map(timestampedSegment).join("\n\n");
+  return {
+    omitted: transcript.length > maximum,
+    transcript: elideMiddle(transcript, maximum),
+  };
 }
 
-function transcriptContext(rows: SegmentRow[]): { pending: SegmentRow[]; transcript: string } {
-  const pending: SegmentRow[] = [];
-  const formatted: string[] = [];
-  let characters = 0;
-  for (const segment of rows) {
-    const value = timestampedSegment(segment);
-    const separatorCharacters = pending.length === 0 ? 0 : 2;
-    if (pending.length > 0 && characters + separatorCharacters + value.length > MAX_TRANSCRIPT_CONTEXT_CHARACTERS) break;
-    pending.push(segment);
-    const bounded = pending.length === 1
-      ? elideMiddle(value, MAX_TRANSCRIPT_CONTEXT_CHARACTERS)
-      : value;
-    formatted.push(bounded);
-    characters += separatorCharacters + bounded.length;
-  }
-  return { pending, transcript: formatted.join("\n\n") };
+function recentTranscriptContext(rows: SegmentRow[]): string {
+  const latestOffset = Math.max(...rows.map((segment) => Number(segment.end_offset_ms)));
+  const windowStartsAt = Math.max(0, latestOffset - RECENT_TRANSCRIPT_WINDOW_MS);
+  const recent = rows.filter((segment) => Number(segment.end_offset_ms) >= windowStartsAt);
+  return boundedTranscript(recent, MAX_RECENT_TRANSCRIPT_CHARACTERS).transcript;
 }
 
 function plainNoteMarkdown(title: string, manualNotes: string, notes: string, segments: SegmentRow[]): string {
@@ -488,7 +496,7 @@ function plainNoteMarkdown(title: string, manualNotes: string, notes: string, se
     `# ${title}`,
     "## Notes",
     manualNotes.trim() || "_No written notes yet._",
-    "## Live notes",
+    "## AI notes",
     notes.trim() || "_No live notes yet._",
     "## Transcript",
     transcript || "_No transcript yet._",
@@ -502,7 +510,7 @@ function modelNoteMarkdown(title: string, manualNotes: string, notes: string, se
     `# ${title}`,
     "## User-written notes",
     manualNotes.trim() || "_No written notes yet._",
-    "## Generated live notes",
+    "## AI-generated meeting brief",
     notes.trim() || "_No live notes yet._",
     "## Timestamped transcript",
     transcript || "_No transcript yet._",
