@@ -45,6 +45,10 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Workspace `test` does not reach the repository-root release scripts.
+      - name: Test the release and deployment scripts
+        run: pnpm test:scripts
+
       # The same dry-run validation the deployment workflow runs, so a broken
       # Worker configuration fails on the pull request instead of at release.
       - name: Validate both Wrangler configurations with dry-run builds
