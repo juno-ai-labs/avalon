@@ -261,7 +261,17 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 
 - `.github/workflows/ci.yml` runs on every pull request and on `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history.
 - `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
-- `.github/workflows/release-desktop-macos.yml` runs on a `v*` tag: it guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input.
+- `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs on a `v*` tag push, on a manual dispatch naming an existing tag, and automatically on a merge to `main` that changes the workspace version.
+
+#### Releasing the desktop app by bumping the version
+
+Every published payload is immutable under `v<version>`, so a version can only be released once. The workspace version is therefore the ship signal: a merge to `main` that changes `version` in `package.json` and `apps/desktop/package.json` releases that version, and a merge that leaves the version alone never does. `apps/desktop/scripts/plan-release.mjs` makes that decision on a cheap runner before any macOS runner is claimed, and refuses to release a version whose tag already exists.
+
+This inverts the older convention of recording a release and bumping to the next version afterward. Bump the version in the change you intend to ship; do not pre-bump at the start of a cycle, because the merge that carries the bump is the release.
+
+The tag is created locally so the existing guards can verify it against HEAD, and is pushed only after the payloads are published and the channel is promoted. A failed release leaves no tag, so the same version can be retried by re-running the workflow or by merging a fix. Pushing the tag with `GITHUB_TOKEN` deliberately does not start another run.
+
+To release a version whose bump has already merged — including `1.33.0`, which was pre-bumped under the old convention — dispatch the workflow against the tag, or bump to the next version.
 
 Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API deployment, and the existing `desktop-release` environment for the macOS release. Worker secrets are never held by Actions; they are set per region with Wrangler.
 
