@@ -269,6 +269,8 @@ Every published payload is immutable under `v<version>`, so a version can only b
 
 This inverts the older convention of recording a release and bumping to the next version afterward. Bump the version in the change you intend to ship; do not pre-bump at the start of a cycle, because the merge that carries the bump is the release.
 
+The API and the desktop app are one release train in a fixed order: the Workers deploy first, the signed app ships against them second. A merge that changes both triggers the two workflows simultaneously, and GitHub's concurrency model cannot order runs of different workflows, so the release workflow waits for any in-flight or queued `deploy-api.yml` run before it claims a macOS runner. The dependency is one-directional — an API deployment never waits for a desktop release — which is what keeps it deadlock-free. If an API deployment is stuck, the release fails after 45 minutes rather than publishing ahead of it.
+
 The tag is created locally so the existing guards can verify it against HEAD, and is pushed only after the payloads are published and the channel is promoted. A failed release leaves no tag, so the same version can be retried by re-running the workflow or by merging a fix. Pushing the tag with `GITHUB_TOKEN` deliberately does not start another run.
 
 To release a version whose bump has already merged — including `1.33.0`, which was pre-bumped under the old convention — dispatch the workflow against the tag, or bump to the next version.

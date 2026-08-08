@@ -24,6 +24,18 @@ test('the macOS runner is only claimed once the plan job has approved a release'
   assert.match(workflow, /^ {2}release:\n {4}needs: plan\n {4}if: needs\.plan\.outputs\.should_release == 'true'$/mu);
 });
 
+test('the app is never released ahead of an in-flight API deployment', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const releaseJobStart = workflow.indexOf('\n  release:');
+  const waitStep = workflow.indexOf('scripts/await-api-deployment.mjs');
+
+  assert.notEqual(waitStep, -1, 'Release workflow must wait for API deployments');
+  // The wait belongs to the planning job, so a queued release does not hold a
+  // macOS runner idle while the Workers deploy.
+  assert.ok(waitStep < releaseJobStart, 'The API wait must run before the macOS release job');
+  assert.match(workflow, /^ {4}permissions:\n {6}contents: read\n {6}actions: read$/mu);
+});
+
 test('tag pushes are never filtered by path', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const trigger = workflow.match(/^on:\n(?<body>(?:^(?: {2}|$).*\n)+)/mu)?.groups?.body;
