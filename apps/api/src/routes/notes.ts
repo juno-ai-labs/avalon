@@ -44,8 +44,13 @@ noteRoutes.post(
   "/:id/generate",
   zValidator("param", idParam),
   zValidator("json", GenerateNoteNotesRequestSchema),
-  async (c) => c.json(await new NoteService(c.env, getAuth(c)).generate(
-    c.req.valid("param").id,
-    c.get("requestId"),
-  )),
+  async (c) => {
+    const input = c.req.valid("json");
+    return c.json(await new NoteService(c.env, getAuth(c)).generate(
+      c.req.valid("param").id,
+      c.get("requestId"),
+      input.mode,
+      input.transcriptStatus,
+    ));
+  },
 );
