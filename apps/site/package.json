@@ -11,6 +11,9 @@
     "test": "vitest run",
     "deploy": "AVALON_RELEASE_DISCOVERY=1 pnpm build && wrangler deploy --config wrangler.jsonc"
   },
+  "dependencies": {
+    "@avalon/contracts": "workspace:*"
+  },
   "devDependencies": {
     "typescript": "catalog:",
     "vite": "latest",
