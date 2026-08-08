@@ -508,6 +508,7 @@ export function useRealtimeDictation(
     onTranscriptRef.current('');
     transition('requesting');
     try {
+      let microphoneWarning: string | undefined;
       let systemAudioWarning: string | undefined;
       const registerStream = (kind: 'microphone' | 'system') => (stream: MediaStream): MediaStream => {
         attempt.streams.push(stream);
@@ -541,7 +542,10 @@ export function useRealtimeDictation(
                 : { deviceId: { exact: selectedDeviceId } }
             ),
           },
-        }).then(registerStream('microphone')),
+        }).then(registerStream('microphone')).catch((microphoneError: unknown) => {
+          microphoneWarning = `Recording computer audio only. ${captureErrorMessage(microphoneError)}`;
+          return undefined;
+        }),
         ...(options.includeSystemAudio ? [requestSystemAudioStream()
           .then(registerStream('system'))
           .catch((systemAudioError: unknown) => {
@@ -553,9 +557,16 @@ export function useRealtimeDictation(
         api.getTranscriptionSocketTicket(),
         streamsPromise,
       ]);
-      if (attemptRef.current !== attempt || attempt.streams.length === 0) {
+      if (attemptRef.current !== attempt) {
         await cleanupAttempt(attempt);
         return;
+      }
+      if (attempt.streams.length === 0) {
+        throw new Error([
+          'No audio input is available.',
+          microphoneWarning?.replace(/^Recording computer audio only\.\s*/u, ''),
+          systemAudioWarning?.replace(/^Recording microphone only\.\s*/u, ''),
+        ].filter(Boolean).join(' '));
       }
       transition('connecting');
       const socket = new WebSocket(ticket.url);
@@ -635,7 +646,8 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
         return;
       }
-      if (systemAudioWarning) setWarning(systemAudioWarning);
+      const captureWarning = [microphoneWarning, systemAudioWarning].filter(Boolean).join(' ');
+      if (captureWarning) setWarning(captureWarning);
       transition('listening');
       void refreshDevices();
     } catch (caught) {
