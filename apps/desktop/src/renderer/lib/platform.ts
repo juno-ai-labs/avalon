@@ -320,6 +320,15 @@ const browserBridge: AvalonDesktopBridge = {
   async prepareMeetingAudioPermissions() {
     return { microphone: 'unknown', systemAudio: 'unknown' };
   },
+  async startMeetingSystemAudioCapture() {
+    throw new Error('Native computer audio capture is available only in the Avalon desktop app.');
+  },
+  async stopMeetingSystemAudioCapture() {
+    // No native capture exists in a browser tab.
+  },
+  onMeetingSystemAudioData() {
+    return () => undefined;
+  },
   async openMeetingAudioSettings() {
     // Browser permission recovery is owned by the browser chrome rather than
     // an operating-system settings pane Avalon can open directly.
