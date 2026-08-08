@@ -30,6 +30,13 @@ const state = vi.hoisted(() => ({
   closeMeetingNotes: vi.fn(async () => undefined),
   closeRequested: undefined as undefined | (() => void),
   copyText: vi.fn(),
+  getMeetingAudioPermissions: vi.fn(),
+  openMeetingAudioSettings: vi.fn(async () => undefined),
+  permissions: { microphone: 'granted', systemAudio: 'granted' } as {
+    microphone: 'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown';
+    systemAudio: 'not-determined' | 'granted' | 'denied' | 'restricted' | 'unknown';
+  },
+  prepareMeetingAudioPermissions: vi.fn(),
   commit: vi.fn(async () => ''),
   dictationState: 'idle' as 'idle' | 'requesting' | 'connecting' | 'listening' | 'transcribing' | 'finalizing' | 'error',
   dictationWarning: undefined as string | undefined,
@@ -53,6 +60,9 @@ vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     closeMeetingNotes: state.closeMeetingNotes,
     copyText: state.copyText,
+    getMeetingAudioPermissions: state.getMeetingAudioPermissions,
+    openMeetingAudioSettings: state.openMeetingAudioSettings,
+    prepareMeetingAudioPermissions: state.prepareMeetingAudioPermissions,
     onMeetingCloseRequested: (listener: () => void) => {
       state.closeRequested = listener;
       return () => {
@@ -117,6 +127,9 @@ describe('MeetingNotesScreen', () => {
     state.dictationOptions = undefined;
     state.dictationState = 'idle';
     state.dictationWarning = undefined;
+    state.permissions = { microphone: 'granted', systemAudio: 'granted' };
+    state.getMeetingAudioPermissions.mockImplementation(async () => state.permissions);
+    state.prepareMeetingAudioPermissions.mockImplementation(async () => state.permissions);
     state.userId = '00000000-0000-4000-8000-000000000114';
     const detail = noteDetail();
     state.api.createNote.mockResolvedValue(detail);
@@ -210,6 +223,25 @@ describe('MeetingNotesScreen', () => {
     ));
     expect(screen.getByRole('heading', { name: 'Control Tower' })).toBeVisible();
     expect(await screen.findByRole('heading', { name: 'Summary' })).toBeVisible();
+  });
+
+  it('waits for the native permission decision before marking the note as recording', async () => {
+    const permissionDecision = deferred<typeof state.permissions>();
+    state.prepareMeetingAudioPermissions.mockImplementationOnce(() => permissionDecision.promise);
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+
+    expect(await screen.findByText('Requesting audio access…')).toBeVisible();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.api.updateNote).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ recordingStatus: 'recording' }),
+    );
+
+    await act(async () => permissionDecision.resolve({ microphone: 'granted', systemAudio: 'granted' }));
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'Stop recording' })).toBeVisible();
   });
 
   it('waits for the final provider transcript, persistence, and summary before marking the note complete', async () => {
@@ -330,12 +362,16 @@ describe('MeetingNotesScreen', () => {
       useSystemDefaultMicrophone: true,
     });
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    expect(state.prepareMeetingAudioPermissions).toHaveBeenCalledOnce();
+    expect(state.prepareMeetingAudioPermissions.mock.invocationCallOrder[0])
+      .toBeLessThan(state.start.mock.invocationCallOrder[0]!);
     expect(screen.queryByRole('checkbox', { name: 'Computer audio' })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Type or paste notes here…')).not.toBeInTheDocument();
   });
 
   it('keeps the recording active and shows a visible warning when only the microphone is available', async () => {
     state.dictationWarning = 'Recording microphone only. Computer audio access is blocked.';
+    state.permissions = { microphone: 'granted', systemAudio: 'denied' };
 
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
@@ -344,6 +380,24 @@ describe('MeetingNotesScreen', () => {
     expect(screen.getByRole('button', { name: 'Stop recording' })).toBeVisible();
     expect(screen.getByRole('status')).toHaveTextContent('Recording microphone only');
     expect(screen.getByText('Listening to your microphone')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Open System Settings' }));
+    await waitFor(() => expect(state.openMeetingAudioSettings).toHaveBeenCalledWith('system-audio'));
+  });
+
+  it('does not mark the note recording when every audio permission is blocked', async () => {
+    state.permissions = { microphone: 'denied', systemAudio: 'denied' };
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+
+    await waitFor(() => expect(state.prepareMeetingAudioPermissions).toHaveBeenCalledOnce());
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.api.updateNote).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ recordingStatus: 'recording' }),
+    );
+    expect(screen.getByText(/microphone and computer audio access are blocked/i)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry recording' })).toBeVisible();
   });
 
   it('marks the final summary transcript partial when provider finalization fails', async () => {
@@ -391,5 +445,6 @@ describe('MeetingNotesScreen', () => {
     expect(screen.getByRole('heading', { name: 'Shared summary' })).toBeVisible();
     expect(screen.getByRole('combobox', { name: 'Note visibility' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeDisabled();
+    expect(state.prepareMeetingAudioPermissions).not.toHaveBeenCalled();
   });
 });

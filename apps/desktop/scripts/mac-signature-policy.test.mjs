@@ -36,10 +36,11 @@ test('the checked-in inherited entitlement plist matches the signing allowlist',
   assert.doesNotThrow(() => assertEntitlementPlistMatchesPolicy(contents, 'Inherited plist'));
 });
 
-test('the packaged app explains both microphone and computer audio access', () => {
+test('the packaged app explains microphone and both macOS computer-audio capture paths', () => {
   const contents = readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8');
   assert.match(contents, /^\s+NSMicrophoneUsageDescription:\s+\S.+$/mu);
   assert.match(contents, /^\s+NSAudioCaptureUsageDescription:\s+\S.+$/mu);
+  assert.match(contents, /^\s+NSScreenCaptureUsageDescription:\s+\S.+$/mu);
 });
 
 test('nested components require the Avalon Developer ID team', () => {

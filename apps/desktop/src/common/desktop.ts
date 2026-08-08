@@ -66,6 +66,20 @@ export interface DesktopWorkspaceOnboardingState {
   invitations: DesktopPendingWorkspaceInvitation[];
 }
 
+export type DesktopMediaPermissionStatus =
+  | 'not-determined'
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'unknown';
+
+export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
+
+export interface DesktopMeetingAudioPermissions {
+  microphone: DesktopMediaPermissionStatus;
+  systemAudio: DesktopMediaPermissionStatus;
+}
+
 export interface AvalonDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
@@ -97,6 +111,9 @@ export interface AvalonDesktopBridge {
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
   closeMeetingNotes: () => Promise<void>;
+  getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
+  prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
+  openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
   onMeetingCloseRequested: (listener: () => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   consumePendingDeepLinks: () => Promise<string[]>;

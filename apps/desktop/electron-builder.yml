@@ -34,6 +34,7 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation or meeting notes.
     NSAudioCaptureUsageDescription: Avalon captures computer audio only when you record meeting notes.
+    NSScreenCaptureUsageDescription: Avalon uses macOS screen capture only to record computer audio for meeting notes. Avalon does not read or transmit screen pixels.
     NSDockTilePlugIn: AvalonDockTilePlugin.docktileplugin
   hardenedRuntime: true
   forceCodeSigning: true
