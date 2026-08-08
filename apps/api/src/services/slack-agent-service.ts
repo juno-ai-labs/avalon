@@ -7,7 +7,17 @@ import {
   slackApi,
   type SlackIngressEnvelope,
 } from "@avalon/connectors";
-import { ExternalActorSchema, SlackIngressQueueMessageSchema, type ExternalActor } from "@avalon/contracts";
+import {
+  ExternalActorSchema,
+  SlackIngressQueueMessageSchema,
+  SlackOriginContextSchema,
+  SlackSearchAuthorizationSchema,
+  type ExternalActor,
+  type SlackOriginAttachment,
+  type SlackOriginContext,
+  type SlackOriginNearbyMessage,
+  type SlackSearchAuthorization,
+} from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
@@ -62,7 +72,10 @@ type SlackPromptSource = {
   channelType: "public" | "private" | "im" | "unknown";
   channelResolutionFailure: "missing_scope" | "lookup_failed" | null;
   channelId: string | null;
+  channelName: string | null;
   threadTs: string | null;
+  messageTs: string | null;
+  attachments: SlackOriginAttachment[];
 };
 
 const SlackModalContextSchema = z.object({
@@ -70,7 +83,17 @@ const SlackModalContextSchema = z.object({
   channelType: z.enum(["public", "private", "im", "unknown"]),
   channelResolutionFailure: z.enum(["missing_scope", "lookup_failed"]).nullable().optional().default(null),
   channelId: z.string().min(1).nullable(),
+  channelName: z.string().min(1).max(255).nullable().optional().default(null),
   threadTs: z.string().min(1).nullable(),
+  messageTs: z.string().min(1).nullable().optional().default(null),
+  attachments: z.array(z.object({
+    id: z.string().min(1).max(255).nullable(),
+    name: z.string().min(1).max(500),
+    title: z.string().max(500).nullable(),
+    mimeType: z.string().max(255).nullable(),
+    fileType: z.string().max(120).nullable(),
+    permalink: z.string().url().max(2000).nullable(),
+  }).strict()).max(10).optional().default([]),
 }).strict();
 
 const SlackAgentPolicySchema = z.object({
@@ -90,8 +113,6 @@ const DEFAULT_SLACK_AGENT_POLICY: z.infer<typeof SlackAgentPolicySchema> = {
   allow_commands: 1,
   allow_shortcuts: 1,
 };
-const SLACK_CONTEXT_PROMPT_MAX_CHARS = 50_000;
-const SLACK_ACTIVE_CONTEXT_MAX_AGE_MS = 5 * 60_000;
 const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
 const SLACK_CONNECTION_DENIAL_TEXT = "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then reply `try again` in this thread.";
 const SLACK_POLICY_DENIAL_TEXT = "Avalon workspace tasks are not enabled for this Slack surface. Ask an Avalon workspace admin to update the Slack agent policy, or connect your Avalon account in App Home. After the setting is updated, reply `try again` in this thread.";
@@ -104,7 +125,6 @@ const SLACK_RETRYABLE_DENIAL_PREFIXES = [
 ] as const;
 
 type SlackPendingDenialReason = "connection" | "channel_resolution" | "policy";
-
 const SlackQueuedJobRowSchema = z.object({
   id: z.string().min(1),
   workspace_id: z.string().uuid(),
@@ -353,16 +373,20 @@ export class SlackAgentService {
         await slackApi(token, "views.open", { trigger_id: triggerId, view: feedbackModal(String(action?.value ?? "")) }, AbortSignal.timeout(1_500));
         return {};
       }
-      const sourceText = type === "message_action" && asRecord(payload.message).text
-        ? String(asRecord(payload.message).text)
+      const shortcutMessage = asRecord(payload.message);
+      const sourceText = type === "message_action" && shortcutMessage.text
+        ? String(shortcutMessage.text)
         : "";
       const shortcutChannelId = nestedString(payload, "channel", "id");
       const shortcutThreadTs = type === "message_action"
-        ? String(asRecord(payload.message).thread_ts ?? asRecord(payload.message).ts ?? "") || null
+        ? String(shortcutMessage.thread_ts ?? shortcutMessage.ts ?? "") || null
+        : null;
+      const shortcutMessageTs = type === "message_action" && shortcutMessage.ts
+        ? String(shortcutMessage.ts)
         : null;
       const shortcutChannelResolution = shortcutChannelId
         ? await resolveSlackChannelType(token, shortcutChannelId, nestedString(payload, "channel", "type"))
-        : { channelType: "unknown" as const, failure: null };
+        : { channelType: "unknown" as const, channelName: null, failure: null };
       await slackApi(token, "views.open", {
         trigger_id: triggerId,
         view: startTaskModal(sourceText, {
@@ -370,7 +394,10 @@ export class SlackAgentService {
           channelType: shortcutChannelResolution.channelType,
           channelResolutionFailure: shortcutChannelResolution.failure,
           channelId: shortcutChannelId || null,
+          channelName: nestedString(payload, "channel", "name") ?? shortcutChannelResolution.channelName,
           threadTs: shortcutThreadTs,
+          messageTs: shortcutMessageTs,
+          attachments: slackOriginAttachments(shortcutMessage),
         }),
       }, AbortSignal.timeout(1_500));
       return {};
@@ -394,7 +421,10 @@ export class SlackAgentService {
           channelType: slackChannelType(commandForm.channel_name || commandForm.channel_id),
           channelResolutionFailure: null,
           channelId: commandForm.channel_id,
+          channelName: commandForm.channel_name || null,
           threadTs: null,
+          messageTs: null,
+          attachments: [],
         }),
       }, AbortSignal.timeout(1_500));
       return { response_type: "ephemeral", text: "Opening Avalon…" };
@@ -571,7 +601,10 @@ export class SlackAgentService {
         channelType: slackChannelType(form.channel_name || form.channel_id),
         channelResolutionFailure: null,
         channelId: form.channel_id,
+        channelName: form.channel_name || null,
         threadTs: null,
+        messageTs: null,
+        attachments: [],
       },
     );
     if (form.response_url) {
@@ -995,15 +1028,9 @@ export class SlackAgentService {
     }
     if (type === "app_home_opened") {
       const userId = String(event.user ?? "");
-      if (userId && event.context) await this.storeActiveContext(teamId, userId, event.context);
       if (event.tab !== "home") return;
       const viewHash = typeof asRecord(event.view).hash === "string" ? String(asRecord(event.view).hash) : undefined;
       if (userId) await this.publishHome(teamId, userId, viewHash);
-      return;
-    }
-    if (type === "app_context_changed") {
-      const userId = authorizedUserId(envelope);
-      if (userId) await this.storeActiveContext(teamId, userId, event.context ?? {});
       return;
     }
     if (type === "app_uninstalled") {
@@ -1089,7 +1116,7 @@ export class SlackAgentService {
     }
     const channelResolution = existingSession
       && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
-      ? { channelType: existingSession.channel_type, failure: null }
+      ? { channelType: existingSession.channel_type, channelName: null, failure: null }
       : await resolveSlackChannelType(token, channelId, event.channel_type);
     await this.startFromPrompt(
       teamId,
@@ -1103,9 +1130,12 @@ export class SlackAgentService {
         channelType: channelResolution.channelType,
         channelResolutionFailure: channelResolution.failure,
         channelId,
+        channelName: channelResolution.channelName,
         threadTs: rootTs,
+        messageTs: String(event.ts),
+        attachments: slackOriginAttachments(event),
       },
-      { event, activeContext: event.app_context ?? event.context },
+      slackEventSearchAuthorization(event),
     );
   }
 
@@ -1117,7 +1147,7 @@ export class SlackAgentService {
     prompt: string,
     clientMessageId: string,
     source: SlackPromptSource,
-    eventContext?: { event: Record<string, unknown>; activeContext?: unknown },
+    slackSearchAuthorization?: SlackSearchAuthorization,
   ): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
@@ -1146,7 +1176,7 @@ export class SlackAgentService {
     }
     const identity = await this.linkedIdentity(teamId, slackUserId);
     let actor: ExternalActor | null = null;
-    let matchedWorkspaceUserId: string | null = null;
+    let matchedWorkspaceUserId: string | null = identity?.auth.userId ?? null;
     if (!identity) {
       if (source.channelResolutionFailure) {
         const targetChannel = channelId ?? await this.openDm(token, slackUserId);
@@ -1197,19 +1227,13 @@ export class SlackAgentService {
       actor = externalIdentity.actor;
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
     }
+    const slackOrigin = await this.slackOriginContext(
+      token,
+      teamId,
+      source,
+      matchedWorkspaceUserId,
+    );
     const channel = channelId ?? await this.openDm(token, slackUserId);
-    if (eventContext?.activeContext) {
-      await this.storeActiveContext(teamId, slackUserId, eventContext.activeContext);
-    }
-    const effectivePrompt = eventContext
-      ? await this.augmentPromptWithSlackContext(
-          teamId,
-          slackUserId,
-          eventContext.event,
-          requestedPrompt,
-          slackContextChannelId(eventContext.activeContext) ?? channel,
-        )
-      : requestedPrompt;
     const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
     let session = await this.loadSession(connection.id, channel, thread);
@@ -1238,9 +1262,11 @@ export class SlackAgentService {
               slackUserId,
               channel,
               thread,
-              prompt: effectivePrompt,
+              prompt: requestedPrompt,
               clientMessageId,
               source,
+              slackOrigin,
+              ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
             });
             sessionCreatedThisCall = true;
             try {
@@ -1303,8 +1329,10 @@ export class SlackAgentService {
         const workspaceService = new SlackWorkspaceWorkstreamService(this.env, connection.workspace_id);
         const externalInput = {
           actor: externalIdentity.actor,
-          text: effectivePrompt,
+          text: requestedPrompt,
           clientMessageId: clientMessageId.slice(0, 120),
+          slackOrigin,
+          ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
         };
         if (!await workspaceService.answerOpenElicitation(session.workstream_id, externalInput)) {
           await workspaceService.createMessage(session.workstream_id, externalInput);
@@ -1322,16 +1350,18 @@ export class SlackAgentService {
         if (!await this.answerOpenElicitationAsUser(
           service,
           session.workstream_id,
-          effectivePrompt,
+          requestedPrompt,
           clientMessageId.slice(0, 120),
+          slackOrigin,
+          slackSearchAuthorization,
         )) {
           await service.createMessage(session.workstream_id, {
-            text: effectivePrompt,
+            text: requestedPrompt,
             clientMessageId: clientMessageId.slice(0, 120),
             mentions: [],
             confirmedParticipantUserIds: [],
             attachmentIds: [],
-          });
+          }, slackOrigin, slackSearchAuthorization);
         }
       } else if (!justCreated) {
         if (session.execution_scope !== "workspace") {
@@ -1378,6 +1408,8 @@ export class SlackAgentService {
     prompt: string;
     clientMessageId: string;
     source: SlackPromptSource;
+    slackOrigin: SlackOriginContext;
+    slackSearchAuthorization?: SlackSearchAuthorization;
   }): Promise<SlackSessionRow> {
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
@@ -1387,13 +1419,17 @@ export class SlackAgentService {
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
-        })
+        }, input.slackOrigin, input.slackSearchAuthorization)
       : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
           actor: ExternalActorSchema.parse(input.actor),
           title: slackTaskTitle(input.prompt),
           objective: input.prompt.slice(0, 4_000),
           text: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
+          slackOrigin: input.slackOrigin,
+          ...(input.slackSearchAuthorization
+            ? { slackSearchAuthorization: input.slackSearchAuthorization }
+            : {}),
         });
     const id = newId();
     const at = nowIso();
@@ -1424,7 +1460,11 @@ export class SlackAgentService {
       input.identity ? "explicit_link" : null,
       input.identity ? input.slackUserId : null,
       input.identity ? at : null,
-      JSON.stringify({ source: input.source, externalActor: input.actor }),
+      JSON.stringify({
+        source: input.source,
+        externalActor: input.actor,
+        slackOrigin: input.slackOrigin,
+      }),
       at,
       at,
     ).run();
@@ -1580,6 +1620,8 @@ export class SlackAgentService {
     workstreamId: string,
     response: string,
     clientMessageId: string,
+    slackOrigin: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
   ): Promise<boolean> {
     const elicitation = await this.env.DB.prepare(
       `SELECT id, response_type, options_json FROM elicitations
@@ -1595,6 +1637,8 @@ export class SlackAgentService {
       elicitation.id,
       slackElicitationRequest(elicitation, response),
       clientMessageId,
+      slackOrigin,
+      slackSearchAuthorization,
     );
     return true;
   }
@@ -1752,6 +1796,68 @@ export class SlackAgentService {
     return { actor, matchedWorkspaceUserId: matched?.id ?? null };
   }
 
+  private async slackOriginContext(
+    token: string,
+    teamId: string,
+    source: SlackPromptSource,
+    matchedAvalonUserId: string | null,
+  ): Promise<SlackOriginContext> {
+    const nearby = await this.nearbySlackMessages(token, source);
+    return SlackOriginContextSchema.parse({
+      teamId,
+      channelId: source.channelId,
+      channelName: source.channelName,
+      threadTs: source.threadTs,
+      invocationType: source.kind,
+      channelType: source.channelType,
+      matchedAvalonUserId,
+      nearbyMessagesStatus: nearby.status,
+      nearbyMessages: nearby.messages,
+      attachments: source.attachments,
+    });
+  }
+
+  private async nearbySlackMessages(
+    token: string,
+    source: SlackPromptSource,
+  ): Promise<{
+    status: SlackOriginContext["nearbyMessagesStatus"];
+    messages: SlackOriginNearbyMessage[];
+  }> {
+    if (!source.channelId || !source.messageTs) {
+      return { status: "not_applicable", messages: [] };
+    }
+    try {
+      const result = source.threadTs && source.threadTs !== source.messageTs
+        ? await slackApi(token, "conversations.replies", {
+            channel: source.channelId,
+            ts: source.threadTs,
+            latest: source.messageTs,
+            inclusive: false,
+            limit: 8,
+          }, AbortSignal.timeout(5_000))
+        : await slackApi(token, "conversations.history", {
+            channel: source.channelId,
+            latest: source.messageTs,
+            inclusive: false,
+            limit: 8,
+          }, AbortSignal.timeout(5_000));
+      const messages = result.messages
+        .filter((message) => message.ts !== source.messageTs)
+        .map(slackOriginNearbyMessage)
+        .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+        .slice(-8);
+      return { status: "available", messages };
+    } catch (error) {
+      console.warn("Slack nearby context lookup failed", {
+        channel_id: source.channelId,
+        thread_ts: source.threadTs,
+        reason: slackErrorReason(error),
+      });
+      return { status: "unavailable", messages: [] };
+    }
+  }
+
   private async claimThread(connectionId: string, channelId: string, threadTs: string): Promise<string | null> {
     const leaseId = crypto.randomUUID();
     const at = nowIso();
@@ -1838,55 +1944,6 @@ export class SlackAgentService {
     } catch (error) {
       if (viewHash && error instanceof ConnectorError && error.message === "hash_conflict") return;
       throw error;
-    }
-  }
-
-  private async storeActiveContext(teamId: string, slackUserId: string, context: unknown): Promise<void> {
-    const connection = await this.connectionForTeam(teamId);
-    await this.env.DB.prepare(
-      `INSERT INTO slack_agent_contexts (connection_id, slack_user_id, context_json, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(connection_id, slack_user_id) DO UPDATE SET
-         context_json = excluded.context_json, updated_at = excluded.updated_at`,
-    ).bind(connection.id, slackUserId, JSON.stringify(context), nowIso()).run();
-  }
-
-  private async augmentPromptWithSlackContext(
-    teamId: string,
-    slackUserId: string,
-    event: Record<string, unknown>,
-    prompt: string,
-    channelId: string,
-  ): Promise<string> {
-    const actionToken = typeof event.action_token === "string" ? event.action_token : null;
-    if (!/\b(this|that|current|here|above|viewing|channel|thread|conversation)\b/iu.test(prompt)) return prompt;
-    const connection = await this.connectionForTeam(teamId);
-    if (actionToken) {
-      try {
-        const result = await slackApi(await this.botToken(connection), "assistant.search.context", {
-          query: prompt,
-          action_token: actionToken,
-          channel_types: ["public_channel"],
-          content_types: ["messages", "files", "channels", "users"],
-          context_channel_id: channelId,
-          include_context_messages: true,
-          limit: 8,
-        }, AbortSignal.timeout(8_000));
-        return appendSlackContext(prompt, "assistant.search.context", result);
-      } catch {
-        // The latest App context remains a useful fallback when search context is unavailable.
-      }
-    }
-    const stored = await this.env.DB.prepare(
-      "SELECT context_json, updated_at FROM slack_agent_contexts WHERE connection_id = ? AND slack_user_id = ?",
-    ).bind(connection.id, slackUserId).first<{ context_json: string; updated_at: string }>();
-    if (!stored?.context_json) return prompt;
-    const updatedAt = Date.parse(stored.updated_at);
-    if (!Number.isFinite(updatedAt) || updatedAt < Date.now() - SLACK_ACTIVE_CONTEXT_MAX_AGE_MS) return prompt;
-    try {
-      return appendSlackContext(prompt, "app_context", JSON.parse(stored.context_json));
-    } catch {
-      return prompt;
     }
   }
 
@@ -2249,19 +2306,23 @@ async function resolveSlackChannelType(
   hint: unknown,
 ): Promise<{
   channelType: SlackPromptSource["channelType"];
+  channelName: string | null;
   failure: SlackPromptSource["channelResolutionFailure"];
 }> {
   const hinted = slackChannelType(hint);
-  if (hinted === "im" || channelId.startsWith("D")) return { channelType: "im", failure: null };
+  if (hinted === "im" || channelId.startsWith("D")) {
+    return { channelType: "im", channelName: null, failure: null };
+  }
   try {
     const result = await slackApi(token, "conversations.info", {
       channel: channelId,
     }, AbortSignal.timeout(5_000));
-    if (result.channel.is_im === true) return { channelType: "im", failure: null };
+    const channelName = result.channel.name?.trim().slice(0, 255) || null;
+    if (result.channel.is_im === true) return { channelType: "im", channelName, failure: null };
     if (result.channel.is_mpim === true || result.channel.is_private) {
-      return { channelType: "private", failure: null };
+      return { channelType: "private", channelName, failure: null };
     }
-    return { channelType: "public", failure: null };
+    return { channelType: "public", channelName, failure: null };
   } catch (error) {
     const reason = slackErrorReason(error);
     console.warn("Slack conversation privacy lookup failed closed", {
@@ -2270,6 +2331,7 @@ async function resolveSlackChannelType(
     });
     return {
       channelType: "unknown",
+      channelName: null,
       failure: reason === "missing_scope" ? "missing_scope" : "lookup_failed",
     };
   }
@@ -2380,7 +2442,10 @@ function startTaskModal(
     channelType: "unknown",
     channelResolutionFailure: null,
     channelId: null,
+    channelName: null,
     threadTs: null,
+    messageTs: null,
+    attachments: [],
   },
 ): Record<string, unknown> {
   return { type: "modal", callback_id: "avalon_start_task_submit", private_metadata: JSON.stringify(SlackModalContextSchema.parse(source)), title: { type: "plain_text", text: "Start an Avalon task" }, submit: { type: "plain_text", text: "Start" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", block_id: "prompt", label: { type: "plain_text", text: "What should Avalon do?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, initial_value: initial.slice(0, 3_000), placeholder: { type: "plain_text", text: "Summarize this, investigate an issue, or coordinate work…" } } }] };
@@ -2517,51 +2582,87 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function authorizedUserId(envelope: SlackIngressEnvelope): string | null {
-  const matches = (envelope.authorizations ?? []).filter((authorization) =>
-    authorization.team_id === envelope.team_id
-      && typeof authorization.user_id === "string"
-      && authorization.user_id,
-  );
-  const authorization = matches.find((candidate) => candidate.is_bot !== true) ?? matches[0];
-  return authorization ? String(authorization.user_id) : null;
+function slackOriginNearbyMessage(value: unknown): SlackOriginNearbyMessage {
+  const message = asRecord(value);
+  const userId = typeof message.user === "string" && message.user
+    ? message.user
+    : typeof message.bot_id === "string" && message.bot_id
+      ? message.bot_id
+      : null;
+  return {
+    timestamp: String(message.ts ?? "unknown").slice(0, 80),
+    userId,
+    text: String(message.text ?? "").slice(0, 2_000),
+    attachments: slackOriginAttachments(message),
+  };
+}
+
+function slackOriginAttachments(value: unknown): SlackOriginAttachment[] {
+  const message = asRecord(value);
+  const attachments: SlackOriginAttachment[] = [];
+  if (Array.isArray(message.files)) {
+    for (const rawFile of message.files.slice(0, 10)) {
+      const file = asRecord(rawFile);
+      const name = slackBoundedString(file.name, 500)
+        ?? slackBoundedString(file.title, 500)
+        ?? "Slack file";
+      attachments.push({
+        id: slackBoundedString(file.id, 255),
+        name,
+        title: slackBoundedString(file.title, 500),
+        mimeType: slackBoundedString(file.mimetype, 255),
+        fileType: slackBoundedString(file.filetype, 120),
+        permalink: slackHttpUrl(file.permalink),
+      });
+    }
+  }
+  if (Array.isArray(message.attachments)) {
+    for (const rawAttachment of message.attachments.slice(0, Math.max(0, 10 - attachments.length))) {
+      const attachment = asRecord(rawAttachment);
+      const name = slackBoundedString(attachment.title, 500)
+        ?? slackBoundedString(attachment.fallback, 500)
+        ?? "Slack attachment";
+      attachments.push({
+        id: slackBoundedString(attachment.id, 255),
+        name,
+        title: slackBoundedString(attachment.title, 500),
+        mimeType: null,
+        fileType: null,
+        permalink: slackHttpUrl(attachment.title_link ?? attachment.from_url),
+      });
+    }
+  }
+  return attachments;
+}
+
+function slackEventSearchAuthorization(event: Record<string, unknown>): SlackSearchAuthorization | undefined {
+  const actionToken = typeof event.action_token === "string" ? event.action_token : null;
+  if (!actionToken) return undefined;
+  const parsed = SlackSearchAuthorizationSchema.safeParse({ actionToken });
+  return parsed.success ? parsed.data : undefined;
+}
+
+function slackBoundedString(value: unknown, maximum: number): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maximum)
+    : null;
+}
+
+function slackHttpUrl(value: unknown): string | null {
+  const raw = slackBoundedString(value, 2_000);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? raw : null;
+  } catch {
+    return null;
+  }
 }
 
 function authorizedBotUserId(envelope: SlackIngressEnvelope): string | null {
   for (const authorization of envelope.authorizations ?? []) {
     if (authorization.team_id !== envelope.team_id || authorization.is_bot !== true) continue;
     if (typeof authorization.user_id === "string" && authorization.user_id) return authorization.user_id;
-  }
-  return null;
-}
-
-function safeJson(value: unknown): string {
-  return JSON.stringify(value).replaceAll("<", "\\u003c");
-}
-
-function appendSlackContext(prompt: string, source: string, value: unknown): string {
-  const prefix = `${prompt}\n\n<slack_context trust="untrusted" source="${source}">`;
-  const suffix = "</slack_context>";
-  const remaining = SLACK_CONTEXT_PROMPT_MAX_CHARS - prefix.length - suffix.length;
-  if (remaining <= 0) return prompt.slice(0, SLACK_CONTEXT_PROMPT_MAX_CHARS);
-  const serialized = safeJson(value);
-  const context = serialized.length <= remaining
-    ? serialized
-    : `${serialized.slice(0, Math.max(0, remaining - 24))}[context truncated]`;
-  return `${prefix}${context}${suffix}`;
-}
-
-function slackContextChannelId(value: unknown): string | null {
-  const context = asRecord(value);
-  if (typeof context.channel_id === "string" && context.channel_id) return context.channel_id;
-  if (!Array.isArray(context.entities)) return null;
-  for (const rawEntity of context.entities) {
-    const entity = asRecord(rawEntity);
-    if (typeof entity.value === "string" && String(entity.type ?? "").endsWith("/channel_id")) {
-      return entity.value;
-    }
-    const nestedValue = asRecord(entity.value);
-    if (typeof nestedValue.channel_id === "string" && nestedValue.channel_id) return nestedValue.channel_id;
   }
   return null;
 }
@@ -2602,16 +2703,17 @@ function escapeMrkdwn(value: string): string {
 }
 
 export const __slackAgentTesting = {
-  appendSlackContext,
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,
   modalPromptSource,
   recoverSlackDeniedPrompt,
   resolveSlackChannelType,
+  slackOriginAttachments,
+  slackOriginNearbyMessage,
+  slackEventSearchAuthorization,
   slackChannelResolutionDenial,
   slackChannelType,
-  slackContextChannelId,
   slackIngressRetryable,
   slackReconnectRequired,
 };

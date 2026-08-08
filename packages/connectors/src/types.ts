@@ -23,6 +23,14 @@ export interface ConnectorToolContext {
   principal: ExecutionPrincipal;
   /** Stable host receipt key when the provider supports idempotent writes. */
   providerIdempotencyKey?: string;
+  /**
+   * Provider invocation credentials captured by the trusted ingress host.
+   * These values are never model-visible and must not be accepted in a tool
+   * input schema or returned from a tool result.
+   */
+  invocationAuthorization?: {
+    slackActionToken?: string;
+  };
   signal: AbortSignal;
 }
 
