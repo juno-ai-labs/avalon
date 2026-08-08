@@ -400,6 +400,12 @@ describe('public Avalon site', () => {
     expect(landing).toContain('/privacy');
     expect(privacy).toContain('does not scrape, mirror');
     expect(support).toContain('within two business days');
+    expect(support).toContain('Generate a Granola Workspace API key');
+    expect(support).toContain('Settings → Connectors → Workspace API keys');
+    expect(support).toContain('Create new key');
+    expect(support).toContain('Personal connections use Granola’s browser sign-in and do not require an API key.');
+    expect(support).toContain('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
+    expect(readProjectFile('index.html')).toContain('href="/support/#granola-key-title">Granola</a>');
     expect(handoff).toContain("url.hostname === 'workstreams'");
     expect(handoff).toContain("url.hostname === 'settings'");
     expect(handoff).toContain("url.hostname === 'automations'");
