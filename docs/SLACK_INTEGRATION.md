@@ -2,6 +2,9 @@
 
 ## Product boundary
 
+Every configured bot and personal OAuth scope, including its concrete Avalon
+use, is listed in [Slack permissions](SLACK_PERMISSIONS.md).
+
 Avalon uses one public Slack Marketplace app for two related but separate connections:
 
 1. A **workspace installation** gives Avalon a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/avalon`, modals, unfurls, streaming replies, and proactive automation results.
@@ -43,7 +46,11 @@ Personal authorization is incremental. **Slack knowledge** requests the read/sea
 
 ## Data behavior
 
-"Zero-copy" means Avalon does not scrape, poll, bulk export, mirror, or build a second index of Slack messages, threads, files, or canvases. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Avalon` is consistently available, but it does not subscribe to broad channel message traffic. Channel membership alone does not import channel history or ordinary messages.
+"Zero-copy" means Avalon does not scrape, poll, bulk export, mirror, or build a second index of Slack messages, threads, files, or canvases. The workspace bot joins every current public channel after installation or reconnection and joins new public channels from `channel_created` events so `@Avalon` is consistently available. To support natural follow-ups, Slack delivers `message.channels` and `message.groups` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts only human replies in an existing Avalon thread or a recent denied Avalon thread; every unrelated message is discarded before a durable ingress job is written. Channel event delivery therefore does not create an imported history or ordinary-message store.
+
+When a prompt is denied because the workspace connection, channel classification, or Agent policy needs attention, Avalon retains that prompt regionally for at most 24 hours. This lets the same Slack member reply `try again` after the problem is fixed without retyping the request. The prompt is deleted when a session starts and expired rows are removed by scheduled maintenance. A narrowly matched, explicitly mentioned retry of a denial created before this mechanism may read at most the first 15 messages in that single thread to recover the prompting mention; unmentioned messages in other threads are ignored.
+
+Natural public- and private-channel follow-ups require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Avalon OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Avalon's routing and retention restrictions above remain narrower than the provider grant.
 
 Normal product use can persist information in the resources that use it. A user prompt, Slack context used for the task, a model-authored summary, a workstream message, a tool receipt, an artifact, or an automation result may remain in Avalon. That is ordinary task history, not a cloned Slack corpus. By default these task and automation resources do not expire automatically; they remain until an authorized user deletes the resource or the workspace is deleted. Workspace disconnect revokes the credentials Avalon holds and disables routing; a Slack administrator separately removes the app from Slack App Management to uninstall it from the workspace. Personal disconnect revokes that user's credential. Disconnecting does not delete existing Avalon resources.
 
@@ -57,7 +64,7 @@ The shared ingress is `https://slack.with-avalon.com`:
 
 Ingress verifies `v0:{timestamp}:{exact raw body}` using HMAC-SHA256, requires a timestamp inside five minutes, compares in constant time, checks `api_app_id`, and deduplicates Events API `event_id` values. URL verification is answered synchronously. Before acknowledging an event, text command, or valid modal submission, the owning regional service writes an ingress job and publishes its opaque job ID to the regional queue. Modal validation errors are returned synchronously to Slack. Shortcuts that need a trigger ID open their modal synchronously. The Global router looks up only the team route and invokes the owning regional service binding.
 
-Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing.
+Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Avalon thread are acknowledged without creating a regional ingress job.
 
 ## Identity linking
 
@@ -84,7 +91,7 @@ Suspended members and revoked links cannot start or continue tasks. A user may l
 
 ## Agent sessions and delivery
 
-A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Replies in that Slack thread add messages to the same workstream. Avalon does not replay or import the rest of the Slack conversation.
+A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
 
 On a prompt Avalon:
 
@@ -128,7 +135,7 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 ## Interactions
 
 - Agent DM: start a durable task or continue its thread.
-- `@Avalon` in a channel: create/continue a task in the mention thread; channel responses always stay threaded.
+- `@Avalon` in a channel: create/continue a task in the mention thread; later human replies in that Avalon-owned thread do not need another mention, and responses always stay threaded.
 - Global shortcut **Start an Avalon task**: open a task modal.
 - Message shortcut **Work on this with Avalon**: prefill the task modal with the selected message.
 - `/avalon [request]`: start the request; an empty command opens the modal.

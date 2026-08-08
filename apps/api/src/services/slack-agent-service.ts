@@ -92,6 +92,18 @@ const DEFAULT_SLACK_AGENT_POLICY: z.infer<typeof SlackAgentPolicySchema> = {
 };
 const SLACK_CONTEXT_PROMPT_MAX_CHARS = 50_000;
 const SLACK_ACTIVE_CONTEXT_MAX_AGE_MS = 5 * 60_000;
+const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
+const SLACK_CONNECTION_DENIAL_TEXT = "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then reply `try again` in this thread.";
+const SLACK_POLICY_DENIAL_TEXT = "Avalon workspace tasks are not enabled for this Slack surface. Ask an Avalon workspace admin to update the Slack agent policy, or connect your Avalon account in App Home. After the setting is updated, reply `try again` in this thread.";
+const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Avalon` again and restate what you want me to do.";
+const SLACK_RETRYABLE_DENIAL_PREFIXES = [
+  "Avalon’s Slack workspace connection needs attention",
+  "Avalon workspace tasks are not enabled for this Slack surface",
+  "Avalon needs updated Slack permissions before it can start workspace tasks here",
+  "Avalon couldn’t verify whether this Slack channel is public or private",
+] as const;
+
+type SlackPendingDenialReason = "connection" | "channel_resolution" | "policy";
 
 const SlackQueuedJobRowSchema = z.object({
   id: z.string().min(1),
@@ -191,6 +203,9 @@ export class SlackAgentService {
         "DELETE FROM slack_agent_thread_claims WHERE lease_expires_at < ?",
       ).bind(at),
       this.env.DB.prepare(
+        "DELETE FROM slack_agent_pending_prompts WHERE expires_at < ?",
+      ).bind(at),
+      this.env.DB.prepare(
         `DELETE FROM slack_ingress_jobs
          WHERE status = 'failed' AND attempt_count >= 20 AND updated_at < ?`,
       ).bind(retentionCutoff),
@@ -242,6 +257,14 @@ export class SlackAgentService {
     if (envelope.type === "url_verification") return { ok: true };
     const invocation = parseSlackAgentInvocation({ kind: "event", envelope });
     if (invocation.kind !== "event") throw new ApiError(422, "slack_event_invalid", "Slack event identity is missing");
+    if (invocation.event.type === "message"
+      && !await this.shouldEnqueueSlackMessage(
+        invocation.teamId,
+        invocation.event,
+        authorizedBotUserId(envelope),
+      )) {
+      return { ok: true };
+    }
     return this.enqueueIngressJob({
       id: `event:${invocation.eventId}`,
       teamId: invocation.teamId,
@@ -1021,27 +1044,53 @@ export class SlackAgentService {
     const slackUserId = String(event.user);
     const channelId = String(event.channel);
     const rootTs = typeof event.thread_ts === "string" ? event.thread_ts : String(event.ts);
-    const botUserId = type === "app_mention"
-      ? authorizedBotUserId(envelope) ?? await this.botUserId(await this.connectionForTeam(teamId))
+    const connection = await this.connectionForTeam(teamId);
+    const token = await this.botToken(connection);
+    const directMessage = type === "message" && isDirectSlackMessageEvent(event);
+    const existingSession = !directMessage
+      ? await this.loadSession(connection.id, channelId, rootTs)
       : null;
-    const prompt = (botUserId
+    const pendingPrompt = !directMessage && !existingSession
+      ? await this.loadPendingPrompt(connection.id, channelId, rootTs, slackUserId)
+      : null;
+    const botUserId = type === "app_mention" || !directMessage
+      ? authorizedBotUserId(envelope) ?? await this.botUserId(connection)
+      : null;
+    let prompt = (botUserId
       ? String(event.text ?? "").replaceAll(`<@${botUserId}>`, "")
       : String(event.text ?? "")).trim();
     if (!prompt) return;
+    if (type === "message" && !directMessage && !existingSession && !pendingPrompt) return;
+    if (type === "app_mention" && !existingSession && !pendingPrompt && isSlackRetryPrompt(prompt)) {
+      const recovered = await this.recoverLegacyDeniedPrompt(
+        token,
+        connection,
+        channelId,
+        rootTs,
+        slackUserId,
+      );
+      if (!recovered) {
+        await slackApi(token, "chat.postMessage", {
+          channel: channelId,
+          thread_ts: rootTs,
+          text: SLACK_RETRY_PROMPT_MISSING_TEXT,
+        }, AbortSignal.timeout(5_000));
+        return;
+      }
+      prompt = recovered;
+    }
     if (/^(?:help|\/help)$/iu.test(prompt)) {
-      const connection = await this.connectionForTeam(teamId);
-      await slackApi(await this.botToken(connection), "chat.postMessage", {
+      await slackApi(token, "chat.postMessage", {
         channel: channelId,
         thread_ts: rootTs,
         text: "Ask Avalon to investigate, summarize, coordinate, or create an automation. Use /avalon anywhere, a shortcut on a message, or Start a task in App Home. Open App Home to connect your Avalon account and manage notifications.",
       }, AbortSignal.timeout(5_000));
       return;
     }
-    const channelResolution = await resolveSlackChannelType(
-      await this.botToken(await this.connectionForTeam(teamId)),
-      channelId,
-      event.channel_type,
-    );
+    const channelResolution = existingSession
+      && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
+      ? { channelType: existingSession.channel_type, failure: null }
+      : await resolveSlackChannelType(token, channelId, event.channel_type);
     await this.startFromPrompt(
       teamId,
       slackUserId,
@@ -1050,7 +1099,7 @@ export class SlackAgentService {
       prompt,
       `event:${envelope.event_id}`,
       {
-        kind: type === "app_mention" ? "app_mention" : "direct_message",
+        kind: type === "app_mention" || !directMessage ? "app_mention" : "direct_message",
         channelType: channelResolution.channelType,
         channelResolutionFailure: channelResolution.failure,
         channelId,
@@ -1072,12 +1121,26 @@ export class SlackAgentService {
   ): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
+    const pendingPrompt = channelId && threadTs && isSlackRetryPrompt(prompt)
+      ? await this.loadPendingPrompt(connection.id, channelId, threadTs, slackUserId)
+      : null;
+    const requestedPrompt = pendingPrompt?.prompt ?? prompt;
     if (connection.status !== "healthy") {
       const targetChannel = channelId ?? await this.openDm(token, slackUserId);
+      if (threadTs) {
+        await this.rememberPendingPrompt(
+          connection.id,
+          targetChannel,
+          threadTs,
+          slackUserId,
+          requestedPrompt,
+          "connection",
+        );
+      }
       await slackApi(token, "chat.postMessage", {
         channel: targetChannel,
         ...(threadTs ? { thread_ts: threadTs } : {}),
-        text: "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then try again.",
+        text: SLACK_CONNECTION_DENIAL_TEXT,
       }, AbortSignal.timeout(5_000));
       return;
     }
@@ -1089,6 +1152,16 @@ export class SlackAgentService {
         const targetChannel = channelId ?? await this.openDm(token, slackUserId);
         const resolutionDenial = slackChannelResolutionDenial(source.channelResolutionFailure);
         if (resolutionDenial.reconnectRequired) await this.markSlackReconnectRequired(connection.id);
+        if (threadTs) {
+          await this.rememberPendingPrompt(
+            connection.id,
+            targetChannel,
+            threadTs,
+            slackUserId,
+            requestedPrompt,
+            "channel_resolution",
+          );
+        }
         await slackApi(token, "chat.postMessage", {
           channel: targetChannel,
           ...(threadTs ? { thread_ts: threadTs } : {}),
@@ -1098,10 +1171,20 @@ export class SlackAgentService {
       }
       if (!await this.unlinkedWorkspaceExecutionAllowed(connection.id, source)) {
         const targetChannel = channelId ?? await this.openDm(token, slackUserId);
+        if (threadTs) {
+          await this.rememberPendingPrompt(
+            connection.id,
+            targetChannel,
+            threadTs,
+            slackUserId,
+            requestedPrompt,
+            "policy",
+          );
+        }
         await slackApi(token, "chat.postMessage", {
           channel: targetChannel,
           ...(threadTs ? { thread_ts: threadTs } : {}),
-          text: "Avalon workspace tasks are not enabled for this Slack surface. Ask an Avalon workspace admin to update the Slack agent policy, or connect your Avalon account in App Home.",
+          text: SLACK_POLICY_DENIAL_TEXT,
         }, AbortSignal.timeout(5_000));
         return;
       }
@@ -1123,11 +1206,11 @@ export class SlackAgentService {
           teamId,
           slackUserId,
           eventContext.event,
-          prompt,
+          requestedPrompt,
           slackContextChannelId(eventContext.activeContext) ?? channel,
         )
-      : prompt;
-    const thread = threadTs ?? await this.createUserPromptRoot(token, channel, prompt);
+      : requestedPrompt;
+    const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
     let session = await this.loadSession(connection.id, channel, thread);
     if (session?.opening_client_message_id === openingClientMessageId) return;
@@ -1164,7 +1247,7 @@ export class SlackAgentService {
               await slackApi(token, "assistant.threads.setTitle", {
                 channel_id: channel,
                 thread_ts: thread,
-                title: prompt,
+                title: requestedPrompt,
               }, AbortSignal.timeout(5_000));
             } catch (error) {
               console.warn("Slack thread title failed", {
@@ -1177,6 +1260,9 @@ export class SlackAgentService {
           await this.releaseThreadClaim(connection.id, channel, thread, claimId);
         }
       }
+    }
+    if (session) {
+      await this.clearPendingPrompt(connection.id, channel, thread, slackUserId);
     }
     if (session && session.workstream_id) {
       const justCreated = session.opening_client_message_id === openingClientMessageId;
@@ -1367,6 +1453,126 @@ export class SlackAgentService {
       `SELECT * FROM slack_agent_sessions
        WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?`,
     ).bind(connectionId, channelId, threadTs).first<SlackSessionRow>();
+  }
+
+  private async shouldEnqueueSlackMessage(
+    teamId: string,
+    event: Record<string, unknown>,
+    authorizedBotId: string | null,
+  ): Promise<boolean> {
+    const subtype = typeof event.subtype === "string" ? event.subtype : null;
+    if (event.bot_id
+      || (subtype && subtype !== "thread_broadcast")
+      || !event.user
+      || !event.channel
+      || !event.ts) return false;
+    if (isDirectSlackMessageEvent(event)) return true;
+    if (typeof event.thread_ts !== "string" || !event.thread_ts) return false;
+    const connection = await this.connectionForTeam(teamId);
+    const channelId = String(event.channel);
+    const threadTs = event.thread_ts;
+    const slackUserId = String(event.user);
+    const text = String(event.text ?? "");
+    if (text.includes("<@")) {
+      const botUserId = authorizedBotId ?? await this.botUserId(connection);
+      if (botUserId && text.includes(`<@${botUserId}>`)) return false;
+    }
+    const routable = await this.env.DB.prepare(
+      `SELECT 1 AS routable
+       WHERE EXISTS (
+         SELECT 1 FROM slack_agent_sessions
+         WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+       ) OR EXISTS (
+         SELECT 1 FROM slack_agent_pending_prompts
+         WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+           AND slack_user_id = ? AND expires_at > ?
+       )`,
+    ).bind(
+      connection.id,
+      channelId,
+      threadTs,
+      connection.id,
+      channelId,
+      threadTs,
+      slackUserId,
+      nowIso(),
+    ).first<{ routable: number }>();
+    return Boolean(routable);
+  }
+
+  private async loadPendingPrompt(
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+  ): Promise<{ prompt: string } | null> {
+    return this.env.DB.prepare(
+      `SELECT prompt FROM slack_agent_pending_prompts
+       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+         AND slack_user_id = ? AND expires_at > ?`,
+    ).bind(connectionId, channelId, threadTs, slackUserId, nowIso()).first<{ prompt: string }>();
+  }
+
+  private async rememberPendingPrompt(
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+    prompt: string,
+    denialReason: SlackPendingDenialReason,
+  ): Promise<void> {
+    const retainedPrompt = prompt.trim().slice(0, 40_000);
+    if (!retainedPrompt) return;
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `INSERT INTO slack_agent_pending_prompts
+       (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
+        denial_reason, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(connection_id, slack_channel_id, slack_thread_ts, slack_user_id)
+       DO UPDATE SET prompt = excluded.prompt, denial_reason = excluded.denial_reason,
+         expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
+    ).bind(
+      connectionId,
+      channelId,
+      threadTs,
+      slackUserId,
+      retainedPrompt,
+      denialReason,
+      new Date(Date.now() + SLACK_PENDING_PROMPT_TTL_MS).toISOString(),
+      at,
+      at,
+    ).run();
+  }
+
+  private async clearPendingPrompt(
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+  ): Promise<void> {
+    await this.env.DB.prepare(
+      `DELETE FROM slack_agent_pending_prompts
+       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+         AND slack_user_id = ?`,
+    ).bind(connectionId, channelId, threadTs, slackUserId).run();
+  }
+
+  private async recoverLegacyDeniedPrompt(
+    token: string,
+    connection: SlackConnectionRow,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+  ): Promise<string | null> {
+    const botUserId = await this.botUserId(connection);
+    if (!botUserId) return null;
+    const result = await slackApi(token, "conversations.replies", {
+      channel: channelId,
+      ts: threadTs,
+      limit: 15,
+    }, AbortSignal.timeout(8_000));
+    return recoverSlackDeniedPrompt(result.messages, slackUserId, botUserId);
   }
 
   private async answerOpenElicitationAsUser(
@@ -2002,6 +2208,41 @@ function slackChannelType(value: unknown): SlackPromptSource["channelType"] {
   return "unknown";
 }
 
+function isDirectSlackMessageEvent(event: Record<string, unknown>): boolean {
+  return slackChannelType(event.channel_type) === "im"
+    || (typeof event.channel === "string" && event.channel.startsWith("D"));
+}
+
+function isSlackRetryPrompt(value: string): boolean {
+  return /^(?:please\s+)?(?:retry|try\s+again)[.!]?$/iu.test(value.trim());
+}
+
+function recoverSlackDeniedPrompt(
+  messages: readonly Record<string, unknown>[],
+  slackUserId: string,
+  botUserId: string,
+): string | null {
+  let denialIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    const text = typeof message.text === "string" ? message.text : "";
+    if (message.user === botUserId
+      && SLACK_RETRYABLE_DENIAL_PREFIXES.some((prefix) => text.startsWith(prefix))) {
+      denialIndex = index;
+      break;
+    }
+  }
+  if (denialIndex < 0) return null;
+  for (let index = denialIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.user !== slackUserId || typeof message.text !== "string") continue;
+    if (!message.text.includes(`<@${botUserId}>`)) continue;
+    const prompt = message.text.replaceAll(`<@${botUserId}>`, "").trim();
+    if (prompt) return prompt;
+  }
+  return null;
+}
+
 async function resolveSlackChannelType(
   token: string,
   channelId: string,
@@ -2039,12 +2280,12 @@ function slackChannelResolutionDenial(
 ): { text: string; reconnectRequired: boolean } {
   if (failure === "missing_scope") {
     return {
-      text: "Avalon needs updated Slack permissions before it can start workspace tasks here. Ask an Avalon workspace admin to reconnect the Slack workspace in Avalon Settings, then try again. You can also connect your Avalon account in App Home.",
+      text: "Avalon needs updated Slack permissions before it can start workspace tasks here. Ask an Avalon workspace admin to reconnect the Slack workspace in Avalon Settings, then reply `try again` in this thread. You can also connect your Avalon account in App Home.",
       reconnectRequired: true,
     };
   }
   return {
-    text: "Avalon couldn’t verify whether this Slack channel is public or private, so it did not start a workspace task. Try again; if this continues, ask an Avalon workspace admin to test the Slack connection in Avalon Settings. You can also connect your Avalon account in App Home.",
+    text: "Avalon couldn’t verify whether this Slack channel is public or private, so it did not start a workspace task. Reply `try again` in this thread; if this continues, ask an Avalon workspace admin to test the Slack connection in Avalon Settings. You can also connect your Avalon account in App Home.",
     reconnectRequired: false,
   };
 }
@@ -2363,7 +2604,10 @@ function escapeMrkdwn(value: string): string {
 export const __slackAgentTesting = {
   appendSlackContext,
   claimWorkspaceSession,
+  isDirectSlackMessageEvent,
+  isSlackRetryPrompt,
   modalPromptSource,
+  recoverSlackDeniedPrompt,
   resolveSlackChannelType,
   slackChannelResolutionDenial,
   slackChannelType,
