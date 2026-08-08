@@ -86,6 +86,7 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [Agent harness](docs/AGENT_HARNESS.md)
 - [Connectors](docs/CONNECTORS.md)
 - [End-to-end verification](docs/E2E.md)
+- [Running in a Linux sandbox](docs/SANDBOX.md)
 - [Operations runbook](docs/RUNBOOK.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 

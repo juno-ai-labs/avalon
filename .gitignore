@@ -2,6 +2,7 @@
 .env.local
 .dev.vars
 .dev.vars.*
+apps/api/wrangler.sandbox.*.jsonc
 node_modules/
 .pnpm-store/
 dist/
