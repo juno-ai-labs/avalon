@@ -13,7 +13,9 @@ The thread-follow-up behavior follows Slack's current
 [`thread_broadcast`](https://docs.slack.dev/reference/events/message/thread_broadcast/),
 and
 [`conversations.replies`](https://docs.slack.dev/reference/methods/conversations.replies/)
-contracts.
+contracts. Activation acknowledgement follows Slack's
+[`reactions.add`](https://docs.slack.dev/reference/methods/reactions.add/)
+contract.
 
 ## Permission model
 
@@ -100,7 +102,7 @@ bundle.
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
 | `mpim:read` | Discover accessible multi-person DMs and membership. Avalon does not subscribe to ordinary `message.mpim` traffic. |
 | `mpim:write` | Open a group DM with workspace `slack_create_conversation`. |
-| `reactions:write` | Add an emoji reaction with workspace `slack_add_reaction`. |
+| `reactions:write` | Add an emoji reaction with workspace `slack_add_reaction`, and add the host-owned `eyes` reaction to the exact triggering DM or mention after durable admission and authorization but before context gathering or workstream processing. Slack's `already_reacted` response makes retries idempotent; a provider-side acknowledgement failure is logged and does not discard the admitted request. |
 | `search:read.files` | Include matching accessible file results in event-scoped workspace search. Direct file content still requires `files:read`. |
 | `search:read.public` | Search public-channel context for a user-initiated Slack request. |
 | `search:read.users` | Include matching Slack users in event-scoped workspace search. |
