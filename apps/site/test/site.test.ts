@@ -459,12 +459,16 @@ describe('public Avalon site', () => {
     const errorTarget = `avalon://auth/complete?error=google_oauth_denied&region=global&attempt=${attempt}`;
     const connectorSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=eu&attempt=${attempt}&provider=linear`;
     const connectorErrorTarget = `avalon://auth/complete?provider=linear&region=eu&attempt=${attempt}&status=denied&error=oauth_denied`;
+    const granolaSuccessTarget = `avalon://auth/complete?connection=00000000-0000-7000-8000-000000000005&status=connected&region=global&attempt=${attempt}&provider=granola`;
+    const granolaErrorTarget = `avalon://auth/complete?provider=granola&region=global&attempt=${attempt}&status=failed&error=connector_oauth_failed`;
     const asFragment = (target: string): string => `#${new URLSearchParams({ target }).toString()}`;
 
     expect(parseDesktopTarget(asFragment(successTarget))).toBe(successTarget);
     expect(parseDesktopTarget(asFragment(errorTarget))).toBe(errorTarget);
     expect(parseDesktopTarget(asFragment(connectorSuccessTarget))).toBe(connectorSuccessTarget);
     expect(parseDesktopTarget(asFragment(connectorErrorTarget))).toBe(connectorErrorTarget);
+    expect(parseDesktopTarget(asFragment(granolaSuccessTarget))).toBe(granolaSuccessTarget);
+    expect(parseDesktopTarget(asFragment(granolaErrorTarget))).toBe(granolaErrorTarget);
     expect(parseDesktopTarget(asFragment('avalon://auth/complete?error=google_oauth_denied')))
       .toBe('avalon://auth/complete?error=google_oauth_denied');
     expect(parseDesktopTarget(`?target=${encodeURIComponent(successTarget)}`)).toBeNull();

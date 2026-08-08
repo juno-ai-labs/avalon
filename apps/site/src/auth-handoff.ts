@@ -5,13 +5,14 @@ const TICKET_PATTERN = /^[A-Za-z0-9_-]{20,500}$/u;
 const ATTEMPT_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
 const CONNECTION_PATTERN = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/iu;
-const CONNECTOR_PROVIDERS = ['google', 'github', 'linear', 'notion', 'slack'] as const;
+const CONNECTOR_PROVIDERS = ['google', 'github', 'granola', 'linear', 'notion', 'slack'] as const;
 
 type ConnectorProvider = (typeof CONNECTOR_PROVIDERS)[number];
 
 const connectorName: Record<ConnectorProvider, string> = {
   google: 'Google',
   github: 'GitHub',
+  granola: 'Granola',
   linear: 'Linear',
   notion: 'Notion',
   slack: 'Slack',
