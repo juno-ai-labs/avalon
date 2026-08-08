@@ -62,6 +62,7 @@ permissions:
 concurrency:
   group: deploy-api
   cancel-in-progress: false
+  queue: single
 
 jobs:
   deploy:
