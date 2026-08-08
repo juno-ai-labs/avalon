@@ -15,12 +15,22 @@ interface AudioCapture {
 }
 
 interface DictationAttempt {
-  id: number;
-  socket?: WebSocket;
   capture?: AudioCapture;
-  stream?: MediaStream;
+  id: number;
+  segmentCommit?: {
+    promise: Promise<string>;
+    reject: (error: Error) => void;
+    resolve: (transcript: string) => void;
+  };
+  socket?: WebSocket;
+  streams: MediaStream[];
   transcript: string;
   completionTimer?: number;
+}
+
+export interface RealtimeDictationOptions {
+  includeSystemAudio?: boolean;
+  useSystemDefaultMicrophone?: boolean;
 }
 
 const COMPLETION_TIMEOUT_MS = 15_000;
@@ -59,7 +69,10 @@ export function isFinalTranscriptionEvent(event: RealtimeTranscriptionEvent): bo
     || event.type === 'response.text.done';
 }
 
-function microphoneErrorMessage(error: unknown): string {
+class SystemAudioCaptureError extends Error {}
+
+function captureErrorMessage(error: unknown): string {
+  if (error instanceof SystemAudioCaptureError) return error.message;
   if (error instanceof DOMException && error.name === 'NotAllowedError') {
     return 'Microphone access is blocked. Allow it in System Settings and try again.';
   }
@@ -67,6 +80,49 @@ function microphoneErrorMessage(error: unknown): string {
     return 'The selected microphone is unavailable.';
   }
   return error instanceof Error ? error.message : 'Dictation could not start.';
+}
+
+function stopMediaStream(stream: MediaStream): void {
+  for (const track of stream.getTracks()) {
+    try { track.stop(); } catch { /* The track is already stopped. */ }
+  }
+}
+
+async function requestSystemAudioStream(): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new SystemAudioCaptureError('Computer audio capture is unavailable. Turn off Computer audio to record the microphone only.');
+  }
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      audio: true,
+      // Chromium requires a display video track to request loopback audio. The
+      // main process grants a trusted screen source; no renderer reads its pixels.
+      video: {
+        frameRate: { ideal: 1 },
+        height: { ideal: 16 },
+        width: { ideal: 16 },
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      throw new SystemAudioCaptureError(
+        'Computer audio access is blocked. Allow Avalon in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.',
+      );
+    }
+    throw new SystemAudioCaptureError(
+      error instanceof Error && error.message
+        ? `Computer audio could not start: ${error.message}`
+        : 'Computer audio could not start. Turn off Computer audio to record the microphone only.',
+    );
+  }
+  if (stream.getAudioTracks().length === 0) {
+    stopMediaStream(stream);
+    throw new SystemAudioCaptureError(
+      'Computer audio was not available. Turn off Computer audio to record the microphone only.',
+    );
+  }
+  return stream;
 }
 
 function bytesToBase64(buffer: ArrayBuffer): string {
@@ -136,23 +192,38 @@ async function waitForTranscriptionSession(
   });
 }
 
-async function createAudioCapture(stream: MediaStream, onAudio: (buffer: ArrayBuffer) => void): Promise<AudioCapture> {
+async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: ArrayBuffer) => void): Promise<AudioCapture> {
   const context = new AudioContext({ sampleRate: 24_000 });
-  let source: MediaStreamAudioSourceNode | undefined;
+  const sources: MediaStreamAudioSourceNode[] = [];
+  let inputGain: GainNode | undefined;
   let node: AudioWorkletNode | undefined;
   let silence: GainNode | undefined;
   try {
     await context.suspend();
     await context.audioWorklet.addModule(new URL('../audio/pcm16-capture-worklet.js?no-inline', import.meta.url));
-    source = context.createMediaStreamSource(stream);
-    node = new AudioWorkletNode(context, 'avalon-pcm16-capture');
+    inputGain = context.createGain();
+    // Leave headroom when the microphone and loopback are both active.
+    inputGain.gain.value = streams.length > 1 ? 0.65 : 1;
+    for (const stream of streams) {
+      const source = context.createMediaStreamSource(stream);
+      source.connect(inputGain);
+      sources.push(source);
+    }
+    node = new AudioWorkletNode(context, 'avalon-pcm16-capture', {
+      channelCount: 1,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers',
+    });
     silence = context.createGain();
     silence.gain.value = 0;
-    source.connect(node);
+    inputGain.connect(node);
     node.connect(silence);
     silence.connect(context.destination);
   } catch (error) {
-    try { source?.disconnect(); } catch { /* Already disconnected. */ }
+    for (const source of sources) {
+      try { source.disconnect(); } catch { /* Already disconnected. */ }
+    }
+    try { inputGain?.disconnect(); } catch { /* Already disconnected. */ }
     try { node?.disconnect(); } catch { /* Already disconnected. */ }
     try { silence?.disconnect(); } catch { /* Already disconnected. */ }
     try { await context.close(); } catch { /* Preserve the setup error. */ }
@@ -192,10 +263,10 @@ async function createAudioCapture(stream: MediaStream, onAudio: (buffer: ArrayBu
       } finally {
         if (flushTimer !== undefined) window.clearTimeout(flushTimer);
         node.port.onmessage = null;
-        for (const track of stream.getTracks()) {
-          try { track.stop(); } catch (error) { failure ??= error; }
+        for (const source of sources) {
+          try { source.disconnect(); } catch (error) { failure ??= error; }
         }
-        try { source.disconnect(); } catch (error) { failure ??= error; }
+        try { inputGain.disconnect(); } catch (error) { failure ??= error; }
         try { node.disconnect(); } catch (error) { failure ??= error; }
         try { silence.disconnect(); } catch (error) { failure ??= error; }
         try { await context.close(); } catch (error) { failure ??= error; }
@@ -214,8 +285,8 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
   if (attempt.capture) {
     try { await attempt.capture.stop(); } catch (error) { failure = error; }
   }
-  if (attempt.stream) {
-    for (const track of attempt.stream.getTracks()) {
+  for (const stream of attempt.streams) {
+    for (const track of stream.getTracks()) {
       try { track.stop(); } catch (error) { failure ??= error; }
     }
   }
@@ -228,11 +299,13 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
 export function useRealtimeDictation(
   api: Pick<AvalonApi, 'getTranscriptionSocketTicket'> | undefined,
   onTranscript: (transcript: string) => void,
+  options: RealtimeDictationOptions = {},
 ): {
   devices: MicrophoneDevice[];
   error?: string;
   selectedDeviceId: string;
   setSelectedDeviceId: (deviceId: string) => void;
+  commit: () => Promise<string>;
   start: () => Promise<void>;
   state: DictationState;
   stop: () => Promise<void>;
@@ -283,17 +356,20 @@ export function useRealtimeDictation(
   ): void => {
     if (attemptRef.current !== attempt) return;
     attemptRef.current = undefined;
+    const pendingSegment = attempt.segmentCommit;
+    attempt.segmentCommit = undefined;
+    pendingSegment?.reject(new Error(nextError ?? 'Recording ended before the transcript segment was finalized.'));
     if (nextError) setError(nextError);
     transition(nextState);
     void cleanupAttempt(attempt).catch((cleanupError) => {
       if (attemptRef.current || nextAttemptIdRef.current !== attempt.id || nextState === 'error') return;
-      setError(microphoneErrorMessage(cleanupError));
+      setError(captureErrorMessage(cleanupError));
       transition('error');
     });
   }, [transition]);
 
   const stop = useCallback(async (): Promise<void> => {
-    const attempt = attemptRef.current;
+    let attempt = attemptRef.current;
     if (!attempt) return;
     if (stateRef.current === 'requesting' || stateRef.current === 'connecting') {
       attemptRef.current = undefined;
@@ -302,22 +378,31 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
       } catch (cleanupError) {
         if (!attemptRef.current && nextAttemptIdRef.current === attempt.id) {
-          setError(microphoneErrorMessage(cleanupError));
+          setError(captureErrorMessage(cleanupError));
           transition('error');
         }
       }
       return;
     }
     if (stateRef.current === 'transcribing') {
-      finish(attempt, 'idle');
-      return;
+      if (!attempt.segmentCommit) {
+        finish(attempt, 'idle');
+        return;
+      }
+      try {
+        await attempt.segmentCommit.promise;
+      } catch {
+        return;
+      }
+      attempt = attemptRef.current;
+      if (!attempt) return;
     }
     if (!attempt.capture || !attempt.socket || stateRef.current !== 'listening') return;
     transition('transcribing');
     try {
       await attempt.capture.stop(true);
     } catch (cleanupError) {
-      finish(attempt, 'error', microphoneErrorMessage(cleanupError));
+      finish(attempt, 'error', captureErrorMessage(cleanupError));
       return;
     }
     if (attemptRef.current !== attempt) return;
@@ -328,7 +413,7 @@ export function useRealtimeDictation(
     try {
       attempt.socket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     } catch (socketError) {
-      finish(attempt, 'error', microphoneErrorMessage(socketError));
+      finish(attempt, 'error', captureErrorMessage(socketError));
       return;
     }
     attempt.completionTimer = window.setTimeout(() => {
@@ -342,10 +427,56 @@ export function useRealtimeDictation(
     }, COMPLETION_TIMEOUT_MS);
   }, [finish, transition]);
 
+  const commit = useCallback(async (): Promise<string> => {
+    const attempt = attemptRef.current;
+    if (!attempt) return '';
+    if (attempt.segmentCommit) return attempt.segmentCommit.promise;
+    if (!attempt.socket || stateRef.current !== 'listening') return '';
+    if (attempt.socket.readyState !== WebSocket.OPEN) {
+      const message = 'The dictation connection closed before the transcript segment could be saved.';
+      finish(attempt, 'error', message);
+      throw new Error(message);
+    }
+
+    let resolve!: (transcript: string) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<string>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    attempt.segmentCommit = { promise, reject, resolve };
+    setError(undefined);
+    transition('transcribing');
+    try {
+      attempt.socket.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    } catch (socketError) {
+      finish(attempt, 'error', captureErrorMessage(socketError));
+      return promise;
+    }
+    attempt.completionTimer = window.setTimeout(() => {
+      if (attemptRef.current !== attempt || attempt.segmentCommit?.promise !== promise) return;
+      attempt.completionTimer = undefined;
+      const pendingSegment = attempt.segmentCommit;
+      const finalizedTranscript = attempt.transcript;
+      attempt.segmentCommit = undefined;
+      attempt.transcript = '';
+      onTranscriptRef.current('');
+      setError(
+        finalizedTranscript
+          ? 'The transcription service did not confirm this segment in time. Recording is still active; the visible text may be incomplete.'
+          : 'The transcription service did not return this segment in time. Recording is still active.',
+      );
+      transition('listening');
+      pendingSegment.resolve(finalizedTranscript);
+    }, COMPLETION_TIMEOUT_MS);
+    return promise;
+  }, [finish, transition]);
+
   const start = useCallback(async (): Promise<void> => {
     if (!api || !navigator.mediaDevices?.getUserMedia || !['idle', 'error'].includes(stateRef.current)) return;
     const attempt: DictationAttempt = {
       id: nextAttemptIdRef.current + 1,
+      streams: [],
       transcript: '',
     };
     nextAttemptIdRef.current = attempt.id;
@@ -354,24 +485,32 @@ export function useRealtimeDictation(
     onTranscriptRef.current('');
     transition('requesting');
     try {
-      const streamPromise = navigator.mediaDevices.getUserMedia({
-        audio: {
-          autoGainControl: true,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          ...(selectedDeviceId === 'default' ? {} : { deviceId: { exact: selectedDeviceId } }),
-        },
-      }).then((stream) => {
-        attempt.stream = stream;
-        if (attemptRef.current !== attempt) stream.getTracks().forEach((track) => track.stop());
+      const registerStream = (stream: MediaStream): MediaStream => {
+        attempt.streams.push(stream);
+        if (attemptRef.current !== attempt) stopMediaStream(stream);
         return stream;
-      });
+      };
+      const streamsPromise = Promise.all([
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            autoGainControl: true,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            ...(
+              options.useSystemDefaultMicrophone || selectedDeviceId === 'default'
+                ? {}
+                : { deviceId: { exact: selectedDeviceId } }
+            ),
+          },
+        }).then(registerStream),
+        ...(options.includeSystemAudio ? [requestSystemAudioStream().then(registerStream)] : []),
+      ]);
       const [ticket] = await Promise.all([
         api.getTranscriptionSocketTicket(),
-        streamPromise,
+        streamsPromise,
       ]);
-      if (attemptRef.current !== attempt || !attempt.stream) {
+      if (attemptRef.current !== attempt || attempt.streams.length === 0) {
         await cleanupAttempt(attempt);
         return;
       }
@@ -387,7 +526,21 @@ export function useRealtimeDictation(
             attempt.transcript = nextTranscript;
             onTranscriptRef.current(attempt.transcript);
             if (stateRef.current === 'transcribing' && isFinalTranscriptionEvent(event)) {
-              finish(attempt, 'idle');
+              if (attempt.segmentCommit) {
+                if (attempt.completionTimer !== undefined) {
+                  window.clearTimeout(attempt.completionTimer);
+                  attempt.completionTimer = undefined;
+                }
+                const pendingSegment = attempt.segmentCommit;
+                const finalizedTranscript = attempt.transcript;
+                attempt.segmentCommit = undefined;
+                attempt.transcript = '';
+                onTranscriptRef.current('');
+                transition('listening');
+                pendingSegment.resolve(finalizedTranscript);
+              } else {
+                finish(attempt, 'idle');
+              }
             }
           } else if (event.type === 'error' || event.type === 'conversation.item.input_audio_transcription.failed') {
             finish(attempt, 'error', providerErrorMessage(event));
@@ -403,7 +556,7 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
         return;
       }
-      const capture = await createAudioCapture(attempt.stream, (buffer) => {
+      const capture = await createAudioCapture(attempt.streams, (buffer) => {
         if (attemptRef.current === attempt && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: bytesToBase64(buffer) }));
         }
@@ -421,10 +574,18 @@ export function useRealtimeDictation(
       transition('listening');
       void refreshDevices();
     } catch (caught) {
-      if (attemptRef.current === attempt) finish(attempt, 'error', microphoneErrorMessage(caught));
+      if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
       else await cleanupAttempt(attempt).catch(() => undefined);
     }
-  }, [api, finish, refreshDevices, selectedDeviceId, transition]);
+  }, [
+    api,
+    finish,
+    options.includeSystemAudio,
+    options.useSystemDefaultMicrophone,
+    refreshDevices,
+    selectedDeviceId,
+    transition,
+  ]);
 
   useEffect(() => () => {
     const attempt = attemptRef.current;
@@ -439,6 +600,7 @@ export function useRealtimeDictation(
   }, []);
 
   return {
+    commit,
     devices,
     ...(error ? { error } : {}),
     selectedDeviceId,
