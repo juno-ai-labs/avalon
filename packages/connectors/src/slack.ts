@@ -54,9 +54,11 @@ export const SlackWorkspaceBotScopes = [
   "assistant:write",
   "app_mentions:read",
   "channels:join",
+  "channels:history",
   "channels:read",
   "chat:write",
   "commands",
+  "groups:history",
   "groups:read",
   "im:history",
   "im:write",
@@ -175,6 +177,14 @@ const SlackListedPublicChannelSchema = SlackChannelSchema.extend({
 });
 const SlackMessageResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
 const SlackStreamResponseSchema = SlackOkSchema.extend({ channel: SlackIdSchema, ts: SlackTimestampSchema });
+const SlackThreadMessageSchema = z.object({
+  type: z.string().optional(),
+  user: SlackIdSchema.optional(),
+  bot_id: SlackIdSchema.optional(),
+  text: z.string().optional(),
+  ts: SlackTimestampSchema,
+  thread_ts: SlackTimestampSchema.optional(),
+}).passthrough();
 const SlackSearchMessageSchema = z.object({
   author_name: z.string().optional(),
   author_user_id: SlackIdSchema.optional(),
@@ -292,6 +302,19 @@ const SlackWebApiSchemas = {
   "conversations.open": {
     request: z.object({ users: SlackIdSchema }).strict(),
     response: SlackOkSchema.extend({ channel: SlackChannelSchema }),
+  },
+  "conversations.replies": {
+    request: z.object({
+      channel: SlackIdSchema,
+      ts: SlackTimestampSchema,
+      limit: z.number().int().min(1).max(15).optional(),
+      cursor: z.string().min(1).optional(),
+    }).strict(),
+    response: SlackOkSchema.extend({
+      messages: z.array(SlackThreadMessageSchema),
+      has_more: z.boolean().optional(),
+      response_metadata: z.object({ next_cursor: z.string() }).passthrough().optional(),
+    }),
   },
   "conversations.info": {
     request: z.object({ channel: SlackIdSchema }).strict(),
@@ -507,6 +530,7 @@ const SlackGetMethods = new Set<SlackWebApiMethod>([
   "auth.revoke",
   "conversations.info",
   "conversations.list",
+  "conversations.replies",
   "users.info",
   "users.lookupByEmail",
 ]);
