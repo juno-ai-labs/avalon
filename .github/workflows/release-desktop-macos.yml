@@ -39,7 +39,11 @@ jobs:
   # macOS runner just to discover they have nothing to ship.
   plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 60
+    # Reading Actions runs is how the release orders itself behind the API.
+    permissions:
+      contents: read
+      actions: read
     outputs:
       should_release: ${{ steps.plan.outputs.should_release }}
       tag: ${{ steps.plan.outputs.tag }}
@@ -57,6 +61,16 @@ jobs:
           GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           RELEASE_INPUT_TAG: ${{ inputs.tag }}
         run: node apps/desktop/scripts/plan-release.mjs
+
+      # The API deploys first and the app ships against it second. Waiting here
+      # rather than on the macOS runner keeps a queued release cheap, and the
+      # regional health gate later in the release re-checks what this ordering
+      # is meant to guarantee.
+      - name: Wait for any API deployment to finish
+        if: steps.plan.outputs.should_release == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/await-api-deployment.mjs deploy-api.yml
 
   release:
     needs: plan
