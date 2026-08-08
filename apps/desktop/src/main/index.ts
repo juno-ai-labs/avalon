@@ -9,6 +9,7 @@ import {
 } from '@avalon/contracts';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -16,7 +17,6 @@ import {
   app,
   BrowserWindow,
   clipboard,
-  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -28,7 +28,6 @@ import {
   session as electronSession,
   shell,
   systemPreferences,
-  webContents as electronWebContents,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
@@ -68,14 +67,17 @@ import { applicationMenuTemplate } from './application-menu';
 import { LockdownModeController } from './lockdown-mode';
 import {
   allowsTrustedAudioCapture,
-  allowsTrustedDisplayCapturePermission,
-  allowsTrustedMeetingDisplayCapture,
 } from './media-permission';
 import {
   meetingAudioPermissions,
   meetingAudioSettingsUrl,
   prepareMeetingAudioPermissions,
 } from './meeting-audio-permission';
+import {
+  nativeSystemAudioAddonPath,
+  NativeSystemAudioController,
+  type NativeSystemAudioBinding,
+} from './native-system-audio';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -116,9 +118,8 @@ import {
   legacyPackagedUserDataDirectory,
   userDataDirectoryForLaunch,
 } from './user-data-path';
-import { configureSystemAudioCapture } from './system-audio-capture';
-
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
+const requireNativeModule = createRequire(import.meta.url);
 const executeFile = promisify(execFile);
 // Never let inherited development environment variables choose the renderer
 // or API origins of an installed app. The preload bridge is privileged, so a
@@ -130,10 +131,6 @@ const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-// Chromium feature selection is fixed when Electron starts. Configure macOS
-// system-audio capture before app.whenReady() or any renderer is created.
-configureSystemAudioCapture(app.commandLine, process.platform);
 
 function isUuid(value: string): boolean {
   return UUID_PATTERN.test(value);
@@ -157,6 +154,17 @@ let developmentDockIconUsesAppearancePreview = false;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
+const nativeSystemAudioController = new NativeSystemAudioController(() => {
+  if (process.platform !== 'darwin') {
+    throw new Error('Native computer audio capture is available only on macOS.');
+  }
+  const addonPath = nativeSystemAudioAddonPath({
+    currentDirectory,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+  });
+  return requireNativeModule(addonPath) as NativeSystemAudioBinding;
+});
 
 function avalonWindows(): BrowserWindow[] {
   return [mainWindow, settingsWindow, ...meetingWindows]
@@ -1069,15 +1077,7 @@ function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
 function meetingAudioPermissionDependencies() {
   return {
     askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
-    getMediaAccessStatus: (permission: 'microphone' | 'screen') =>
-      systemPreferences.getMediaAccessStatus(permission),
-    platform: process.platform,
-    requestSystemAudioAccess: async () => {
-      await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { height: 0, width: 0 },
-      });
-    },
+    getMicrophoneAccessStatus: () => systemPreferences.getMediaAccessStatus('microphone'),
   };
 }
 
@@ -1223,6 +1223,14 @@ function registerIpc(): void {
   ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
     assertMeetingIpcSender(event);
     return prepareMeetingAudioPermissions(meetingAudioPermissionDependencies());
+  });
+  ipcMain.handle('meeting-audio:start-system-capture', (event) => {
+    assertMeetingIpcSender(event);
+    return nativeSystemAudioController.start(event.sender);
+  });
+  ipcMain.handle('meeting-audio:stop-system-capture', (event) => {
+    assertMeetingIpcSender(event);
+    return nativeSystemAudioController.stop(event.sender);
   });
   ipcMain.handle('meeting-audio:open-settings', async (event, rawPermission: unknown) => {
     assertMeetingIpcSender(event);
@@ -1564,7 +1572,12 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
     event.preventDefault();
     meetingWindow.webContents.send('meeting:close-requested');
   });
-  meetingWindow.on('closed', () => meetingWindows.delete(meetingWindow));
+  meetingWindow.on('closed', () => {
+    void nativeSystemAudioController.stop(meetingWindow.webContents).catch((error) => {
+      console.warn('[meeting] Failed to stop native computer audio after window close', error);
+    });
+    meetingWindows.delete(meetingWindow);
+  });
   try {
     await loadRenderer(
       meetingWindow,
@@ -1679,10 +1692,6 @@ function installContentSecurityPolicy(): void {
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
       trustedRenderer,
-    }) || allowsTrustedDisplayCapturePermission({
-      isMeetingWindow: isMeetingWindowContents(webContents),
-      permission,
-      trustedRenderer,
     }));
   });
   electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
@@ -1692,46 +1701,6 @@ function installContentSecurityPolicy(): void {
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
       trustedRenderer,
-    }) || allowsTrustedDisplayCapturePermission({
-      isMeetingWindow: isMeetingWindowContents(webContents),
-      permission,
-      trustedRenderer,
-    });
-  });
-
-  electronSession.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
-    const frame = request.frame;
-    const contents = frame ? electronWebContents.fromFrame(frame) : undefined;
-    const allowed = Boolean(contents) && allowsTrustedMeetingDisplayCapture({
-      audioRequested: request.audioRequested,
-      isMainFrame: frame?.parent === null,
-      isMeetingWindow: contents ? isMeetingWindowContents(contents) : false,
-      trustedRenderer: rendererNavigationAllowed(request.securityOrigin) && rendererNavigationAllowed(frame?.url ?? ''),
-      videoRequested: request.videoRequested,
-    });
-    if (!allowed || !contents || !frame) {
-      callback({});
-      return;
-    }
-
-    void desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 0, height: 0 },
-    }).then((sources) => {
-      const source = sources[0];
-      const stillTrusted = electronWebContents.fromFrame(frame) === contents
-        && isMeetingWindowContents(contents)
-        && rendererNavigationAllowed(frame.url);
-      if (!source || !stillTrusted) {
-        callback({});
-        return;
-      }
-      // The renderer retains the low-rate video track only because Chromium's
-      // display-capture API requires one. Avalon never reads or transmits pixels.
-      callback({ audio: 'loopback', video: source });
-    }).catch((error: unknown) => {
-      console.warn('[avalon] system audio capture could not enumerate a display', error);
-      callback({});
     });
   });
 }

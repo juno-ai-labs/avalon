@@ -80,6 +80,11 @@ export interface DesktopMeetingAudioPermissions {
   systemAudio: DesktopMediaPermissionStatus;
 }
 
+export interface DesktopSystemAudioCaptureInfo {
+  channels: 1;
+  sampleRate: number;
+}
+
 export interface AvalonDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
@@ -113,6 +118,9 @@ export interface AvalonDesktopBridge {
   closeMeetingNotes: () => Promise<void>;
   getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
+  startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
+  stopMeetingSystemAudioCapture: () => Promise<void>;
+  onMeetingSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
   onMeetingCloseRequested: (listener: () => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;

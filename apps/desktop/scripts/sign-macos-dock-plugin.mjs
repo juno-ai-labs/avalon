@@ -6,15 +6,11 @@ import { selectDeveloperIdIdentity } from './finalize-macos-release.mjs';
 
 const run = promisify(execFile);
 
-export default async function signMacosDockPlugin(context) {
+export default async function signMacosNativeComponents(context) {
   if (context.electronPlatformName !== 'darwin') return;
   const applicationPath = join(
     context.appOutDir,
     `${context.packager.appInfo.productFilename}.app`,
-  );
-  const pluginPath = join(
-    applicationPath,
-    'Contents/PlugIns/AvalonDockTilePlugin.docktileplugin',
   );
   const identities = await run('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning']);
   const qualifier = process.env.CSC_NAME
@@ -25,15 +21,21 @@ export default async function signMacosDockPlugin(context) {
     qualifier,
   );
 
-  await run('/usr/bin/codesign', [
-    '--force',
-    '--timestamp',
-    '--options',
-    'runtime',
-    '--sign',
-    identity.hash,
-    pluginPath,
-  ]);
-  await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '--verbose=4', pluginPath]);
-  console.log(`Signed ${pluginPath} with ${identity.name}`);
+  const componentPaths = [
+    join(applicationPath, 'Contents/PlugIns/AvalonDockTilePlugin.docktileplugin'),
+    join(applicationPath, 'Contents/Resources/native/system-audio-tap.node'),
+  ];
+  for (const componentPath of componentPaths) {
+    await run('/usr/bin/codesign', [
+      '--force',
+      '--timestamp',
+      '--options',
+      'runtime',
+      '--sign',
+      identity.hash,
+      componentPath,
+    ]);
+    await run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', componentPath]);
+    console.log(`Signed ${componentPath} with ${identity.name}`);
+  }
 }

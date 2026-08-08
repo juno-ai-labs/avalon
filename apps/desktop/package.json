@@ -7,9 +7,11 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
+    "predev": "node scripts/build-development-native-components.mjs",
     "dev": "electron-vite dev",
     "build": "pnpm typecheck && electron-vite build",
     "build:macos-icons": "node scripts/build-macos-icon-components.mjs",
+    "build:macos-native": "node scripts/build-macos-native-components.mjs",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
