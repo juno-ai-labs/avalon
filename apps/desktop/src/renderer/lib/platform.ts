@@ -311,6 +311,12 @@ const browserBridge: AvalonDesktopBridge = {
     target.hash = '/meeting';
     window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
   },
+  async closeMeetingNotes() {
+    window.close();
+  },
+  onMeetingCloseRequested() {
+    return () => undefined;
+  },
   onSettingsSectionRequested() {
     return () => undefined;
   },
