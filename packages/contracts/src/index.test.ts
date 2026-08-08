@@ -7,6 +7,8 @@ import {
   AutomationDraftStreamEventSchema,
   ClientSocketEventSchema,
   CompileAutomationRequestSchema,
+  ConnectorOAuthProviderSchema,
+  ConnectorOAuthProviders,
   CreateAutomationRequestSchema,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
@@ -34,6 +36,11 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("uses one connector OAuth provider catalog across protocol consumers", () => {
+    expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
+    expect(ConnectorOAuthProviders).toContain("granola");
+  });
+
   it("keeps timestamped transcript segments separate from editable note text", () => {
     const segment = AppendNoteTranscriptSegmentRequestSchema.parse({
       clientSegmentId: id,
