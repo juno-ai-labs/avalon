@@ -295,7 +295,7 @@ export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -758,7 +758,7 @@ export const DesktopExchangeRequestSchema = z.object({
   codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
   timezone: IanaTimezoneSchema.default("America/Los_Angeles")
 });
-export const ConnectorOAuthProviderSchema = z.enum(["google", "github", "linear", "notion", "slack"]);
+export const ConnectorOAuthProviderSchema = z.enum(["google", "github", "granola", "linear", "notion", "slack"]);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
 export const ConnectorOAuthStartSchema = z.object({
   url: z.string().url(),

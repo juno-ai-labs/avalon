@@ -2116,6 +2116,15 @@ pre {
 .form-field { display: grid; gap: 6px; }
 .form-field > span { color: var(--muted); font-size: 10.5px; }
 .form-field textarea { background: #191a17; border: 1px solid #3b3c36; border-radius: 6px; line-height: 1.5; outline: 0; padding: 10px; resize: vertical; width: 100%; }
+.granola-key-guide { background: #1b1c19; border: 1px solid #383a34; border-radius: 8px; margin-bottom: 16px; padding: 13px 14px; }
+.granola-key-guide h3 { color: var(--ink); font-size: 11.5px; margin: 0; }
+.granola-key-guide ol { color: var(--ink-soft); font-size: 10.5px; line-height: 1.5; margin: 9px 0; padding-left: 19px; }
+.granola-key-guide li + li { margin-top: 4px; }
+.granola-key-guide p { color: var(--muted); font-size: 10px; line-height: 1.5; margin: 10px 0 0; }
+.granola-key-guide-link { background: transparent; border: 0; color: #aab96a; cursor: pointer; font-size: 10px; margin-top: 10px; padding: 0; text-align: left; }
+.granola-key-guide-link:hover { color: #c8d985; text-decoration: underline; text-underline-offset: 3px; }
+.granola-key-input { background: #191a17; border: 1px solid #3b3c36; border-radius: 6px; color: var(--ink); font-family: 'SFMono-Regular', Consolas, monospace; outline: 0; padding: 9px 10px; width: 100%; }
+.granola-key-input:focus { border-color: #77786f; box-shadow: 0 0 0 2px rgba(130, 151, 172, 0.12); }
 .rename-workstream-field input { background: #191a17; border: 1px solid #3b3c36; border-radius: 6px; outline: 0; padding: 9px 10px; width: 100%; }
 .rename-workstream-field input:focus { border-color: #77786f; box-shadow: 0 0 0 2px rgba(130, 151, 172, 0.12); }
 .modal-copy { color: var(--muted); margin: 0; }
