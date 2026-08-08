@@ -8,6 +8,8 @@ import type {
   CreateWorkstreamRequestSchema,
   ExecutionPrincipal,
   Message,
+  SlackOriginContext,
+  SlackSearchAuthorization,
   UpdateWorkstreamRequestSchema,
   Workstream,
   WorkstreamDetail,
@@ -123,6 +125,8 @@ export async function launchWorkstreamHarness(
     triggerMessageId: string | null;
     origin: string;
     executionPrincipal: ExecutionPrincipal;
+    slackOrigin?: SlackOriginContext;
+    slackSearchAuthorization?: SlackSearchAuthorization;
     parentHarnessRunId?: string;
     supersedeActiveRun?: boolean;
   },
@@ -169,6 +173,10 @@ export async function launchWorkstreamHarness(
     automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
+    ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
+    ...(input.slackSearchAuthorization
+      ? { slackSearchAuthorization: input.slackSearchAuthorization }
+      : {}),
     reason: input.origin,
   };
   try {
@@ -272,7 +280,11 @@ export class WorkstreamService {
     return { items, nextCursor: hasMore ? items.at(-1)?.lastActivityAt ?? null : null };
   }
 
-  async create(input: CreateWorkstreamInput) {
+  async create(
+    input: CreateWorkstreamInput,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+  ) {
     await this.assertMembersExist(input.participantUserIds);
     const attachmentIds = [...new Set(input.attachmentIds)];
     await this.assertDraftAttachments(attachmentIds);
@@ -304,7 +316,14 @@ export class WorkstreamService {
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
     if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
-    const harnessRunId = await this.launchHarness(created.workstream.id, created.messageId, "opening_message");
+    const harnessRunId = await this.launchHarness(
+      created.workstream.id,
+      created.messageId,
+      "opening_message",
+      undefined,
+      slackOrigin,
+      slackSearchAuthorization,
+    );
     return { ...created, harnessRunId };
   }
 
@@ -494,7 +513,12 @@ export class WorkstreamService {
     return this.requireWorkstream(id);
   }
 
-  async createMessage(id: string, input: CreateMessageInput) {
+  async createMessage(
+    id: string,
+    input: CreateMessageInput,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+  ) {
     const workstream = await this.requireWorkstream(id);
     const replayed = await this.loadMessageByClientId(id, input.clientMessageId);
     if (replayed) {
@@ -566,7 +590,16 @@ export class WorkstreamService {
         classification.classification === "both" ||
         (classification.classification === "uncertain" && (workstream.harnessStatus === "running" || connectorMentions.length > 0));
     }
-    const harnessRunId = shouldInvoke ? await this.launchHarness(id, message.id, "human_message") : null;
+    const harnessRunId = shouldInvoke
+      ? await this.launchHarness(
+          id,
+          message.id,
+          "human_message",
+          undefined,
+          slackOrigin,
+          slackSearchAuthorization,
+        )
+      : null;
     return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
   }
 
@@ -658,6 +691,8 @@ export class WorkstreamService {
     elicitationId: string,
     input: AnswerElicitationInput,
     clientMessageId = `elicitation-response:${elicitationId}`,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
     await this.requireWorkstream(id);
     const duplicate = await this.loadMessageByClientId(id, clientMessageId);
@@ -761,7 +796,14 @@ export class WorkstreamService {
     ).bind(id).first<{ count: number }>();
     let harnessRunId: string | null = null;
     if (Number(remaining?.count ?? 0) === 0) {
-      harnessRunId = await this.launchHarness(id, null, "elicitation_answer", String(elicitation.harness_run_id));
+      harnessRunId = await this.launchHarness(
+        id,
+        responseMessageId,
+        "elicitation_answer",
+        String(elicitation.harness_run_id),
+        slackOrigin,
+        slackSearchAuthorization,
+      );
     }
     const updated = (await this.loadElicitations(id, true)).find((item) => item.id === elicitationId);
     if (updated) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "elicitation_answered", elicitation: updated });
@@ -990,7 +1032,14 @@ export class WorkstreamService {
     }
   }
 
-  private async launchHarness(workstreamId: string, triggerMessageId: string | null, origin: string, parentHarnessRunId?: string): Promise<string> {
+  private async launchHarness(
+    workstreamId: string,
+    triggerMessageId: string | null,
+    origin: string,
+    parentHarnessRunId?: string,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+  ): Promise<string> {
     return launchWorkstreamHarness(this.env, {
       workspaceId: this.auth.workspaceId,
       workstreamId,
@@ -998,6 +1047,8 @@ export class WorkstreamService {
       origin,
       executionPrincipal: { type: "user", userId: this.auth.userId },
       supersedeActiveRun: origin === "human_message",
+      ...(slackOrigin ? { slackOrigin } : {}),
+      ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
       ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
     });
   }

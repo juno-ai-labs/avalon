@@ -7,6 +7,7 @@ import {
   GoogleCapabilityScopes,
   LinearCapabilityScopes,
   SlackCapabilityScopes,
+  SlackWorkspaceCapabilities,
   verifyGenericWebhook,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
@@ -279,7 +280,9 @@ export class ConnectionService {
       throw new ApiError(422, "invalid_connector_scope", `${adapter.manifest.displayName} does not support ${input.scope} connections`);
     }
     const supported = new Set(adapter.manifest.capabilities.map((capability) => capability.id));
-    const capabilities = [...new Set(input.capabilities)];
+    const capabilities = provider === "slack" && input.scope === "workspace"
+      ? [...SlackWorkspaceCapabilities]
+      : [...new Set(input.capabilities)];
     if (
       !capabilities.length
       || capabilities.some((capability) =>
@@ -667,12 +670,14 @@ export class ConnectionService {
     } else if (provider === "linear") {
       assertSameLinearWorkspaceIdentity(existingCredentials, incomingCredentials);
     }
-    const grantedCapabilities = provider === "slack" && stateData.scope === "personal" && existing
-      ? [...new Set([
-          ...parseJson<string[]>(existing.granted_scopes_json, []),
-          ...stateData.capabilities,
-        ])]
-      : stateData.capabilities;
+    const grantedCapabilities = provider === "slack" && stateData.scope === "workspace"
+      ? [...SlackWorkspaceCapabilities]
+      : provider === "slack" && existing
+        ? [...new Set([
+            ...parseJson<string[]>(existing.granted_scopes_json, []),
+            ...stateData.capabilities,
+          ])]
+        : stateData.capabilities;
     const credentials = { ...existingCredentials, ...incomingCredentials, providerAccountId };
     const encrypted = await encryptString(JSON.stringify(credentials), this.env.CONNECTOR_CREDENTIALS_KEY, connectionId);
     const at = nowIso();

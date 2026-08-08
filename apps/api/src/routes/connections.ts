@@ -71,7 +71,11 @@ const githubStart = z.object({
 const slackStart = z.discriminatedUnion("scope", [
   z.object({
     scope: z.literal("workspace"),
-    capabilities: z.array(z.enum(["slack.agent", "slack.notifications.write"])).min(1),
+    capabilities: z.array(z.enum([
+      "slack.search", "slack.messages.read", "slack.files.read", "slack.users.read",
+      "slack.messages.write", "slack.conversations.write", "slack.reactions.write",
+      "slack.agent", "slack.notifications.write",
+    ])).min(1),
   }),
   z.object({
     scope: z.literal("personal"),
