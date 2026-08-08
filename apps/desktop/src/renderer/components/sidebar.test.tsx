@@ -173,6 +173,9 @@ describe('Sidebar work-stream markers', () => {
               workspace={workspace}
               workstreams={[
                 workstream('old-input', 'Old input request', 'needs_input', 'ad_hoc', '2026-06-12T12:00:00.000Z'),
+                workstream('month-scheduled', 'Scheduled this month', 'scheduled', 'ad_hoc', '2026-07-10T12:00:00.000Z'),
+                workstream('week-scheduled', 'Scheduled this week', 'scheduled', 'ad_hoc', '2026-07-27T12:00:00.000Z'),
+                workstream('yesterday-failed', 'Failed yesterday', 'failed', 'ad_hoc', '2026-07-30T12:00:00.000Z'),
                 workstream('day-running', 'Recently running', 'running', 'ad_hoc', '2026-07-31T08:00:00.000Z'),
                 workstream('hour-complete', 'Just completed', 'completed', 'ad_hoc', '2026-07-31T19:50:00.000Z'),
               ]}
@@ -183,13 +186,19 @@ describe('Sidebar work-stream markers', () => {
 
       expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
         'Last hour',
-        'Last day',
-        'The rest',
+        'Today',
+        'Yesterday',
+        'This week',
+        'This month',
+        'Before this month',
       ]);
       expect(screen.queryByRole('heading', { name: 'Work streams' })).not.toBeInTheDocument();
       expect([...document.querySelectorAll('.workstream-row .sidebar-row-title')].map((row) => row.textContent)).toEqual([
         'Just completed',
         'Recently running',
+        'Failed yesterday',
+        'Scheduled this week',
+        'Scheduled this month',
         'Old input request',
       ]);
     } finally {
