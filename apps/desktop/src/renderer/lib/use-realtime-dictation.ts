@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AvalonApi } from './api';
 import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
+import { desktopBridge } from './platform';
 
 export type DictationState = 'idle' | 'requesting' | 'connecting' | 'listening' | 'transcribing' | 'finalizing' | 'error';
 
@@ -12,6 +13,11 @@ export interface MicrophoneDevice {
 interface AudioCapture {
   start: () => Promise<void>;
   stop: (flush?: boolean) => Promise<void>;
+}
+
+interface SystemAudioCapture {
+  listen: (listener: ((data: ArrayBuffer, sampleRate: number) => void) | undefined) => void;
+  stop: () => Promise<void>;
 }
 
 interface DictationAttempt {
@@ -31,6 +37,7 @@ interface DictationAttempt {
   };
   socket?: WebSocket;
   streams: MediaStream[];
+  systemAudio?: SystemAudioCapture;
   transcript: string;
   completionTimer?: number;
 }
@@ -98,39 +105,36 @@ function stopMediaStream(stream: MediaStream): void {
   }
 }
 
-async function requestSystemAudioStream(): Promise<MediaStream> {
-  if (!navigator.mediaDevices?.getDisplayMedia) {
-    throw new SystemAudioCaptureError('Computer audio capture is unavailable.');
-  }
-  let stream: MediaStream;
+async function requestSystemAudioCapture(): Promise<SystemAudioCapture> {
+  const bridge = desktopBridge();
+  let audioListener: ((data: ArrayBuffer, sampleRate: number) => void) | undefined;
+  const unsubscribe = bridge.onMeetingSystemAudioData((data, sampleRate) => audioListener?.(data, sampleRate));
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({
-      audio: true,
-      // Chromium requires a display video track to request loopback audio. The
-      // main process grants a trusted screen source; no renderer reads its pixels.
-      video: {
-        frameRate: { ideal: 1 },
-        height: { ideal: 16 },
-        width: { ideal: 16 },
-      },
-    });
+    await bridge.startMeetingSystemAudioCapture();
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'NotAllowedError') {
-      throw new SystemAudioCaptureError(
-        'Computer audio access is blocked. Allow Avalon in System Settings > Privacy & Security > Screen & System Audio Recording, then try again.',
-      );
-    }
+    unsubscribe();
     throw new SystemAudioCaptureError(
       error instanceof Error && error.message
         ? `Computer audio could not start: ${error.message}`
         : 'Computer audio could not start.',
     );
   }
-  if (stream.getAudioTracks().length === 0) {
-    stopMediaStream(stream);
-    throw new SystemAudioCaptureError('Computer audio was not available.');
-  }
-  return stream;
+  let stopped = false;
+  return {
+    listen(listener) {
+      audioListener = listener;
+    },
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      try {
+        await bridge.stopMeetingSystemAudioCapture();
+      } finally {
+        audioListener = undefined;
+        unsubscribe();
+      }
+    },
+  };
 }
 
 function bytesToBase64(buffer: ArrayBuffer): string {
@@ -200,7 +204,11 @@ async function waitForTranscriptionSession(
   });
 }
 
-async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: ArrayBuffer) => void): Promise<AudioCapture> {
+async function createAudioCapture(
+  streams: MediaStream[],
+  systemAudio: SystemAudioCapture | undefined,
+  onAudio: (buffer: ArrayBuffer) => void,
+): Promise<AudioCapture> {
   const context = new AudioContext({ sampleRate: 24_000 });
   const sources: MediaStreamAudioSourceNode[] = [];
   let inputGain: GainNode | undefined;
@@ -210,8 +218,9 @@ async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: Arra
     await context.suspend();
     await context.audioWorklet.addModule(new URL('../audio/pcm16-capture-worklet.js?no-inline', import.meta.url));
     inputGain = context.createGain();
-    // Leave headroom when the microphone and loopback are both active.
-    inputGain.gain.value = streams.length > 1 ? 0.65 : 1;
+    // The worklet mixes native Core Audio PCM with the microphone. Leave
+    // headroom only when both sources are active.
+    inputGain.gain.value = 1;
     for (const stream of streams) {
       const source = context.createMediaStreamSource(stream);
       source.connect(inputGain);
@@ -221,6 +230,10 @@ async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: Arra
       channelCount: 1,
       channelCountMode: 'explicit',
       channelInterpretation: 'speakers',
+      processorOptions: {
+        microphoneGain: systemAudio ? 0.65 : 1,
+        systemGain: streams.length > 0 ? 0.65 : 1,
+      },
     });
     silence = context.createGain();
     silence.gain.value = 0;
@@ -244,6 +257,9 @@ async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: Arra
     if (event.data.type === 'audio' && event.data.buffer) onAudio(event.data.buffer);
     if (event.data.type === 'flushed') resolveFlush?.();
   };
+  systemAudio?.listen((buffer, sampleRate) => {
+    node.port.postMessage({ type: 'system-audio', buffer, sampleRate }, [buffer]);
+  });
 
   return {
     async start() {
@@ -255,6 +271,9 @@ async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: Arra
       let failure: unknown;
       let flushTimer: number | undefined;
       try {
+        // Core Audio stop is a drain barrier. It resolves only after every
+        // native PCM callback has reached this worklet.
+        try { await systemAudio?.stop(); } catch (error) { failure = error; }
         if (flush && context.state === 'running') {
           await new Promise<void>((resolve, reject) => {
             resolveFlush = resolve;
@@ -269,8 +288,9 @@ async function createAudioCapture(streams: MediaStream[], onAudio: (buffer: Arra
           });
         }
       } catch (error) {
-        failure = error;
+        failure ??= error;
       } finally {
+        systemAudio?.listen(undefined);
         if (flushTimer !== undefined) window.clearTimeout(flushTimer);
         node.port.onmessage = null;
         for (const source of sources) {
@@ -299,6 +319,9 @@ async function cleanupAttempt(attempt: DictationAttempt): Promise<void> {
     for (const track of stream.getTracks()) {
       try { track.stop(); } catch (error) { failure ??= error; }
     }
+  }
+  if (attempt.systemAudio) {
+    try { await attempt.systemAudio.stop(); } catch (error) { failure ??= error; }
   }
   if (attempt.socket && attempt.socket.readyState < WebSocket.CLOSING) {
     try { attempt.socket.close(1000, 'Dictation complete'); } catch (error) { failure ??= error; }
@@ -420,6 +443,10 @@ export function useRealtimeDictation(
       resolveFinalization = resolve;
       rejectFinalization = reject;
     });
+    // A socket can fail while stop is still awaiting the audio drain/flush.
+    // Mark the internal promise handled immediately; the returned stop promise
+    // still adopts and reports the same rejection to its caller.
+    void finalizationPromise.catch(() => undefined);
     attempt.finalization = {
       promise: finalizationPromise,
       reject: rejectFinalization,
@@ -510,21 +537,22 @@ export function useRealtimeDictation(
     try {
       let microphoneWarning: string | undefined;
       let systemAudioWarning: string | undefined;
-      const registerStream = (kind: 'microphone' | 'system') => (stream: MediaStream): MediaStream => {
+      const registerStream = (stream: MediaStream): MediaStream => {
         attempt.streams.push(stream);
         if (attemptRef.current !== attempt) stopMediaStream(stream);
         for (const track of stream.getAudioTracks()) {
           track.addEventListener?.('ended', () => {
             if (attemptRef.current !== attempt) return;
-            const hasLiveAudio = attempt.streams.some((candidate) => candidate.getAudioTracks()
-              .some((candidateTrack) => candidateTrack.readyState !== 'ended'));
+            const hasLiveAudio = Boolean(attempt.systemAudio)
+              || attempt.streams.some((candidate) => candidate.getAudioTracks()
+                .some((candidateTrack) => candidateTrack.readyState !== 'ended'));
             if (!hasLiveAudio) {
               finish(attempt, 'error', 'All audio inputs stopped. Check your microphone and computer-audio permissions.');
               return;
             }
-            setWarning(kind === 'microphone'
+            setWarning(attempt.systemAudio
               ? 'The microphone stopped. Recording computer audio only.'
-              : 'Computer audio stopped. Recording microphone only.');
+              : 'The microphone stopped. No audio input remains.');
           }, { once: true });
         }
         return stream;
@@ -542,12 +570,15 @@ export function useRealtimeDictation(
                 : { deviceId: { exact: selectedDeviceId } }
             ),
           },
-        }).then(registerStream('microphone')).catch((microphoneError: unknown) => {
+        }).then(registerStream).catch((microphoneError: unknown) => {
           microphoneWarning = `Recording computer audio only. ${captureErrorMessage(microphoneError)}`;
           return undefined;
         }),
-        ...(options.includeSystemAudio ? [requestSystemAudioStream()
-          .then(registerStream('system'))
+        ...(options.includeSystemAudio ? [requestSystemAudioCapture()
+          .then((systemAudio) => {
+            attempt.systemAudio = systemAudio;
+            return systemAudio;
+          })
           .catch((systemAudioError: unknown) => {
             systemAudioWarning = `Recording microphone only. ${captureErrorMessage(systemAudioError)}`;
             return undefined;
@@ -561,7 +592,7 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
         return;
       }
-      if (attempt.streams.length === 0) {
+      if (attempt.streams.length === 0 && !attempt.systemAudio) {
         throw new Error([
           'No audio input is available.',
           microphoneWarning?.replace(/^Recording computer audio only\.\s*/u, ''),
@@ -623,7 +654,7 @@ export function useRealtimeDictation(
         await cleanupAttempt(attempt);
         return;
       }
-      const capture = await createAudioCapture(attempt.streams, (buffer) => {
+      const capture = await createAudioCapture(attempt.streams, attempt.systemAudio, (buffer) => {
         if (attemptRef.current === attempt && socket.readyState === WebSocket.OPEN) {
           if (socket.bufferedAmount > MAX_SOCKET_BUFFERED_BYTES) {
             finish(attempt, 'error', 'The network could not keep up with the recording audio.');
