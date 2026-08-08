@@ -1,0 +1,146 @@
+name: Deploy Avalon API
+
+# Ordinary regional release, in the order docs/RUNBOOK.md requires:
+# validate both Wrangler configurations, apply the remote D1 migrations, deploy
+# EU, deploy Global, then call GET /health on both regions.
+#
+# The Global Worker holds named service bindings into EU entrypoints, so EU is
+# always deployed first. A release that introduces a brand-new cross-region
+# entrypoint is the documented three-stage bootstrap exception and must be run
+# by hand — never deploy a caller before its target entrypoint exists.
+#
+# Prerequisites this workflow does not perform (one-time, per the runbook):
+# regional resource creation, confirming each configured D1 ID belongs to its
+# intended region, and setting the regional Worker secrets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or SHA to deploy (defaults to the caller's ref)
+        required: false
+        type: string
+      regions:
+        description: Regions to deploy; EU always precedes Global
+        required: true
+        default: eu-and-global
+        type: choice
+        options:
+          - eu-and-global
+          - eu
+          - global
+      apply_migrations:
+        description: Apply pending D1 migrations remotely before deploying
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: api-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      DEPLOY_EU: ${{ inputs.regions != 'global' }}
+      DEPLOY_GLOBAL: ${{ inputs.regions != 'eu' }}
+
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Require Cloudflare deployment credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck the Worker
+        run: pnpm --filter @avalon/api typecheck
+
+      - name: Run the Worker test suites
+        run: pnpm --filter @avalon/api test
+
+      - name: Validate both Wrangler configurations with dry-run builds
+        run: |
+          set -euo pipefail
+          pnpm --filter @avalon/api build
+          pnpm --filter @avalon/api build:eu
+
+      - name: List the pending remote migrations for EU
+        if: env.DEPLOY_EU == 'true'
+        run: pnpm --filter @avalon/api db:migrate:remote:list:eu
+
+      - name: List the pending remote migrations for Global
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @avalon/api db:migrate:remote:list
+
+      - name: Apply the remote D1 migrations to EU
+        if: inputs.apply_migrations && env.DEPLOY_EU == 'true'
+        run: pnpm --filter @avalon/api db:migrate:remote:eu
+
+      - name: Apply the remote D1 migrations to Global
+        if: inputs.apply_migrations && env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @avalon/api db:migrate:remote
+
+      # EU precedes Global because Global binds named EU entrypoints.
+      - name: Deploy the EU Worker
+        if: env.DEPLOY_EU == 'true'
+        run: pnpm --filter @avalon/api deploy:eu
+
+      - name: Deploy the Global Worker
+        if: env.DEPLOY_GLOBAL == 'true'
+        run: pnpm --filter @avalon/api deploy:global
+
+      - name: Verify regional health
+        run: |
+          set -euo pipefail
+          regions=""
+          if [ "$DEPLOY_EU" = "true" ]; then regions="$regions eu"; fi
+          if [ "$DEPLOY_GLOBAL" = "true" ]; then regions="$regions global"; fi
+          node scripts/check-regional-health.mjs $regions
+
+      - name: Record the remaining manual release gates
+        if: success()
+        run: |
+          {
+            echo "### Avalon API deployed"
+            echo ""
+            echo "- Revision: \`${{ inputs.ref || github.ref_name }}\` (${GITHUB_SHA})"
+            echo "- Regions: \`${{ inputs.regions }}\`"
+            echo "- Remote migrations applied: \`${{ inputs.apply_migrations }}\`"
+            echo ""
+            echo "Remaining human acceptance gates from docs/RUNBOOK.md (steps 8-13):"
+            echo ""
+            echo "1. Workspace invitation to a real inbox and email-bound acceptance."
+            echo "2. Google identity login in a provider test account."
+            echo "3. Google Mail + Calendar connector reads/writes, then delete the fixtures."
+            echo "4. Google Drive + Docs + Sheets connector reads/writes against disposable fixtures."
+            echo "5. Drive poll baseline, change, re-poll for \`docs.document_changed\` and \`sheets.spreadsheet_changed\`."
+            echo "6. Create an automation, run it manually, confirm one work stream and run record survive a retry."
+          } >> "$GITHUB_STEP_SUMMARY"

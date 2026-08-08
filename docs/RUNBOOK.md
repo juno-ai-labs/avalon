@@ -242,9 +242,9 @@ For ordinary releases after both entrypoints exist:
 2. Create or confirm each region's named Cloudflare resources. Scoped memory requires `avalon-global-memory` and `avalon-eu-memory` Vectorize indexes with 1,024 dimensions and cosine distance, plus the Workers AI binding declared by each API Worker.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
-5. Apply the D1 migration remotely to EU and Global.
+5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
 6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release only, use the three-stage bootstrap order above.
-7. Call `GET /health` on both regional APIs.
+7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.
 10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
@@ -254,6 +254,16 @@ For ordinary releases after both entrypoints exist:
 14. After every successful deployment, run the configured Gitleaks gate, commit the complete verified release transaction, and push the authorized current branch. A deployment is not complete until its source and release metadata are present on the remote. Never stage `.env.local`, generated release bundles, dependency directories, or local Cloudflare state.
 
 Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers after the infrastructure prerequisites are satisfied. Do not mark Google capabilities release-ready until the provider credentials and APIs are configured, provider verification is complete where required, and steps 9–12 pass. A failed regional health check blocks desktop distribution for that region.
+
+### Automated workflows
+
+Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
+
+- `.github/workflows/ci.yml` runs on every pull request and on `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history.
+- `.github/workflows/deploy-api.yml` is a manual dispatch that performs steps 1 and 5–7 for the selected regions: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs in the `api-production` environment, so an environment reviewer requirement gates it. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order.
+- `.github/workflows/release-desktop-macos.yml` runs on a `v*` tag: it guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input.
+
+Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API deployment, and the existing `desktop-release` environment for the macOS release. Worker secrets are never held by Actions; they are set per region with Wrangler.
 
 ## Provider configuration
 
