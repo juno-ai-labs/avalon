@@ -3,7 +3,7 @@ import type { AvalonApi } from './api';
 import { readDevicePreferences, setDeviceMicrophoneId } from './device-preferences';
 import { desktopBridge } from './platform';
 
-export type DictationState = 'idle' | 'requesting' | 'connecting' | 'listening' | 'transcribing' | 'finalizing' | 'error';
+export type DictationState = 'idle' | 'requesting' | 'connecting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error';
 
 export interface MicrophoneDevice {
   deviceId: string;
@@ -11,6 +11,8 @@ export interface MicrophoneDevice {
 }
 
 interface AudioCapture {
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
   start: () => Promise<void>;
   stop: (flush?: boolean) => Promise<void>;
 }
@@ -48,6 +50,7 @@ export interface RealtimeDictationOptions {
 }
 
 const AUDIO_FLUSH_TIMEOUT_MS = 2_000;
+const AUDIO_CONTROL_TIMEOUT_MS = 2_000;
 const COMPLETION_TIMEOUT_MS = 60_000;
 const MAX_SOCKET_BUFFERED_BYTES = 4 * 1_024 * 1_024;
 
@@ -253,15 +256,55 @@ async function createAudioCapture(
 
   let stopped = false;
   let resolveFlush: (() => void) | undefined;
+  let resolvePause: (() => void) | undefined;
+  let resolveResume: (() => void) | undefined;
   node.port.onmessage = (event: MessageEvent<{ type?: string; buffer?: ArrayBuffer }>) => {
     if (event.data.type === 'audio' && event.data.buffer) onAudio(event.data.buffer);
     if (event.data.type === 'flushed') resolveFlush?.();
+    if (event.data.type === 'paused') resolvePause?.();
+    if (event.data.type === 'resumed') resolveResume?.();
   };
   systemAudio?.listen((buffer, sampleRate) => {
     node.port.postMessage({ type: 'system-audio', buffer, sampleRate }, [buffer]);
   });
 
   return {
+    async pause() {
+      if (stopped) return;
+      await new Promise<void>((resolve, reject) => {
+        resolvePause = resolve;
+        const timer = window.setTimeout(
+          () => reject(new Error('Audio capture did not pause in time.')),
+          AUDIO_CONTROL_TIMEOUT_MS,
+        );
+        resolvePause = () => {
+          window.clearTimeout(timer);
+          resolve();
+        };
+        try { node.port.postMessage('pause'); } catch (error) {
+          window.clearTimeout(timer);
+          reject(error);
+        }
+      }).finally(() => { resolvePause = undefined; });
+    },
+    async resume() {
+      if (stopped) return;
+      await new Promise<void>((resolve, reject) => {
+        resolveResume = resolve;
+        const timer = window.setTimeout(
+          () => reject(new Error('Audio capture did not resume in time.')),
+          AUDIO_CONTROL_TIMEOUT_MS,
+        );
+        resolveResume = () => {
+          window.clearTimeout(timer);
+          resolve();
+        };
+        try { node.port.postMessage('resume'); } catch (error) {
+          window.clearTimeout(timer);
+          reject(error);
+        }
+      }).finally(() => { resolveResume = undefined; });
+    },
     async start() {
       if (!stopped) await context.resume();
     },
@@ -340,6 +383,8 @@ export function useRealtimeDictation(
   selectedDeviceId: string;
   setSelectedDeviceId: (deviceId: string) => void;
   commit: () => Promise<string>;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
   start: () => Promise<void>;
   state: DictationState;
   stop: () => Promise<void>;
@@ -436,7 +481,7 @@ export function useRealtimeDictation(
       attempt = attemptRef.current;
       if (!attempt) return;
     }
-    if (!attempt.capture || !attempt.socket || stateRef.current !== 'listening') return;
+    if (!attempt.capture || !attempt.socket || !['listening', 'paused'].includes(stateRef.current)) return;
     let resolveFinalization!: () => void;
     let rejectFinalization!: (error: Error) => void;
     const finalizationPromise = new Promise<void>((resolve, reject) => {
@@ -480,6 +525,30 @@ export function useRealtimeDictation(
       );
     }, COMPLETION_TIMEOUT_MS);
     return finalizationPromise;
+  }, [finish, transition]);
+
+  const pause = useCallback(async (): Promise<void> => {
+    const attempt = attemptRef.current;
+    if (!attempt?.capture || stateRef.current !== 'listening') return;
+    try {
+      await attempt.capture.pause();
+      if (attemptRef.current === attempt) transition('paused');
+    } catch (caught) {
+      if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
+      throw caught;
+    }
+  }, [finish, transition]);
+
+  const resume = useCallback(async (): Promise<void> => {
+    const attempt = attemptRef.current;
+    if (!attempt?.capture || stateRef.current !== 'paused') return;
+    try {
+      await attempt.capture.resume();
+      if (attemptRef.current === attempt) transition('listening');
+    } catch (caught) {
+      if (attemptRef.current === attempt) finish(attempt, 'error', captureErrorMessage(caught));
+      throw caught;
+    }
   }, [finish, transition]);
 
   const commit = useCallback(async (): Promise<string> => {
@@ -714,6 +783,8 @@ export function useRealtimeDictation(
     ...(warning ? { warning } : {}),
     selectedDeviceId,
     setSelectedDeviceId: selectDevice,
+    pause,
+    resume,
     start,
     state,
     stop,

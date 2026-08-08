@@ -10,14 +10,31 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
   systemReadPosition = 0;
   systemWritePosition = 0;
   systemSampleRate = 0;
+  paused = false;
 
   constructor(options) {
     super();
     this.microphoneGain = options.processorOptions?.microphoneGain ?? 1;
     this.systemGain = options.processorOptions?.systemGain ?? 1;
     this.port.onmessage = (event) => {
+      if (event.data === 'pause') {
+        if (!this.paused) {
+          this.drainSystemAudio();
+          this.emit(this.offset);
+          this.paused = true;
+          this.systemReadPosition = this.systemWritePosition;
+        }
+        this.port.postMessage({ type: 'paused' });
+        return;
+      }
+      if (event.data === 'resume') {
+        this.systemReadPosition = this.systemWritePosition;
+        this.paused = false;
+        this.port.postMessage({ type: 'resumed' });
+        return;
+      }
       if (event.data === 'flush') {
-        this.drainSystemAudio();
+        if (!this.paused) this.drainSystemAudio();
         this.emit(this.offset);
         this.port.postMessage({ type: 'flushed' });
         return;
@@ -27,6 +44,7 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
         || !Number.isFinite(event.data.sampleRate)
         || event.data.sampleRate < 8_000
         || event.data.sampleRate > 384_000) return;
+      if (this.paused) return;
       if (this.systemSampleRate !== event.data.sampleRate) {
         this.systemSampleRate = event.data.sampleRate;
         this.systemReadPosition = this.systemWritePosition;
@@ -83,6 +101,7 @@ class Pcm16CaptureProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs) {
+    if (this.paused) return true;
     const input = inputs[0]?.[0];
     const blockLength = outputs[0]?.[0]?.length ?? input?.length ?? 128;
     for (let index = 0; index < blockLength; index += 1) {

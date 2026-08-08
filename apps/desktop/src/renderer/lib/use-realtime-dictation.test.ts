@@ -118,6 +118,14 @@ function installAudioGraph(options: { acknowledgeFlush?: boolean; flushBuffer?: 
     port = {
       onmessage: null as ((event: MessageEvent<{ buffer?: ArrayBuffer; type: string }>) => void) | null,
       postMessage: vi.fn((message: unknown) => {
+        if (message === 'pause') {
+          this.port.onmessage?.(new MessageEvent('message', { data: { type: 'paused' } }));
+          return;
+        }
+        if (message === 'resume') {
+          this.port.onmessage?.(new MessageEvent('message', { data: { type: 'resumed' } }));
+          return;
+        }
         if (message !== 'flush') return;
         if (options.flushBuffer) this.port.onmessage?.(new MessageEvent('message', {
           data: { buffer: options.flushBuffer, type: 'audio' },
@@ -270,6 +278,39 @@ describe('realtime dictation transcript', () => {
     await act(async () => stop);
 
     expect(result.current.state).toBe('idle');
+  });
+
+  it('pauses and resumes audio without replacing the transcription session or native tap', async () => {
+    installMediaDevices(vi.fn(async () => mediaStream()));
+    const audioGraph = installAudioGraph();
+    const api = {
+      getTranscriptionSocketTicket: vi.fn(async () => ({
+        url: 'wss://example.test/pause-resume',
+        ticket: 'ticket',
+      })),
+    };
+    const { result, unmount } = renderHook(() => useRealtimeDictation(api, vi.fn(), { includeSystemAudio: true }));
+
+    let start!: Promise<void>;
+    act(() => { start = result.current.start(); });
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    act(() => FakeWebSocket.instances[0]!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'transcription_session.updated' }),
+    })));
+    await act(async () => start);
+
+    await act(async () => result.current.pause());
+    expect(result.current.state).toBe('paused');
+    expect(systemAudioBridge.stop).not.toHaveBeenCalled();
+    await act(async () => result.current.resume());
+
+    expect(result.current.state).toBe('listening');
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(api.getTranscriptionSocketTicket).toHaveBeenCalledOnce();
+    expect(audioGraph.contextCount()).toBe(1);
+    expect(systemAudioBridge.start).toHaveBeenCalledOnce();
+    expect(systemAudioBridge.stop).not.toHaveBeenCalled();
+    unmount();
   });
 
   it('keeps recording the microphone when native computer audio is unavailable', async () => {
