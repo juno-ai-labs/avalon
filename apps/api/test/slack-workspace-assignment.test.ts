@@ -246,6 +246,7 @@ describe("Slack workspace workstream assignment", () => {
         provider_account_id: "T123",
         encrypted_credentials: "encrypted",
         credential_iv: "iv",
+        granted_scopes_json: '["slack.agent"]',
         status: "healthy",
       },
       slackUserId: "U456",
@@ -402,6 +403,175 @@ describe("Slack public channel membership", () => {
     expect(database.prepare(
       "SELECT status, payload_json, completed_at FROM slack_ingress_jobs WHERE id = 'event:EvChannelCreated'",
     ).get()).toMatchObject({ status: "completed", payload_json: null });
+  });
+
+  it("adds eyes to the triggering message before starting Slack task processing", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:acknowledge", appMention("EvAcknowledge"));
+    const methods: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      methods.push(method);
+      if (method === "conversations.info") return new Response(JSON.stringify({
+        ok: true,
+        channel: { id: "C123", is_private: false, is_im: false, is_mpim: false },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+      if (method === "users.info") return new Response(JSON.stringify({
+        ok: true,
+        user: {
+          id: "U456",
+          team_id: "T123",
+          deleted: false,
+          is_bot: false,
+          profile: { display_name: "Taylor", email: "taylor@example.com" },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+      if (method === "reactions.add") {
+        expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
+        expect(JSON.parse(String(init?.body))).toEqual({
+          channel: "C123",
+          name: "eyes",
+          timestamp: "1.0",
+        });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "assistant.threads.setStatus" || method === "assistant.threads.setTitle") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "chat.startStream") return new Response(JSON.stringify({
+        ok: true,
+        channel: "C123",
+        ts: "2.0",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+    const env = {
+      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      APP_ENV: "test",
+      OPENROUTER_PRIMARY_MODEL: "test-model",
+      SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
+      WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
+    } as unknown as Env;
+
+    await new SlackAgentService(env).processQueuedIngress("event:acknowledge");
+
+    expect(methods.indexOf("reactions.add")).toBeGreaterThan(methods.indexOf("users.info"));
+    expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      "SELECT status, payload_json FROM slack_ingress_jobs WHERE id = 'event:acknowledge'",
+    ).get()).toEqual({ status: "completed", payload_json: null });
+  });
+
+  it.each([
+    ["too_many_reactions", "healthy"],
+    ["missing_scope", "needs_reconnect"],
+  ] as const)("continues an admitted task when reactions.add returns %s", async (reactionError, expectedStatus) => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, `event:${reactionError}`, appMention(`Ev${reactionError}`));
+    const { fetcher, methods } = slackTaskApiFetcher(database, { ok: false, error: reactionError });
+    vi.stubGlobal("fetch", fetcher);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const env = {
+      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      APP_ENV: "test",
+      OPENROUTER_PRIMARY_MODEL: "test-model",
+      SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
+      WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
+    } as unknown as Env;
+
+    await new SlackAgentService(env).processQueuedIngress(`event:${reactionError}`);
+
+    expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
+    expect(warning).toHaveBeenCalledWith("Slack activation acknowledgement failed", expect.objectContaining({
+      reason: reactionError,
+    }));
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      "SELECT status FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).get()).toEqual({ status: expectedStatus });
+    expect(database.prepare(
+      `SELECT status, payload_json FROM slack_ingress_jobs WHERE id = 'event:${reactionError}'`,
+    ).get()).toEqual({ status: "completed", payload_json: null });
+  });
+
+  it("uses the installed Slack capability grants for activation", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.prepare(
+      "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
+    ).run();
+    insertSlackEventJob(database, "event:missing-capability", appMention("EvMissingCapability"));
+    const { fetcher, methods } = slackTaskApiFetcher(database, { ok: true });
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      vi.fn(async () => undefined),
+    )).processQueuedIngress("event:missing-capability")).rejects.toThrow(/has not granted slack\.agent/iu);
+
+    expect(methods).not.toContain("reactions.add");
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
+    expect(database.prepare(
+      "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:missing-capability'",
+    ).get()).toEqual({
+      status: "failed",
+      attempt_count: 20,
+      error_code: "unsupported_capability",
+    });
+  });
+
+  it("acknowledges linked-user activation without external actor lookup", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('44444444-4444-4444-8444-444444444444', 'google-linked',
+              'linked@example.com', 'Linked User', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES ('22222222-2222-4222-8222-222222222222',
+              '44444444-4444-4444-8444-444444444444', 'member', 'active', '2026-01-01');
+      INSERT INTO slack_user_links
+        (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
+         status, created_at, updated_at)
+      VALUES ('33333333-3333-4333-8333-333333333333',
+              '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111',
+              '44444444-4444-4444-8444-444444444444', 'T123', 'U456',
+              'active', '2026-01-01', '2026-01-01');
+    `);
+    insertSlackEventJob(database, "event:linked", appMention("EvLinked"));
+    const { fetcher, methods } = slackTaskApiFetcher(database, { ok: true });
+    vi.stubGlobal("fetch", fetcher);
+    const env = {
+      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      APP_ENV: "test",
+      OPENROUTER_PRIMARY_MODEL: "test-model",
+      SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
+      WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn(async () => ({ id: "workflow" })) },
+    } as unknown as Env;
+
+    await new SlackAgentService(env).processQueuedIngress("event:linked");
+
+    expect(methods).toContain("reactions.add");
+    expect(methods).not.toContain("users.info");
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams",
+    ).get()).toEqual({ created_by_user_id: "44444444-4444-4444-8444-444444444444" });
   });
 
   it("makes deterministic ingress failures terminal in the durable job row", async () => {
@@ -789,6 +959,62 @@ function appMention(eventId: string): Record<string, unknown> {
       text: "<@UBOT> investigate this",
     },
   };
+}
+
+function slackTaskApiFetcher(
+  database: DatabaseSync,
+  reactionResponse: Record<string, unknown>,
+): { fetcher: ReturnType<typeof vi.fn>; methods: string[] } {
+  const methods: string[] = [];
+  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+    const method = url.pathname.split("/").at(-1)!;
+    methods.push(method);
+    if (method === "conversations.info") return new Response(JSON.stringify({
+      ok: true,
+      channel: { id: "C123", is_private: false, is_im: false, is_mpim: false },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    if (method === "users.info") return new Response(JSON.stringify({
+      ok: true,
+      user: {
+        id: "U456",
+        team_id: "T123",
+        deleted: false,
+        is_bot: false,
+        profile: { display_name: "Taylor", email: "taylor@example.com" },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    if (method === "conversations.history") return new Response(JSON.stringify({
+      ok: true,
+      messages: [],
+      has_more: false,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    if (method === "reactions.add") {
+      expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        channel: "C123",
+        name: "eyes",
+        timestamp: "1.0",
+      });
+      return new Response(JSON.stringify(reactionResponse), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (method === "assistant.threads.setStatus" || method === "assistant.threads.setTitle") {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (method === "chat.startStream") return new Response(JSON.stringify({
+      ok: true,
+      channel: "C123",
+      ts: "2.0",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    throw new Error(`Unexpected Slack request ${url}`);
+  });
+  return { fetcher, methods };
 }
 
 function slackMembershipEnvironment(

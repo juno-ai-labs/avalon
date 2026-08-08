@@ -212,6 +212,18 @@ export type SlackAgentInvocation =
 
 const SlackIdSchema = z.string().min(1);
 const SlackTimestampSchema = z.string().min(1);
+export const SLACK_AGENT_ACKNOWLEDGEMENT_REACTION = "eyes" as const;
+export const SlackAgentAcknowledgementCommandSchema = z.object({
+  kind: z.literal("acknowledge"),
+  channelId: SlackIdSchema,
+  timestamp: SlackTimestampSchema,
+  reaction: z.literal(SLACK_AGENT_ACKNOWLEDGEMENT_REACTION),
+}).strict();
+export type SlackAgentAcknowledgementCommand = z.infer<typeof SlackAgentAcknowledgementCommandSchema>;
+export interface SlackAgentAcknowledgementResult {
+  success: true;
+  alreadyPresent: boolean;
+}
 const SlackBlockSchema = z.record(z.string(), z.unknown());
 const SlackViewSchema = z.record(z.string(), z.unknown()).refine((view) => typeof view.type === "string", "Slack view type is required");
 const SlackOkSchema = z.object({ ok: z.literal(true) }).passthrough();
@@ -648,6 +660,24 @@ export function parseSlackAgentInvocation(input: unknown): SlackAgentInvocation 
     return { kind: "command", teamId: command.team_id, userId: command.user_id, command: command.command, text: command.text, channelId: command.channel_id, triggerId: command.trigger_id, responseUrl: command.response_url };
   }
   throw new ConnectorError("provider_error", "Slack invocation kind is unsupported");
+}
+
+export function slackAgentActivationAcknowledgement(
+  invocation: SlackAgentInvocation,
+): SlackAgentAcknowledgementCommand | null {
+  if (invocation.kind !== "event") return null;
+  const event = invocation.event;
+  if (event.type !== "app_mention" && event.type !== "message") return null;
+  if (event.bot_id || event.subtype
+    || typeof event.user !== "string" || !event.user
+    || typeof event.channel !== "string" || !event.channel
+    || typeof event.ts !== "string" || !event.ts) return null;
+  return {
+    kind: "acknowledge",
+    channelId: event.channel,
+    timestamp: event.ts,
+    reaction: SLACK_AGENT_ACKNOWLEDGEMENT_REACTION,
+  };
 }
 
 export async function verifySlackRequest(input: {
@@ -1496,6 +1526,30 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     messagingAgent: {
       capability: SlackCapabilities.agent,
       parseInvocation: parseSlackAgentInvocation,
+      activationAcknowledgement: slackAgentActivationAcknowledgement,
+      async execute(command, context) {
+        if (context.connection.scope !== "workspace"
+          || !context.connection.grantedScopes.includes(SlackCapabilities.agent)) {
+          throw new ConnectorError(
+            "unsupported_capability",
+            `The Slack connection has not granted ${SlackCapabilities.agent}`,
+          );
+        }
+        const acknowledgement = SlackAgentAcknowledgementCommandSchema.parse(command);
+        try {
+          await slackApi(botToken(context.connection), "reactions.add", {
+            channel: acknowledgement.channelId,
+            name: acknowledgement.reaction,
+            timestamp: acknowledgement.timestamp,
+          }, context.signal, fetcher);
+          return { success: true, alreadyPresent: false } satisfies SlackAgentAcknowledgementResult;
+        } catch (error) {
+          if (error instanceof ConnectorError && error.message === "already_reacted") {
+            return { success: true, alreadyPresent: true } satisfies SlackAgentAcknowledgementResult;
+          }
+          throw error;
+        }
+      },
     },
     async beginAuthorization(input) {
       const connectionScope = input.connectionScope;
