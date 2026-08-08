@@ -30,7 +30,7 @@ the missing signing and encryption values, so the Workers boot with development
 authentication enabled and every provider integration reported as
 `not configured` by `/health`.
 
-## The one required deviation: remote-only Worker bindings
+## The one required deviation: the AI binding
 
 `pnpm dev:api` fails in a credential-less environment:
 
@@ -40,14 +40,16 @@ non-interactive environment, it's necessary to set a CLOUDFLARE_API_TOKEN
 environment variable for wrangler to work.
 ```
 
-Wrangler opens a remote proxy session for the `ai`, `vectorize`, and `images`
-bindings because those products have no local implementation. The session is
-established during startup, so the whole Worker refuses to boot even for
-requests that never touch them.
+Wrangler prints each binding's mode before it starts. D1, R2, Durable Objects,
+Queues, Workflows, the regional service bindings, and — perhaps unexpectedly —
+Images all run `local`. `MEMORY_INDEX` is `not supported`, which does not block
+startup. Only `env.AI` is `remote`, and its proxy session is established during
+startup, so the whole Worker refuses to boot over one binding that most requests
+never touch.
 
 `node scripts/make-sandbox-wrangler.mjs` writes ignored
-`apps/api/wrangler.sandbox.{global,eu}.jsonc` copies with exactly those three
-bindings removed. Run each region directly against them:
+`apps/api/wrangler.sandbox.{global,eu}.jsonc` copies with only the `ai` binding
+removed. Run each region directly against them:
 
 ```text
 cd apps/api
@@ -58,12 +60,44 @@ npx wrangler dev --config wrangler.sandbox.eu.jsonc --env-file .dev.vars.eu \
 ```
 
 Both Workers then report `{"ok":true}` with D1, R2, Durable Objects, Queues, and
-Workflows all available locally. Anything that reaches Workers AI, Vectorize, or
-Images — today that is scoped agent memory and image derivatives — fails at call
-time instead of at boot. Never deploy from the generated configs.
+Workflows all available locally. Only scoped agent memory is lost: its embedding
+(`env.AI`) and vector (`env.MEMORY_INDEX`) calls fail at call time instead of at
+boot. Never deploy from the generated configs.
 
 Cron triggers are not fired automatically in local dev; invoke the scheduled
 handler with `curl http://127.0.0.1:8787/cdn-cgi/local/scheduled`.
+
+## What a Cloudflare API token would change
+
+A token is not needed for anything above, and it buys little for local
+development. `wrangler dev` proxies only bindings whose mode is `remote`, which
+today means `env.AI` alone; everything else stays local either way. Scoped
+memory still would not work end to end, because Vectorize is proxied only when a
+binding is explicitly marked `"remote": true` — and marking
+`MEMORY_INDEX` remote points local development at the **production**
+`avalon-global-memory` index, where `processMemoryIndexOutbox` would upsert
+vectors derived from local D1 rows.
+
+The proxy session is not free of side effects on the account. Wrangler mints it
+through `POST /accounts/{id}/workers/subdomain/edge-preview`, registering a
+`workers.dev` subdomain if the account has none, and then uploads a proxy Worker
+to `POST /accounts/{id}/workers/scripts/{name}/edge-preview` under the
+deployed Worker's own name — `avalon-api-global` or `avalon-api-eu`. That is a
+preview upload rather than a deployment, but it requires Workers Scripts Edit,
+the same permission that lets `pnpm deploy:global` overwrite the live API. There
+is no read-only token that enables local development.
+
+Two further mutation paths open as soon as a token exists in `.env.local`:
+`apps/release-retention/wrangler.dry-run.jsonc` marks both R2 buckets
+`"remote": true`, so `pnpm --filter @avalon/release-retention dev:dry-run` reads
+the real `avalon-desktop-releases` bucket and would archive from it if
+`RETENTION_DRY_RUN` were ever set to `false`; and `wrangler d1 ... --local` is
+what keeps migrations off the production databases, so any command that loses
+that flag targets `avalon-global` directly.
+
+`scripts/sync-dev-env.mjs` does not copy `CLOUDFLARE_*` values into either
+`.dev.vars` file, so a token in `.env.local` never reaches a Worker's
+environment.
 
 ## Desktop client on Linux
 
