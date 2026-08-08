@@ -10,6 +10,11 @@ on:
         description: Existing v<semver> tag to release
         required: true
         type: string
+      skip_health_gate:
+        description: Publish even if a regional API health check fails (emergency use only)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -171,6 +176,13 @@ jobs:
             apps/desktop/release/release/*.blockmap
             apps/desktop/release/release/latest-mac.yml
             apps/desktop/release/release/SHA256SUMS
+
+      # A failed regional health check blocks desktop distribution for that
+      # region, so the gate runs after the verified build and before anything
+      # reaches the update channel.
+      - name: Verify regional API health before distributing
+        if: ${{ !inputs.skip_health_gate }}
+        run: node scripts/check-regional-health.mjs eu global
 
       - name: Publish immutable payloads and promote the release manifest
         shell: bash

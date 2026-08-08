@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the revision
+        uses: actions/checkout@v5
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # The same dry-run validation the deployment workflow runs, so a broken
+      # Worker configuration fails on the pull request instead of at release.
+      - name: Validate both Wrangler configurations with dry-run builds
+        run: |
+          set -euo pipefail
+          pnpm --filter @avalon/api build
+          pnpm --filter @avalon/api build:eu
+
+      - name: Check the desktop release invariants
+        run: pnpm --filter @avalon/desktop test:release
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Pinned deliberately: a secret-scanning gate should not change under the
+      # release without review. Bump after checking the release notes.
+      GITLEAKS_VERSION: 8.18.4
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL "$base/$archive" -o "$RUNNER_TEMP/$archive"
+          curl -sSfL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o "$RUNNER_TEMP/checksums.txt"
+          (cd "$RUNNER_TEMP" && sha256sum --check --ignore-missing checksums.txt)
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Run the configured Gitleaks gate
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gitleaks" detect --config .gitleaks.toml --redact --no-banner --verbose
