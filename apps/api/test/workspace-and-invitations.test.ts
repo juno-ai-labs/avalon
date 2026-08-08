@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env, IdentityAuthContext } from "../src/env";
 import { sha256 } from "../src/lib/crypto";
 import { AuthService, __authServiceTesting } from "../src/services/auth-service";
@@ -128,6 +128,11 @@ function environment(database: StubDatabase, overrides: Partial<Env> = {}): Env 
     ...overrides,
   } as unknown as Env;
 }
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-08-01T01:00:00.000Z"));
+});
 
 afterEach(() => {
   vi.useRealTimers();

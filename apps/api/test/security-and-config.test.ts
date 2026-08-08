@@ -680,9 +680,10 @@ describe("environment guardrails", () => {
     expect(__realtimeTranscriptionTesting.sendableCloseCode(4_001)).toBe(4_001);
     expect(__realtimeTranscriptionTesting.limits).toMatchObject({
       maxClientFramesPerSecond: 30,
-      maxConnectionMs: 300_000,
       maxConcurrentUserSessions: 2,
       maxConcurrentWorkspaceSessions: 20,
+      sessionLeaseRefreshMs: 60_000,
+      sessionLeaseSeconds: 120,
     });
   });
 

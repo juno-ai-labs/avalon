@@ -21,6 +21,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railWidth = useUiStore((state) => state.railWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  const showShellRail = railOpen && !location.pathname.startsWith('/notes/');
   const automations = useQuery({
     queryKey: ['automations'],
     queryFn: ({ signal }) => api!.getAutomations(signal),
@@ -48,7 +49,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } as CSSProperties;
 
   return (
-    <div className={railOpen ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
+    <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
       <Sidebar
         automations={automations.data ?? []}
         loading={automations.isLoading || workstreams.isLoading || notes.isLoading}
@@ -80,7 +81,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           await queryClient.invalidateQueries({ queryKey: ['workstreams'] });
           void navigate(`/workstreams/${workstream.id}`);
         }}
-        onOpenMeetingNotes={(noteId) => desktopBridge().openMeetingNotes(noteId)}
+        onOpenMeetingNotes={() => desktopBridge().openMeetingNotes()}
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}
