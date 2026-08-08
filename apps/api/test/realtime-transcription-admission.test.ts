@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { __realtimeTranscriptionTesting } from "../src/services/realtime-transcription-service";
 import type { TranscriptionSocketClaims } from "../src/services/socket-service";
@@ -45,6 +45,12 @@ class SqliteD1Database {
     for (const statement of statements) results.push(await statement.run<T>());
     return results;
   }
+
+  sessionExpiry(sessionId: string): number {
+    return Number(this.database.prepare(
+      "SELECT expires_at FROM realtime_transcription_sessions WHERE id = ?",
+    ).get(sessionId)?.expires_at ?? 0);
+  }
 }
 
 function claims(ticketId: string, userId = "user-1"): TranscriptionSocketClaims {
@@ -60,7 +66,10 @@ function claims(ticketId: string, userId = "user-1"): TranscriptionSocketClaims 
 describe("realtime transcription admission", () => {
   let adapter: SqliteD1Database | undefined;
 
-  afterEach(() => adapter?.database.close());
+  afterEach(() => {
+    adapter?.database.close();
+    vi.useRealTimers();
+  });
 
   it("consumes each signed ticket exactly once", async () => {
     adapter = new SqliteD1Database();
@@ -113,5 +122,20 @@ describe("realtime transcription admission", () => {
 
     await Promise.all(sessions.map((sessionId) =>
       __realtimeTranscriptionTesting.releaseTranscriptionSession(env, sessionId)));
+  });
+
+  it("renews a live session lease without replacing the transcription session", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T18:00:00.000Z"));
+    adapter = new SqliteD1Database();
+    const env = { DB: adapter as unknown as D1Database } as Env;
+    const sessionId = await __realtimeTranscriptionTesting.reserveTranscriptionSession(env, claims("ticket-renew"));
+    const originalExpiry = adapter.sessionExpiry(sessionId);
+
+    vi.setSystemTime(new Date("2026-08-07T18:01:00.000Z"));
+    await __realtimeTranscriptionTesting.renewTranscriptionSession(env, sessionId);
+
+    expect(adapter.sessionExpiry(sessionId)).toBe(originalExpiry + 60);
+    await __realtimeTranscriptionTesting.releaseTranscriptionSession(env, sessionId);
   });
 });
