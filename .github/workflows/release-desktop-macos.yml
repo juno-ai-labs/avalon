@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
+    # Deliberately unfiltered by path. GitHub does not define whether a paths
+    # filter also applies to tag pushes, and a silently skipped tag release is
+    # far worse than the seconds the planning job costs on an unrelated merge.
+    # The version-change gate in plan-release.mjs is the real filter, and a
+    # version bump always touches package.json anyway.
   workflow_dispatch:
     inputs:
       tag:
@@ -28,14 +35,42 @@ concurrency:
   queue: single
 
 jobs:
+  # Decides the release on a cheap runner so ordinary merges never occupy a
+  # macOS runner just to discover they have nothing to ship.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_release: ${{ steps.plan.outputs.should_release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
+      create_tag: ${{ steps.plan.outputs.create_tag }}
+    steps:
+      - name: Check out the full history and tags
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Plan the release
+        id: plan
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          RELEASE_INPUT_TAG: ${{ inputs.tag }}
+        run: node apps/desktop/scripts/plan-release.mjs
+
   release:
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true'
     # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
     runs-on: macos-26
     timeout-minutes: 90
     environment: desktop-release
+    # Publishing the release tag after a verified release needs write access.
+    permissions:
+      contents: write
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
       # The certificate is imported into an explicit keychain below. Keeping
       # CSC_LINK out of the packaging environment prevents electron-builder
       # from hiding the identity in a transient keychain that the final DMG
@@ -53,11 +88,20 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     steps:
-      - name: Check out the exact release tag
+      - name: Check out the exact release commit
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ needs.plan.outputs.ref }}
+
+      # The tag is created locally so every downstream guard sees it, but it is
+      # not pushed until the release has actually published. A failed run
+      # therefore leaves no tag behind and the next attempt can retry the same
+      # version.
+      - name: Create the release tag locally
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        run: git tag "$RELEASE_TAG" HEAD
 
       - name: Require native Apple Silicon
         run: test "$(uname -m)" = arm64
@@ -190,6 +234,14 @@ jobs:
 
       - name: Deploy the landing site with the verified release
         run: pnpm --filter @avalon/site run deploy
+
+      # Only now is the tag true: it marks a version whose payloads are
+      # published and whose channel is promoted. Pushing with GITHUB_TOKEN does
+      # not start another workflow run, so this cannot re-enter the release.
+      - name: Publish the release tag
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        run: git push origin "refs/tags/$RELEASE_TAG"
 
       - name: Remove the temporary signing keychain
         if: always()
