@@ -46,33 +46,55 @@ export interface ConnectorPollResult {
   nextPollAt?: string;
 }
 
-export interface ConnectorNativeAgentExecutionContext {
+export interface ConnectorAgentExecutionContext {
   connection: ConnectorConnectionContext;
   signal: AbortSignal;
 }
 
-/** Provider-hosted conversational ingress parsed only after request verification. */
-export interface ConnectorMessagingAgentAdapter<Invocation = unknown> {
-  capability: string;
-  parseInvocation(payload: unknown): Invocation;
-}
-
 /**
- * Provider-native agent operations live in the connector control plane. They
- * are intentionally separate from model-callable tools and are dispatched by
- * a session coordinator only after provider routing and authorization checks.
+ * Provider-hosted agent operations live in the connector control plane. They
+ * are intentionally separate from model-callable tools. The activation hook
+ * produces a deterministic provider command which the host dispatches after
+ * durable admission and before model or tool processing.
  */
-export interface ConnectorNativeAgentAdapter<
+export interface ConnectorAgentAdapter<
   Invocation = unknown,
   Command = unknown,
   Result = unknown,
 > {
   capability: string;
   parseInvocation(payload: unknown): Invocation;
+  activationAcknowledgement?(invocation: Invocation): Command | null;
   execute(
     command: Command,
-    context: ConnectorNativeAgentExecutionContext,
+    context: ConnectorAgentExecutionContext,
   ): Promise<Result>;
+}
+
+/** Provider-hosted conversational ingress parsed only after request verification. */
+export type ConnectorMessagingAgentAdapter<
+  Invocation = unknown,
+  Command = unknown,
+  Result = unknown,
+> = ConnectorAgentAdapter<Invocation, Command, Result>;
+
+/** Provider-native session ingress such as Linear Agent Sessions. */
+export type ConnectorNativeAgentAdapter<
+  Invocation = unknown,
+  Command = unknown,
+  Result = unknown,
+> = ConnectorAgentAdapter<Invocation, Command, Result>;
+
+/** Backward-compatible name for native-agent call sites. */
+export type ConnectorNativeAgentExecutionContext = ConnectorAgentExecutionContext;
+
+export async function acknowledgeConnectorAgentActivation<Invocation, Command, Result>(
+  adapter: ConnectorAgentAdapter<Invocation, Command, Result>,
+  invocation: Invocation,
+  context: ConnectorAgentExecutionContext,
+): Promise<Result | null> {
+  const command = adapter.activationAcknowledgement?.(invocation) ?? null;
+  return command === null ? null : adapter.execute(command, context);
 }
 
 export interface ConnectorAuthorizationInput extends Record<string, unknown> {

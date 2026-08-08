@@ -46,7 +46,7 @@ Raw Slack APIs are the workspace Agent and workspace-tool plane:
 
 Slack's hosted MCP server is the user tool plane. Avalon initializes a JSON-RPC 2.0 Streamable HTTP session at `https://mcp.slack.com/mcp`, sends `notifications/initialized`, follows all `tools/list` cursors, validates the discovered tool and its input contract, invokes `tools/call`, and closes the session when Slack assigns one. SSE responses are rejected because Slack does not support them. The static connector capabilities constrain which discovered tools can be offered to the model. MCP calls are never used to host the Agent surface or to bypass a frozen automation delivery target.
 
-Personal authorization is incremental. **Slack knowledge** requests the read/search capabilities; **Slack actions** requests user-attributed writes. Adding the second preset expands the existing personal Slack connection instead of replacing its earlier grants. Workspace Agent scopes remain a separate administrator-controlled installation with one reviewed capability bundle. Existing workspace installations must reconnect after the workspace-tool scope expansion before health checks and tool calls succeed.
+Personal authorization is incremental. **Slack knowledge** requests the read/search capabilities; **Slack actions** requests user-attributed writes. Adding the second preset expands the existing personal Slack connection instead of replacing its earlier grants. Workspace Agent scopes remain a separate administrator-controlled installation with one reviewed capability bundle, including `reactions:write` for the deterministic activation acknowledgement and workspace reaction tool. Existing workspace installations must reconnect after the workspace-tool scope expansion before health checks and tool calls succeed.
 
 ## Data behavior
 
@@ -72,6 +72,8 @@ Ingress verifies `v0:{timestamp}:{exact raw body}` using HMAC-SHA256, requires a
 
 Queue workers atomically lease jobs, retry failed or abandoned work, and clear the stored ingress payload after successful processing. Retries with the same `event_id` and body are acknowledged once. Reuse of an event ID with different content is a conflict. Provider payloads are not written to Global object storage during routing. Ordinary channel messages that do not match an existing or retryable Avalon thread are acknowledged without creating a regional ingress job.
 
+After a queued DM or mention passes connection, policy, and actor checks, the worker uses the shared connector activation flow to add the `eyes` reaction to the exact triggering message before it gathers context, creates/resumes a workstream, or starts model/tool processing. Slack's `already_reacted` response is a successful idempotent retry. A Slack-side reaction failure is logged and, when appropriate, marks the installation for reconnect, but does not discard the already-admitted user request. Commands and modal submissions have no unambiguous source message and retain their existing ephemeral/modal acknowledgement instead.
+
 ## Identity linking
 
 Slack users are never matched to Avalon accounts by mutable profile fields or email alone.
@@ -84,8 +86,10 @@ DM only when exactly one installed team returns a valid active human. This looku
 as a delivery address: it does not create a `slack_user_links` row, authenticate the recipient,
 or authorize personal Slack tools. Missing, ambiguous, invalid, or incompletely authorized
 matches fall back to the ordinary mention email. Existing installations must complete the
-Avalon OAuth flow again to grant the additive `users:read` and `users:read.email` bot scopes;
-until then, lookup-based mentions use email without disabling the existing Slack Agent.
+Avalon OAuth flow again to grant additive `users:read`, `users:read.email`, and
+`reactions:write` bot scopes. Until the identity scopes arrive, lookup-based mentions use
+email. If an already-admitted prompt discovers that `reactions:write` is missing, Avalon
+continues that task but marks the installation for reconnect before accepting later prompts.
 
 1. An unlinked user opens Avalon Home or sends a prompt.
 2. The regional service creates a random, hashed, 15-minute link challenge bound to the workspace installation and Slack user ID.
@@ -101,13 +105,14 @@ A Slack root DM or root mention creates a stable `slack_agent_sessions` row keye
 
 On a prompt Avalon:
 
-1. sets the Slack Agent thread status;
-2. creates or resumes the durable workstream;
-3. starts a `chat.startStream` reply when the surface supports it;
-4. executes the ordinary authorized Avalon harness;
-5. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
-6. falls back to complete 40,000-character Slack message chunks if streaming is unavailable;
-7. links to the canonical Avalon workstream and offers feedback.
+1. adds an `eyes` reaction when the invocation has a source message;
+2. sets the Slack Agent thread status;
+3. creates or resumes the durable workstream;
+4. starts a `chat.startStream` reply when the surface supports it;
+5. executes the ordinary authorized Avalon harness;
+6. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
+7. falls back to complete 40,000-character Slack message chunks if streaming is unavailable;
+8. links to the canonical Avalon workstream and offers feedback.
 
 The persisted Avalon run is canonical. A Slack delivery failure never rewrites a completed run as failed.
 
