@@ -96,26 +96,8 @@ const SlackModalContextSchema = z.object({
   }).strict()).max(10).optional().default([]),
 }).strict();
 
-const SlackAgentPolicySchema = z.object({
-  allow_unlinked_workspace_tasks: z.coerce.number().int().min(0).max(1),
-  public_channel_mode: z.enum(["all_invited", "allowlist", "disabled"]),
-  private_channel_mode: z.enum(["allowlist", "disabled"]),
-  allow_direct_messages: z.coerce.number().int().min(0).max(1),
-  allow_commands: z.coerce.number().int().min(0).max(1),
-  allow_shortcuts: z.coerce.number().int().min(0).max(1),
-});
-
-const DEFAULT_SLACK_AGENT_POLICY: z.infer<typeof SlackAgentPolicySchema> = {
-  allow_unlinked_workspace_tasks: 1,
-  public_channel_mode: "all_invited",
-  private_channel_mode: "disabled",
-  allow_direct_messages: 1,
-  allow_commands: 1,
-  allow_shortcuts: 1,
-};
 const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
 const SLACK_CONNECTION_DENIAL_TEXT = "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then reply `try again` in this thread.";
-const SLACK_POLICY_DENIAL_TEXT = "Avalon workspace tasks are not enabled for this Slack surface. Ask an Avalon workspace admin to update the Slack agent policy, or connect your Avalon account in App Home. After the setting is updated, reply `try again` in this thread.";
 const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Avalon` again and restate what you want me to do.";
 const SLACK_RETRYABLE_DENIAL_PREFIXES = [
   "Avalon’s Slack workspace connection needs attention",
@@ -1199,25 +1181,6 @@ export class SlackAgentService {
         }, AbortSignal.timeout(5_000));
         return;
       }
-      if (!await this.unlinkedWorkspaceExecutionAllowed(connection.id, source)) {
-        const targetChannel = channelId ?? await this.openDm(token, slackUserId);
-        if (threadTs) {
-          await this.rememberPendingPrompt(
-            connection.id,
-            targetChannel,
-            threadTs,
-            slackUserId,
-            requestedPrompt,
-            "policy",
-          );
-        }
-        await slackApi(token, "chat.postMessage", {
-          channel: targetChannel,
-          ...(threadTs ? { thread_ts: threadTs } : {}),
-          text: SLACK_POLICY_DENIAL_TEXT,
-        }, AbortSignal.timeout(5_000));
-        return;
-      }
       const externalIdentity = await this.externalSlackActor(
         token,
         connection.workspace_id,
@@ -1710,34 +1673,6 @@ export class SlackAgentService {
     }, AbortSignal.timeout(5_000));
   }
 
-  private async unlinkedWorkspaceExecutionAllowed(
-    connectionId: string,
-    source: SlackPromptSource,
-  ): Promise<boolean> {
-    const rawPolicy = await this.env.DB.prepare(
-      `SELECT allow_unlinked_workspace_tasks, public_channel_mode, private_channel_mode,
-              allow_direct_messages, allow_commands, allow_shortcuts
-       FROM slack_agent_policies WHERE connection_id = ?`,
-    ).bind(connectionId).first<Record<string, unknown>>();
-    const policy = rawPolicy ? SlackAgentPolicySchema.parse(rawPolicy) : DEFAULT_SLACK_AGENT_POLICY;
-    if (policy.allow_unlinked_workspace_tasks !== 1) return false;
-    if (source.kind === "direct_message") return policy.allow_direct_messages === 1;
-    if (source.kind === "slash_command") return policy.allow_commands === 1;
-    if (source.kind === "shortcut" && policy.allow_shortcuts !== 1) return false;
-    if (source.channelType === "public") {
-      if (policy.public_channel_mode === "all_invited") return true;
-      if (policy.public_channel_mode === "disabled") return false;
-      return this.channelAllowlisted(connectionId, source.channelId, "public");
-    }
-    if (source.channelType === "private") {
-      if (policy.private_channel_mode === "disabled") return false;
-      return this.channelAllowlisted(connectionId, source.channelId, "private");
-    }
-    return source.kind === "shortcut" && source.channelId === null
-      ? policy.allow_shortcuts === 1
-      : false;
-  }
-
   private async markSlackReconnectRequired(connectionId: string, reason = "missing_scope"): Promise<void> {
     await this.env.DB.prepare(
       `UPDATE connector_connections
@@ -1748,19 +1683,6 @@ export class SlackAgentService {
       message: `Slack workspace authorization needs reconnect (${reason})`,
       reconnectRequired: true,
     }), nowIso(), connectionId).run();
-  }
-
-  private async channelAllowlisted(
-    connectionId: string,
-    channelId: string | null,
-    channelType: "public" | "private",
-  ): Promise<boolean> {
-    if (!channelId) return false;
-    const row = await this.env.DB.prepare(
-      `SELECT 1 AS enabled FROM slack_agent_channel_allowlist
-       WHERE connection_id = ? AND slack_channel_id = ? AND channel_type = ? AND enabled = 1`,
-    ).bind(connectionId, channelId, channelType).first<{ enabled: number }>();
-    return Boolean(row);
   }
 
   private async externalSlackActor(
