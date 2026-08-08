@@ -275,13 +275,14 @@ describe('Sidebar work-stream markers', () => {
       'Shared research',
       'Older work stream',
     ]);
-    const noteButton = screen.getByRole('button', { name: /Customer interview/u });
-    expect(within(noteButton).getByRole('img', { name: 'Note' })).toHaveClass('sidebar-note-marker');
-    expect(within(noteButton).getByRole('img', { name: 'Private note' })).toHaveClass('sidebar-note-privacy');
-    expect(within(screen.getByRole('button', { name: /Shared research/u })).queryByRole('img', { name: 'Private note' }))
+    const noteLink = screen.getByRole('link', { name: /Customer interview/u });
+    expect(noteLink).toHaveAttribute('href', '/notes/00000000-0000-4000-8000-000000000021');
+    expect(within(noteLink).getByRole('img', { name: 'Note' })).toHaveClass('sidebar-note-marker');
+    expect(within(noteLink).getByRole('img', { name: 'Private note' })).toHaveClass('sidebar-note-privacy');
+    expect(within(screen.getByRole('link', { name: /Shared research/u })).queryByRole('img', { name: 'Private note' }))
       .not.toBeInTheDocument();
-    fireEvent.click(noteButton);
-    await waitFor(() => expect(onOpenMeetingNotes).toHaveBeenCalledWith('00000000-0000-4000-8000-000000000021'));
+    fireEvent.click(noteLink);
+    expect(onOpenMeetingNotes).not.toHaveBeenCalled();
   });
 
   it('marks work streams unread on the server and renames from the menu', async () => {

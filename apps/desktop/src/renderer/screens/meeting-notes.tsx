@@ -1,8 +1,6 @@
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import clsx from 'clsx';
 import {
   AudioLines,
-  ChevronDown,
   Copy,
   Globe2,
   LoaderCircle,
@@ -22,7 +20,7 @@ import { desktopBridge } from '../lib/platform';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
-export const MEETING_TRANSCRIPTION_SEGMENT_MS = 4 * 60 * 1_000 + 45_000;
+export const MEETING_TRANSCRIPTION_SEGMENT_MS = 5 * 60 * 1_000;
 export const MEETING_NOTES_INTERVAL_MS = 5 * 60 * 1_000;
 const NOTE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -49,6 +47,26 @@ export function appendMeetingSegment(committed: string, segment: string): string
   return committed.trim() ? `${committed.trimEnd()}\n\n${next}` : next;
 }
 
+export function meetingRecordedMs(recordedBeforeActiveMs: number, activeStartedAtMs: number | null, nowMs: number): number {
+  return recordedBeforeActiveMs + (
+    activeStartedAtMs === null ? 0 : Math.max(0, nowMs - activeStartedAtMs)
+  );
+}
+
+export function mergeSavedMeetingSegmentDuration(
+  recordedBeforeActiveMs: number,
+  segmentEndOffsetMs: number,
+  activeStartedAtMs: number | null,
+): number {
+  // While recording, recordedBeforeActiveMs is the immutable duration from
+  // earlier recording sessions. The active clock contributes this session's
+  // elapsed time, so folding segment boundaries into the base would count the
+  // same active span again at every five-minute commit.
+  return activeStartedAtMs === null
+    ? Math.max(recordedBeforeActiveMs, segmentEndOffsetMs)
+    : recordedBeforeActiveMs;
+}
+
 function formatElapsed(durationMs: number, started: boolean): string {
   if (!started) return 'Not recording';
   const seconds = Math.max(0, Math.floor(durationMs / 1_000));
@@ -72,7 +90,6 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [title, setTitle] = useState(initialTitle);
   const [segments, setSegments] = useState<NoteTranscriptSegment[]>([]);
   const [interim, setInterim] = useState('');
-  const [manualNotes, setManualNotes] = useState('');
   const [notes, setNotes] = useState('');
   const [startedAt, setStartedAt] = useState<string | undefined>();
   const [recordedMs, setRecordedMs] = useState(0);
@@ -92,10 +109,14 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const recordingIntentRef = useRef(false);
   const activeRecordingStartedAtRef = useRef<number | null>(null);
   const currentSegmentStartedOffsetRef = useRef(0);
+  const segmentBoundaryOffsetRef = useRef<number | null>(null);
   const previousDictationStateRef = useRef<string>('idle');
   const generationInFlightRef = useRef(false);
   const generationQueuedRef = useRef(false);
   const persistenceTailRef = useRef<Promise<void>>(Promise.resolve());
+  const notesBodyRef = useRef<HTMLDivElement | null>(null);
+  const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
+  const autoStartRequestedRef = useRef(false);
   const readOnly = Boolean(note && note.ownerUserId !== session?.user.id);
 
   const hydrateNote = useCallback((next: NoteDetail): void => {
@@ -105,7 +126,6 @@ export function MeetingNotesScreen(): React.JSX.Element {
     setNote(next);
     setTitle(next.title);
     setSegments(next.segments);
-    setManualNotes(next.manualNotes);
     setNotes(next.liveNotes);
     setRecordedMs(next.recordedMs);
     setStartedAt(next.startedAt ?? undefined);
@@ -184,40 +204,36 @@ export function MeetingNotesScreen(): React.JSX.Element {
     return () => window.clearTimeout(timer);
   }, [api, applyNotePatch, noteId, readOnly, title]);
 
-  useEffect(() => {
-    const current = noteRef.current;
-    if (!api || !current || readOnly || manualNotes === current.manualNotes) return undefined;
-    const timer = window.setTimeout(() => {
-      setSavePending(true);
-      setSaveError(undefined);
-      const patch = { manualNotes };
-      void api.updateNote(noteId, patch).then((next) => applyNotePatch(next, patch)).catch((error: unknown) => {
-        setSaveError(error instanceof Error ? error.message : 'Avalon could not save these notes.');
-      }).finally(() => setSavePending(false));
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [api, applyNotePatch, manualNotes, noteId, readOnly]);
-
   const currentRecordedMs = useCallback((): number => {
-    const activeStartedAt = activeRecordingStartedAtRef.current;
-    return recordedMsRef.current + (activeStartedAt === null ? 0 : Math.max(0, Date.now() - activeStartedAt));
+    return meetingRecordedMs(recordedMsRef.current, activeRecordingStartedAtRef.current, Date.now());
   }, []);
 
   const onLiveTranscript = useCallback((segment: string) => {
     segmentRef.current = segment;
     setInterim(segment);
   }, []);
-  const dictation = useRealtimeDictation(api ?? undefined, onLiveTranscript);
+  const dictation = useRealtimeDictation(api ?? undefined, onLiveTranscript, {
+    includeSystemAudio: true,
+    useSystemDefaultMicrophone: true,
+  });
 
-  const commitSegment = useCallback(async (): Promise<void> => {
+  const commitSegment = useCallback(async (
+    finalizedText?: string,
+    offsets?: { endOffsetMs: number; startOffsetMs: number },
+  ): Promise<void> => {
     if (!api || !noteRef.current || readOnly) return;
-    const text = segmentRef.current.trim();
-    segmentRef.current = '';
-    setInterim('');
+    const text = (finalizedText ?? segmentRef.current).trim();
+    if (finalizedText === undefined) {
+      segmentRef.current = '';
+      setInterim('');
+    }
     if (!text) return;
     const clientSegmentId = crypto.randomUUID();
-    const startOffsetMs = currentSegmentStartedOffsetRef.current;
-    const endOffsetMs = Math.max(startOffsetMs, currentRecordedMs());
+    const startOffsetMs = offsets?.startOffsetMs ?? currentSegmentStartedOffsetRef.current;
+    const endOffsetMs = Math.max(
+      startOffsetMs,
+      offsets?.endOffsetMs ?? segmentBoundaryOffsetRef.current ?? currentRecordedMs(),
+    );
     const capturedAt = new Date().toISOString();
     const optimistic: NoteTranscriptSegment = {
       id: clientSegmentId,
@@ -245,8 +261,15 @@ export function MeetingNotesScreen(): React.JSX.Element {
         .filter((segment) => segment.id !== clientSegmentId && segment.id !== saved.id)
         .concat(saved)
         .sort((left, right) => left.sequenceNumber - right.sequenceNumber);
-      recordedMsRef.current = Math.max(recordedMsRef.current, saved.endOffsetMs);
-      setRecordedMs(recordedMsRef.current);
+      const nextRecordedMs = mergeSavedMeetingSegmentDuration(
+        recordedMsRef.current,
+        saved.endOffsetMs,
+        activeRecordingStartedAtRef.current,
+      );
+      if (nextRecordedMs !== recordedMsRef.current) {
+        recordedMsRef.current = nextRecordedMs;
+        setRecordedMs(nextRecordedMs);
+      }
       setSegments(segmentsRef.current);
       setSaveError(undefined);
     }).catch((error: unknown) => {
@@ -300,16 +323,29 @@ export function MeetingNotesScreen(): React.JSX.Element {
   useEffect(() => {
     if (dictation.state !== 'listening' || !recordingIntentRef.current) return undefined;
     const timer = window.setTimeout(() => {
-      if (recordingIntentRef.current) void dictation.stop();
+      if (!recordingIntentRef.current) return;
+      const startOffsetMs = currentSegmentStartedOffsetRef.current;
+      const boundaryOffsetMs = currentRecordedMs();
+      segmentBoundaryOffsetRef.current = boundaryOffsetMs;
+      currentSegmentStartedOffsetRef.current = boundaryOffsetMs;
+      void dictation.commit().then(async (finalizedTranscript) => {
+        await commitSegment(finalizedTranscript, {
+          endOffsetMs: boundaryOffsetMs,
+          startOffsetMs,
+        });
+        await generateNotes();
+      }).catch(() => {
+        if (segmentBoundaryOffsetRef.current === boundaryOffsetMs) {
+          currentSegmentStartedOffsetRef.current = startOffsetMs;
+        }
+      }).finally(() => {
+        if (segmentBoundaryOffsetRef.current === boundaryOffsetMs) {
+          segmentBoundaryOffsetRef.current = null;
+        }
+      });
     }, MEETING_TRANSCRIPTION_SEGMENT_MS);
     return () => window.clearTimeout(timer);
-  }, [dictation.state, dictation.stop]);
-
-  useEffect(() => {
-    if (!recording) return undefined;
-    const timer = window.setInterval(() => void generateNotes(), MEETING_NOTES_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [generateNotes, recording]);
+  }, [commitSegment, currentRecordedMs, dictation.commit, dictation.state, generateNotes]);
 
   useEffect(() => {
     const previous = previousDictationStateRef.current;
@@ -319,6 +355,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       const finalRecordedMs = stopRecordingClock();
       setRecording(false);
       void commitSegment().finally(() => {
+        segmentBoundaryOffsetRef.current = null;
         if (api && noteRef.current) {
           const patch = {
             recordingStatus: 'complete',
@@ -333,23 +370,20 @@ export function MeetingNotesScreen(): React.JSX.Element {
     }
     if (dictation.state !== 'idle' || previous === 'idle') return;
     void commitSegment().finally(() => {
-      if (recordingIntentRef.current) {
-        currentSegmentStartedOffsetRef.current = currentRecordedMs();
-        void dictation.start();
-      } else {
-        void generateNotes();
-      }
+      segmentBoundaryOffsetRef.current = null;
+      void generateNotes();
     });
-  }, [api, applyNotePatch, commitSegment, currentRecordedMs, dictation.start, dictation.state, generateNotes, noteId, stopRecordingClock]);
+  }, [api, applyNotePatch, commitSegment, dictation.state, generateNotes, noteId, stopRecordingClock]);
 
   useEffect(() => () => {
     recordingIntentRef.current = false;
     void dictation.stop();
   }, [dictation.stop]);
 
-  const startRecording = async (): Promise<void> => {
+  const startRecording = useCallback(async (): Promise<void> => {
     if (!api || !noteRef.current || readOnly || recordingIntentRef.current) return;
     recordingIntentRef.current = true;
+    segmentBoundaryOffsetRef.current = null;
     activeRecordingStartedAtRef.current = Date.now();
     currentSegmentStartedOffsetRef.current = recordedMsRef.current;
     setRecording(true);
@@ -363,17 +397,35 @@ export function MeetingNotesScreen(): React.JSX.Element {
         startedAt: nextStartedAt,
         endedAt: null,
       } as const;
-      applyNotePatch(await api.updateNote(noteId, patch), patch);
-      await dictation.start();
+      const [next] = await Promise.all([
+        api.updateNote(noteId, patch),
+        // Start capture alongside the status update so the window begins
+        // listening even when the meeting has not started producing audio yet.
+        dictation.start(),
+      ]);
+      applyNotePatch(next, patch);
     } catch (error) {
       recordingIntentRef.current = false;
       stopRecordingClock();
       setRecording(false);
+      await dictation.stop().catch(() => undefined);
       setSaveError(error instanceof Error ? error.message : 'Avalon could not start this recording.');
     } finally {
       setSavePending(false);
     }
-  };
+  }, [api, applyNotePatch, dictation.start, dictation.stop, noteId, readOnly, startedAt, stopRecordingClock]);
+
+  useEffect(() => {
+    if (
+      autoStartRequestedRef.current
+      || loading
+      || !note
+      || readOnly
+      || note.recordingStatus !== 'idle'
+    ) return;
+    autoStartRequestedRef.current = true;
+    void startRecording();
+  }, [loading, note, readOnly, startRecording]);
 
   const stopRecording = async (): Promise<void> => {
     if (!api || !noteRef.current || readOnly) return;
@@ -418,12 +470,21 @@ export function MeetingNotesScreen(): React.JSX.Element {
   };
 
   const transcript = transcriptText(segments, interim);
+  useEffect(() => {
+    const body = notesBodyRef.current;
+    if (body) body.scrollTop = body.scrollHeight;
+  }, [notes, notesPending]);
+  useEffect(() => {
+    const body = transcriptBodyRef.current;
+    if (body) body.scrollTop = body.scrollHeight;
+  }, [transcript]);
+
   const statusLabel = dictation.state === 'requesting'
-    ? 'Requesting microphone…'
+    ? 'Requesting audio access…'
     : dictation.state === 'connecting'
       ? 'Connecting transcription…'
       : dictation.state === 'transcribing'
-        ? 'Finishing transcript…'
+        ? 'Updating notes…'
         : recording
           ? 'Recording'
           : 'Ready';
@@ -435,9 +496,11 @@ export function MeetingNotesScreen(): React.JSX.Element {
           <span className={clsx('meeting-recording-dot', recording && 'is-active')} aria-hidden="true" />
           <span>{loading ? 'Opening note…' : statusLabel}</span>
           <span aria-label="Recording duration">{formatElapsed(
-            recordedMs + (recording && activeRecordingStartedAtRef.current !== null
-              ? Math.max(0, now - activeRecordingStartedAtRef.current)
-              : 0),
+            meetingRecordedMs(
+              recordedMs,
+              recording ? activeRecordingStartedAtRef.current : null,
+              now,
+            ),
             Boolean(startedAt),
           )}</span>
         </div>
@@ -446,8 +509,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
 
       <main className="meeting-layout">
         <section className="meeting-heading">
-          <label htmlFor="meeting-title">Title</label>
           <input
+            aria-label="Note title"
             disabled={loading || !note || readOnly}
             id="meeting-title"
             maxLength={180}
@@ -455,7 +518,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
             value={title}
           />
           <div className="meeting-heading-meta">
-            <p>Live transcript and AI notes update together while you record.</p>
+            <p>{recording ? 'Listening to your microphone and computer audio' : 'Live meeting notes'}</p>
             <label className="meeting-visibility">
               {note?.scope === 'workspace' ? <Globe2 aria-hidden="true" size={13} /> : <Lock aria-hidden="true" size={13} />}
               <span className="sr-only">Note visibility</span>
@@ -473,62 +536,49 @@ export function MeetingNotesScreen(): React.JSX.Element {
           {saveError && <InlineError>{saveError}</InlineError>}
         </section>
 
-        <div className="meeting-panels">
-          <section aria-labelledby="live-notes-heading" className="meeting-panel meeting-live-notes">
+        <div className="meeting-stack">
+          <section aria-labelledby="live-notes-heading" className="meeting-live-notes">
             <header>
-              <span><NotebookPen aria-hidden="true" size={17} /><h2 id="live-notes-heading">Live notes</h2></span>
-              <div>
-                <IconButton disabled={!notes || notesPending} label="Copy live notes" onClick={() => void copy(notes)}>
-                  <Copy size={15} />
-                </IconButton>
-                <Button disabled={readOnly || segments.length === 0 || notesPending || savePending} onClick={() => void generateNotes()}>
-                  {notesPending ? <LoaderCircle className="spin" size={14} /> : <WandSparkles size={14} />}
-                  Update now
-                </Button>
-              </div>
+              <span><NotebookPen aria-hidden="true" size={17} /><h2 id="live-notes-heading">AI summary</h2></span>
+              <IconButton disabled={!notes || notesPending} label="Copy AI summary" onClick={() => void copy(notes)}>
+                <Copy size={15} />
+              </IconButton>
             </header>
-            {generatedAt && <p className="meeting-updated-at">Updated {new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(generatedAt))}</p>}
-            {notesError && <InlineError>{notesError}</InlineError>}
-            <div aria-live="polite" className="meeting-notes-body">
-              <label className="meeting-manual-notes">
-                <span>Your notes</span>
-                <textarea
-                  disabled={loading || !note || readOnly}
-                  onChange={(event) => setManualNotes(event.target.value)}
-                  placeholder="Type or paste notes here…"
-                  value={manualNotes}
-                />
-              </label>
+            <div aria-live="polite" className="meeting-notes-body" ref={notesBodyRef}>
+              {generatedAt && <p className="meeting-updated-at">Updated {new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(generatedAt))}</p>}
+              {notesError && <InlineError>{notesError}</InlineError>}
               {notes ? (
                 <div className="meeting-generated-notes">
-                  <span>AI live notes</span>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{notes}</ReactMarkdown>
                 </div>
               ) : (
                 <div className="meeting-empty-state">
                   <WandSparkles aria-hidden="true" size={24} />
-                  <strong>Notes will appear here</strong>
-                  <p>Avalon refreshes them after each five-minute transcript segment. You can also update them anytime.</p>
+                  <strong>Your running summary will appear here</strong>
+                  <p>Avalon updates it automatically every five minutes and once more when the recording ends.</p>
                 </div>
+              )}
+              {notesPending && (
+                <div className="meeting-summary-progress"><LoaderCircle className="spin" size={14} /> Updating summary…</div>
               )}
             </div>
           </section>
 
-          <section aria-labelledby="live-transcript-heading" className="meeting-panel meeting-transcript">
+          <section aria-labelledby="live-transcript-heading" className="meeting-transcript-card">
             <header>
               <span><AudioLines aria-hidden="true" size={18} /><h2 id="live-transcript-heading">Live transcript</h2></span>
               <IconButton disabled={!transcript} label="Copy transcript" onClick={() => void copy(transcript)}>
                 <Copy size={15} />
               </IconButton>
             </header>
-            <div aria-live="polite" className="meeting-transcript-body">
+            <div aria-live="polite" className="meeting-transcript-body" ref={transcriptBodyRef}>
               {transcript ? transcript.split(/\n{2,}/u).map((paragraph, index) => (
                 <p key={`${index}-${paragraph.slice(0, 20)}`}>{paragraph}</p>
               )) : (
                 <div className="meeting-empty-state">
                   <Mic aria-hidden="true" size={24} />
                   <strong>Your transcript will appear live</strong>
-                  <p>Start recording and speak naturally. Avalon captures the selected microphone.</p>
+                  <p>Start recording and speak naturally. Avalon automatically captures you and the meeting.</p>
                 </div>
               )}
             </div>
@@ -537,29 +587,10 @@ export function MeetingNotesScreen(): React.JSX.Element {
       </main>
 
       <footer className="meeting-controls">
-        <div className="meeting-device-control">
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <Button disabled={readOnly || recording || ['requesting', 'connecting', 'transcribing'].includes(dictation.state)}>
-                <Mic size={15} />
-                {dictation.devices.find((device) => device.deviceId === dictation.selectedDeviceId)?.label ?? 'Default microphone'}
-                <ChevronDown size={13} />
-              </Button>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content align="start" className="menu-content" side="top" sideOffset={8}>
-                <DropdownMenu.RadioGroup onValueChange={dictation.setSelectedDeviceId} value={dictation.selectedDeviceId}>
-                  {dictation.devices.map((device) => (
-                    <DropdownMenu.RadioItem className="menu-item" key={device.deviceId} value={device.deviceId}>
-                      <DropdownMenu.ItemIndicator>✓</DropdownMenu.ItemIndicator>
-                      {device.label}
-                    </DropdownMenu.RadioItem>
-                  ))}
-                </DropdownMenu.RadioGroup>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          {dictation.error && <span role="alert">{dictation.error}</span>}
+        <div className="meeting-control-status">
+          {dictation.error
+            ? <span role="alert">{dictation.error}</span>
+            : <span>Uses your current system audio input</span>}
         </div>
         {recording ? (
           <Button className="meeting-stop-button" onClick={() => void stopRecording()}>
@@ -574,6 +605,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
             <span aria-hidden="true" className="meeting-start-dot" /> Start recording
           </Button>
         )}
+        <span aria-hidden="true" />
       </footer>
     </div>
   );
