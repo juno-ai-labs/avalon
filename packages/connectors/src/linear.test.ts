@@ -10,6 +10,7 @@ import {
   type VerifiedLinearWebhook,
   verifyLinearWebhook,
 } from "./linear";
+import { linearAgentActivationAcknowledgement } from "./linear-agent";
 import type { FetchLike } from "./provider-utils";
 import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
 
@@ -84,6 +85,7 @@ describe("Linear connector", () => {
     expect(connectorCapabilitySupportsScope(adapter, LinearCapabilities.agent, "personal")).toBe(false);
     expect(connectorCapabilitySupportsScope(adapter, LinearCapabilities.agent, "workspace")).toBe(true);
     expect(adapter.nativeAgent?.capability).toBe(LinearCapabilities.agent);
+    expect(adapter.nativeAgent?.activationAcknowledgement).toBe(linearAgentActivationAcknowledgement);
     const resourceOnlyAuthorization = await adapter.beginAuthorization!({
       state: "r".repeat(32),
       codeChallenge: "d".repeat(43),

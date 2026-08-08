@@ -23,6 +23,7 @@ import {
 } from "./types";
 import {
   createLinearNativeAgentProtocol,
+  linearAgentActivationAcknowledgement,
   linearAgentInvocation,
   parseVerifiedLinearAgentSessionEvent,
   type LinearAgentProtocolCommand,
@@ -53,8 +54,10 @@ export const LinearCapabilities = {
   agent: "linear.agent",
 } as const;
 
-/** Scopes that make an app-actor installation participate as a native Linear agent. */
-export const LinearAgentOAuthScopes = ["app:assignable", "app:mentionable"] as const;
+const LinearAgentActorOAuthScopes = ["app:assignable", "app:mentionable"] as const;
+
+/** Scopes needed for native participation and the immediate activation reaction. */
+export const LinearAgentOAuthScopes = [...LinearAgentActorOAuthScopes, "write"] as const;
 
 export const LinearCapabilityScopes = {
   [LinearCapabilities.read]: ["read"],
@@ -371,6 +374,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
     nativeAgent: {
       capability: LinearCapabilities.agent,
       parseInvocation: linearAgentInvocation,
+      activationAcknowledgement: linearAgentActivationAcknowledgement,
       async execute(command, context) {
         assertWorkspaceConnection(context.connection);
         if (!context.connection.grantedScopes.includes(LinearCapabilities.agent)) {
@@ -397,7 +401,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       if (scopes.some((scope) => scope === "admin" || !supportedLinearScopes.has(scope))) {
         throw new ConnectorError("unsupported_capability", "The requested Linear OAuth scope is not supported");
       }
-      if (parsed.connectionScope === "personal" && LinearAgentOAuthScopes.some((scope) => scopes.includes(scope))) {
+      if (parsed.connectionScope === "personal" && LinearAgentActorOAuthScopes.some((scope) => scopes.includes(scope))) {
         throw new ConnectorError(
           "unsupported_capability",
           `${LinearCapabilities.agent} requires a workspace-scoped Linear app connection`,
@@ -452,7 +456,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       const providerScopes = Array.isArray(credentials.providerScopes)
         ? credentials.providerScopes.filter((scope): scope is string => typeof scope === "string")
         : [];
-      if (parsed.connectionScope === "personal" && LinearAgentOAuthScopes.some((scope) => providerScopes.includes(scope))) {
+      if (parsed.connectionScope === "personal" && LinearAgentActorOAuthScopes.some((scope) => providerScopes.includes(scope))) {
         throw new ConnectorError(
           "unsupported_capability",
           `${LinearCapabilities.agent} cannot be granted to a personal Linear connection`,
