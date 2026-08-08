@@ -52,6 +52,7 @@ export {
   SlackCapabilities,
   SlackCapabilityScopes,
   SlackWorkspaceBotScopes,
+  SlackWorkspaceCapabilities,
   slackTools,
   type SlackAgentInvocation,
   type SlackApiRequest,

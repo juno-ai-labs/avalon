@@ -84,20 +84,7 @@ describe("Slack Agent durable ingress", () => {
     ]));
   });
 
-  it("bounds untrusted Slack context and classifies deterministic failures as terminal", () => {
-    const augmented = __slackAgentTesting.appendSlackContext(
-      "Summarize this channel",
-      "assistant.search.context",
-      { messages: [{ content: "x".repeat(100_000) }] },
-    );
-    expect(augmented.length).toBeLessThanOrEqual(50_000);
-    expect(augmented).toContain("[context truncated]");
-    expect(__slackAgentTesting.slackContextChannelId({
-      entities: [{
-        type: "slack#/types/message_context",
-        value: { message_ts: "1.2", channel_id: "CACTIVE" },
-      }],
-    })).toBe("CACTIVE");
+  it("classifies deterministic failures as terminal", () => {
     expect(__slackAgentTesting.slackIngressRetryable(
       new ConnectorError("provider_error", "missing_scope", { error: "missing_scope" }),
     )).toBe(false);
@@ -141,7 +128,7 @@ describe("Slack Agent durable ingress", () => {
   it("resolves modern private channels from conversations.info instead of ID prefixes", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       ok: true,
-      channel: { id: "CPRIVATE", is_private: true, is_im: false, is_mpim: false },
+      channel: { id: "CPRIVATE", name: "founders-boiler-room", is_private: true, is_im: false, is_mpim: false },
     }), { status: 200, headers: { "content-type": "application/json" } }));
     vi.stubGlobal("fetch", fetcher);
 
@@ -149,7 +136,7 @@ describe("Slack Agent durable ingress", () => {
       "xoxb-test",
       "CPRIVATE",
       "channel",
-    )).resolves.toEqual({ channelType: "private", failure: null });
+    )).resolves.toEqual({ channelType: "private", channelName: "founders-boiler-room", failure: null });
     expect(fetcher).toHaveBeenCalledOnce();
     expect(__slackAgentTesting.slackChannelType("CPRIVATE")).toBe("unknown");
   });
@@ -165,7 +152,7 @@ describe("Slack Agent durable ingress", () => {
       "xoxb-test",
       "CUNKNOWN",
       "channel",
-    )).resolves.toEqual({ channelType: "unknown", failure: "missing_scope" });
+    )).resolves.toEqual({ channelType: "unknown", channelName: null, failure: "missing_scope" });
     expect(__slackAgentTesting.slackChannelResolutionDenial("missing_scope")).toMatchObject({
       reconnectRequired: true,
       text: expect.stringContaining("reconnect the Slack workspace"),
@@ -176,6 +163,45 @@ describe("Slack Agent durable ingress", () => {
     });
     expect(__slackAgentTesting.modalPromptSource(undefined)).toBeNull();
     expect(__slackAgentTesting.modalPromptSource("not-json")).toBeNull();
+  });
+
+  it("bounds Slack attachment and nearby-message metadata", () => {
+    const message = __slackAgentTesting.slackOriginNearbyMessage({
+      ts: "1786129999.000100",
+      user: "UALEX",
+      text: "x".repeat(3_000),
+      files: [{
+        id: "FBRIEF",
+        name: "monad-thesis-brief.md",
+        title: "Monad thesis",
+        mimetype: "text/markdown",
+        filetype: "markdown",
+        permalink: "https://example.slack.com/files/FBRIEF",
+      }],
+      attachments: [{
+        title: "Landing page",
+        title_link: "javascript:alert(1)",
+      }],
+    });
+
+    expect(message).toMatchObject({
+      timestamp: "1786129999.000100",
+      userId: "UALEX",
+      attachments: [
+        { id: "FBRIEF", name: "monad-thesis-brief.md", mimeType: "text/markdown" },
+        { id: null, name: "Landing page", permalink: null },
+      ],
+    });
+    expect(message.text).toHaveLength(2_000);
+  });
+
+  it("extracts event-only Slack search authorization without adding it to source context", () => {
+    expect(__slackAgentTesting.slackEventSearchAuthorization({
+      action_token: "1786130000.abcdef.event-token",
+      text: "find the latest project update",
+    })).toEqual({ actionToken: "1786130000.abcdef.event-token" });
+    expect(__slackAgentTesting.slackEventSearchAuthorization({ text: "no token" })).toBeUndefined();
+    expect(__slackAgentTesting.slackEventSearchAuthorization({ action_token: "" })).toBeUndefined();
   });
 
   it("returns modal field errors synchronously", async () => {

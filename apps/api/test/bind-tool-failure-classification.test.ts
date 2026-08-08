@@ -82,5 +82,28 @@ describe("Bind tool failure persistence", () => {
       { type: "workspace", workspaceId: "workspace-1" },
       signal,
     )).not.toHaveProperty("providerIdempotencyKey");
+    expect(__integrationTesting.createConnectorToolContext(
+      connection,
+      { type: "workspace", workspaceId: "workspace-1" },
+      signal,
+      undefined,
+      { slackActionToken: "event-only-token" },
+    )).toMatchObject({
+      invocationAuthorization: { slackActionToken: "event-only-token" },
+    });
+  });
+
+  it("keeps Slack search results out of durable tool replay payloads", () => {
+    const searchOutput = { messages: [{ text: "private transient result" }] };
+    expect(__integrationTesting.durableToolReplayOutput(
+      "slack.search",
+      searchOutput,
+      "Searched Slack messages",
+    )).toEqual({ transient: true, summary: "Searched Slack messages" });
+    expect(__integrationTesting.durableToolReplayOutput(
+      "slack.messages.read",
+      searchOutput,
+      "Read Slack messages",
+    )).toBe(searchOutput);
   });
 });
