@@ -115,7 +115,9 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).toContain("users:read");
     expect(SlackWorkspaceBotScopes).toContain("channels:read");
     expect(SlackWorkspaceBotScopes).toContain("channels:join");
+    expect(SlackWorkspaceBotScopes).toContain("channels:history");
     expect(SlackWorkspaceBotScopes).toContain("groups:read");
+    expect(SlackWorkspaceBotScopes).toContain("groups:history");
   });
 
   it("uses Slack's query transport for conversations.info", async () => {
@@ -135,6 +137,38 @@ describe("Slack connector", () => {
       channel: "CPUBLIC",
     }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
       channel: { id: "CPUBLIC", is_private: false },
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("reads a bounded Slack thread using conversations.replies query transport", async () => {
+    const fetcher: FetchLike = vi.fn(async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      expect(init?.method).toBe("GET");
+      expect(init?.body).toBeUndefined();
+      expect(new Headers(init?.headers).has("content-type")).toBe(false);
+      expect(url.searchParams.get("channel")).toBe("C1");
+      expect(url.searchParams.get("ts")).toBe("1.0");
+      expect(url.searchParams.get("limit")).toBe("15");
+      return json({
+        ok: true,
+        messages: [
+          { type: "message", user: "U1", text: "<@UBOT> investigate", ts: "1.0" },
+          { type: "message", user: "UBOT", text: "Not yet", ts: "1.1", thread_ts: "1.0" },
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+    });
+
+    await expect(slackApi("xoxb", "conversations.replies", {
+      channel: "C1",
+      ts: "1.0",
+      limit: 15,
+    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+      messages: [
+        { user: "U1", text: "<@UBOT> investigate" },
+        { user: "UBOT", text: "Not yet" },
+      ],
     });
     expect(fetcher).toHaveBeenCalledOnce();
   });
