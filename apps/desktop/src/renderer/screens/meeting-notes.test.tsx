@@ -38,13 +38,15 @@ const state = vi.hoisted(() => ({
   },
   prepareMeetingAudioPermissions: vi.fn(),
   commit: vi.fn(async () => ''),
-  dictationState: 'idle' as 'idle' | 'requesting' | 'connecting' | 'listening' | 'transcribing' | 'finalizing' | 'error',
+  dictationState: 'idle' as 'idle' | 'requesting' | 'connecting' | 'listening' | 'paused' | 'transcribing' | 'finalizing' | 'error',
   dictationWarning: undefined as string | undefined,
   dictationOptions: undefined as undefined | {
     includeSystemAudio?: boolean;
     useSystemDefaultMicrophone?: boolean;
   },
   onTranscript: undefined as undefined | ((transcript: string) => void),
+  pause: vi.fn(async () => undefined),
+  resume: vi.fn(async () => undefined),
   start: vi.fn(async () => undefined),
   stop: vi.fn(async () => undefined),
   userId: '00000000-0000-4000-8000-000000000114',
@@ -84,6 +86,8 @@ vi.mock('../lib/use-realtime-dictation', () => ({
       devices: [{ deviceId: 'default', label: 'Default microphone' }],
       selectedDeviceId: 'default',
       setSelectedDeviceId: vi.fn(),
+      pause: state.pause,
+      resume: state.resume,
       start: state.start,
       state: state.dictationState,
       stop: state.stop,
@@ -121,6 +125,8 @@ describe('MeetingNotesScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.commit.mockResolvedValue('');
+    state.pause.mockResolvedValue(undefined);
+    state.resume.mockResolvedValue(undefined);
     state.start.mockResolvedValue(undefined);
     state.stop.mockResolvedValue(undefined);
     state.closeRequested = undefined;
@@ -201,12 +207,12 @@ describe('MeetingNotesScreen', () => {
 
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole('button', { name: 'Stop recording' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
 
     act(() => state.onTranscript?.('We agreed to launch Tuesday.'));
     expect(screen.getByText('We agreed to launch Tuesday.')).toBeVisible();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
     await waitFor(() => expect(state.api.appendNoteTranscriptSegment).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
@@ -225,6 +231,25 @@ describe('MeetingNotesScreen', () => {
     expect(await screen.findByRole('heading', { name: 'Summary' })).toBeVisible();
   });
 
+  it('offers Pause and End while recording, then Resume and End while paused', async () => {
+    state.dictationState = 'listening';
+    const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(state.pause).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+
+    state.dictationState = 'paused';
+    view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    expect(screen.getByText('Paused')).toBeVisible();
+    expect(screen.getByText('Audio capture paused')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
+    await waitFor(() => expect(state.resume).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
+  });
+
   it('waits for the native permission decision before marking the note as recording', async () => {
     const permissionDecision = deferred<typeof state.permissions>();
     state.prepareMeetingAudioPermissions.mockImplementationOnce(() => permissionDecision.promise);
@@ -241,7 +266,7 @@ describe('MeetingNotesScreen', () => {
 
     await act(async () => permissionDecision.resolve({ microphone: 'granted', systemAudio: 'granted' }));
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: 'Stop recording' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
   });
 
   it('waits for the final provider transcript, persistence, and summary before marking the note complete', async () => {
@@ -256,7 +281,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
     expect(await screen.findByRole('button', { name: 'Finalizing…' })).toBeDisabled();
     expect(state.api.updateNote).not.toHaveBeenCalledWith(
       expect.any(String),
@@ -339,7 +364,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }));
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
 
     await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledWith(
       expect.any(String),
@@ -377,7 +402,7 @@ describe('MeetingNotesScreen', () => {
     await screen.findByDisplayValue('Meeting notes');
 
     await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: 'Stop recording' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'End' })).toBeVisible();
     expect(screen.getByRole('status')).toHaveTextContent('Recording microphone only');
     expect(screen.getByText('Listening to your microphone')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Open System Settings' }));
@@ -407,7 +432,7 @@ describe('MeetingNotesScreen', () => {
     render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
     await screen.findByDisplayValue('Meeting notes');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop recording' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'End' }));
 
     await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledWith(
       expect.any(String),
