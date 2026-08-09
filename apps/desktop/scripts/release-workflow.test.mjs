@@ -7,14 +7,17 @@ import { fileURLToPath } from 'node:url';
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const workflowPath = join(repositoryDirectory, '.github/workflows/release-desktop-macos.yml');
 
-test('desktop releases share one non-canceling newest-pending queue', async () => {
+test('desktop releases queue without discarding a pending member', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const concurrency = workflow.match(/^ {4}concurrency:\n(?<body>(?:^(?: {6}|$).*\n)+)/mu)?.groups?.body;
 
   assert.ok(concurrency, 'Release workflow must define job-level concurrency');
   assert.match(concurrency, /^ {6}group: desktop-macos-release$/mu);
   assert.match(concurrency, /^ {6}cancel-in-progress: false$/mu);
-  assert.match(concurrency, /^ {6}queue: single$/mu);
+  // `single` would let a queued site deployment cancel a pending release,
+  // since deploy-site.yml shares this group.
+  assert.match(concurrency, /^ {6}queue: max$/mu);
+  assert.doesNotMatch(concurrency, /queue: single/u);
   assert.doesNotMatch(concurrency, /github\.|inputs\.|ref_name/u);
 });
 
@@ -35,6 +38,7 @@ test('the site deployment cannot overlap a release', async () => {
   // A release deploys the site from the config it just rewrote; a standalone
   // site deployment landing afterwards would restore the superseded version.
   assert.match(siteWorkflow, /^ {2}group: desktop-macos-release$/mu);
+  assert.match(siteWorkflow, /^ {2}queue: max$/mu);
 });
 
 test('the macOS runner is only claimed once the plan job has approved a release', async () => {
