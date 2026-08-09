@@ -26,13 +26,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  # Signing, mutable channel promotion, and the landing-site deployment form
-  # one release transaction. Serialize every tag and manual dispatch globally;
-  # while one runs, keep only the newest pending release.
-  group: desktop-macos-release
-  cancel-in-progress: false
-  queue: single
+# Concurrency lives on the release job, not here. At workflow level it would
+# also cover the planner, so a push that plans a skip would still occupy the
+# single pending slot and could displace a queued release that had work to do.
+# Keeping the planner outside the queue means only runs that actually release
+# contend for it, and a plan is never delayed behind a 90-minute release.
 
 jobs:
   # Decides the release on a cheap runner so ordinary merges never occupy a
@@ -61,6 +59,15 @@ jobs:
   release:
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
+    concurrency:
+      # Signing, mutable channel promotion, and the landing-site deployment
+      # form one release transaction. Serialize every tag and manual dispatch
+      # globally; while one runs, keep only the newest pending release.
+      # deploy-site.yml shares this group so a site deployment cannot overlap
+      # a release and republish an older advertised version afterwards.
+      group: desktop-macos-release
+      cancel-in-progress: false
+      queue: single
     # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
     runs-on: macos-26

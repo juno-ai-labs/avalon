@@ -9,13 +9,32 @@ const workflowPath = join(repositoryDirectory, '.github/workflows/release-deskto
 
 test('desktop releases share one non-canceling newest-pending queue', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const concurrency = workflow.match(/^concurrency:\n(?<body>(?:^(?: {2}|$).*\n)+)/mu)?.groups?.body;
+  const concurrency = workflow.match(/^ {4}concurrency:\n(?<body>(?:^(?: {6}|$).*\n)+)/mu)?.groups?.body;
 
-  assert.ok(concurrency, 'Release workflow must define workflow-level concurrency');
-  assert.match(concurrency, /^ {2}group: desktop-macos-release$/mu);
-  assert.match(concurrency, /^ {2}cancel-in-progress: false$/mu);
-  assert.match(concurrency, /^ {2}queue: single$/mu);
+  assert.ok(concurrency, 'Release workflow must define job-level concurrency');
+  assert.match(concurrency, /^ {6}group: desktop-macos-release$/mu);
+  assert.match(concurrency, /^ {6}cancel-in-progress: false$/mu);
+  assert.match(concurrency, /^ {6}queue: single$/mu);
   assert.doesNotMatch(concurrency, /github\.|inputs\.|ref_name/u);
+});
+
+test('the planner stays outside the release queue', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const planJob = workflow.slice(workflow.indexOf('\n  plan:'), workflow.indexOf('\n  release:'));
+
+  // At workflow level the group would also cover the planner, so a push that
+  // plans a skip would occupy the single pending slot and could displace a
+  // queued release that had work to do.
+  assert.doesNotMatch(workflow, /^concurrency:$/mu, 'Concurrency must not be workflow-level');
+  assert.doesNotMatch(planJob, /concurrency:/u, 'The planning job must not join the release queue');
+});
+
+test('the site deployment cannot overlap a release', async () => {
+  const siteWorkflow = await readFile(join(repositoryDirectory, '.github/workflows/deploy-site.yml'), 'utf8');
+
+  // A release deploys the site from the config it just rewrote; a standalone
+  // site deployment landing afterwards would restore the superseded version.
+  assert.match(siteWorkflow, /^ {2}group: desktop-macos-release$/mu);
 });
 
 test('the macOS runner is only claimed once the plan job has approved a release', async () => {

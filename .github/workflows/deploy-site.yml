@@ -23,9 +23,13 @@ permissions:
   contents: read
 
 concurrency:
-  # A site deployment is a single wrangler publish; while one runs, only the
-  # newest pending commit is worth keeping.
-  group: deploy-site
+  # Deliberately the desktop release's group, not one of its own. A release
+  # deploys the site as its final step, from the release.config.json it just
+  # rewrote. A standalone site deployment running alongside it would build from
+  # the older committed config and could land afterwards, restoring the
+  # superseded version on the live site. Sharing the group makes the two
+  # strictly ordered; while one runs, only the newest pending commit is kept.
+  group: desktop-macos-release
   cancel-in-progress: false
   queue: single
 
