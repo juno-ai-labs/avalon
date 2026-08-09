@@ -24,6 +24,7 @@ const bridge = vi.hoisted(() => ({
   getOnboardingState: vi.fn(),
   getRuntimeConfig: vi.fn(),
   getSession: vi.fn(),
+  hasStoredCredential: vi.fn(),
   logout: vi.fn(),
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
@@ -53,6 +54,11 @@ const globalIdentitySession: DesktopSession = {
   ...euSession,
   apiBaseUrl: 'https://api.with-avalon.com',
   workspace: null,
+};
+
+const expiredIdentitySession: DesktopSession = {
+  ...globalIdentitySession,
+  expiresAt: '2020-01-01T00:00:00.000Z',
 };
 
 function SessionProbe(): React.JSX.Element {
@@ -107,6 +113,7 @@ describe('single-platform desktop identity routing', () => {
       devAuthEnabled: false,
     });
     bridge.getSession.mockResolvedValue(null);
+    bridge.hasStoredCredential.mockResolvedValue(false);
     bridge.consumePendingDeepLinks.mockResolvedValue([]);
     bridge.onDeepLink.mockImplementation((listener: (url: string) => void) => {
       deepLinkListener = listener;
@@ -170,14 +177,10 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('signs out once main reports the durable credential was cleared', async () => {
-    // Main clears the encrypted credential when the service definitively
-    // rejects it, so an absent native session is the terminal signal.
-    bridge.getSession.mockResolvedValueOnce({
-      ...globalIdentitySession,
-      expiresAt: '2020-01-01T00:00:00.000Z',
-    });
+  it('signs out once main reports the durable credential was surrendered', async () => {
+    bridge.getSession.mockResolvedValueOnce(expiredIdentitySession);
     bridge.refreshSession.mockRejectedValueOnce(new Error('refresh token expired'));
+    bridge.hasStoredCredential.mockResolvedValue(false);
 
     renderProvider();
 
@@ -190,21 +193,52 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('keeps a still-stored session signed in when a refresh fails transiently', async () => {
-    const expiredSession = { ...globalIdentitySession, expiresAt: '2020-01-01T00:00:00.000Z' };
-    bridge.getSession.mockResolvedValue(expiredSession);
+    bridge.getSession.mockResolvedValue(expiredIdentitySession);
+    bridge.hasStoredCredential.mockResolvedValue(true);
     bridge.refreshSession.mockRejectedValueOnce(new Error('network unreachable'));
 
     renderProvider();
 
     await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    await waitFor(() => expect(bridge.getSession).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+    await waitFor(() => expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1), { timeout: 5_000 });
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
     expect(bridge.logout).not.toHaveBeenCalled();
   });
 
+  it('keeps retrying a permanently failing refresh while the credential is still stored', async () => {
+    // Main surrenders the credential when a refresh can never succeed, so a
+    // refresh that keeps failing with one still on disk is by definition
+    // transient and must never strand the user on the sign-in screen.
+    bridge.getSession.mockResolvedValue(expiredIdentitySession);
+    bridge.hasStoredCredential.mockResolvedValue(true);
+    bridge.refreshSession.mockRejectedValue(new Error('regional service unreachable'));
+
+    renderProvider();
+
+    await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    await waitFor(() => expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
+  it('does not probe the network to decide whether the credential was surrendered', async () => {
+    // `session:get` refreshes to rebuild a missing profile cache, so using it
+    // as the oracle would let a network blip masquerade as an expiry.
+    bridge.getSession.mockResolvedValueOnce(expiredIdentitySession);
+    bridge.hasStoredCredential.mockResolvedValue(true);
+    bridge.refreshSession.mockRejectedValueOnce(new Error('network unreachable'));
+
+    renderProvider();
+
+    await waitFor(() => expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    expect(bridge.getSession).toHaveBeenCalledTimes(1);
+    expect(bridge.refreshSession).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the session when an unauthorized read leaves the native credential intact', async () => {
     bridge.getSession.mockResolvedValue(euSession);
+    bridge.hasStoredCredential.mockResolvedValue(true);
 
     renderProvider();
     await waitFor(() => expect(observedSignOutIfCleared).not.toBeNull());
@@ -214,8 +248,9 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.logout).not.toHaveBeenCalled();
   });
 
-  it('drops the session when an unauthorized read follows a cleared native credential', async () => {
-    bridge.getSession.mockResolvedValueOnce(euSession).mockResolvedValue(null);
+  it('drops the session when an unauthorized read follows a surrendered credential', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    bridge.hasStoredCredential.mockResolvedValue(false);
 
     renderProvider();
     await waitFor(() => expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com'));

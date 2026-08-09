@@ -1093,6 +1093,58 @@ describe('expired access-token recovery', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it('leaves a 401 that is not a rejected bearer alone', async () => {
+    // A replayed socket ticket shares the status but renewing would burn a
+    // refresh-token rotation and silently repeat the request.
+    const fetchMock = vi.fn().mockResolvedValue(json(
+      { error: { code: 'socket_ticket_replayed', message: 'The socket ticket was already used' } },
+      { status: 401 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const renew = vi.fn().mockResolvedValue(renewed);
+    api.setCredentialRenewal(renew);
+
+    await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({
+      status: 401,
+      code: 'socket_ticket_replayed',
+      message: 'The socket ticket was already used',
+    });
+    expect(renew).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('renews for every code that means the session credential was rejected', async () => {
+    for (const code of ['invalid_session', 'authentication_required', 'session_revoked']) {
+      const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
+        new Headers(init?.headers).get('Authorization') === `Bearer ${renewed.accessToken}`
+          ? json(socketTicket)
+          : json({ error: { code } }, { status: 401 }),
+      ));
+      vi.stubGlobal('fetch', fetchMock);
+      const api = new AvalonApi('https://api.avalon.test', session);
+      api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
+
+      await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(socketTicket);
+      expect(fetchMock, code).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  it('keeps the rejection readable for the caller when renewal is declined', async () => {
+    // The body is peeked through a clone, so nothing consumes it out from
+    // under the error the caller ultimately sees.
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    api.setCredentialRenewal(vi.fn().mockResolvedValue(session));
+
+    await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({
+      status: 401,
+      code: 'invalid_session',
+      message: 'The session is invalid or expired',
+    });
+  });
+
   it('does not replay unauthenticated when signing out clears the session mid-flight', async () => {
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
