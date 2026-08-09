@@ -1,0 +1,23 @@
+name: Concurrency probe
+
+# TEMPORARY. The earlier probe proved `queue` at workflow level. This one
+# proves it at *job* level, which is where the release workflow now declares
+# it — and a pull_request event never parses that workflow, so nothing else on
+# this PR would catch a rejection. Delete once observed.
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: concurrency-probe-job-${{ github.ref }}
+      cancel-in-progress: false
+      queue: single
+    steps:
+      - name: Report that the job-level mapping parsed
+        run: echo "job-level concurrency.queue was accepted by the workflow parser"
