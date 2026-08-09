@@ -35,7 +35,7 @@ export interface PendingInvitation {
   region: Region;
 }
 
-interface AppSessionValue {
+export interface AppSessionValue {
   booting: boolean;
   runtime: RuntimeConfig | null;
   region: Region | null;
@@ -58,6 +58,7 @@ interface AppSessionValue {
   finishWorkspaceSetup: (name: string, region: Region) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
   signOut: () => Promise<void>;
+  signOutIfCredentialCleared: () => Promise<void>;
   clearDeepLinkError: () => void;
 }
 
@@ -169,12 +170,29 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     session?.workspace?.region,
     session?.workspace?.role,
   ]);
+  const renewCredential = useCallback(async (): Promise<DesktopSession> => {
+    const renewed = await bridge.refreshSession();
+    setSession(renewed);
+    return renewed;
+  }, [bridge]);
+
   useLayoutEffect(() => {
     // Access-token rotation must not replace the API client: it owns transient
     // draft state that should survive a routine credential refresh. Synchronize
-    // its credential only after React commits the matching session state.
+    // its credential only after React commits the matching session state. The
+    // client also adopts a token itself the moment it renews one, so this is
+    // the authoritative writer rather than the only one; main rejects a
+    // refresh once sign-out moves the lifecycle epoch, so the two cannot
+    // disagree about which session is current.
     api?.setSession(session);
   }, [api, session]);
+  useLayoutEffect(() => {
+    // The scheduled refresh below cannot fire while the machine is asleep or
+    // the renderer is throttled, so requests must also be able to renew an
+    // already-expired bearer on demand instead of failing until a restart.
+    api?.setCredentialRenewal(renewCredential);
+    return () => api?.setCredentialRenewal(null);
+  }, [api, renewCredential]);
 
   // Invitation preview and OAuth must always use the invite's regional
   // service, even when an existing session belongs to the other region.
@@ -244,6 +262,19 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setRegion('global');
       queryClient.clear();
     }
+  }, [bridge, queryClient]);
+
+  /** An unauthorized read is not proof of a dead session: the bearer may have
+   * simply expired, and renewing it is the API client's job. Main surrenders
+   * the durable credential when a refresh fails terminally, so only a missing
+   * credential ends things here. */
+  const signOutIfCredentialCleared = useCallback(async (): Promise<void> => {
+    const stored = await bridge.hasStoredCredential().catch(() => true);
+    if (stored) return;
+    setSession(null);
+    setDeviceSelectedRegion('global');
+    setRegion('global');
+    queryClient.clear();
   }, [bridge, queryClient]);
 
   const selectRegion = useCallback((nextRegion: Region) => {
@@ -492,6 +523,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     if (!session) return;
     let cancelled = false;
     let retryTimer: number | undefined;
+    let retryDelayMs = 5_000;
     const expiresAt = Date.parse(session.expiresAt);
     const refreshAt = Number.isFinite(expiresAt) ? Math.max(1_000, expiresAt - Date.now() - 60_000) : 60_000;
     const refresh = async (): Promise<void> => {
@@ -499,22 +531,21 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const refreshed = await bridge.refreshSession();
         if (!cancelled) setSession(refreshed);
       } catch {
-        if (!cancelled && Date.now() < expiresAt) {
-          retryTimer = window.setTimeout(() => void refresh(), 30_000);
-        } else if (!cancelled) {
-          // Main owns the encrypted refresh credential. Clearing renderer
-          // state alone would leave a stored session that blocks the next
-          // PKCE exchange, so terminal expiry must clear/revoke native state.
-          try {
-            await bridge.logout();
-          } catch {
-            // Main clears (or tombstones) local credentials before attempting
-            // the best-effort server revocation.
-          }
-          if (cancelled) return;
+        if (cancelled) return;
+        // Main owns the encrypted refresh credential and surrenders it when a
+        // refresh fails terminally. Every other failure is transient: the
+        // refresh credential outlives the access token by weeks, so a network
+        // blip must never end an otherwise valid session. A failed probe is
+        // read as "still stored" for the same reason.
+        const stored = await bridge.hasStoredCredential().catch(() => true);
+        if (cancelled) return;
+        if (!stored) {
           setDeepLinkError('Your session expired. Sign in again to continue.');
           setSession(null);
+          return;
         }
+        retryTimer = window.setTimeout(() => void refresh(), retryDelayMs);
+        retryDelayMs = Math.min(5 * 60_000, retryDelayMs * 2);
       }
     };
     const timer = window.setTimeout(() => void refresh(), refreshAt);
@@ -555,6 +586,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       finishWorkspaceSetup,
       refreshSession,
       signOut,
+      signOutIfCredentialCleared,
       clearDeepLinkError: () => setDeepLinkError(null),
     }),
     [
@@ -575,6 +607,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       refreshSession,
       session,
       signOut,
+      signOutIfCredentialCleared,
       selectRegion,
       setWorkspaceName,
       editWorkspaceSetup,
