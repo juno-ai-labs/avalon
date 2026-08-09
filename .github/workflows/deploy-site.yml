@@ -28,10 +28,13 @@ concurrency:
   # rewrote. A standalone site deployment running alongside it would build from
   # the older committed config and could land afterwards, restoring the
   # superseded version on the live site. Sharing the group makes the two
-  # strictly ordered; while one runs, only the newest pending commit is kept.
+  # strictly ordered.
+  #
+  # queue: max, not single: `single` cancels the pending member when another
+  # queues, so a site deployment could discard a pending desktop release.
   group: desktop-macos-release
   cancel-in-progress: false
-  queue: single
+  queue: max
 
 jobs:
   deploy:
@@ -69,8 +72,13 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck the site
-        run: pnpm --filter @avalon/site typecheck
+      # ci.yml runs on the same push but cannot gate this workflow, so the
+      # deployment verifies the workspace itself rather than racing it.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
 
       - name: Test the site
         run: pnpm --filter @avalon/site test

@@ -64,9 +64,14 @@ jobs:
       # globally; while one runs, keep only the newest pending release.
       # deploy-site.yml shares this group so a site deployment cannot overlap
       # a release and republish an older advertised version afterwards.
+      #
+      # queue: max, not single. `single` keeps one pending member and cancels
+      # it when another queues — and because the site deployment shares this
+      # group, a queued site job would evict a pending release. `max` keeps
+      # every pending member in FIFO order, so nothing is discarded.
       group: desktop-macos-release
       cancel-in-progress: false
-      queue: single
+      queue: max
     # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
     runs-on: macos-26
@@ -146,6 +151,18 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      # ci.yml runs on the same push but cannot gate this workflow: both start
+      # together, so a release could publish from a commit whose CI ultimately
+      # failed. Verify here, before the build is spent.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Run release invariants
         run: pnpm --filter @avalon/desktop test:release
@@ -268,9 +285,19 @@ jobs:
           config=apps/site/release.config.json
           cp "$config" "$RUNNER_TEMP/release.config.json"
 
+          # Committed from a separate worktree so this job's checkout is never
+          # moved off the release commit. Switching the main working tree to
+          # origin/main would leave the site deployed from newer sources than
+          # the dependencies installed for this release.
+          sync="$RUNNER_TEMP/main-sync"
+          rm -rf "$sync"
+          cleanup() { git -C "$GITHUB_WORKSPACE" worktree remove --force "$sync" 2>/dev/null || true; }
+          trap cleanup EXIT
           for attempt in 1 2 3; do
             git fetch origin main
-            git checkout -B release-config-sync origin/main
+            git worktree remove --force "$sync" 2>/dev/null || true
+            git worktree add --detach "$sync" origin/main
+            cd "$sync"
             # Never move the recorded release backwards: a dispatch replaying an
             # older tag must not overwrite a newer published config.
             recorded="$(node -p "require('./$config').version")"
