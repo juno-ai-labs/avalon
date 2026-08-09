@@ -35,7 +35,7 @@ export interface PendingInvitation {
   region: Region;
 }
 
-interface AppSessionValue {
+export interface AppSessionValue {
   booting: boolean;
   runtime: RuntimeConfig | null;
   region: Region | null;
@@ -179,7 +179,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   useLayoutEffect(() => {
     // Access-token rotation must not replace the API client: it owns transient
     // draft state that should survive a routine credential refresh. Synchronize
-    // its credential only after React commits the matching session state.
+    // its credential only after React commits the matching session state. The
+    // client also adopts a token itself the moment it renews one, so this is
+    // the authoritative writer rather than the only one; main rejects a
+    // refresh once sign-out moves the lifecycle epoch, so the two cannot
+    // disagree about which session is current.
     api?.setSession(session);
   }, [api, session]);
   useLayoutEffect(() => {
@@ -261,12 +265,12 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
   }, [bridge, queryClient]);
 
   /** An unauthorized read is not proof of a dead session: the bearer may have
-   * simply expired, and renewing it is the API client's job. Main clears the
-   * durable credential when the service definitively rejects it, so only a
-   * missing native session ends things here. */
+   * simply expired, and renewing it is the API client's job. Main surrenders
+   * the durable credential when a refresh fails terminally, so only a missing
+   * credential ends things here. */
   const signOutIfCredentialCleared = useCallback(async (): Promise<void> => {
-    const nativeSession = await bridge.getSession().catch(() => null);
-    if (nativeSession) return;
+    const stored = await bridge.hasStoredCredential().catch(() => true);
+    if (stored) return;
     setSession(null);
     setDeviceSelectedRegion('global');
     setRegion('global');
@@ -528,13 +532,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (!cancelled) setSession(refreshed);
       } catch {
         if (cancelled) return;
-        // Main owns the encrypted refresh credential and clears it when the
-        // service definitively rejects it. Every other failure is transient:
-        // the refresh credential outlives the access token by weeks, so a
-        // network blip must never end an otherwise valid session.
-        const nativeSession = await bridge.getSession().catch(() => null);
+        // Main owns the encrypted refresh credential and surrenders it when a
+        // refresh fails terminally. Every other failure is transient: the
+        // refresh credential outlives the access token by weeks, so a network
+        // blip must never end an otherwise valid session. A failed probe is
+        // read as "still stored" for the same reason.
+        const stored = await bridge.hasStoredCredential().catch(() => true);
         if (cancelled) return;
-        if (!nativeSession) {
+        if (!stored) {
           setDeepLinkError('Your session expired. Sign in again to continue.');
           setSession(null);
           return;

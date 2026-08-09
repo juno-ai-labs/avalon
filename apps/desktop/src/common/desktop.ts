@@ -110,6 +110,10 @@ export interface AvalonDesktopBridge {
   acceptInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<DesktopSession>;
   declineInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
+  /** Pure read of whether a durable credential is still stored. Unlike
+   * `getSession`, this never reaches the network, so it can answer "was the
+   * credential surrendered?" without a refresh of its own failing the probe. */
+  hasStoredCredential: () => Promise<boolean>;
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;

@@ -5,8 +5,8 @@ import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useState 
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
-import { ApiError } from './lib/api';
-import { AppSessionProvider, useAppSession } from './lib/app-session';
+import { ApiError, isSessionRejection } from './lib/api';
+import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import { AutomationOverviewScreen } from './screens/automation-overview';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
@@ -107,8 +107,20 @@ function NotFoundScreen(): React.JSX.Element {
   );
 }
 
+/** A rejected bearer may just be expired, so main decides whether the session
+ * is over. Every other 401 — including ones the client synthesizes after a 200,
+ * like `session_profile_missing` — is deterministic, and only signing out
+ * recovers from it. */
+function endSessionFor(
+  error: unknown,
+  { signOut, signOutIfCredentialCleared }: Pick<AppSessionValue, 'signOut' | 'signOutIfCredentialCleared'>,
+): void {
+  if (!(error instanceof ApiError) || error.status !== 401) return;
+  void (isSessionRejection(error) ? signOutIfCredentialCleared() : signOut());
+}
+
 function WorkspaceApp(): React.JSX.Element {
-  const { api, session, signOutIfCredentialCleared } = useAppSession();
+  const { api, session, signOut, signOutIfCredentialCleared } = useAppSession();
   const workspace = useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
@@ -125,10 +137,8 @@ function WorkspaceApp(): React.JSX.Element {
   });
 
   useEffect(() => {
-    if (workspace.error instanceof ApiError && workspace.error.status === 401) {
-      void signOutIfCredentialCleared();
-    }
-  }, [signOutIfCredentialCleared, workspace.error]);
+    endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared });
+  }, [signOut, signOutIfCredentialCleared, workspace.error]);
 
   if (workspace.isLoading || !workspace.error && !workspace.data) return <LoadingState label="Opening workspace…" />;
   if (workspace.error) return <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />;
@@ -177,7 +187,9 @@ function WorkspaceApp(): React.JSX.Element {
 }
 
 function WorkspaceOnboardingGate(): React.JSX.Element {
-  const { activateWorkspace, getOnboardingState, runtime, session, signOutIfCredentialCleared } = useAppSession();
+  const {
+    activateWorkspace, getOnboardingState, runtime, session, signOut, signOutIfCredentialCleared,
+  } = useAppSession();
   const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
   const [activationError, setActivationError] = useState<Error | null>(null);
   const onboarding = useQuery({
@@ -198,10 +210,8 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 
   useEffect(() => {
-    if (onboarding.error instanceof ApiError && onboarding.error.status === 401) {
-      void signOutIfCredentialCleared();
-    }
-  }, [onboarding.error, signOutIfCredentialCleared]);
+    endSessionFor(onboarding.error, { signOut, signOutIfCredentialCleared });
+  }, [onboarding.error, signOut, signOutIfCredentialCleared]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
     return <LoadingState label="Checking your organizations…" />;
