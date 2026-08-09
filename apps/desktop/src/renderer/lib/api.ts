@@ -99,6 +99,24 @@ export class ApiError extends Error {
   }
 }
 
+/** The service answers 401 for plenty of things that are not a dead bearer —
+ * replayed socket tickets, stale OAuth state, a missing identity. Renewing on
+ * those would burn a refresh-token rotation and silently replay the request,
+ * so only a rejected session credential is worth retrying. */
+const sessionRejectionCodes = new Set(['invalid_session', 'authentication_required', 'session_revoked']);
+
+export function isSessionRejection(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401 && sessionRejectionCodes.has(error.code ?? '');
+}
+
+async function rejectedTheBearer(response: Response): Promise<boolean> {
+  const payload: unknown = await response.clone().json().catch(() => null);
+  const code = payload && typeof payload === 'object' && 'error' in payload
+    ? (payload as { error?: { code?: string } }).error?.code
+    : undefined;
+  return code !== undefined && sessionRejectionCodes.has(code);
+}
+
 function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -579,6 +597,9 @@ export class AvalonApi {
   private readonly automationDetails = new Map<string, z.infer<typeof WireAutomationDetailSchema>>();
   private readonly pendingRunKeys = new Map<string, string>();
 
+  private renewCredential: (() => Promise<DesktopSession>) | null = null;
+  private renewalInFlight: Promise<string | null> | null = null;
+
   constructor(
     readonly baseUrl: string,
     private session: DesktopSession | null,
@@ -588,16 +609,62 @@ export class AvalonApi {
     this.session = session;
   }
 
-  private async execute(path: string, init: RequestInit): Promise<Response> {
+  /** Access tokens live minutes while the durable refresh credential lives
+   * weeks. Without a reactive renewal an expired bearer fails every request
+   * with `invalid_session` until the app restarts, because retrying replays
+   * the same dead token. */
+  setCredentialRenewal(renew: (() => Promise<DesktopSession>) | null): void {
+    this.renewCredential = renew;
+  }
+
+  private async send(path: string, init: RequestInit, accessToken: string | null): Promise<Response> {
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
-    if (this.session?.accessToken) headers.set('Authorization', `Bearer ${this.session.accessToken}`);
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
     try {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw new ApiError('Avalon could not reach the selected regional service.', 0, 'network_error', error);
     }
+  }
+
+  /** Resolves the credential a replay should use, or null when there is
+   * nothing newer to retry under. Signing out mid-flight clears the session,
+   * and an unauthenticated replay would only fail again. */
+  private async renewedCredential(rejectedToken: string): Promise<string | null> {
+    const current = this.session?.accessToken ?? null;
+    // A token that already moved on was renewed by a concurrent request, so
+    // replay against the current one instead of burning another rotation.
+    if (current !== rejectedToken) return current;
+    const renew = this.renewCredential;
+    if (!renew) return null;
+    this.renewalInFlight ??= renew()
+      .then((session) => {
+        this.session = session;
+        return session.accessToken === rejectedToken ? null : session.accessToken;
+      })
+      .catch(() => null)
+      .finally(() => {
+        this.renewalInFlight = null;
+      });
+    return this.renewalInFlight;
+  }
+
+  private async execute(path: string, init: RequestInit): Promise<Response> {
+    const accessToken = this.session?.accessToken ?? null;
+    const response = await this.send(path, init, accessToken);
+    if (response.status !== 401 || accessToken === null) return response;
+    // The clone drains the body now, so nothing is left outstanding across the
+    // renewal round-trip while the original stays readable for the caller if
+    // this turns out not to be a rejected bearer.
+    if (!await rejectedTheBearer(response)) return response;
+    const renewed = await this.renewedCredential(accessToken);
+    if (renewed === null) return response;
+    // Every `execute` body is a string, so the rejected attempt can be
+    // discarded and replayed verbatim under the renewed credential.
+    void response.body?.cancel().catch(() => undefined);
+    return this.send(path, init, renewed);
   }
 
   private async throwResponseError(response: Response): Promise<never> {
@@ -1126,13 +1193,31 @@ export class AvalonApi {
     onProgress?: (percentage: number) => void,
     signal?: AbortSignal,
   ): Promise<WorkstreamResource> {
+    const accessToken = this.session?.accessToken ?? null;
+    try {
+      return await this.sendUpload(file, draftId, accessToken, onProgress, signal);
+    } catch (error) {
+      if (!isSessionRejection(error) || accessToken === null) throw error;
+      const renewed = await this.renewedCredential(accessToken);
+      if (renewed === null) throw error;
+      return this.sendUpload(file, draftId, renewed, onProgress, signal);
+    }
+  }
+
+  private async sendUpload(
+    file: File,
+    draftId: string,
+    accessToken: string | null,
+    onProgress?: (percentage: number) => void,
+    signal?: AbortSignal,
+  ): Promise<WorkstreamResource> {
     return new Promise((resolve, reject) => {
       const request = new XMLHttpRequest();
       request.open('POST', `${this.baseUrl}/resources/upload`);
       request.responseType = 'json';
       request.setRequestHeader('Accept', 'application/json');
       request.setRequestHeader('X-Avalon-Draft-Id', draftId);
-      if (this.session?.accessToken) request.setRequestHeader('Authorization', `Bearer ${this.session.accessToken}`);
+      if (accessToken) request.setRequestHeader('Authorization', `Bearer ${accessToken}`);
       request.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
       });

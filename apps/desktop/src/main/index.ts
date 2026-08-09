@@ -48,7 +48,9 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import {
   definitivelyInvalidatesStoredCredential,
+  refreshFailureIsTerminal,
   responseError,
+  UnusableCredentialError,
 } from './api-response-error';
 import {
   applicationIconPath,
@@ -576,10 +578,10 @@ async function requestSession(
   });
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Avalon returned an invalid authentication session');
+  if (!parsed.success) throw new UnusableCredentialError('Avalon returned an invalid authentication session');
   const returnedApiBaseUrl = new URL(parsed.data.apiBaseUrl).toString().replace(/\/$/u, '');
   if (returnedApiBaseUrl !== apiBaseUrl) {
-    throw new Error('The regional service returned a mismatched endpoint');
+    throw new UnusableCredentialError('The regional service returned a mismatched endpoint');
   }
   return { ...parsed.data, apiBaseUrl: returnedApiBaseUrl };
 }
@@ -849,14 +851,42 @@ async function refreshWireSession(): Promise<WireSession> {
     throw new Error('Avalon was signed out while the session was refreshing');
   }
   const apiBaseUrl = apiBaseForAuth(previousAuth);
-  const session = await requestSession(
-    apiBaseUrl,
-    '/auth/refresh',
-    { refreshToken: previousAuth.refreshToken },
-    previousAuth.accessToken,
-  );
-  if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
-    throw new Error('The refreshed session did not match the stored credential binding');
+  let session: WireSession;
+  try {
+    session = await requestSession(
+      apiBaseUrl,
+      '/auth/refresh',
+      { refreshToken: previousAuth.refreshToken },
+      previousAuth.accessToken,
+    );
+    // A binding the service will never agree with cannot be retried into
+    // working. Joining the organization from another device rebinds the
+    // server session while this device's stored binding stays unbound, so
+    // this must surrender the credential rather than loop on it forever.
+    if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
+      throw new UnusableCredentialError('The refreshed session did not match the stored credential binding');
+    }
+  } catch (error) {
+    // Only a terminal failure may delete anything, and only the credential
+    // this attempt actually presented. A sign-out/sign-in, an organization
+    // activation, or a lockdown relogin can persist a newer credential while
+    // this request is in flight, so the generation is rechecked under the same
+    // lock the success path takes. Everything else stays on disk so renderers
+    // can keep retrying instead of treating a network blip as an expired
+    // session.
+    if (refreshFailureIsTerminal(error)) {
+      try {
+        await withSessionMutation(async () => {
+          if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) return;
+          const currentAuth = await loadStoredAuth();
+          if (!currentAuth || !storedAuthMatches(currentAuth, previousAuth)) return;
+          await clearStoredSessionUnlocked();
+        });
+      } catch (cleanupError) {
+        console.warn('[avalon] could not clear a rejected desktop credential', cleanupError);
+      }
+    }
+    throw error;
   }
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
@@ -1176,6 +1206,13 @@ function registerIpc(): void {
   ipcMain.handle('auth:refresh-session', (event) => {
     assertTrustedIpcSender(event);
     return coalescedRefreshSession();
+  });
+  ipcMain.handle('auth:has-stored-credential', async (event) => {
+    assertTrustedIpcSender(event);
+    // Deliberately not `session:get`: that rebuilds a missing profile cache by
+    // refreshing, so a network blip would answer "no credential" and strand
+    // renderers on a false expiry. `loadStoredAuth` only touches disk.
+    return Boolean(await loadStoredAuth());
   });
   ipcMain.handle('auth:logout', (event) => {
     assertTrustedIpcSender(event);
