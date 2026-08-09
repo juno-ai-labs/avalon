@@ -1093,6 +1093,18 @@ describe('expired access-token recovery', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it('does not replay unauthenticated when signing out clears the session mid-flight', async () => {
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
+    // Sign-out lands between the request and its rejection.
+    void Promise.resolve().then(() => api.setSession(null));
+
+    await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it('does not retry when renewal fails', async () => {
     const fetchMock = unauthorizedUntilRenewed();
     vi.stubGlobal('fetch', fetchMock);
