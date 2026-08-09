@@ -84,6 +84,7 @@ const bridge: AvalonDesktopBridge = {
   acceptInvitation: (input) => ipcRenderer.invoke('onboarding:accept-invitation', input) as Promise<DesktopSession>,
   declineInvitation: (input) => ipcRenderer.invoke('onboarding:decline-invitation', input) as Promise<void>,
   refreshSession: () => ipcRenderer.invoke('auth:refresh-session') as Promise<DesktopSession>,
+  hasStoredCredential: () => ipcRenderer.invoke('auth:has-stored-credential') as Promise<boolean>,
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
