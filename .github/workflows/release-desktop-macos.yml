@@ -236,16 +236,65 @@ jobs:
         shell: bash
         run: AVALON_RELEASE_PUBLISH_CONFIRM="${RELEASE_TAG#v}" pnpm --filter @avalon/desktop release:publish:r2
 
-      - name: Deploy the landing site with the verified release
-        run: pnpm --filter @avalon/site run deploy
-
-      # Only now is the tag true: it marks a version whose payloads are
-      # published and whose channel is promoted. Pushing with GITHUB_TOKEN does
-      # not start another workflow run, so this cannot re-enter the release.
+      # Immediately after promotion, and before the site deploy: from here the
+      # release is live to updaters, so anything that fails later must stay
+      # recoverable. An untagged live release is not — it cannot be re-run
+      # (the immutable-bytes guard rejects a fresh build) and cannot be
+      # dispatched (there is no tag). Pushing with GITHUB_TOKEN does not start
+      # another workflow run, so this cannot re-enter the release.
       - name: Publish the release tag
         if: needs.plan.outputs.create_tag == 'true'
         shell: bash
         run: git push origin "refs/tags/$RELEASE_TAG"
+
+      # The publisher rewrote apps/site/release.config.json on this runner, and
+      # the runner is about to be reclaimed. main must learn the new version:
+      # publish-r2-release.mjs reads the committed copy through
+      # assertNextReleaseVersion, so a stale one rejects the *next* release
+      # outright, and check-site-release-config.mjs fails every later site
+      # deploy against the live channel.
+      - name: Record the published release config on the default branch
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          config=apps/site/release.config.json
+          cp "$config" "$RUNNER_TEMP/release.config.json"
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout -B release-config-sync origin/main
+            # Never move the recorded release backwards: a dispatch replaying an
+            # older tag must not overwrite a newer published config.
+            recorded="$(node -p "require('./$config').version")"
+            if ! node -e '
+              const [recorded, released] = process.argv.slice(1);
+              const part = (value) => value.replace(/^v/u, "").split(".").map(Number);
+              const [a, b] = [part(recorded), part(released)];
+              const older = a[0] !== b[0] ? a[0] < b[0] : a[1] !== b[1] ? a[1] < b[1] : a[2] < b[2];
+              process.exit(older ? 0 : 1);
+            ' "$recorded" "$RELEASE_VERSION"; then
+              echo "main already records ${recorded}; leaving it alone"
+              exit 0
+            fi
+
+            cp "$RUNNER_TEMP/release.config.json" "$config"
+            git add "$config"
+            git -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m "Record Avalon ${RELEASE_VERSION#v} release config"
+            if git push origin HEAD:main; then
+              echo "recorded ${RELEASE_VERSION#v} on main"
+              exit 0
+            fi
+            echo "main moved during attempt ${attempt}; retrying"
+          done
+          echo "Could not record the release config on main after 3 attempts" >&2
+          exit 1
+
+      - name: Deploy the landing site with the verified release
+        run: pnpm --filter @avalon/site run deploy
 
       - name: Remove the temporary signing keychain
         if: always()
