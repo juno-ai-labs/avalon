@@ -46,25 +46,43 @@ test('tag pushes are never filtered by path', async () => {
   assert.doesNotMatch(trigger, /^\s*paths:/mu);
 });
 
-test('the release tag is pushed only after the payloads and channel are published', async () => {
+test('the release tag is pushed after publication and before anything that can still fail', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const stepIndex = (name) => workflow.indexOf(`- name: ${name}`);
 
   const createdLocally = stepIndex('Create the release tag locally');
   const published = stepIndex('Publish immutable payloads and promote the release manifest');
-  const site = stepIndex('Deploy the landing site with the verified release');
   const pushedTag = stepIndex('Publish the release tag');
+  const recordedConfig = stepIndex('Record the published release config on the default branch');
+  const site = stepIndex('Deploy the landing site with the verified release');
 
-  for (const [name, index] of Object.entries({ createdLocally, published, site, pushedTag })) {
+  for (const [name, index] of Object.entries({ createdLocally, published, pushedTag, recordedConfig, site })) {
     assert.notEqual(index, -1, `Release workflow must keep the ${name} step`);
   }
   // Every tag released by hand is annotated; automation must not start mixing
   // in lightweight ones.
   assert.match(workflow, /tag -a "\$RELEASE_TAG"/u);
-  // A failed release must leave no tag behind, so the version can be retried.
+  // A release that fails before publication must leave no tag, so the version
+  // can be retried.
   assert.ok(createdLocally < published, 'The local tag must exist before the release guards run');
   assert.ok(published < pushedTag, 'The tag must not be pushed before the payloads are published');
-  assert.ok(site < pushedTag, 'The tag must not be pushed before the channel is live');
+  // Once the channel is promoted the release is live to updaters, and an
+  // untagged live release can be neither re-run nor dispatched. So everything
+  // that can still fail happens after the tag exists.
+  assert.ok(pushedTag < recordedConfig, 'The tag must be pushed before the release config is recorded');
+  assert.ok(pushedTag < site, 'The tag must be pushed before the site deploy, which can fail on its own');
+});
+
+test('the release records its site config back on the default branch', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const recordStep = workflow.slice(workflow.indexOf('- name: Record the published release config'));
+
+  // publish-r2-release.mjs reads the committed config through
+  // assertNextReleaseVersion, so leaving main stale breaks the next release.
+  assert.match(recordStep, /git push origin HEAD:main/u);
+  assert.match(recordStep, /apps\/site\/release\.config\.json/u);
+  // A dispatch replaying an older tag must not move the record backwards.
+  assert.match(recordStep, /leaving it alone/u);
 });
 
 test('the release job can write the tag it publishes', async () => {

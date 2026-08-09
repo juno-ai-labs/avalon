@@ -4,9 +4,16 @@
 //
 // Releases are keyed to the workspace version rather than to individual
 // commits, because every published payload is immutable under v<version>: the
-// same version can only ever be released once. A push therefore releases only
-// when it *changes* the version, which makes the version bump the deliberate
-// "ship this" signal and leaves ordinary merges to accumulate in the cycle.
+// same version can only ever be released once. The existence of the tag is
+// therefore the whole gate — any merge while the current version is unreleased
+// ships it, exactly once, and every merge after that skips.
+//
+// Deliberately *not* keyed to "this push changed the version". The concurrency
+// group keeps only the newest pending run, so a bump that merges while a
+// release is in flight can have its run dropped by a later merge; a diff
+// against that push's `before` would then see no change and skip forever,
+// silently retiring the version. Tag existence is durable state and survives
+// run collapse.
 //
 // Tag pushes and manual dispatches keep their original meaning and always
 // release the tag they name.
@@ -28,7 +35,6 @@ export function planRelease({
   headSha,
   rootVersion,
   desktopVersion,
-  previousVersion,
   tagExists,
 }) {
   if (eventName === 'workflow_dispatch') {
@@ -43,26 +49,19 @@ export function planRelease({
 
   // Branch push: the workspace version is the candidate release.
   const tag = `v${rootVersion}`;
-  assertReleaseTag(tag, rootVersion, desktopVersion);
-
   if (tagExists) {
     return { shouldRelease: false, tag, ref: headSha, createTag: false, reason: `${tag} is already released` };
   }
-  if (previousVersion === rootVersion) {
-    return {
-      shouldRelease: false,
-      tag,
-      ref: headSha,
-      createTag: false,
-      reason: `version unchanged at ${rootVersion}; bump it to release`,
-    };
-  }
+  // Below the short-circuit on purpose: a violated invariant should redden the
+  // merge that introduced it, not every subsequent merge. CI already enforces
+  // this on the pull request, so here it is a backstop.
+  assertReleaseTag(tag, rootVersion, desktopVersion);
   return {
     shouldRelease: true,
     tag,
     ref: headSha,
     createTag: true,
-    reason: `version bumped ${previousVersion ?? '(unknown)'} to ${rootVersion}`,
+    reason: `${rootVersion} has not been released yet`,
   };
 }
 
@@ -72,14 +71,6 @@ function git(...args) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
-}
-
-function versionAtCommit(commit) {
-  try {
-    return JSON.parse(git('show', `${commit}:package.json`)).version;
-  } catch {
-    return undefined;
-  }
 }
 
 function tagExistsLocally(tag) {
@@ -96,12 +87,6 @@ async function main() {
   const refName = process.env.GITHUB_REF_NAME;
   const headSha = process.env.GITHUB_SHA;
   const inputTag = process.env.RELEASE_INPUT_TAG || undefined;
-  // The push payload's `before` spans every commit in the push, so a version
-  // bump is still detected when several commits land at once. It is unset or
-  // all-zeroes for a new branch, where the first parent is the best available
-  // comparison point.
-  const before = process.env.GITHUB_EVENT_BEFORE;
-  const previousCommit = before && !/^0+$/u.test(before) ? before : `${headSha}^`;
 
   const [rootPackage, desktopPackage] = await Promise.all([
     readFile(resolve(repositoryDirectory, 'package.json'), 'utf8').then(JSON.parse),
@@ -116,7 +101,6 @@ async function main() {
     headSha,
     rootVersion: rootPackage.version,
     desktopVersion: desktopPackage.version,
-    previousVersion: isBranchPush ? versionAtCommit(previousCommit) : undefined,
     tagExists: isBranchPush ? tagExistsLocally(`v${rootPackage.version}`) : false,
   });
 

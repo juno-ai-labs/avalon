@@ -11,7 +11,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Superseding a pull request run is free; superseding a main run is not.
+  # Under continuous deployment a merge reaches production, and the
+  # full-history Gitleaks gate exists nowhere else, so main runs finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
