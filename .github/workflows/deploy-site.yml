@@ -23,18 +23,19 @@ permissions:
   contents: read
 
 concurrency:
-  # Deliberately the desktop release's group, not one of its own. A release
-  # deploys the site as its final step, from the release.config.json it just
-  # rewrote. A standalone site deployment running alongside it would build from
-  # the older committed config and could land afterwards, restoring the
-  # superseded version on the live site. Sharing the group makes the two
-  # strictly ordered.
+  # A group of its own, not the desktop release's. Sharing that group would
+  # order the two, but `single` cancels the pending member when another queues,
+  # so a site deployment could discard a pending release — and never losing a
+  # release matters more than the narrow overlap this leaves.
   #
-  # queue: max, not single: `single` cancels the pending member when another
-  # queues, so a site deployment could discard a pending desktop release.
-  group: desktop-macos-release
+  # That overlap: a release deploys the site as its final step from the config
+  # it just rewrote, so a standalone deployment landing immediately afterwards
+  # could restore the superseded version. The guard is the release-config check
+  # in the step below, which runs against the live channel immediately before
+  # the publish, leaving only a seconds-wide window.
+  group: deploy-site
   cancel-in-progress: false
-  queue: max
+  queue: single
 
 jobs:
   deploy:

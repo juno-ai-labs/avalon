@@ -60,18 +60,16 @@ jobs:
     if: needs.plan.outputs.should_release == 'true'
     concurrency:
       # Signing, mutable channel promotion, and the landing-site deployment
-      # form one release transaction. Serialize every tag and manual dispatch
-      # globally; while one runs, keep only the newest pending release.
-      # deploy-site.yml shares this group so a site deployment cannot overlap
-      # a release and republish an older advertised version afterwards.
+      # form one release transaction, so a running release is never cancelled.
+      # Newer releases supersede older *pending* ones: intermediate versions do
+      # not need to ship, and the newest pending run carries the newest work.
       #
-      # queue: max, not single. `single` keeps one pending member and cancels
-      # it when another queues — and because the site deployment shares this
-      # group, a queued site job would evict a pending release. `max` keeps
-      # every pending member in FIFO order, so nothing is discarded.
+      # This group holds releases only. The site deployment deliberately keeps
+      # its own, because a queued site job sharing this one would satisfy
+      # `single` by cancelling a pending release.
       group: desktop-macos-release
       cancel-in-progress: false
-      queue: max
+      queue: single
     # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
     runs-on: macos-26
