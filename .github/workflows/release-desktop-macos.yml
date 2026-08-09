@@ -101,7 +101,11 @@ jobs:
       - name: Create the release tag locally
         if: needs.plan.outputs.create_tag == 'true'
         shell: bash
-        run: git tag "$RELEASE_TAG" HEAD
+        # Annotated, to match every tag released by hand before this.
+        run: |
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              tag -a "$RELEASE_TAG" -m "Avalon ${RELEASE_TAG#v}" HEAD
 
       - name: Require native Apple Silicon
         run: test "$(uname -m)" = arm64
