@@ -579,6 +579,9 @@ export class AvalonApi {
   private readonly automationDetails = new Map<string, z.infer<typeof WireAutomationDetailSchema>>();
   private readonly pendingRunKeys = new Map<string, string>();
 
+  private renewCredential: (() => Promise<DesktopSession>) | null = null;
+  private renewalInFlight: Promise<boolean> | null = null;
+
   constructor(
     readonly baseUrl: string,
     private session: DesktopSession | null,
@@ -588,16 +591,54 @@ export class AvalonApi {
     this.session = session;
   }
 
-  private async execute(path: string, init: RequestInit): Promise<Response> {
+  /** Access tokens live minutes while the durable refresh credential lives
+   * weeks. Without a reactive renewal an expired bearer fails every request
+   * with `invalid_session` until the app restarts, because retrying replays
+   * the same dead token. */
+  setCredentialRenewal(renew: (() => Promise<DesktopSession>) | null): void {
+    this.renewCredential = renew;
+  }
+
+  private async send(path: string, init: RequestInit, accessToken: string | null): Promise<Response> {
     const headers = new Headers(init.headers);
     if (!headers.has('Accept')) headers.set('Accept', 'application/json');
-    if (this.session?.accessToken) headers.set('Authorization', `Bearer ${this.session.accessToken}`);
+    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
     try {
       return await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       throw new ApiError('Avalon could not reach the selected regional service.', 0, 'network_error', error);
     }
+  }
+
+  /** Resolves true when a token newer than the rejected one is available. */
+  private async renewExpiredCredential(rejectedToken: string): Promise<boolean> {
+    // A token that already moved on was renewed by a concurrent request, so
+    // replay against the current one instead of burning another rotation.
+    if ((this.session?.accessToken ?? null) !== rejectedToken) return true;
+    const renew = this.renewCredential;
+    if (!renew) return false;
+    this.renewalInFlight ??= renew()
+      .then((session) => {
+        this.session = session;
+        return session.accessToken !== rejectedToken;
+      })
+      .catch(() => false)
+      .finally(() => {
+        this.renewalInFlight = null;
+      });
+    return this.renewalInFlight;
+  }
+
+  private async execute(path: string, init: RequestInit): Promise<Response> {
+    const accessToken = this.session?.accessToken ?? null;
+    const response = await this.send(path, init, accessToken);
+    if (response.status !== 401 || accessToken === null) return response;
+    if (!await this.renewExpiredCredential(accessToken)) return response;
+    // Every `execute` body is a string, so the rejected attempt can be
+    // discarded and replayed verbatim under the renewed credential.
+    void response.body?.cancel().catch(() => undefined);
+    return this.send(path, init, this.session?.accessToken ?? null);
   }
 
   private async throwResponseError(response: Response): Promise<never> {
@@ -1126,13 +1167,30 @@ export class AvalonApi {
     onProgress?: (percentage: number) => void,
     signal?: AbortSignal,
   ): Promise<WorkstreamResource> {
+    const accessToken = this.session?.accessToken ?? null;
+    try {
+      return await this.sendUpload(file, draftId, accessToken, onProgress, signal);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401 || accessToken === null) throw error;
+      if (!await this.renewExpiredCredential(accessToken)) throw error;
+      return this.sendUpload(file, draftId, this.session?.accessToken ?? null, onProgress, signal);
+    }
+  }
+
+  private async sendUpload(
+    file: File,
+    draftId: string,
+    accessToken: string | null,
+    onProgress?: (percentage: number) => void,
+    signal?: AbortSignal,
+  ): Promise<WorkstreamResource> {
     return new Promise((resolve, reject) => {
       const request = new XMLHttpRequest();
       request.open('POST', `${this.baseUrl}/resources/upload`);
       request.responseType = 'json';
       request.setRequestHeader('Accept', 'application/json');
       request.setRequestHeader('X-Avalon-Draft-Id', draftId);
-      if (this.session?.accessToken) request.setRequestHeader('Authorization', `Bearer ${this.session.accessToken}`);
+      if (accessToken) request.setRequestHeader('Authorization', `Bearer ${accessToken}`);
       request.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) onProgress?.(Math.min(99, Math.round((event.loaded / event.total) * 100)));
       });
