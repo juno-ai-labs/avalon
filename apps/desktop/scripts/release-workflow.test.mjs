@@ -58,6 +58,9 @@ test('the release tag is pushed only after the payloads and channel are publishe
   for (const [name, index] of Object.entries({ createdLocally, published, site, pushedTag })) {
     assert.notEqual(index, -1, `Release workflow must keep the ${name} step`);
   }
+  // Every tag released by hand is annotated; automation must not start mixing
+  // in lightweight ones.
+  assert.match(workflow, /tag -a "\$RELEASE_TAG"/u);
   // A failed release must leave no tag behind, so the version can be retried.
   assert.ok(createdLocally < published, 'The local tag must exist before the release guards run');
   assert.ok(published < pushedTag, 'The tag must not be pushed before the payloads are published');
