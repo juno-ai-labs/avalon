@@ -1,0 +1,23 @@
+name: Concurrency probe
+
+# TEMPORARY. Proves that `queue` is accepted in a concurrency mapping. If the
+# key were unsupported this file would be an invalid workflow and fail to
+# register, which is the exact failure mode under review. Delete once observed.
+
+on: pull_request
+
+permissions:
+  contents: read
+
+concurrency:
+  group: concurrency-probe-${{ github.ref }}
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report that the workflow parsed
+        run: echo "concurrency.queue was accepted by the workflow parser"
