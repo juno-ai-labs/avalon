@@ -10,6 +10,12 @@ on:
       - main
     paths:
       - "apps/site/**"
+      # The site compiles shared contracts in: auth-handoff validates OAuth
+      # callbacks against ConnectorOAuthProviders, so adding a provider must
+      # reach the site as well as the API, or production rejects the new
+      # provider's callback until an unrelated site change ships.
+      - "packages/**"
+      - "pnpm-lock.yaml"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
 
