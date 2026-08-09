@@ -154,10 +154,13 @@ jobs:
       - name: Record the remaining manual release gates
         if: success()
         run: |
+          # GITHUB_SHA is the dispatching ref, which is not the checked-out
+          # commit when inputs.ref names a different branch, tag, or SHA.
+          deployed_sha="$(git rev-parse HEAD)"
           {
             echo "### Avalon API deployed"
             echo ""
-            echo "- Revision: \`${{ inputs.ref || github.ref_name }}\` (${GITHUB_SHA})"
+            echo "- Revision: \`${{ inputs.ref || github.ref_name }}\` (${deployed_sha})"
             echo "- Trigger: \`${GITHUB_EVENT_NAME}\`"
             echo "- Regions: EU \`${DEPLOY_EU}\`, Global \`${DEPLOY_GLOBAL}\`"
             echo "- Remote migrations applied: \`${APPLY_MIGRATIONS}\`"
