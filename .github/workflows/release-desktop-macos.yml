@@ -1,16 +1,15 @@
 name: Release Avalon for macOS
 
 on:
+  # A tag is an artifact of a release, not an input to one: nothing triggers on
+  # `v*`, and the planner never reads tags. The workspace version measured
+  # against the published record decides, so pushing a tag by hand records
+  # nothing and starts nothing.
   push:
-    tags:
-      - "v*"
     branches:
       - main
-    # Deliberately unfiltered by path. GitHub does not define whether a paths
-    # filter also applies to tag pushes, and a silently skipped tag release is
-    # far worse than the seconds the planning job costs on an unrelated merge.
-    # The version-change gate in plan-release.mjs is the real filter, and a
-    # version bump always touches package.json anyway.
+    # Unfiltered by path: the planner is cheap, and the version gate is the
+    # real filter.
   workflow_dispatch:
     inputs:
       tag:
