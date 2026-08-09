@@ -99,6 +99,24 @@ export class ApiError extends Error {
   }
 }
 
+/** The service answers 401 for plenty of things that are not a dead bearer —
+ * replayed socket tickets, stale OAuth state, a missing identity. Renewing on
+ * those would burn a refresh-token rotation and silently replay the request,
+ * so only a rejected session credential is worth retrying. */
+const sessionRejectionCodes = new Set(['invalid_session', 'authentication_required', 'session_revoked']);
+
+export function isSessionRejection(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401 && sessionRejectionCodes.has(error.code ?? '');
+}
+
+async function rejectedTheBearer(response: Response): Promise<boolean> {
+  const payload: unknown = await response.clone().json().catch(() => null);
+  const code = payload && typeof payload === 'object' && 'error' in payload
+    ? (payload as { error?: { code?: string } }).error?.code
+    : undefined;
+  return code !== undefined && sessionRejectionCodes.has(code);
+}
+
 function abortableDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -637,6 +655,10 @@ export class AvalonApi {
     const accessToken = this.session?.accessToken ?? null;
     const response = await this.send(path, init, accessToken);
     if (response.status !== 401 || accessToken === null) return response;
+    // The clone drains the body now, so nothing is left outstanding across the
+    // renewal round-trip while the original stays readable for the caller if
+    // this turns out not to be a rejected bearer.
+    if (!await rejectedTheBearer(response)) return response;
     const renewed = await this.renewedCredential(accessToken);
     if (renewed === null) return response;
     // Every `execute` body is a string, so the rejected attempt can be
@@ -1175,7 +1197,7 @@ export class AvalonApi {
     try {
       return await this.sendUpload(file, draftId, accessToken, onProgress, signal);
     } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 401 || accessToken === null) throw error;
+      if (!isSessionRejection(error) || accessToken === null) throw error;
       const renewed = await this.renewedCredential(accessToken);
       if (renewed === null) throw error;
       return this.sendUpload(file, draftId, renewed, onProgress, signal);

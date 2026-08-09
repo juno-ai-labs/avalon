@@ -260,6 +260,9 @@ const browserBridge: AvalonDesktopBridge = {
     if (!browserSession || !browserRefreshToken) throw new Error('No session is available to refresh');
     return browserSessionRequest(browserSession.apiBaseUrl, '/auth/refresh', { refreshToken: browserRefreshToken });
   },
+  async hasStoredCredential() {
+    return browserRefreshToken !== null;
+  },
   async logout() {
     browserSession = null;
     browserRefreshToken = null;
