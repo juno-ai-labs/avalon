@@ -16,3 +16,11 @@ paths = [
   '''(^|/)\.turbo/''',
   '''(^|/)\.pnpm-store/''',
 ]
+# Placeholder PEM blocks in tests, which assert redaction and configuration
+# handling rather than carrying key material. The body is deliberately narrow:
+# letters and hyphens only, at most 39 characters, so it admits `fake` or
+# `unused-test-key` while a real key — hundreds of base64 characters with
+# digits, `+`, `/`, and `=` — still fails the gate.
+regexes = [
+  '''-----BEGIN [A-Z ]*PRIVATE KEY-----\\{1,2}n[A-Za-z][A-Za-z-]{0,38}\\{1,2}n-----END [A-Z ]*PRIVATE KEY-{4,5}''',
+]
