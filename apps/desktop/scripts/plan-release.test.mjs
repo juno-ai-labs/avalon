@@ -9,12 +9,11 @@ const branchPush = (overrides = {}) => ({
   headSha: 'abc123',
   rootVersion: '1.34.0',
   desktopVersion: '1.34.0',
-  previousVersion: '1.33.0',
   tagExists: false,
   ...overrides,
 });
 
-test('a version bump on the default branch releases and creates its tag', () => {
+test('an unreleased version on the default branch releases and creates its tag', () => {
   const plan = planRelease(branchPush());
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.tag, 'v1.34.0');
@@ -22,11 +21,19 @@ test('a version bump on the default branch releases and creates its tag', () => 
   assert.equal(plan.createTag, true);
 });
 
-test('a merge that does not change the version does not release', () => {
-  const plan = planRelease(branchPush({ previousVersion: '1.34.0' }));
+test('a merge whose run was collapsed still releases the pending version', () => {
+  // The concurrency group keeps only the newest pending run, so the merge that
+  // carried the bump can be discarded. Any later merge must still ship it:
+  // the gate is durable tag state, not this push's diff.
+  const plan = planRelease(branchPush({ tagExists: false }));
+  assert.equal(plan.shouldRelease, true);
+  assert.equal(plan.createTag, true);
+});
+
+test('every merge after the release skips, so a version ships exactly once', () => {
+  const plan = planRelease(branchPush({ tagExists: true }));
   assert.equal(plan.shouldRelease, false);
-  assert.equal(plan.createTag, false);
-  assert.match(plan.reason, /bump it to release/u);
+  assert.match(plan.reason, /already released/u);
 });
 
 test('an already released version never republishes, even if the bump reappears', () => {
@@ -43,6 +50,13 @@ test('a version bump whose desktop package disagrees fails instead of releasing'
     () => planRelease(branchPush({ desktopVersion: '1.33.0' })),
     /Desktop package version 1\.33\.0 does not match tag v1\.34\.0/u,
   );
+});
+
+test('an already released version skips before the invariants are asserted', () => {
+  // Otherwise a bad version reddens every later merge rather than the one that
+  // introduced it.
+  const plan = planRelease(branchPush({ desktopVersion: '1.33.0', tagExists: true }));
+  assert.equal(plan.shouldRelease, false);
 });
 
 test('a non-minor version bump is rejected by the existing tag rules', () => {
@@ -69,10 +83,9 @@ test('a manual dispatch without a tag fails rather than guessing', () => {
   assert.throws(() => planRelease({ eventName: 'workflow_dispatch', refName: 'main' }), /must name an existing tag/u);
 });
 
-test('an unknown previous version still releases a new tag', () => {
-  // A first push to a fresh clone or a force-pushed history: the tag check is
-  // the authority, and it says this version has never been published.
-  const plan = planRelease(branchPush({ previousVersion: undefined }));
-  assert.equal(plan.shouldRelease, true);
-  assert.equal(plan.createTag, true);
+test('the plan is idempotent across repeated merges', () => {
+  // Same inputs, same answer: nothing depends on which push triggered it.
+  const first = planRelease(branchPush());
+  const second = planRelease(branchPush());
+  assert.deepEqual(first, second);
 });
