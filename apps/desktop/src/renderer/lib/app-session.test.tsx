@@ -9,6 +9,7 @@ import { readDevicePreferences } from './device-preferences';
 let deepLinkListener: ((url: string) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
 let observedApi: AvalonApi | null = null;
+let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 const bridge = vi.hoisted(() => ({
   cancelDesktopAuthAttempt: vi.fn(),
   createDesktopAuthAttempt: vi.fn(),
@@ -55,8 +56,10 @@ const globalIdentitySession: DesktopSession = {
 };
 
 function SessionProbe(): React.JSX.Element {
-  const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = useAppSession();
+  const context = useAppSession();
+  const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
+  observedSignOutIfCleared = context.signOutIfCredentialCleared;
   return (
     <>
       <output>
@@ -92,6 +95,7 @@ describe('single-platform desktop identity routing', () => {
     deepLinkListener = null;
     sessionListener = null;
     observedApi = null;
+    observedSignOutIfCleared = null;
     bridge.getRuntimeConfig.mockResolvedValue({
       appVersion: 'test',
       isPackaged: true,
@@ -166,19 +170,86 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('clears the native session after a terminal refresh failure so sign-in can restart', async () => {
+  it('signs out once main reports the durable credential was cleared', async () => {
+    // Main clears the encrypted credential when the service definitively
+    // rejects it, so an absent native session is the terminal signal.
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
       expiresAt: '2020-01-01T00:00:00.000Z',
     });
     bridge.refreshSession.mockRejectedValueOnce(new Error('refresh token expired'));
-    bridge.logout.mockResolvedValueOnce(undefined);
 
     renderProvider();
 
-    await waitFor(() => expect(bridge.logout).toHaveBeenCalledTimes(1), { timeout: 2_500 });
-    expect(await screen.findByText('global:signed-out')).toBeVisible();
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('session expired');
+    await waitFor(
+      () => expect(screen.getByTestId('deep-link-error')).toHaveTextContent('session expired'),
+      { timeout: 2_500 },
+    );
+    expect(screen.getByTestId('session-email')).toHaveTextContent('none');
+    expect(bridge.logout).not.toHaveBeenCalled();
+  });
+
+  it('keeps a still-stored session signed in when a refresh fails transiently', async () => {
+    const expiredSession = { ...globalIdentitySession, expiresAt: '2020-01-01T00:00:00.000Z' };
+    bridge.getSession.mockResolvedValue(expiredSession);
+    bridge.refreshSession.mockRejectedValueOnce(new Error('network unreachable'));
+
+    renderProvider();
+
+    await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 2_500 });
+    await waitFor(() => expect(bridge.getSession).toHaveBeenCalledTimes(2), { timeout: 2_500 });
+    expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+    expect(bridge.logout).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session when an unauthorized read leaves the native credential intact', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+
+    renderProvider();
+    await waitFor(() => expect(observedSignOutIfCleared).not.toBeNull());
+    await act(async () => observedSignOutIfCleared?.());
+
+    expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
+    expect(bridge.logout).not.toHaveBeenCalled();
+  });
+
+  it('drops the session when an unauthorized read follows a cleared native credential', async () => {
+    bridge.getSession.mockResolvedValueOnce(euSession).mockResolvedValue(null);
+
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com'));
+    await act(async () => observedSignOutIfCleared?.());
+
+    expect(screen.getByTestId('session-email')).toHaveTextContent('none');
+  });
+
+  it('renews a service-rejected bearer on demand so requests recover without a restart', async () => {
+    // The scheduled refresh cannot fire while the renderer is throttled, so
+    // the client still believes its token is valid when the service rejects it.
+    const renewedSession = {
+      ...globalIdentitySession,
+      accessToken: 'renewed-access-token-longer-than-twenty',
+    };
+    bridge.getSession.mockResolvedValueOnce(globalIdentitySession);
+    bridge.refreshSession.mockResolvedValue(renewedSession);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      const authorization = new Headers(init?.headers).get('Authorization');
+      return Promise.resolve(authorization === `Bearer ${renewedSession.accessToken}`
+        ? new Response(JSON.stringify({ url: 'wss://api.with-avalon.com/socket', ticket: 'socket-ticket' }))
+        : new Response(JSON.stringify({ error: { code: 'invalid_session' } }), { status: 401 }));
+    });
+
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId('session-token')).toHaveTextContent(
+      globalIdentitySession.accessToken,
+    ));
+
+    await expect(observedApi!.getSocketTicket('workstream-1'))
+      .resolves.toMatchObject({ ticket: 'socket-ticket' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(bridge.refreshSession).toHaveBeenCalled();
+    fetchMock.mockRestore();
   });
 
   it('rejects a regional authentication callback instead of creating a second login surface', async () => {

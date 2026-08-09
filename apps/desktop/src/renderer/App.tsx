@@ -108,7 +108,7 @@ function NotFoundScreen(): React.JSX.Element {
 }
 
 function WorkspaceApp(): React.JSX.Element {
-  const { api, session, signOut } = useAppSession();
+  const { api, session, signOutIfCredentialCleared } = useAppSession();
   const workspace = useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
@@ -125,8 +125,10 @@ function WorkspaceApp(): React.JSX.Element {
   });
 
   useEffect(() => {
-    if (workspace.error instanceof ApiError && workspace.error.status === 401) void signOut();
-  }, [signOut, workspace.error]);
+    if (workspace.error instanceof ApiError && workspace.error.status === 401) {
+      void signOutIfCredentialCleared();
+    }
+  }, [signOutIfCredentialCleared, workspace.error]);
 
   if (workspace.isLoading || !workspace.error && !workspace.data) return <LoadingState label="Opening workspace…" />;
   if (workspace.error) return <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />;
@@ -175,7 +177,7 @@ function WorkspaceApp(): React.JSX.Element {
 }
 
 function WorkspaceOnboardingGate(): React.JSX.Element {
-  const { activateWorkspace, getOnboardingState, runtime, session, signOut } = useAppSession();
+  const { activateWorkspace, getOnboardingState, runtime, session, signOutIfCredentialCleared } = useAppSession();
   const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
   const [activationError, setActivationError] = useState<Error | null>(null);
   const onboarding = useQuery({
@@ -196,8 +198,10 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 
   useEffect(() => {
-    if (onboarding.error instanceof ApiError && onboarding.error.status === 401) void signOut();
-  }, [onboarding.error, signOut]);
+    if (onboarding.error instanceof ApiError && onboarding.error.status === 401) {
+      void signOutIfCredentialCleared();
+    }
+  }, [onboarding.error, signOutIfCredentialCleared]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
     return <LoadingState label="Checking your organizations…" />;
