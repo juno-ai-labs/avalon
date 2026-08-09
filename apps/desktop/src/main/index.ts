@@ -849,12 +849,27 @@ async function refreshWireSession(): Promise<WireSession> {
     throw new Error('Avalon was signed out while the session was refreshing');
   }
   const apiBaseUrl = apiBaseForAuth(previousAuth);
-  const session = await requestSession(
-    apiBaseUrl,
-    '/auth/refresh',
-    { refreshToken: previousAuth.refreshToken },
-    previousAuth.accessToken,
-  );
+  let session: WireSession;
+  try {
+    session = await requestSession(
+      apiBaseUrl,
+      '/auth/refresh',
+      { refreshToken: previousAuth.refreshToken },
+      previousAuth.accessToken,
+    );
+  } catch (error) {
+    // Only the service can declare the durable credential dead. Clearing it
+    // here is what lets renderers retry every other failure indefinitely
+    // instead of treating a network blip as an expired session.
+    if (definitivelyInvalidatesStoredCredential(error)) {
+      try {
+        await clearStoredSession();
+      } catch (cleanupError) {
+        console.warn('[avalon] could not clear a rejected desktop credential', cleanupError);
+      }
+    }
+    throw error;
+  }
   if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
     throw new Error('The refreshed session did not match the stored credential binding');
   }

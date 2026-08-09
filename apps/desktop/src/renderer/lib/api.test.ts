@@ -1033,3 +1033,102 @@ describe('Avalon API wire adapter', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
+
+describe('expired access-token recovery', () => {
+  const renewed: DesktopSession = { ...session, accessToken: 'renewed-access-token-longer-than-twenty' };
+  const socketTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+
+  function unauthorizedUntilRenewed() {
+    return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
+      new Headers(init?.headers).get('Authorization') === `Bearer ${renewed.accessToken}`
+        ? json(socketTicket)
+        : json({ error: { code: 'invalid_session', message: 'The session is invalid or expired' } }, { status: 401 }),
+    ));
+  }
+
+  it('renews the credential and replays the rejected request', async () => {
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    const renew = vi.fn().mockResolvedValue(renewed);
+    api.setCredentialRenewal(renew);
+
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(socketTicket);
+    expect(renew).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Authorization'))
+      .toBe(`Bearer ${renewed.accessToken}`);
+  });
+
+  it('renews once for a burst of concurrent rejections', async () => {
+    vi.stubGlobal('fetch', unauthorizedUntilRenewed());
+    const api = new AvalonApi('https://api.avalon.test', session);
+    let release!: (value: DesktopSession) => void;
+    const renew = vi.fn(() => new Promise<DesktopSession>((resolve) => {
+      release = resolve;
+    }));
+    api.setCredentialRenewal(renew);
+
+    const pending = Promise.all([
+      api.getSocketTicket(workstreamId),
+      api.getSocketTicket(workstreamId),
+      api.getSocketTicket(workstreamId),
+    ]);
+    await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
+    release(renewed);
+
+    await expect(pending).resolves.toEqual([socketTicket, socketTicket, socketTicket]);
+    expect(renew).toHaveBeenCalledOnce();
+  });
+
+  it('surfaces the original rejection when no renewal is registered', async () => {
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({
+      status: 401,
+      code: 'invalid_session',
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry when renewal fails', async () => {
+    const fetchMock = unauthorizedUntilRenewed();
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    api.setCredentialRenewal(vi.fn().mockRejectedValue(new Error('offline')));
+
+    await expect(api.getSocketTicket(workstreamId)).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('replays an unauthorized upload under the renewed credential', async () => {
+    class StubUpload {
+      static instances: StubUpload[] = [];
+      readonly headers = new Map<string, string>();
+      readonly upload = { addEventListener: (): void => undefined };
+      private readonly listeners = new Map<string, () => void>();
+      responseType = '';
+      status = 401;
+      response: unknown = { error: { code: 'invalid_session' } };
+      open(): void { StubUpload.instances.push(this); }
+      setRequestHeader(name: string, value: string): void { this.headers.set(name, value); }
+      addEventListener(name: string, listener: () => void): void { this.listeners.set(name, listener); }
+      send(): void {
+        if (this.headers.get('Authorization') === `Bearer ${renewed.accessToken}`) {
+          this.status = 200;
+          this.response = resource;
+        }
+        queueMicrotask(() => this.listeners.get('load')?.());
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', StubUpload);
+    const api = new AvalonApi('https://api.avalon.test', session);
+    api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
+
+    await expect(api.uploadResource(new File(['body'], 'note.txt'), 'draft-1'))
+      .resolves.toMatchObject({ id: resourceId });
+    expect(StubUpload.instances).toHaveLength(2);
+  });
+});
