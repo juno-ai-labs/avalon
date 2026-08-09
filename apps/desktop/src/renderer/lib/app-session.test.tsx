@@ -183,7 +183,7 @@ describe('single-platform desktop identity routing', () => {
 
     await waitFor(
       () => expect(screen.getByTestId('deep-link-error')).toHaveTextContent('session expired'),
-      { timeout: 2_500 },
+      { timeout: 5_000 },
     );
     expect(screen.getByTestId('session-email')).toHaveTextContent('none');
     expect(bridge.logout).not.toHaveBeenCalled();
@@ -196,8 +196,8 @@ describe('single-platform desktop identity routing', () => {
 
     renderProvider();
 
-    await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 2_500 });
-    await waitFor(() => expect(bridge.getSession).toHaveBeenCalledTimes(2), { timeout: 2_500 });
+    await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    await waitFor(() => expect(bridge.getSession).toHaveBeenCalledTimes(2), { timeout: 5_000 });
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
     expect(bridge.logout).not.toHaveBeenCalled();

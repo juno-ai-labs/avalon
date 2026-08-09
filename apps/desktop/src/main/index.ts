@@ -858,12 +858,21 @@ async function refreshWireSession(): Promise<WireSession> {
       previousAuth.accessToken,
     );
   } catch (error) {
-    // Only the service can declare the durable credential dead. Clearing it
-    // here is what lets renderers retry every other failure indefinitely
-    // instead of treating a network blip as an expired session.
+    // Only the service can declare the durable credential dead, and only the
+    // one this attempt actually presented. A sign-out/sign-in, an organization
+    // activation, or a lockdown relogin can persist a newer credential while
+    // this request is in flight, so the generation is rechecked under the same
+    // lock the success path takes before anything is deleted. Clearing is what
+    // lets renderers retry every other failure indefinitely instead of
+    // treating a network blip as an expired session.
     if (definitivelyInvalidatesStoredCredential(error)) {
       try {
-        await clearStoredSession();
+        await withSessionMutation(async () => {
+          if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) return;
+          const currentAuth = await loadStoredAuth();
+          if (!currentAuth || !storedAuthMatches(currentAuth, previousAuth)) return;
+          await clearStoredSessionUnlocked();
+        });
       } catch (cleanupError) {
         console.warn('[avalon] could not clear a rejected desktop credential', cleanupError);
       }

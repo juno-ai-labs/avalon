@@ -580,7 +580,7 @@ export class AvalonApi {
   private readonly pendingRunKeys = new Map<string, string>();
 
   private renewCredential: (() => Promise<DesktopSession>) | null = null;
-  private renewalInFlight: Promise<boolean> | null = null;
+  private renewalInFlight: Promise<string | null> | null = null;
 
   constructor(
     readonly baseUrl: string,
@@ -611,19 +611,22 @@ export class AvalonApi {
     }
   }
 
-  /** Resolves true when a token newer than the rejected one is available. */
-  private async renewExpiredCredential(rejectedToken: string): Promise<boolean> {
+  /** Resolves the credential a replay should use, or null when there is
+   * nothing newer to retry under. Signing out mid-flight clears the session,
+   * and an unauthenticated replay would only fail again. */
+  private async renewedCredential(rejectedToken: string): Promise<string | null> {
+    const current = this.session?.accessToken ?? null;
     // A token that already moved on was renewed by a concurrent request, so
     // replay against the current one instead of burning another rotation.
-    if ((this.session?.accessToken ?? null) !== rejectedToken) return true;
+    if (current !== rejectedToken) return current;
     const renew = this.renewCredential;
-    if (!renew) return false;
+    if (!renew) return null;
     this.renewalInFlight ??= renew()
       .then((session) => {
         this.session = session;
-        return session.accessToken !== rejectedToken;
+        return session.accessToken === rejectedToken ? null : session.accessToken;
       })
-      .catch(() => false)
+      .catch(() => null)
       .finally(() => {
         this.renewalInFlight = null;
       });
@@ -634,11 +637,12 @@ export class AvalonApi {
     const accessToken = this.session?.accessToken ?? null;
     const response = await this.send(path, init, accessToken);
     if (response.status !== 401 || accessToken === null) return response;
-    if (!await this.renewExpiredCredential(accessToken)) return response;
+    const renewed = await this.renewedCredential(accessToken);
+    if (renewed === null) return response;
     // Every `execute` body is a string, so the rejected attempt can be
     // discarded and replayed verbatim under the renewed credential.
     void response.body?.cancel().catch(() => undefined);
-    return this.send(path, init, this.session?.accessToken ?? null);
+    return this.send(path, init, renewed);
   }
 
   private async throwResponseError(response: Response): Promise<never> {
@@ -1172,8 +1176,9 @@ export class AvalonApi {
       return await this.sendUpload(file, draftId, accessToken, onProgress, signal);
     } catch (error) {
       if (!(error instanceof ApiError) || error.status !== 401 || accessToken === null) throw error;
-      if (!await this.renewExpiredCredential(accessToken)) throw error;
-      return this.sendUpload(file, draftId, this.session?.accessToken ?? null, onProgress, signal);
+      const renewed = await this.renewedCredential(accessToken);
+      if (renewed === null) throw error;
+      return this.sendUpload(file, draftId, renewed, onProgress, signal);
     }
   }
 
