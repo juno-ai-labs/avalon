@@ -1,0 +1,68 @@
+name: Repair the release record
+
+# Recovery for the one window the release cannot retry out of. Once the payloads
+# are published and the channel promoted, the release is live and a rebuild is
+# not byte-identical, so re-running it is rejected by the immutable-object
+# guard. If the record commit fails after that point, main names the previous
+# version — which blocks the *next* release through assertNextReleaseVersion and
+# fails every site deployment against the live channel.
+#
+# This rebuilds the record from what is actually published and commits it. It
+# touches no artifacts, so it is safe to run whenever main and the channel
+# disagree, and a no-op when they already match.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Its own group. Sharing the release group would order it behind a release,
+  # but `queue: single` would then let this job cancel a pending release.
+  group: repair-release-record
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Committing the rebuilt record to the default branch.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No dependency install: the repair reads only the public channel and the
+      # repository's own release helpers.
+      - name: Rebuild the record from the live channel
+        id: repair
+        run: node apps/desktop/scripts/repair-site-release-config.mjs
+
+      - name: Commit the repaired record
+        if: steps.repair.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          config=apps/site/release.config.json
+          version="$(node -p "require('./$config').version")"
+          git add "$config"
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m "Record Avalon ${version} release config"
+          git push origin HEAD:main
+          echo "Recorded ${version} on main" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report that no repair was needed
+        if: steps.repair.outputs.changed != 'true'
+        run: echo "The release record already matches the live channel." >> "$GITHUB_STEP_SUMMARY"
