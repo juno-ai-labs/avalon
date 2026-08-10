@@ -53,7 +53,7 @@ update it in the same change.
 | [`sandbox-proxy.md`](sandbox-proxy.md) | Outbound HTTPS failures behind the sandbox proxy — policy denials versus clients that break on the CONNECT tunnel — and the fix for each. |
 | [`E2E.md`](E2E.md) | The local smoke check and the manual desktop acceptance flows for the sidebar, signup, invitations, settings, realtime recovery, and dictation. |
 | [`RUNBOOK.md`](RUNBOOK.md) | Operations: hosted resources per region, secrets, migrations, health verification, deployment, and provider acceptance. |
-| [`pull-requests.md`](pull-requests.md) | The required shape of every pull request description, plus the repository's merge style. Read before opening a PR. |
+| [`pull-requests.md`](pull-requests.md) | The required shape of every pull request description, plus the repository's merge style. Read before opening a PR; `.github/pull_request_template.md` is its layout and changes with it. |
 | [`DESKTOP_ICONS.md`](DESKTOP_ICONS.md) | The native adaptive icon, the selectable icon set, and the generation pipeline. Read before changing the artwork. |
 
 ## Related material outside this folder
