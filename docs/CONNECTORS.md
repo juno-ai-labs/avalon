@@ -69,6 +69,14 @@ untouched — the opening message keeps its external actor, so the transcript st
 provider identity wrote it. A connector that cannot map its actor leaves the work stream
 ownerless instead of guessing a member.
 
+## Delivering automation results to a person
+
+A connector that can hand a finished automation result to the person who owns the automation declares `userDelivery` in its manifest: the frozen `targetType` stored on the automation, the label and one-line description the create screen shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the "Deliver results" list, and a connector that declares nothing is never offered.
+
+`requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Avalon user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so an unhealthy connection, an unlinked installation, or a connector Avalon does not register in this region is simply not a destination.
+
+Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way, adding it to `AutomationDeliveryTargetTypeSchema`, to the `automation_delivery_targets` shape check, and to the identity-link map. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](WORKSTREAM_EMAIL_ADDRESSES.md#outbound-automation-results).
+
 ## Agent activation acknowledgement
 
 Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.

@@ -21,6 +21,7 @@ import {
   buildAutomationMemoryTableStatements,
   ensureAutomationMemoryTables,
 } from "./memory-table-service";
+import { declaredUserDeliveryTargetType } from "./user-delivery";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
@@ -33,6 +34,10 @@ interface CompiledSchedule {
   timezone: string;
   nextRunAt: string;
 }
+
+type ResolvedDeliveryTarget =
+  | { type: "slack_agent_dm"; connectionId: string; teamId: string; slackUserId: string }
+  | { type: "email"; emailAddress: string };
 
 interface ValidatedConnectorBindings {
   bindings: Record<string, string>;
@@ -192,7 +197,7 @@ export class AutomationService {
       connectorSelection,
     );
     const resourceIds = await this.validateAutomationResources(input.scope, input.resourceIds);
-    const deliveryTargets = await this.resolveSlackDeliveryTargets(input.scope, input.deliveryTargets);
+    const deliveryTargets = await this.resolveDeliveryTargets(input.scope, input.deliveryTargets);
     const templateId = newId();
     const versionId = newId();
     const subscriptionId = newId();
@@ -239,9 +244,21 @@ export class AutomationService {
       ...deliveryTargets.map((target) => this.env.DB.prepare(
         `INSERT INTO automation_delivery_targets
          (id, workspace_id, automation_subscription_id, target_type, connection_id,
-          user_id, slack_team_id, slack_user_id, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'slack_agent_dm', ?, ?, ?, ?, 'active', ?, ?)`,
-      ).bind(newId(), this.auth.workspaceId, subscriptionId, target.connectionId, this.auth.userId, target.teamId, target.slackUserId, at, at)),
+          user_id, slack_team_id, slack_user_id, email_address, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind(
+        newId(),
+        this.auth.workspaceId,
+        subscriptionId,
+        target.type,
+        target.type === "slack_agent_dm" ? target.connectionId : null,
+        this.auth.userId,
+        target.type === "slack_agent_dm" ? target.teamId : null,
+        target.type === "slack_agent_dm" ? target.slackUserId : null,
+        target.type === "email" ? target.emailAddress : null,
+        at,
+        at,
+      )),
       ...resourceIds.map((resourceId) => this.env.DB.prepare(
         `INSERT INTO automation_resources
          (automation_subscription_id, resource_id, attached_by_user_id, relationship_type, attached_at)
@@ -294,12 +311,18 @@ export class AutomationService {
           ).bind(row.template_id, row.latest_version_number).first<Record<string, unknown>>()
         : Promise.resolve(null),
       this.env.DB.prepare(
-        `SELECT dt.connection_id, dt.status, cc.display_name
+        `SELECT dt.target_type, dt.connection_id, dt.email_address, dt.status, cc.display_name
          FROM automation_delivery_targets dt
-         JOIN connector_connections cc ON cc.id = dt.connection_id
+         LEFT JOIN connector_connections cc ON cc.id = dt.connection_id
          WHERE dt.automation_subscription_id = ? AND dt.workspace_id = ?
          ORDER BY dt.created_at`,
-      ).bind(id, this.auth.workspaceId).all<{ connection_id: string; status: "active" | "needs_input" | "disabled"; display_name: string }>(),
+      ).bind(id, this.auth.workspaceId).all<{
+        target_type: "slack_agent_dm" | "email";
+        connection_id: string | null;
+        email_address: string | null;
+        status: "active" | "needs_input" | "disabled";
+        display_name: string | null;
+      }>(),
     ]);
     return {
       id: String(row.id), name: String(row.name), description: String(row.description), emailAddress, scope: String(row.scope), status: String(row.status),
@@ -313,9 +336,11 @@ export class AutomationService {
       defaultPluginIds: parseJson(row.default_plugins_json, []),
       activitySourcePluginIds: parseJson(row.activity_trigger_bindings_json, {}),
       deliveryTargets: (deliveryTargets.results ?? []).map((target) => ({
-        type: "slack_agent_dm" as const,
+        type: target.target_type,
         connectionId: target.connection_id,
-        displayName: target.display_name,
+        displayName: target.target_type === "email"
+          ? target.email_address ?? "Email"
+          : target.display_name ?? "Slack",
         status: target.status,
       })),
       templateUpdate: latestVersion ? {
@@ -1139,30 +1164,53 @@ export class AutomationService {
     if (scope === "workspace" && this.auth.role !== "owner" && this.auth.role !== "admin") throw new ApiError(403, "workspace_admin_required", "Only administrators can create workspace automations");
   }
 
-  private async resolveSlackDeliveryTargets(
+  private async resolveDeliveryTargets(
     scope: Scope,
-    targets: Array<{ type: "slack_agent_dm"; connectionId: string }>,
-  ): Promise<Array<{ connectionId: string; teamId: string; slackUserId: string }>> {
+    targets: CreateAutomationInput["deliveryTargets"],
+  ): Promise<ResolvedDeliveryTarget[]> {
     if (targets.length === 0) return [];
-    if (scope !== "personal") throw new ApiError(422, "personal_automation_required", "Slack Agent DM delivery requires a personal automation");
-    const resolved: Array<{ connectionId: string; teamId: string; slackUserId: string }> = [];
+    if (scope !== "personal") throw new ApiError(422, "personal_automation_required", "Result delivery outside Avalon requires a personal automation");
+    const resolved: ResolvedDeliveryTarget[] = [];
     for (const target of targets) {
+      if (target.type === "email") {
+        resolved.push({ type: "email", emailAddress: await this.deliveryEmailAddress() });
+        continue;
+      }
+      // The connector must declare this delivery surface and the owner must
+      // already be linked to the installation — the same two conditions the
+      // create screen offered the destination on.
       const row = await this.env.DB.prepare(
-        `SELECT cc.id, cc.provider_account_id, l.slack_user_id
+        `SELECT cc.id, cc.connector_type, cc.provider_account_id, l.slack_user_id
          FROM connector_connections cc
          JOIN slack_user_links l ON l.connection_id = cc.id
            AND l.workspace_id = cc.workspace_id AND l.user_id = ? AND l.status = 'active'
-         WHERE cc.id = ? AND cc.workspace_id = ? AND cc.connector_type = 'slack'
-           AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
+         WHERE cc.id = ? AND cc.workspace_id = ? AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
       ).bind(this.auth.userId, target.connectionId, this.auth.workspaceId).first<{
         id: string;
+        connector_type: string;
         provider_account_id: string;
         slack_user_id: string;
       }>();
-      if (!row) throw new ApiError(422, "slack_delivery_unavailable", "Connect your Avalon user in the selected Slack workspace before using it for automation delivery");
-      resolved.push({ connectionId: row.id, teamId: row.provider_account_id, slackUserId: row.slack_user_id });
+      if (!row || declaredUserDeliveryTargetType(this.env, row.connector_type) !== target.type) {
+        throw new ApiError(422, "slack_delivery_unavailable", "Connect your Avalon user in the selected Slack workspace before using it for automation delivery");
+      }
+      resolved.push({ type: "slack_agent_dm", connectionId: row.id, teamId: row.provider_account_id, slackUserId: row.slack_user_id });
     }
     return resolved;
+  }
+
+  // Email delivery is frozen against the owner's account address at save time
+  // rather than resolved per run, so a later account change cannot silently
+  // redirect an automation's results.
+  private async deliveryEmailAddress(): Promise<string> {
+    const row = await this.env.DB.prepare(
+      `SELECT u.email FROM users u
+       JOIN workspace_members wm ON wm.user_id = u.id AND wm.workspace_id = ? AND wm.status = 'active'
+       WHERE u.id = ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId).first<{ email: string | null }>();
+    const email = row?.email?.trim() ?? "";
+    if (!email) throw new ApiError(422, "email_delivery_unavailable", "Your Avalon account has no email address to deliver results to");
+    return email;
   }
 
   private assertCanManageSubscription(subscription: Record<string, unknown>): void {
