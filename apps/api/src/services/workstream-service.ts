@@ -1300,8 +1300,9 @@ export class WorkstreamService {
        WHERE s.workstream_id = ? ${includeResolved ? "" : "AND s.status = 'pending'"} ORDER BY s.created_at DESC`,
     ).bind(id).all<Record<string, unknown>>();
     return (result.results ?? []).map((row) => ({
-      id: String(row.id), activityId: String(row.activity_id), workstreamId: String(row.workstream_id), title: String(row.title), summary: String(row.summary),
-      confidence: Number(row.confidence), reason: String(row.reason), status: String(row.status), createdAt: String(row.created_at), resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
+      id: String(row.id), activityId: String(row.activity_id), workstreamId: String(row.workstream_id),
+      title: String(row.title).slice(0, 300), summary: String(row.summary).slice(0, 2_000),
+      confidence: Number(row.confidence), reason: String(row.reason).slice(0, 1_200), status: String(row.status), createdAt: String(row.created_at), resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
     }));
   }
 
