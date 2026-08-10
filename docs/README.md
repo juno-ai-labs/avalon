@@ -25,6 +25,7 @@ update it in the same change.
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`PRD.md`](PRD.md) | The product contract: work streams as the organizing unit, the agent's role, and the visual language. Read before changing what Avalon *is*. |
+| [`prds.md`](prds.md) | How a per-change product requirement document under `docs/PRDs/` is named, staged through its four statuses, and frozen once historical. Read before writing or renaming one. The PRD folders themselves are not listed in this index. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The monorepo's three deployment surfaces, the Electron main/renderer split, the Hono Worker and its runtime components, and how the packages depend on each other. |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | Identity, tenancy, and the D1 schema — the checked-in migrations are authoritative. Read before adding a table, column, or migration. |
 | [`REGIONALIZATION.md`](REGIONALIZATION.md) | The Global/EU boundary: single identity endpoint, the Global control plane's membership and invitation discovery, immutable workspace region. Read before touching anything cross-region. |
