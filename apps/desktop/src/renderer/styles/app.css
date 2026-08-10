@@ -1472,7 +1472,8 @@ pre {
 .participant-modifier .avatar-overflow { border-color: #292a26; }
 .participant-modifier:hover .avatar-stack .avatar,
 .participant-modifier:hover .avatar-overflow { border-color: #30312d; }
-.hero-composer { --composer-line-height: 1.55; --composer-text-padding: 17px 18px 7px; background: #242521; border: 1px solid #3b3c36; border-radius: 11px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15); margin: 0 auto; max-width: 690px; overflow: hidden; }
+/* Text metrics come from `.workstream-composer`, which this element also carries. */
+.hero-composer { background: #242521; border: 1px solid #3b3c36; border-radius: 11px; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15); margin: 0 auto; max-width: 690px; overflow: hidden; }
 .hero-composer textarea { background: transparent; border: 0; color: var(--ink); display: block; min-height: 84px; outline: 0; resize: none; width: 100%; }
 .hero-composer textarea::placeholder { color: #76766f; }
 .hero-composer .composer-toolbar { padding: 3px 10px 10px; }
@@ -1837,8 +1838,14 @@ pre {
   word-break: normal;
 }
 .workstream-composer .composer-highlight { color: var(--ink); inset: 0; pointer-events: none; position: absolute; user-select: none; }
-.workstream-composer.is-highlighting textarea,
-.workstream-composer.is-highlighting .composer-highlight { overflow-y: scroll; }
+/*
+ * A reserved gutter, on every composer rather than only the ones with a
+ * highlight layer. The layers must agree on where a line wraps, and `auto`
+ * would take 9px away mid-draft; applying it unconditionally also keeps the
+ * text column from shifting when a composer gains its first mentionable label.
+ */
+.workstream-composer textarea,
+.workstream-composer .composer-highlight { overflow-y: scroll; }
 .workstream-composer .composer-highlight::-webkit-scrollbar-thumb { background: transparent; }
 /* The draft itself is drawn by the highlight layer; the textarea keeps only its caret and selection. */
 .workstream-composer.is-highlighting textarea { color: transparent; caret-color: var(--ink); }
