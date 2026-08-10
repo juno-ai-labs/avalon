@@ -111,9 +111,7 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('workstream-1')).toBeVisible();
   });
 
-  it('keeps Details to the four human-facing rows until debugging is turned on', async () => {
-    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
-
+  it('collapses Details to the four human-facing rows when debugging is turned off', async () => {
     render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
@@ -122,21 +120,33 @@ describe('InspectorRail details', () => {
 
     const details = screen.getByText('Email').closest('dl') as HTMLElement;
     const labels = (): string[] => [...details.querySelectorAll('dt')].map((term) => term.textContent ?? '');
-    await waitFor(() => expect(labels()).toEqual(['Email', 'Created by', 'Created', 'Last activity']));
 
-    // The address is clipped to a single line, so the full value stays
-    // reachable through the title and the copy control.
-    expect(screen.getByText(workstream.emailAddress ?? ''))
-      .toHaveAttribute('title', workstream.emailAddress);
-    expect(screen.getByText(workstream.emailAddress ?? '').closest('dd')).not.toHaveClass('email-detail');
+    // The stored preference is on, so the wiring rows have to arrive before the
+    // collapse below can mean anything.
+    await waitFor(() => expect(labels()).toContain('Harness run'));
 
     // The Settings window owns the preference, so the rail learns about a
     // change through the application-settings broadcast.
-    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true });
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
 
-    expect(labels()).toContain('Harness run');
-    expect(within(details).getByText('harness-run-1')).toBeVisible();
-    expect(screen.getByText(workstream.emailAddress ?? '')).not.toHaveAttribute('title');
+    expect(labels()).toEqual(['Email', 'Created by', 'Created', 'Last activity']);
+    expect(within(details).queryByText('harness-run-1')).not.toBeInTheDocument();
+  });
+
+  it('clips the address to one line in both states so the row reads the same way', async () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} />
+      </Tooltip.Provider>,
+    );
+
+    const address = (): HTMLElement => screen.getByText(workstream.emailAddress ?? '');
+    await waitFor(() => expect(screen.getByText('Origin')).toBeVisible());
+    expect(address()).toHaveAttribute('title', workstream.emailAddress);
+
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
+
+    expect(address()).toHaveAttribute('title', workstream.emailAddress);
   });
 
   it('shows the complete work-stream email address in Details and copies it with feedback', async () => {
