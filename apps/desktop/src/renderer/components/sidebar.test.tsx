@@ -43,6 +43,7 @@ const workspace: Workspace = {
 };
 
 const defaultActions = {
+  onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
@@ -262,6 +263,42 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
     await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
+  });
+
+  it('sinks drafts under the automations that run and archives one from its menu', async () => {
+    const onArchiveDraftAutomation = vi.fn(async () => undefined);
+    const draft: AutomationSummary = { id: 'automation-2', name: 'Ad hoc competitor scan', scope: 'you', status: 'draft' };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[draft, automation]}
+            onArchiveDraftAutomation={onArchiveDraftAutomation}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const section = screen.getByRole('region', { name: 'Automations' });
+    expect([...section.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
+      'Daily product brief',
+      'Ad hoc competitor scan',
+    ]);
+    const draftRow = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
+    expect(draftRow).toHaveClass('is-draft');
+    expect(draftRow.querySelector('.mini-state.draft')).not.toBeNull();
+    expect(within(draftRow).getByText('Draft')).toBeVisible();
+
+    fireEvent.contextMenu(draftRow, { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('data-disabled');
+    expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive draft' }));
+    await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(draft));
   });
 
   it('opens meeting notes from the primary actions', async () => {

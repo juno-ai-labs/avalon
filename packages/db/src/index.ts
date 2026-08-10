@@ -648,7 +648,7 @@ export function createDatabase(db: D1DatabaseLike) {
            FROM automation_subscriptions s
            JOIN automation_templates t ON t.id = s.template_id
            JOIN automation_template_versions v ON v.id = s.template_version_id
-           WHERE s.workspace_id = ? AND t.archived_at IS NULL
+           WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.archived_at IS NULL
            ORDER BY t.name COLLATE NOCASE`
         )
         .bind(workspaceId)
