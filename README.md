@@ -77,6 +77,8 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 ## Documentation
 
+Every document is indexed, with its scope, in [the documentation index](docs/README.md).
+
 - [Product requirements](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop application icons](docs/DESKTOP_ICONS.md)
@@ -90,6 +92,7 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [Development environment](docs/dev-environment.md)
 - [Claude Code remote sandbox](docs/SANDBOX.md)
 - [Outbound HTTPS through the sandbox proxy](docs/sandbox-proxy.md)
+- [Creating a pull request](docs/pull-requests.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 
 ## Hosted deployment
