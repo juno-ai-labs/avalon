@@ -282,14 +282,12 @@ export class SlackAgentService {
     }
     if (activityEventType
       && invocation.event.type !== "message"
-      && invocation.event.type !== "app_mention"
-      && invocation.event.type !== "channel_created") {
-      const botUserId = authorizedBotUserId(envelope);
-      if (botUserId && (invocation.event.user === botUserId || invocation.event.user_id === botUserId)) {
-        return { ok: true };
-      }
+      && invocation.event.type !== "app_mention") {
       const connection = await this.connectionForTeam(invocation.teamId);
-      if (!await this.hasSubscribedSlackActivity(connection, activityEventType)) return { ok: true };
+      const botUserId = authorizedBotUserId(envelope) ?? await this.botUserId(connection);
+      if (botUserId && slackEventActorUserIds(invocation.event).includes(botUserId)) return { ok: true };
+      if (invocation.event.type !== "channel_created"
+        && !await this.hasSubscribedSlackActivity(connection, activityEventType)) return { ok: true };
     }
     return this.enqueueIngressJob({
       id: `event:${invocation.eventId}`,
@@ -1602,9 +1600,9 @@ export class SlackAgentService {
   ): Promise<Awaited<ReturnType<typeof resolveSlackChannelType>> | null> {
     if (!slackActivityEventType(envelope)) return null;
     const event = envelope.event ?? {};
-    const botUserId = authorizedBotUserId(envelope);
-    if (botUserId && (event.user === botUserId || event.user_id === botUserId)) return null;
     const connection = await this.connectionForTeam(teamId);
+    const botUserId = authorizedBotUserId(envelope) ?? await this.botUserId(connection);
+    if (botUserId && slackEventActorUserIds(event).includes(botUserId)) return null;
     const context: ConnectorConnectionContext = {
       id: connection.id,
       workspaceId: connection.workspace_id,
@@ -1618,6 +1616,7 @@ export class SlackAgentService {
     const normalized = normalizeSlackActivity(context, envelope, null);
     if (!normalized) return null;
     const activitySubscribed = await this.hasSubscribedSlackActivity(connection, normalized.eventType);
+    if (!activitySubscribed) return null;
 
     const channelId = typeof normalized.metadata.channelId === "string"
       ? normalized.metadata.channelId
@@ -1630,7 +1629,18 @@ export class SlackAgentService {
         : event.type === "channel_created"
           ? "public"
           : event.channel_type ?? asRecord(event.item).channel_type;
-    const channelResolution = channelId
+    const rootTs = typeof event.thread_ts === "string"
+      ? event.thread_ts
+      : typeof event.ts === "string"
+        ? event.ts
+        : null;
+    const existingSession = channelId && rootTs && (event.type === "message" || event.type === "app_mention")
+      ? await this.loadSession(connection.id, channelId, rootTs)
+      : null;
+    const channelResolution = existingSession
+      && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
+      ? { channelType: existingSession.channel_type, channelName: null, failure: null }
+      : channelId
       ? event.type === "channel_created"
         ? {
             channelType: "public" as const,
@@ -1641,7 +1651,6 @@ export class SlackAgentService {
           }
         : await resolveSlackChannelType(await this.botToken(connection), channelId, channelHint)
       : { channelType: "unknown" as const, channelName: null, failure: null };
-    if (!activitySubscribed) return channelResolution;
     const workspaceAutomationAllowed = channelResolution.channelType === "public";
     const allowedUserIds = workspaceAutomationAllowed
       ? []
@@ -1723,7 +1732,7 @@ export class SlackAgentService {
         }
         if (trigger.type === "connector_activity") return trigger.eventTypes.includes(eventType);
         const prefilterEventType = trigger.deterministicPrefilter.eventType;
-        return typeof prefilterEventType !== "string" || prefilterEventType === eventType;
+        return typeof prefilterEventType === "string" && prefilterEventType === eventType;
       });
     });
   }
@@ -2900,6 +2909,12 @@ function authorizedBotUserId(envelope: SlackIngressEnvelope): string | null {
   return null;
 }
 
+function slackEventActorUserIds(event: Record<string, unknown>): string[] {
+  const channel = asRecord(event.channel);
+  return [...new Set([event.user, event.user_id, channel.creator]
+    .filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
 function slackReconnectRequired(error: unknown): boolean {
   const reason = slackErrorReason(error);
   return (error instanceof ConnectorError
@@ -2954,6 +2969,7 @@ export const __slackAgentTesting = {
   slackOriginAttachments,
   slackOriginNearbyMessage,
   slackEventSearchAuthorization,
+  slackEventActorUserIds,
   slackChannelResolutionDenial,
   slackChannelType,
   slackIngressRetryable,

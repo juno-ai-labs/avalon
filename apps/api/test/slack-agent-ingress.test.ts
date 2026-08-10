@@ -30,6 +30,7 @@ class IngressDatabase {
   readonly sessions = new Set<string>();
   readonly pendingPrompts = new Set<string>();
   readonly activityEventTypes = new Set<string>();
+  readonly semanticActivityEventTypes: Array<string | null> = [];
   prepare(sql: string) { return new IngressStatement(this, sql); }
 
   async first(sql: string, values: unknown[]) {
@@ -59,19 +60,30 @@ class IngressDatabase {
 
   async all(sql: string) {
     if (sql.includes("FROM automation_subscriptions")) {
+      const triggers = [
+        ...(this.activityEventTypes.size === 0 ? [] : [{
+          type: "connector_activity",
+          connectorType: "slack",
+          sourceBindingKey: "slack_source",
+          suggestedSourcePluginId: "plugin_slack",
+          eventTypes: [...this.activityEventTypes],
+          deterministicFilters: {},
+        }]),
+        ...this.semanticActivityEventTypes.map((eventType) => ({
+          type: "semantic_activity",
+          connectorType: "slack",
+          sourceBindingKey: "slack_source",
+          suggestedSourcePluginId: "plugin_slack",
+          deterministicPrefilter: eventType ? { eventType } : {},
+          condition: "The activity needs a response.",
+        })),
+      ];
       return {
         success: true,
-        results: this.activityEventTypes.size === 0 ? [] : [{
+        results: triggers.length === 0 ? [] : [{
           connector_bindings_json: JSON.stringify({ plugin_slack: "11111111-1111-4111-8111-111111111111" }),
           activity_trigger_bindings_json: JSON.stringify({ slack_source: "plugin_slack" }),
-          trigger_definitions_json: JSON.stringify([{
-            type: "connector_activity",
-            connectorType: "slack",
-            sourceBindingKey: "slack_source",
-            suggestedSourcePluginId: "plugin_slack",
-            eventTypes: [...this.activityEventTypes],
-            deterministicFilters: {},
-          }]),
+          trigger_definitions_json: JSON.stringify(triggers),
         }],
         meta: {} as D1Meta & Record<string, unknown>,
       };
@@ -100,6 +112,13 @@ describe("Slack Agent durable ingress", () => {
     })).toEqual({
       entities: [{ type: "slack#/types/channel_id", value: "C123", teamId: "T1" }],
     });
+  });
+
+  it("recognizes the nested creator on channel-created events as an activity actor", () => {
+    expect(__slackAgentTesting.slackEventActorUserIds({
+      type: "channel_created",
+      channel: { id: "C1", creator: "UBOT" },
+    })).toEqual(["UBOT"]);
   });
 
   it("keeps the Slack manifest aligned with thread-follow-up scopes and events", () => {
@@ -432,6 +451,35 @@ describe("Slack Agent durable ingress", () => {
     await expect(service.processEvent(payload, "activity-hash")).resolves.toEqual({ ok: true });
     expect(database.jobs.has("event:EvReaction")).toBe(true);
     expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("requires semantic Slack triggers to name the exact event admitted at ingress", async () => {
+    const database = new IngressDatabase();
+    database.semanticActivityEventTypes.push(null);
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+    const payload = {
+      type: "event_callback",
+      api_app_id: "A1",
+      team_id: "T1",
+      event_id: "EvSemanticReaction",
+      authorizations: [{ team_id: "T1", user_id: "UBOT", is_bot: true }],
+      event: {
+        type: "reaction_added",
+        user: "U1",
+        reaction: "eyes",
+        item_user: "U2",
+        item: { type: "message", channel: "C1", ts: "1.0", channel_type: "channel" },
+        event_ts: "1.1",
+      },
+    };
+
+    await expect(service.processEvent(payload, "missing-prefilter-hash")).resolves.toEqual({ ok: true });
+    expect(send).not.toHaveBeenCalled();
+
+    database.semanticActivityEventTypes.splice(0, 1, "slack.reaction.added");
+    await expect(service.processEvent(payload, "exact-prefilter-hash")).resolves.toEqual({ ok: true });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "event:EvSemanticReaction" }));
   });
 });
 

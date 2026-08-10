@@ -646,7 +646,7 @@ export const AutomationDraftSchema = z.object({
   draft.triggers.forEach((trigger, index) => {
     if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") return;
     const connectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
-    if (!draft.ready && !trigger.sourceBindingKey && !trigger.suggestedSourcePluginId) return;
+    if (!draft.ready) return;
     if (!trigger.sourceBindingKey) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -666,6 +666,16 @@ export const AutomationDraftSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["triggers", index, "connectorType"],
         message: "Ready semantic activity triggers require a concrete connector type",
+      });
+    }
+    if (
+      trigger.type === "semantic_activity"
+      && (typeof trigger.deterministicPrefilter.eventType !== "string" || trigger.deterministicPrefilter.eventType.trim().length === 0)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["triggers", index, "deterministicPrefilter", "eventType"],
+        message: "Ready semantic activity triggers require one declared event type",
       });
     }
     if (!trigger.sourceBindingKey || !trigger.suggestedSourcePluginId || !connectorType) return;
