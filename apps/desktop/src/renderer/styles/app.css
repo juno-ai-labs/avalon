@@ -1941,7 +1941,11 @@ pre {
 .rail-card-main > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; }
 .rail-card strong { color: #c5c4bd; font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-card small { color: #77766f; font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.watch-toggle { align-items: center; border-top: 1px solid #343530; color: var(--muted); display: flex; gap: 6px; min-height: 28px; padding: 4px 8px 4px 43px; }
+.resource-row { align-items: center; display: flex; gap: 8px; padding-right: 8px; position: relative; }
+.resource-row .rail-card-main { flex: 1; grid-template-columns: 27px minmax(0, 1fr); padding-right: 0; }
+.resource-row .rail-card-main::after { content: ''; inset: 0; position: absolute; }
+.resource-row-chevron { flex: none; }
+.watch-toggle { align-items: center; color: var(--muted); display: flex; flex: none; gap: 6px; padding: 3px 4px; position: relative; }
 .watch-toggle input { opacity: 0; position: absolute; }
 .watch-toggle:has(input:focus-visible) { border-radius: 4px; box-shadow: inset 0 0 0 1px #6a7f95; }
 .watch-toggle:has(input:disabled) { cursor: not-allowed; opacity: .52; }
