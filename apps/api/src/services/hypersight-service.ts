@@ -10,8 +10,9 @@ import {
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 
-import { HYPERSIGHT_MODEL, type AuthContext, type Env } from "../env";
+import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { resolveAgentModelRouting } from "./agent-model-flags";
 import {
   publishPersonalWorkstreamEvent,
   publishWorkstreamEvent,
@@ -257,6 +258,7 @@ export async function launchHyperSightRefresh(
   if (!configuration) return [];
   const blocks = parseBlocks(configuration.blocks_json).filter((block) => block.prompt.trim().length > 0);
   const launched: HyperSightBlockRun[] = [];
+  const { model } = await resolveAgentModelRouting(env, "hypersight", { workspaceId, workstreamId });
   for (const block of blocks) {
     const harnessRunId = newId();
     const blockRunId = newId();
@@ -273,7 +275,7 @@ export async function launchHyperSightRefresh(
           workspaceId,
           workstreamId,
           JSON.stringify({ type: "workspace", workspaceId }),
-          HYPERSIGHT_MODEL,
+          model,
           createdAt,
         ),
         env.DB.prepare(

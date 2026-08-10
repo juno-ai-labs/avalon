@@ -63,6 +63,11 @@
     }
   ],
   "ai": { "binding": "AI" },
+  // Agent model routing. `app_id` is written back by `wrangler flagship apps
+  // create --update-config` or by automatic provisioning on first deploy.
+  "flagship": [
+    { "binding": "FLAGS", "remote": true }
+  ],
   "vectorize": [
     { "binding": "MEMORY_INDEX", "index_name": "avalon-global-memory" }
   ],
