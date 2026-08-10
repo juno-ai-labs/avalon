@@ -406,10 +406,16 @@ async function preflight(apiKey: string): Promise<string | null> {
     return `OpenRouter returned ${response.status} for a credential check. ${body}`.trim();
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown error";
+    const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
+    // Node's fetch ignores HTTPS_PROXY unless asked to read it, so a proxied
+    // network fails here with nothing pointing at the proxy as the cause.
+    const proxyHint = proxy && !process.env.NODE_USE_ENV_PROXY
+      ? ` A proxy is configured (${proxy}) but Node's fetch does not use it by default — retry with NODE_USE_ENV_PROXY=1.`
+      : "";
     return [
-      `Could not reach openrouter.ai: ${reason}.`,
-      "If this session runs behind an egress proxy, the host may be denied by policy —",
-      "check the proxy's status endpoint before assuming the key is at fault.",
+      `Could not reach openrouter.ai: ${reason}.${proxyHint}`,
+      "If this runs behind an egress proxy, the host may also be denied by policy —",
+      "check the proxy before assuming the key is at fault.",
     ].join(" ");
   }
 }
