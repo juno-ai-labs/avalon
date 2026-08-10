@@ -36,7 +36,7 @@ update it in the same change.
 
 | Document | Scope — read and update when changing… |
 | --- | --- |
-| [`AGENT_HARNESS.md`](AGENT_HARNESS.md) | The bounded Bind 10 adapter over OpenRouter: run admission, tool execution, streaming, receipts, and what the Workflow host owns versus what Bind owns. |
+| [`AGENT_HARNESS.md`](AGENT_HARNESS.md) | The bounded Bind 11 adapter over OpenRouter: run admission, tool execution, loadable skills, streaming, receipts, and what the Workflow host owns versus what Bind owns. |
 | [`CONNECTORS.md`](CONNECTORS.md) | The connector registry and manifest model — OAuth needs, personal versus workspace scopes, activity and resource types, tools, polling, webhooks, watches. Read before adding or changing an adapter. |
 | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) | Provider app registrations and their regional routing, plus the source manifests in `config/provider-apps`. Read before changing a registration or callback. |
 | [`LINEAR_INTEGRATION.md`](LINEAR_INTEGRATION.md) | The Linear OAuth, webhook, and native-agent design against Linear's published contracts. |
