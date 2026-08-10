@@ -20,8 +20,10 @@ import {
   renderAutomationCompilerMessages,
   type AddressingContextMessage,
 } from "./prompts";
+import { toolActivityName } from "./tool-activity";
 
 export * from "./prompts";
+export { toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export { BUILT_IN_SKILLS, DEEP_RESEARCH_SKILL } from "./built-in-skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
@@ -1070,16 +1072,19 @@ function automationPluginNames(plugins: AutomationPluginActivity[]): string {
   return `${names[0]}, ${names[1]}, and ${names.length - 2} more`;
 }
 
+/**
+ * Discovery rows can legitimately name several plugins at once, which the
+ * shared row prose deliberately cannot express. Everything else — web research
+ * and connector tools — defers to `toolActivityName` so the automation composer
+ * and a work stream never word the same row differently.
+ */
 function automationDiscoveryActivityName(
   toolName: string,
   status: "started" | "completed" | "failed",
   plugins: AutomationPluginActivity[],
 ): string {
-  if (toolName === "web_search") {
-    return status === "completed" ? "Searched the public web" : "Searching the public web";
-  }
-  if (toolName === "web_fetch") {
-    return status === "completed" ? "Read a public web page" : "Reading a public web page";
+  if (toolName === "web_search" || toolName === "web_fetch") {
+    return toolActivityName({ toolName, status });
   }
   const names = automationPluginNames(plugins);
   if (toolName === "automation_plugins_search") {
@@ -1090,7 +1095,14 @@ function automationDiscoveryActivityName(
     return status === "completed" ? `Loaded ${names}` : `Loading ${names}`;
   }
   if (toolName === "automation_plugin_inspect") return `Reading ${names}`;
-  return status === "completed" ? `Reviewed ${names}` : `Reviewing ${names}`;
+  if (toolName === "automation_plugins_list" || toolName === "list_plugins") {
+    return status === "completed" ? `Reviewed ${names}` : `Reviewing ${names}`;
+  }
+  return toolActivityName({
+    toolName,
+    status,
+    pluginDisplayName: plugins[0]?.displayName ?? null,
+  });
 }
 
 export async function compileAutomation(input: {
