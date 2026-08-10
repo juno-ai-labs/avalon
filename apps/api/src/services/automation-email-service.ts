@@ -3,7 +3,7 @@ import { ApiError } from "../lib/api-error";
 import { shouldSuppressAutomationResult } from "./slack-agent-service";
 
 const RESEND_EMAILS_URL = "https://api.resend.com/emails";
-const MAX_RESEND_RESPONSE_BYTES = 32_000;
+const MAX_RESEND_RESPONSE_CHARS = 32_000;
 const MAX_RESULT_LENGTH = 40_000;
 
 export interface AutomationResultEmail {
@@ -87,7 +87,7 @@ export async function deliverAutomationResultEmail(
       signal: AbortSignal.timeout(10_000),
     });
     const responseBody = await response.text();
-    if (!response.ok || responseBody.length > MAX_RESEND_RESPONSE_BYTES) throw new Error("Resend rejected the automation result");
+    if (!response.ok || responseBody.length > MAX_RESEND_RESPONSE_CHARS) throw new Error("Resend rejected the automation result");
     const parsed = JSON.parse(responseBody) as { id?: unknown };
     if (typeof parsed.id !== "string" || parsed.id.length === 0 || parsed.id.length > 200) {
       throw new Error("invalid Resend response");

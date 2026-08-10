@@ -544,16 +544,20 @@ export function NewAutomationScreen(): React.JSX.Element {
   const scopeChangeAllowed = session?.workspace?.role === 'owner' || session?.workspace?.role === 'admin';
   const scope: AutomationScope = scopeOverride ?? draft?.summary?.scope ?? 'you';
 
+  // Keyed on the scope in force, not the one Avalon suggested: a workspace
+  // automation cannot preload a coworker's personal plugin, and switching back
+  // to You has to restore the personal picks it dropped. The creator has no
+  // control to recover them by hand.
   useEffect(() => {
     const summary = draft?.summary;
     if (!summary || !connections.data) return;
     const recommendations = summary.recommendedPlugins ?? [];
-    const key = `${draft.draftId}:${recommendations.map((item) => item.pluginId).join(',')}`;
+    const key = `${draft.draftId}:${scope}:${recommendations.map((item) => item.pluginId).join(',')}`;
     if (key === initializedRecommendations) return;
-    const eligible = new Set(eligiblePlugins(connections.data, summary.scope).map((connection) => connection.modelPluginId));
+    const eligible = new Set(eligiblePlugins(connections.data, scope).map((connection) => connection.modelPluginId));
     setDefaultPluginIds(recommendations.map((item) => item.pluginId).filter((pluginId) => eligible.has(pluginId)));
     setInitializedRecommendations(key);
-  }, [connections.data, draft, initializedRecommendations]);
+  }, [connections.data, draft, initializedRecommendations, scope]);
 
   const visibleActivitySources = selectedTemplate?.activitySources ?? draft?.summary?.activitySources ?? [];
   // Switching Runs as changes which connections are eligible, so the bindings
@@ -581,16 +585,6 @@ export function NewAutomationScreen(): React.JSX.Element {
   useEffect(() => {
     setScopeOverride(null);
   }, [draft?.draftId, draft?.summary?.scope]);
-
-  // A workspace automation cannot preload a coworker's personal plugin.
-  useEffect(() => {
-    if (!connections.data) return;
-    const eligible = new Set(eligiblePlugins(connections.data, scope).map((connection) => connection.modelPluginId));
-    setDefaultPluginIds((current) => {
-      const kept = current.filter((pluginId) => eligible.has(pluginId));
-      return kept.length === current.length ? current : kept;
-    });
-  }, [connections.data, scope]);
 
   const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
   useEffect(() => {
