@@ -87,6 +87,9 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [Connectors](docs/CONNECTORS.md)
 - [End-to-end verification](docs/E2E.md)
 - [Operations runbook](docs/RUNBOOK.md)
+- [Development environment](docs/dev-environment.md)
+- [Claude Code remote sandbox](docs/SANDBOX.md)
+- [Outbound HTTPS through the sandbox proxy](docs/sandbox-proxy.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 
 ## Hosted deployment

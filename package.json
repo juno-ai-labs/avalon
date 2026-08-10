@@ -14,6 +14,7 @@
     "cloudflare:observability": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs",
     "cloudflare:observability:check": "dotenv -e .env.local -- node scripts/configure-cloudflare-observability.mjs --check",
     "dev:api": "pnpm env:sync && concurrently -k -n global,eu -c blue,cyan \"pnpm --filter @avalon/api dev\" \"pnpm --filter @avalon/api dev:eu\"",
+    "dev:api:local": "pnpm env:sync && concurrently -k -n global,eu -c blue,cyan \"pnpm --filter @avalon/api dev:local\" \"pnpm --filter @avalon/api dev:local:eu\"",
     "dev:desktop": "dotenv -e .env.local -- pnpm --filter @avalon/desktop dev",
     "dev:desktop:prod": "VITE_API_GLOBAL_URL=https://api.with-avalon.com VITE_API_EU_URL=https://eu.api.with-avalon.com AVALON_DEV_AUTH=false pnpm --filter @avalon/desktop dev",
     "db:migrate": "pnpm env:sync && pnpm --filter @avalon/api db:migrate && pnpm --filter @avalon/api db:migrate:eu",
