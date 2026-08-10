@@ -30,7 +30,7 @@ describe("database migrations", () => {
   });
 
   it("freezes legacy activity-automation visibility into exact connector bindings", () => {
-    const database = migrateDatabaseThrough("0050_generic_webhook_idempotency.sql");
+    const database = migrateDatabaseThrough("0051_generic_webhook_idempotency.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
         ('binding-owner', 'binding-owner-subject', 'owner@example.com', 'Binding Owner', '2026-08-10', '2026-08-10'),
@@ -78,7 +78,7 @@ describe("database migrations", () => {
     `);
 
     database.exec(readFileSync(
-      new URL("../migrations/0051_automation_connector_bindings.sql", import.meta.url),
+      new URL("../migrations/0052_automation_connector_bindings.sql", import.meta.url),
       "utf8",
     ));
 
