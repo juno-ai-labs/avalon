@@ -2,14 +2,25 @@ name: Release Avalon for macOS
 
 on:
   # A tag is an artifact of a release, not an input to one: nothing triggers on
-  # `v*`, and the planner never reads tags. The workspace version measured
-  # against the published record decides, so pushing a tag by hand records
-  # nothing and starts nothing.
+  # `v*`, and the planner never reads tags. The recorded release decides, so
+  # pushing a tag by hand records nothing and starts nothing.
   push:
     branches:
       - main
-    # Unfiltered by path: the planner is cheap, and the version gate is the
-    # real filter.
+    # Deliberately unfiltered by path, even though the planner then applies a
+    # path filter of its own (DESKTOP_RELEASE_PATHS). A `paths:` filter here
+    # would match this push's diff, and a push's diff is not the same question
+    # as "is there unreleased desktop work". They diverge whenever a run is
+    # discarded, cancelled, or fails: the concurrency group keeps only the
+    # newest pending run, so a desktop merge can lose its run, and the next
+    # docs-only push would then not start one at all. The planner instead
+    # measures against the commit the last release was built from, which is
+    # durable committed state, so any later push can still ship stranded work.
+    #
+    # Filtering here would also cost the diagnosis. A push filtered out by
+    # `paths:` produces no run and no log — exactly the "why didn't it
+    # release?" dead end this pipeline was rebuilt to remove. The planner
+    # always runs, on a cheap runner, and always states its reason.
   workflow_dispatch:
     inputs:
       tag:
