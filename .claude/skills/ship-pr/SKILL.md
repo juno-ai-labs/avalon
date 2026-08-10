@@ -175,12 +175,20 @@ progress. Poll `gh pr view <n> --json state,mergedAt` periodically; if `state`
 is already `MERGED`, stop trying to merge it yourself and move straight to
 step 8 with the actual merge commit.
 
-This repo merges as **merge commits only** — never squash, never rebase onto
-main (`docs/pull-requests.md`, "Merge style"):
+This repo merges as **merge commits only** — never squash, never rebase-merge
+(`docs/pull-requests.md`, "Branch style and merge style"):
 
 ```bash
 gh pr merge <n> --merge
 ```
+
+Note that the rule for the *branch* is the opposite one: while the pull request
+is open, bring it up to date by rebasing onto `main` and force-pushing with
+`--force-with-lease`, not by merging `main` into it. Rebase only between review
+rounds — a force-push marks inline review threads outdated — and if the branch
+somehow already carries a merge commit, check what the rebase dropped before
+pushing, because a rebase discards merge commits and anything unique to them
+without reporting a conflict.
 
 ## 8. Validate publishing — don't stop at "the merge succeeded"
 

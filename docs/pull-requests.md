@@ -95,11 +95,58 @@ they do not.
   [the development environment guide](dev-environment.md#driving-and-screenshotting-it).
   Call out pre-existing failures as pre-existing.
 
-## Merge style
+## Branch style and merge style
 
-Branches land as **merge commits**. The history is deliberately a sequence of
-`Merge <description>` commits over preserved per-branch work; do not squash and
-do not rebase onto main. Configure branch protection and auto-merge accordingly.
+These are two different rules that point in opposite directions, and both are
+deliberate. **Rebase the branch while the pull request is open; merge the pull
+request when it lands.**
+
+### While the pull request is open: rebase
+
+Bring a branch up to date with `main` by **rebasing onto it**, never by merging
+`main` into the branch:
+
+```bash
+git fetch origin main
+git rebase origin/main
+git push --force-with-lease
+```
+
+A branch therefore contains only its own commits, in order, on top of current
+`main`. The diff a reviewer reads is exactly the change under review, with no
+merge commits interleaving unrelated work into it. That also keeps the branch's
+own history bisectable and makes it obvious which `main` the change was tested
+against.
+
+Always `--force-with-lease` rather than `--force`, so a push is refused if
+someone else has touched the branch since you last fetched it.
+
+Two things to know before rebasing:
+
+- **A rebase silently drops merge commits and everything unique to them.** If a
+  branch already contains a `Merge main into …` commit — including the
+  conflict resolutions and any work committed alongside them — replaying it will
+  discard that content without a conflict or a warning. Before force-pushing,
+  compare against the pre-rebase state (`git diff <backup-ref> HEAD`) and
+  re-commit anything the rebase dropped. Keeping to rebases from the start
+  avoids the situation entirely.
+- **Force-pushing marks inline review threads outdated**, because the commits
+  they were anchored to no longer exist. Summary comments survive. Prefer to
+  rebase when a review round is finished rather than in the middle of one.
+
+### When the pull request lands: merge
+
+Pull requests land as **merge commits** — never squash, never rebase-merge:
+
+```bash
+gh pr merge <n> --merge
+```
+
+`main`'s history is deliberately a sequence of `Merge <description>` commits
+over preserved per-branch work: each merge commit is one reviewed change that
+can be reverted as a unit, and the individual commits underneath it stay intact.
+Configure branch protection and auto-merge accordingly — allow merge commits,
+disable squash merging and rebase merging.
 
 ## Conventions
 
