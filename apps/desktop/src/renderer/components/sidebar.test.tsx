@@ -1,10 +1,37 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { Sidebar } from './sidebar';
+
+const copyText = vi.hoisted(() => vi.fn());
+const openSettings = vi.hoisted(() => vi.fn());
+const applicationSettings = vi.hoisted(() => ({
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+  listeners: new Set<(settings: unknown) => void>(),
+}));
+
+function announceApplicationSettings(settings: DesktopApplicationSettings): void {
+  applicationSettings.current = settings;
+  act(() => {
+    for (const listener of applicationSettings.listeners) listener(settings);
+  });
+}
+
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    copyText,
+    openSettings,
+    getApplicationSettings: () => Promise.resolve(applicationSettings.current),
+    onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
+      applicationSettings.listeners.add(listener);
+      return () => applicationSettings.listeners.delete(listener);
+    },
+  }),
+}));
 
 const workspace: Workspace = {
   id: 'workspace-1',
@@ -75,6 +102,9 @@ function note(id: string, title: string, lastActivityAt: string): NoteSummary {
 describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    copyText.mockReset().mockResolvedValue(undefined);
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
+    applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
@@ -292,6 +322,41 @@ describe('Sidebar work-stream markers', () => {
       .not.toBeInTheDocument();
     fireEvent.click(noteLink);
     expect(onOpenMeetingNotes).not.toHaveBeenCalled();
+  });
+
+  it('copies resource identifiers from the menus only while debugging is enabled', async () => {
+    const target = workstream('workstream-42', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const workstreamRow = screen.getByRole('link', { name: /Quarterly planning/u });
+    fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Copy work stream id' })).not.toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    // The Settings window owns the preference; the sidebar learns about a
+    // change through the application-settings broadcast.
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true });
+
+    fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream id' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('workstream-42'));
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy automation id' }));
+    await waitFor(() => expect(copyText).toHaveBeenLastCalledWith('automation-1'));
   });
 
   it('marks work streams unread on the server and renames from the menu', async () => {

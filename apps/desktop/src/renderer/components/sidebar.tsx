@@ -8,6 +8,7 @@ import {
   Check,
   CirclePause,
   Cloud,
+  Copy,
   EyeOff,
   FileStack,
   LogOut,
@@ -28,6 +29,7 @@ import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 
 interface SidebarProps {
@@ -118,11 +120,26 @@ function OnboardingChecklist(): React.JSX.Element {
   );
 }
 
+/** Application → Developer → Debug enabled reveals this on every resource
+ * right-click menu, so a bug report can name the exact row it came from. */
+function CopyResourceIdItem({ id, label }: { id: string; label: string }): React.JSX.Element {
+  return (
+    <ContextMenu.Item
+      className="menu-item"
+      onSelect={() => void desktopBridge().copyText(id).catch(() => undefined)}
+    >
+      <Copy aria-hidden="true" size={16} /> {label}
+    </ContextMenu.Item>
+  );
+}
+
 function AutomationRow({
   automation,
+  debugEnabled,
   onRunNow,
 }: {
   automation: AutomationSummary;
+  debugEnabled: boolean;
   onRunNow: (automation: AutomationSummary) => void;
 }): React.JSX.Element {
   return (
@@ -153,6 +170,7 @@ function AutomationRow({
           <ContextMenu.Item className="menu-item">
             <FileStack aria-hidden="true" size={16} /> Turn into template
           </ContextMenu.Item>
+          {debugEnabled && <CopyResourceIdItem id={automation.id} label="Copy automation id" />}
           <ContextMenu.Separator className="menu-separator" />
           <ContextMenu.Item className="menu-item menu-item-danger">
             <Archive aria-hidden="true" size={16} /> Archive
@@ -164,10 +182,12 @@ function AutomationRow({
 }
 
 function WorkstreamRow({
+  debugEnabled,
   workstream,
   onMarkUnread,
   onRename,
 }: {
+  debugEnabled: boolean;
   workstream: WorkstreamSummary;
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
@@ -205,6 +225,7 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
+          {debugEnabled && <CopyResourceIdItem id={workstream.id} label="Copy work stream id" />}
           <ContextMenu.Separator className="menu-separator" />
           <ContextMenu.Item className="menu-item menu-item-danger">
             <Archive aria-hidden="true" size={16} /> Archive
@@ -251,6 +272,7 @@ export function Sidebar({
   onOpenMeetingNotes,
   onSignOut,
 }: SidebarProps): React.JSX.Element {
+  const debugEnabled = useDebugEnabled();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
@@ -357,6 +379,7 @@ export function Sidebar({
                 {automations.map((automation) => (
                   <AutomationRow
                     automation={automation}
+                    debugEnabled={debugEnabled}
                     key={automation.id}
                     onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
                   />
@@ -382,6 +405,7 @@ export function Sidebar({
                       />
                     ) : (
                       <WorkstreamRow
+                        debugEnabled={debugEnabled}
                         key={item.id}
                         onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
