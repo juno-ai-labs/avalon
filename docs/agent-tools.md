@@ -256,11 +256,14 @@ must be a particular identifier, validate the family and hint on mismatch.
 - **Validate at the boundary.** Author the schema with zod and convert it to
   JSON Schema for `inputSchema`, as the connectors do; the harness parses
   arguments against it before the executor runs. Never cast across the boundary.
-- **Choose `serial` deliberately.** Bind runs writes sequentially and may
-  overlap independent reads, returning results in the model's original call
-  order. Mark a read `serial` only when a later tool in the same batch depends
-  on its effect — `load_skill` is serial for exactly that reason, so a
-  `read_skill_resource` behind it in the same batch can see the load.
+- **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
+  lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
+  it orders *execution* rather than describing policy. Bind already runs writes
+  sequentially and may overlap independent reads, returning results in the
+  model's original call order, so `mode: "write"` needs nothing extra. Set
+  `serial` on a **read** whose effect a later tool in the same batch depends on
+  — `load_skill` is serial for exactly that reason, so a `read_skill_resource`
+  behind it in the same batch can see the load.
 - **System messages are static, code-authored prose** on the plugin descriptor,
   and they sit in the cacheable system prefix. Keep per-call values out of them,
   and update the plugin's system message in the same change as the tool it
