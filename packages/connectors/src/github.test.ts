@@ -551,7 +551,11 @@ describe("GitHub connector", () => {
       throw new Error(`Unexpected GitHub URL: ${url}`);
     };
     const adapter = githubAdapter(fetcher);
-    const connection = personalConnection([]);
+    const connection = personalConnection([
+      GitHubCapabilities.metadataRead,
+      GitHubCapabilities.pullRequestsRead,
+      GitHubCapabilities.checksRead,
+    ]);
     await expect(canGitHubPersonalConnectionAccessRepository(githubConfig(fetcher), connection, "acme/widget"))
       .resolves.toBe(true);
     await expect(adapter.hydrateResource!(connection, {

@@ -32,11 +32,11 @@ class CredentialDatabase {
       if (this.row.leaseId && String(this.row.leaseExpiresAt) >= String(at)) return null;
       this.row.leaseId = leaseId!;
       this.row.leaseExpiresAt = leaseExpiresAt!;
-      return { encrypted_credentials: this.row.encrypted, credential_iv: this.row.iv };
+      return { encrypted_credentials: this.row.encrypted, credential_iv: this.row.iv, credential_key_version: 1 };
     }
     if (sql.startsWith("SELECT encrypted_credentials")) {
       return this.row.status === "healthy"
-        ? { encrypted_credentials: this.row.encrypted, credential_iv: this.row.iv }
+        ? { encrypted_credentials: this.row.encrypted, credential_iv: this.row.iv, credential_key_version: 1 }
         : null;
     }
     if (sql.includes("encrypted_credentials = ?") && sql.includes("RETURNING id")) {

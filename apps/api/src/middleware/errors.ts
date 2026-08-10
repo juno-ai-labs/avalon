@@ -39,6 +39,7 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
   } else if (error instanceof ConnectorError) {
     status = error.code === "invalid_configuration" ? 503
       : error.code === "unauthorized" || error.code === "invalid_signature" ? 401
+      : error.code === "invalid_payload" ? 400
       : error.code === "payload_too_large" ? 413
       : error.code === "provider_error" ? 502
       : 422;

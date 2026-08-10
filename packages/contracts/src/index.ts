@@ -874,7 +874,8 @@ export const CompileAutomationRequestSchema = z.object({
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
   scope: ScopeSchema,
-  eventTypes: z.array(z.string().min(1)).default([])
+  eventTypes: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
+  idempotencyKey: z.string().trim().min(1).max(120).optional()
 });
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
@@ -1051,7 +1052,14 @@ export const SlackOriginContextSchema = z.object({
   matchedAvalonUserId: IdSchema.nullable(),
   nearbyMessagesStatus: z.enum(["available", "unavailable", "not_applicable"]),
   nearbyMessages: z.array(SlackOriginNearbyMessageSchema).max(8),
-  attachments: z.array(SlackOriginAttachmentSchema).max(10)
+  attachments: z.array(SlackOriginAttachmentSchema).max(10),
+  appContext: z.object({
+    entities: z.array(z.object({
+      type: z.string().min(1).max(255),
+      value: z.string().min(1).max(1000),
+      teamId: z.string().min(1).max(255).nullable()
+    }).strict()).max(32)
+  }).strict().nullable().optional()
 }).strict();
 
 /**

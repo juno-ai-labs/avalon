@@ -94,7 +94,8 @@ async function enqueue(env: Env, input: EnqueueInput): Promise<void> {
 export async function enqueueActivityOpportunity(env: Env, activityId: string): Promise<void> {
   const activity = await env.DB.prepare(
     `SELECT a.workspace_id, a.connection_id, a.connection_scope, a.connection_owner_user_id, a.occurred_at,
-            a.title, a.summary, a.text_snippet, a.actor_json, a.subject_json, a.visibility_json
+            a.title, a.summary, a.text_snippet, a.actor_json, a.subject_json,
+            a.visibility_json, a.target_user_ids_json
      FROM activities a WHERE a.id = ? LIMIT 1`,
   ).bind(activityId).first<Record<string, unknown>>();
   if (!activity) return;
@@ -105,7 +106,19 @@ export async function enqueueActivityOpportunity(env: Env, activityId: string): 
   const approximateCharacters = [activity.title, activity.summary, activity.text_snippet, activity.actor_json, activity.subject_json]
     .reduce<number>((sum, value) => sum + String(value ?? "").length, 0);
   let restrictedUserIds: string[] = [];
-  if (!personal && typeof activity.visibility_json === "string") {
+  if (!personal) {
+    if (typeof activity.target_user_ids_json === "string") {
+      try {
+        const parsed: unknown = JSON.parse(activity.target_user_ids_json);
+        restrictedUserIds = Array.isArray(parsed)
+          ? parsed.filter((value): value is string => typeof value === "string")
+          : [];
+      } catch {
+        restrictedUserIds = [];
+      }
+    }
+  }
+  if (!personal && restrictedUserIds.length === 0 && typeof activity.visibility_json === "string") {
     try {
       const visibility = JSON.parse(activity.visibility_json) as Record<string, unknown>;
       const rawIds = visibility.targetUserIds ?? visibility.allowedUserIds;

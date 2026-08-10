@@ -4,6 +4,9 @@ import {
   renderWorkOpportunityRankingMessages,
 } from "@avalon/agent-harness";
 import {
+  ConnectorError,
+} from "@avalon/connectors";
+import {
   AutomationPluginIconSchema,
   WorkOpportunityPageSchema,
   type WorkOpportunity,
@@ -13,6 +16,7 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createActivitySuggestion } from "./activity-suggestion-service";
+import { hydrateConnectorActivitySource } from "./integrations";
 import { WorkstreamService } from "./workstream-service";
 
 const MAX_BATCH_EVENTS = 16;
@@ -27,6 +31,7 @@ const MAX_PROVENANCE_NODES = 32;
 const OPPORTUNITY_TTL_MS = 14 * 24 * 60 * 60_000;
 const LEASE_MS = 10 * 60_000;
 const RETRY_DELAY_MS = 5 * 60_000;
+const IMPRESSION_RERANK_INTERVAL_MS = 60 * 60_000;
 
 const UserLinkDecisionSchema = z.object({
   userId: z.string().uuid().nullable(),
@@ -251,8 +256,50 @@ function deriveExternalPeople(
     }
   };
   visit(actor, "actor", 0);
-  visit(subject, "subject", 0);
+  for (const [key, value] of Object.entries(subject)) {
+    if (/(actor|sender|author|assignee|reviewer|subscriber|recipient|mention|user|owner)/iu.test(key)) {
+      visit(value, key.slice(0, 80), 1);
+    }
+  }
   return people;
+}
+
+function granolaHydratedPeople(
+  value: unknown,
+  providerTenantId: string | null,
+): Array<Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const note = value as Record<string, unknown>;
+  const calendar = note.calendar_event && typeof note.calendar_event === "object" && !Array.isArray(note.calendar_event)
+    ? note.calendar_event as Record<string, unknown>
+    : {};
+  const candidates: Array<{ person: unknown; role: string }> = [
+    { person: note.owner, role: "owner" },
+    ...((Array.isArray(note.attendees) ? note.attendees : []).map((person) => ({ person, role: "attendee" }))),
+    ...((Array.isArray(calendar.invitees) ? calendar.invitees : []).map((person) => ({ person, role: "invitee" }))),
+    ...(typeof calendar.organiser === "string" ? [{ person: { email: calendar.organiser }, role: "organizer" }] : []),
+  ];
+  const seen = new Set<string>();
+  return candidates.flatMap(({ person, role }) => {
+    if (!person || typeof person !== "object" || Array.isArray(person)) return [];
+    const record = person as Record<string, unknown>;
+    const email = typeof record.email === "string" ? record.email.toLowerCase() : null;
+    const displayName = typeof record.name === "string" ? record.name : null;
+    if (!email && !displayName) return [];
+    const key = `${role}:${email ?? ""}:${displayName ?? ""}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      provider: "granola",
+      providerTenantId,
+      providerUserId: null,
+      handle: null,
+      email,
+      displayName,
+      role,
+      sourceText: JSON.stringify(record).slice(0, 1_000),
+    }];
+  }).slice(0, 100);
 }
 
 function jsonSize(value: unknown): number {
@@ -365,6 +412,40 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
     const actor = boundedRecord(row.actor_json);
     const subject = boundedRecord(row.subject_json);
     const explicitPeople = boundedArray(row.external_people_json);
+    let hydratedText = "";
+    let hydratedCanonicalUrl: string | null = null;
+    let hydratedPeople: Array<Record<string, unknown>> = [];
+    if (
+      ["notion", "granola"].includes(String(row.provider))
+      && typeof row.provider_resource_id === "string"
+      && typeof row.resource_type === "string"
+    ) {
+      try {
+        const hydrated = await hydrateConnectorActivitySource(env, {
+          workspaceId,
+          connectionId: String(row.connection_id),
+          providerResourceId: row.provider_resource_id,
+          resourceType: row.resource_type,
+        });
+        hydratedText = hydrated == null ? "" : JSON.stringify(hydrated).slice(0, 8_000);
+        if (String(row.provider) === "granola") {
+          const hydratedRecord = boundedRecord(hydrated);
+          hydratedCanonicalUrl = [hydratedRecord.web_url, hydratedRecord.webUrl, hydratedRecord.url]
+            .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null;
+          hydratedPeople = granolaHydratedPeople(
+            hydrated,
+            row.provider_account_id == null ? null : String(row.provider_account_id),
+          );
+        }
+      } catch (error) {
+        if (isTransientSourceHydrationError(error)) throw error;
+        console.warn("Opportunity source hydration failed", {
+          activity_id: event.source_id,
+          provider: row.provider,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
     return {
       id: event.source_id,
       kind: "activity",
@@ -373,17 +454,17 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
       connectionId: String(row.connection_id),
       title: String(row.title).slice(0, 1_000),
       summary: String(row.summary ?? "").slice(0, 3_000),
-      text: String(row.text_snippet ?? "").slice(0, 3_000),
+      text: (hydratedText || String(row.text_snippet ?? "")).slice(0, 8_000),
       actor,
       subject,
-      externalPeople: explicitPeople.length > 0
-        ? explicitPeople
+      externalPeople: explicitPeople.length > 0 || hydratedPeople.length > 0
+        ? [...explicitPeople, ...hydratedPeople].slice(0, 100)
         : deriveExternalPeople(String(row.provider), row.provider_account_id == null ? null : String(row.provider_account_id), actor, subject),
       entityKeys: parseArray(row.entity_keys_json)
         .filter((item): item is string => typeof item === "string")
         .slice(0, 20)
         .map((item) => item.slice(0, 200)),
-      canonicalUrl: [metadata.canonicalUrl, metadata.canonical_url, metadata.url]
+      canonicalUrl: [hydratedCanonicalUrl, metadata.canonicalUrl, metadata.canonical_url, metadata.url]
         .find((value): value is string => typeof value === "string")?.slice(0, 2_000) ?? null,
       workstreamId: null,
       occurredAt: String(row.occurred_at),
@@ -414,6 +495,20 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
     workstreamId: String(row.workstream_id),
     occurredAt: String(row.created_at),
   };
+}
+
+function isTransientSourceHydrationError(error: unknown): boolean {
+  if (error instanceof Error && error.name === "AbortError") return true;
+  if (!(error instanceof ConnectorError)) return false;
+  const details = error.details && typeof error.details === "object"
+    ? error.details as Record<string, unknown>
+    : {};
+  const status = typeof details.status === "number" ? details.status : null;
+  return error.code === "unauthorized"
+    || status === 408
+    || status === 429
+    || (status != null && status >= 500)
+    || (error.code === "provider_error" && status == null);
 }
 
 function packBatches(events: Array<{ event: BatchEventRow; source: ModelSource }>): Array<Array<{ event: BatchEventRow; source: ModelSource }>> {
@@ -840,7 +935,7 @@ async function persistDecision(
     const ownerPronoun = window.audience_scope === "personal"
       && userId === window.audience_user_id
       && /^(?:you|your|yours)$/iu.test(link.sourceText.trim());
-    const verifiedEvidence = ownerPronoun || Boolean(member && people.some((person) => {
+    const verifiedEvidence = ownerPronoun || Boolean(source.provider !== "generic_webhook" && member && people.some((person) => {
       const tenant = String(person.providerTenantId ?? source.providerTenantId ?? "");
       const provider = identityProvider(String(person.provider ?? source.provider));
       const subject = person.providerUserId == null ? null : String(person.providerUserId);
@@ -1351,6 +1446,7 @@ export class WorkOpportunityService {
     const ids = [...new Set(opportunityIds)].slice(0, 4);
     if (ids.length === 0) return;
     const at = nowIso();
+    const rerankBefore = new Date(Date.now() - IMPRESSION_RERANK_INTERVAL_MS).toISOString();
     await this.env.DB.batch([
       ...ids.map((id) => this.env.DB.prepare(
       `INSERT INTO work_opportunity_user_states
@@ -1364,8 +1460,9 @@ export class WorkOpportunityService {
         last_impressed_at = excluded.last_impressed_at, updated_at = excluded.updated_at`,
       ).bind(this.auth.workspaceId, this.auth.userId, at, at, at, id, this.auth.workspaceId, this.auth.userId)),
       this.env.DB.prepare(
-        "UPDATE suggested_work_sets SET status = 'stale', updated_at = ? WHERE workspace_id = ? AND user_id = ?",
-      ).bind(at, this.auth.workspaceId, this.auth.userId),
+        `UPDATE suggested_work_sets SET status = 'stale', updated_at = ?
+         WHERE workspace_id = ? AND user_id = ? AND status = 'ready' AND updated_at <= ?`,
+      ).bind(at, this.auth.workspaceId, this.auth.userId, rerankBefore),
     ]);
   }
 

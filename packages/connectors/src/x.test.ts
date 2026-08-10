@@ -169,6 +169,24 @@ describe("X connector", () => {
     expect(calls).toBe(1);
   });
 
+  it("treats the provider's empty cursor as the first thread page", async () => {
+    const requested: URL[] = [];
+    const fetcher: FetchLike = async (input) => {
+      const url = requestUrl(input);
+      requested.push(url);
+      if (url.pathname === "/twitter/tweet/thread_context") {
+        return jsonResponse({ replies: [{ id: "405", conversationId: "404", isReply: true }] });
+      }
+      return jsonResponse({ tweets: [{ id: "404", conversationId: "404", isReply: false }] });
+    };
+    const result = await execute(xAdapter(fetcher), "get_tweet_thread_context", {
+      tweetId: "405",
+      cursor: "",
+    });
+    expect(result.output).toMatchObject({ original_tweet: { id: "404" } });
+    expect(requested).toHaveLength(2);
+  });
+
   it("discovers the original ID from the requested post when thread context is empty", async () => {
     const requested: URL[] = [];
     const fetcher: FetchLike = async (input) => {
@@ -197,11 +215,20 @@ describe("X connector", () => {
       requested.push(url);
       return jsonResponse({ recharge_credits: 123 });
     });
-    await expect(healthy.healthCheck()).resolves.toEqual({ ok: true, message: "X access is healthy" });
+    await expect(healthy.healthCheck()).resolves.toEqual({ ok: true, message: "TwitterAPI.io access is healthy" });
     expect(requested[0]?.pathname).toBe("/oapi/my/info");
 
     const rejected = xAdapter(async () => jsonResponse({ message: "Invalid API key" }, 401));
     await expect(rejected.healthCheck()).resolves.toEqual({ ok: false, message: "Invalid API key" });
+
+    const empty = xAdapter(async () => jsonResponse({ recharge_credits: 0 }));
+    await expect(empty.healthCheck()).resolves.toEqual({ ok: false, message: "TwitterAPI.io has no remaining credits" });
+
+    const throttled = xAdapter(async () => jsonResponse({ message: "Slow down" }, 429, { "retry-after": "5" }));
+    await expect(throttled.healthCheck()).rejects.toMatchObject({
+      code: "provider_error",
+      details: expect.objectContaining({ status: 429, retryAfterMs: 5_000 }),
+    });
   });
 
   it("enforces principal and granted-capability boundaries", async () => {
@@ -284,6 +311,9 @@ function requestUrl(input: string | URL | Request): URL {
   return new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
 }
 
-function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
+function jsonResponse(value: unknown, status = 200, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) },
+  });
 }

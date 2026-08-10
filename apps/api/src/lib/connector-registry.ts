@@ -40,6 +40,7 @@ export function linearConnectorConfig(env: Env): LinearConnectorConfig | null {
     clientId: env.LINEAR_OAUTH_CLIENT_ID,
     clientSecret: env.LINEAR_OAUTH_CLIENT_SECRET,
     redirectUri: new URL("/connections/linear/callback", env.PUBLIC_API_BASE_URL).toString(),
+    ...(env.LINEAR_WEBHOOK_SECRET ? { webhookSecret: env.LINEAR_WEBHOOK_SECRET } : {}),
   };
 }
 
