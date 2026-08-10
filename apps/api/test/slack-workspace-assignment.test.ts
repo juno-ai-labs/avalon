@@ -107,6 +107,85 @@ describe("Slack workspace workstream assignment", () => {
       `SELECT user_id, participation_reason FROM workstream_participants
        WHERE workstream_id = 'workstream-ownerless'`,
     ).get()).toEqual({ user_id: "user-taylor", participation_reason: "explicit" });
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-ownerless'",
+    ).get()).toEqual({ created_by_user_id: "user-taylor" });
+  });
+
+  it("keeps an existing creator when a later Slack assignment resolves the same session", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const encrypted = await encryptString(
+      JSON.stringify({ botAccessToken: "xoxb-test" }),
+      credentialsKey,
+      "connection-slack",
+    );
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+              'user-owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES
+        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-02-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+              'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+              '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+              'plugin_slack_workspace');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-owned', 'workspace-slack', 'Investigate', 'Investigate',
+              'ad_hoc', 'user-owner', 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-owned', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:owned', 'workstream-owned',
+              'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
+    `);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      user: {
+        id: "U456",
+        team_id: "T123",
+        deleted: false,
+        is_bot: false,
+        profile: { email: "taylor@example.com" },
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } })));
+    const env = {
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      CONNECTOR_CREDENTIALS_KEY: credentialsKey,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      SLACK_CLIENT_ID: "client",
+      SLACK_CLIENT_SECRET: "secret",
+      SLACK_SIGNING_SECRET: "signing",
+    } as unknown as Env;
+
+    await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
+      "workspace-slack",
+      "user-taylor",
+      "taylor@example.com",
+    )).resolves.toBe(1);
+
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-owned'",
+    ).get()).toEqual({ created_by_user_id: "user-owner" });
   });
 
   it("does not answer the next external elicitation when a Slack event is retried", async () => {
@@ -296,6 +375,9 @@ describe("Slack workspace workstream assignment", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM audit_events WHERE action = 'slack.workspace_workstream.claimed'",
     ).get()).toEqual({ count: 1 });
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-claim'",
+    ).get()).toEqual({ created_by_user_id: "user-taylor" });
   });
 });
 

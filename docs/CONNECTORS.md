@@ -15,6 +15,36 @@ Each installed credential has two deliberately separate plugin identities. The o
 
 The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
 
+## Actor identity and work-stream attribution
+
+Every connector that can start work from a provider identity resolves that identity to an
+Avalon member through one shared mapping, `resolveConnectorActorIdentity` over
+`external_user_identities`. It is not per-connector logic: Slack's Agent surface uses it
+today, and Linear's native-agent sessions and every later agent connector use the same
+resolution rather than repeating a provider lookup of their own. The mapping is tried
+strongest first and recorded once resolved, so later work by the same provider identity — in
+any surface — reuses it:
+
+1. **`account_link`** — a mapping already recorded for `(workspace, provider, provider tenant,
+   provider user)`, including the ones synced from confirmed Slack account links.
+2. **`personal_connection`** — a healthy personal connection of that provider whose account is
+   the actor. The member authorized that account themselves, so an exact match is that member.
+3. **`verified_email`** — a provider-verified address held by exactly one active workspace
+   member. An ambiguous or unknown address resolves to nobody.
+
+A work stream a connector creates for a resolved member records them as its
+`created_by_user_id` and adds them as a participant, so it reads as their work rather than as
+workspace automation. When a mapping only arrives later — the member links their account or
+joins the workspace after the task ran — the connector credits their earlier ownerless work
+streams then. An existing creator is never rewritten.
+
+Attribution is not authorization. A resolved member does not authenticate the actor, does not
+expose that member's personal connections, and never changes the execution principal: an
+unlinked author's task still runs with the workspace principal. Message authorship is also
+untouched — the opening message keeps its external actor, so the transcript still shows which
+provider identity wrote it. A connector that cannot map its actor leaves the work stream
+ownerless instead of guessing a member.
+
 ## Agent activation acknowledgement
 
 Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
