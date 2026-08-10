@@ -381,6 +381,39 @@ function report(options: Options, attempts: Attempt[]): void {
   }
 }
 
+/**
+ * One cheap credential check before spending a run's worth of requests, so an
+ * unreachable host or a rejected key reports once instead of failing every
+ * case identically. Skipped when a stub base URL is driving the runner.
+ */
+async function preflight(apiKey: string): Promise<string | null> {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/key", {
+      headers: { authorization: `Bearer ${apiKey}` },
+    });
+    if (response.ok) return null;
+    const body = (await response.text().catch(() => "")).slice(0, 200).trim();
+    if (response.status === 401) return `OpenRouter rejected the API key (401). ${body}`.trim();
+    if (response.status === 403) {
+      // An egress proxy denying CONNECT surfaces here as an opaque 403 with no
+      // OpenRouter error body. Naming the key as the cause would be a guess.
+      return [
+        `A credential check returned 403${body ? `: ${body}` : " with no response body"}.`,
+        "A 403 here is usually an egress proxy denying the host by policy rather than OpenRouter",
+        "refusing the key. Check the response above, or the proxy's status endpoint, before rotating anything.",
+      ].join(" ");
+    }
+    return `OpenRouter returned ${response.status} for a credential check. ${body}`.trim();
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    return [
+      `Could not reach openrouter.ai: ${reason}.`,
+      "If this session runs behind an egress proxy, the host may be denied by policy —",
+      "check the proxy's status endpoint before assuming the key is at fault.",
+    ].join(" ");
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const apiKey = process.env.OPENROUTER_API_KEY;
@@ -388,6 +421,14 @@ async function main(): Promise<void> {
     process.stderr.write("OPENROUTER_API_KEY is not set. Export it, or run with the key from .env.local.\n");
     process.exitCode = 1;
     return;
+  }
+  if (!process.env.AVALON_EVAL_BASE_URL) {
+    const blocked = await preflight(apiKey);
+    if (blocked) {
+      process.stderr.write(`${blocked}\n`);
+      process.exitCode = 1;
+      return;
+    }
   }
   const baseUrl = process.env.AVALON_EVAL_BASE_URL;
   // A stub base URL lets the runner be exercised end to end without a real key.
