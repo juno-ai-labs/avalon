@@ -36,7 +36,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -435,7 +435,6 @@ export function WorkstreamScreen(): React.JSX.Element {
   const readAckTimerRef = useRef<number | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
   const activeWorkstreamIdRef = useRef(id);
-  const reconnectAbortControllerRef = useRef<AbortController | null>(null);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const attachmentDraft = useFileAttachments(api);
@@ -447,11 +446,6 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
 
   useEffect(() => () => closeRail(), [closeRail, id]);
-
-  useEffect(() => () => {
-    reconnectAbortControllerRef.current?.abort();
-    reconnectAbortControllerRef.current = null;
-  }, [id]);
 
   useEffect(() => {
     activeWorkstreamIdRef.current = id;
@@ -722,33 +716,6 @@ export function WorkstreamScreen(): React.JSX.Element {
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     },
-  });
-
-  const reconnect = useMutation({
-    mutationFn: async (connection: WorkstreamConnection) => {
-      reconnectAbortControllerRef.current?.abort();
-      const controller = new AbortController();
-      reconnectAbortControllerRef.current = controller;
-      try {
-        const authorization = await api!.reconnectConnection(connection.id);
-        await desktopBridge().openExternal(authorization.url);
-        const attempt = await api!.waitForConnectorOAuthAttempt(authorization.attemptId, controller.signal);
-        if (attempt.status !== 'succeeded') {
-          throw new Error(
-            attempt.status === 'denied'
-              ? 'Connector authorization was cancelled.'
-              : 'The connector could not be reconnected. Try again.',
-          );
-        }
-      } finally {
-        if (reconnectAbortControllerRef.current === controller) reconnectAbortControllerRef.current = null;
-      }
-    },
-    onSuccess: () => void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-      queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
-      queryClient.invalidateQueries({ queryKey: ['automation'] }),
-    ]),
   });
 
   const watchResource = useMutation({
@@ -1170,7 +1137,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           <WorkstreamComposer
             api={api ?? undefined}
             attachments={attachmentDraft.attachments}
-            error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message ?? reconnect.error?.message}
+            error={sendError ?? attachmentDraft.error ?? attachResource.error?.message ?? stop.error?.message ?? retry.error?.message}
             fileInputRef={fileInputRef}
             members={members.data ?? []}
             onAttach={attachmentDraft.addFiles}
@@ -1191,7 +1158,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <InspectorRail
         dropTarget={railDrop}
-        error={deferredContext.error?.message ?? watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message ?? reconnect.error?.message}
+        error={deferredContext.error?.message ?? watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message}
         messages={transcript}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
@@ -1202,7 +1169,6 @@ export function WorkstreamScreen(): React.JSX.Element {
           if (index >= 0) transcriptVirtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
         }}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
-        onReconnectConnection={(connection) => reconnect.mutate(connection)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         tasks={displayedDetail.backgroundTasks}
         workstream={displayedDetail}
