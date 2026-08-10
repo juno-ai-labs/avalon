@@ -27,19 +27,32 @@ function isClosingBoundary(value: string, index: number): boolean {
 
 function matchLabelAt(value: string, index: number, labels: string[]): string | null {
   for (const label of labels) {
+    // Sliced by the label's own length, never a case-folded one: lowercasing can
+    // change length (`İ` folds to two code units), and slicing by the folded
+    // length would miss a mention the send path still resolves.
     const candidate = value.slice(index, index + label.length);
-    if (candidate.toLocaleLowerCase() !== label) continue;
+    if (candidate.length !== label.length) continue;
+    // `toLowerCase`, not `toLocaleLowerCase`: the send path matches with a
+    // case-insensitive regex, whose folding does not follow the host locale.
+    // A Turkish locale must not make the highlight disagree with what is sent.
+    if (candidate.toLowerCase() !== label.toLowerCase()) continue;
     if (!isClosingBoundary(value, index + label.length)) continue;
     return candidate;
   }
   return null;
 }
 
-/** Orders labels longest-first so `@Ada Lovelace` wins over a shorter `@Ada`. */
+/** Deduplicates case-insensitively and orders longest-first so `@Ada Lovelace` wins over `@Ada`. */
 export function normalizeMentionLabels(labels: readonly string[]): string[] {
-  return [...new Set(labels.map((label) => label.trim()).filter((label) => label.length > 0))]
-    .map((label) => label.toLocaleLowerCase())
-    .sort((left, right) => right.length - left.length);
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const label of labels) {
+    const trimmed = label.trim();
+    if (trimmed.length === 0 || seen.has(trimmed.toLowerCase())) continue;
+    seen.add(trimmed.toLowerCase());
+    unique.push(trimmed);
+  }
+  return unique.sort((left, right) => right.length - left.length);
 }
 
 export function splitMentionHighlights(value: string, labels: readonly string[]): MentionHighlightSegment[] {
