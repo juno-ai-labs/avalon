@@ -79,7 +79,6 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 [The documentation index](docs/README.md) lists every document with its scope. The selection below is a reading path, not the full set.
 
-- [Product requirements](docs/PRDs/2026-08-05_avalon-implementation-brief/prd.md)
 - [Writing a product requirement document](docs/prds.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop application icons](docs/DESKTOP_ICONS.md)
