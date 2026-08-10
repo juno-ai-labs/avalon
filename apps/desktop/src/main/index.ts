@@ -33,6 +33,7 @@ import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
   AvalonRegion,
   DesktopApplicationSettings,
+  DesktopLockdownSettings,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
   MeetingAudioPermissionKind,
@@ -62,10 +63,11 @@ import {
 import { ApplicationIconController } from './application-icon-controller';
 import {
   readStoredApplicationSettings,
-  writeStoredApplicationSettings,
+  updateStoredApplicationSettings,
 } from './application-settings';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
+import { DebugSettingsController } from './debug-settings';
 import { LockdownModeController } from './lockdown-mode';
 import {
   allowsTrustedAudioCapture,
@@ -382,13 +384,25 @@ async function clearCredentialsForLockdownRelogin(): Promise<void> {
 const lockdownModeController = new LockdownModeController({
   safeStorage,
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
-  writeSettings: (settings) => writeStoredApplicationSettings(userDataDirectory(), settings),
+  writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
   migrateSession: migrateSessionEncryption,
   recoverGlobalSessionWithoutKeystore,
   clearCredentialsForRelogin: clearCredentialsForLockdownRelogin,
   runExclusive: withSessionMutation,
-  onChange: broadcastApplicationSettingsChanged,
+  onChange: (lockdown) => broadcastApplicationSettingsChanged(desktopApplicationSettings(lockdown)),
 });
+
+const debugSettingsController = new DebugSettingsController({
+  readSettings: () => readStoredApplicationSettings(userDataDirectory()),
+  writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+});
+
+function desktopApplicationSettings(
+  lockdown: DesktopLockdownSettings = lockdownModeController.state(),
+): DesktopApplicationSettings {
+  return { ...lockdown, debugEnabled: debugSettingsController.enabled() };
+}
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
   const auth = storedAuthFromSession(value, regionForStoredSession(value));
@@ -1116,13 +1130,24 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return runtimeConfig();
   });
-  ipcMain.handle('application-settings:get', (event) => {
+  ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
-    return lockdownModeController.settings();
+    return desktopApplicationSettings(await lockdownModeController.settings());
   });
-  ipcMain.handle('application-settings:set-lockdown-mode', (event, rawEnabled: unknown) => {
+  ipcMain.handle('application-settings:set-lockdown-mode', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
-    return lockdownModeController.set(rawEnabled);
+    return desktopApplicationSettings(await lockdownModeController.set(rawEnabled));
+  });
+  ipcMain.handle('application-settings:set-debug-enabled', async (event, rawEnabled: unknown) => {
+    assertTrustedIpcSender(event);
+    await debugSettingsController.set(rawEnabled);
+    // Deliberately `state()` rather than `settings()`: the latter can run the
+    // automatic keystore fallback, which clears credentials and forces a new
+    // sign-in. Writing a debugging preference must never carry that side
+    // effect. `state()` still probes keystore availability, so an unavailable
+    // keystore is reported as the recoverable state the Settings pane already
+    // models, and the fallback runs on the next read or Lockdown interaction.
+    return desktopApplicationSettings();
   });
   ipcMain.handle('application-icon:get', (event) => {
     assertTrustedIpcSender(event);
@@ -1784,6 +1809,12 @@ if (!singleInstanceLock) {
       await lockdownModeController.initialize();
     } catch (error) {
       console.warn('[avalon] could not initialize desktop session encryption', error);
+    }
+    try {
+      // Read after Lockdown mode: its startup fallback can rewrite the file.
+      await debugSettingsController.initialize();
+    } catch (error) {
+      console.warn('[avalon] could not read the Developer preference', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.

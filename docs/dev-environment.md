@@ -30,6 +30,17 @@ This takes about thirty seconds on a warm registry connection. The `electron`
 package downloads a 125 MB binary during its postinstall step; if that step
 fails, read [the proxy guide](sandbox-proxy.md) before retrying.
 
+Retrying the install is not enough on its own. Once the package is in the pnpm
+store, `pnpm install` reports `Already up to date` and re-runs nothing, and
+`pnpm rebuild electron` exits 0 without fetching anything either — so a missing
+binary stays missing and `electron-vite dev` fails at startup with
+`Error: Electron uninstall`. Run the package's own installer to fetch it:
+
+```bash
+node node_modules/.pnpm/electron@*/node_modules/electron/install.js
+ls node_modules/.pnpm/electron@*/node_modules/electron/dist/electron   # exists once it worked
+```
+
 ```bash
 cp .env.example .env.local   # optional for the API, required for the desktop client
 pnpm env:sync
