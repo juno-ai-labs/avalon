@@ -19,7 +19,9 @@ update it in the same change.
   [`DATA_MODEL.md`](DATA_MODEL.md) and [`SECURITY.md`](SECURITY.md).
 - **Adding a document?** Create `docs/<NAME>.md`, register it in the correct
   table below, and add it to the Documentation list in the root
-  [`README.md`](../README.md).
+  [`README.md`](../README.md). **A PRD is the exception**: it goes in a dated
+  folder under `docs/PRDs/` per [`prds.md`](prds.md), and is registered in
+  neither this index nor the root README.
 
 ## Product and architecture
 

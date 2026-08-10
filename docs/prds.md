@@ -43,7 +43,9 @@ several folders that link to each other, not several PRDs in one folder.
 ## `state.md`
 
 **Where a PRD has got to is recorded in `state.md`, not in the folder name.**
-Every PRD folder has one, and it holds exactly this checklist:
+Every PRD folder has one. It opens with this checklist — these three lines, in
+this order, worded this way — and carries nothing else except the note described
+under [Abandoned and superseded PRDs](#abandoned-and-superseded-prds):
 
 ```
 [ ] planned
@@ -88,8 +90,8 @@ saying what happened, with a link:
 [ ] in progress
 [ ] completed
 
-Superseded by `../2026-09-02_workstream-notification-rules/`. Design only — no
-code shipped. Do not build against this PRD.
+Superseded by [`2026-09-02_workstream-notification-rules`](../2026-09-02_workstream-notification-rules/prd.md).
+Design only — no code shipped. Do not build against this PRD.
 ```
 
 That line is what stands between a future reader and a design that was
