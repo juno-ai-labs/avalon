@@ -67,6 +67,15 @@ export function compareVersions(left, right) {
   return 0;
 }
 
+// The version the pipeline cuts on its own. Every release advances exactly one
+// minor, so this is the only successor automation ever picks: the one-time
+// 0.x -> 1.0.0 stable promotion that assertNextReleaseVersion also accepts is a
+// deliberate human decision and is made by hand.
+export function nextReleaseVersion(currentVersion) {
+  const current = parseVersion(currentVersion);
+  return `${current.major}.${current.minor + 1}.0`;
+}
+
 export function assertNextReleaseVersion(currentVersion, nextVersion) {
   const current = parseVersion(currentVersion);
   assertMinorReleaseVersion(nextVersion);

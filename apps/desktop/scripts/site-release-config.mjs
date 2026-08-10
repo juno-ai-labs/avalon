@@ -43,6 +43,17 @@ function downloadOrigin(value) {
   return url.origin;
 }
 
+// The commit the release was built from. The planner uses it as a watermark —
+// desktop changes after it are unreleased — so it has to be an exact object
+// name, not a ref that can later point somewhere else.
+function releaseCommit(value) {
+  const commit = requiredString(value, 'Release commit');
+  if (!/^[0-9a-f]{40}$/u.test(commit)) {
+    throw new Error('Release commit must be a full lowercase commit SHA');
+  }
+  return commit;
+}
+
 function digest(value, label) {
   if (typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value)) {
     throw new Error(`${label} must be a lowercase SHA-256 digest`);
@@ -113,8 +124,9 @@ export function createPublishedSiteReleaseConfig(current, options) {
   }
   const publishedAt = requiredString(options.publishedAt, 'Publication timestamp');
   if (!Number.isFinite(Date.parse(publishedAt))) throw new Error('Publication timestamp is invalid');
+  const commit = options.commit === undefined ? undefined : releaseCommit(options.commit);
   const objectKey = (name) => `${prefix}/${name}`;
-  return {
+  const config = {
     ...current,
     published: true,
     version,
@@ -142,6 +154,12 @@ export function createPublishedSiteReleaseConfig(current, options) {
     sha256: hashes,
     publishedAt,
   };
+  // Carrying the previous release's commit forward would be worse than having
+  // none: the planner would measure new work against a release it did not
+  // describe. An absent watermark makes the planner fail open and release.
+  if (commit) config.commit = commit;
+  else delete config.commit;
+  return config;
 }
 
 export async function readSiteReleaseConfig(path) {
