@@ -281,7 +281,13 @@ pre {
 .avatar-medium { height: 30px; width: 30px; }
 .avatar-large { height: 38px; width: 38px; }
 .avatar-image { height: 100%; object-fit: cover; width: 100%; }
-.avatar-fallback { color: #e6e5df; font-size: 9px; font-weight: 650; }
+/*
+ * Initials are uppercase, so they carry no descender. Centring the line box
+ * therefore leaves them sitting ~1px high inside the disc; trimming the box to
+ * the font's own cap height and baseline centres the glyphs themselves, in
+ * whatever font the platform resolves.
+ */
+.avatar-fallback { color: #e6e5df; font-size: 9px; font-weight: 650; text-box: trim-both cap alphabetic; }
 .avatar-medium .avatar-fallback { font-size: 10px; }
 .avatar-large .avatar-fallback { font-size: 11px; }
 
@@ -1615,6 +1621,8 @@ pre {
 .mention-chip { align-items: center; background: color-mix(in srgb, var(--brand) 12%, transparent); border: 1px solid color-mix(in srgb, var(--brand) 26%, transparent); border-radius: 999px; box-sizing: border-box; color: var(--brand); display: inline-flex; font-size: 0.92em; font-weight: 580; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 6px 1px 2px; vertical-align: middle; white-space: nowrap; }
 .mention-chip-connector { padding: 1px 7px; }
 .mention-chip-avatar { align-items: center; background: #46524c; border-radius: 999px; color: #e7e6e1; display: inline-flex; flex: 0 0 auto; font-size: 6.5px; font-weight: 700; height: 16px; justify-content: center; letter-spacing: -0.02em; overflow: hidden; position: relative; width: 16px; }
+/* Cap-height centring, as on .avatar-fallback above. */
+.mention-chip-avatar > span { text-box: trim-both cap alphabetic; }
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
