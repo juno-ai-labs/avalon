@@ -77,6 +77,8 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 ## Documentation
 
+[The documentation index](docs/README.md) lists every document with its scope. The selection below is a reading path, not the full set.
+
 - [Product requirements](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop application icons](docs/DESKTOP_ICONS.md)
@@ -87,6 +89,10 @@ Version policy: every new Avalon release advances the minor version by exactly o
 - [Connectors](docs/CONNECTORS.md)
 - [End-to-end verification](docs/E2E.md)
 - [Operations runbook](docs/RUNBOOK.md)
+- [Development environment](docs/dev-environment.md)
+- [Claude Code remote sandbox](docs/SANDBOX.md)
+- [Outbound HTTPS through the sandbox proxy](docs/sandbox-proxy.md)
+- [Creating a pull request](docs/pull-requests.md)
 - [Assumptions](docs/ASSUMPTIONS.md)
 
 ## Hosted deployment
