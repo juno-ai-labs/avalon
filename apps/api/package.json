@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "wrangler dev --config wrangler.global.jsonc --env-file .dev.vars.global --persist-to .wrangler/state/global --port 8787 --inspector-port 9230",
     "dev:eu": "wrangler dev --config wrangler.eu.jsonc --env-file .dev.vars.eu --persist-to .wrangler/state/eu --port 8788 --inspector-port 9231",
+    "dev:local": "wrangler dev --local --config wrangler.global.jsonc --env-file .dev.vars.global --persist-to .wrangler/state/global --port 8787 --inspector-port 9230",
+    "dev:local:eu": "wrangler dev --local --config wrangler.eu.jsonc --env-file .dev.vars.eu --persist-to .wrangler/state/eu --port 8788 --inspector-port 9231",
     "build": "wrangler deploy --dry-run --config wrangler.global.jsonc --outdir dist",
     "build:eu": "wrangler deploy --dry-run --config wrangler.eu.jsonc --outdir dist-eu",
     "typecheck": "tsc --noEmit",
