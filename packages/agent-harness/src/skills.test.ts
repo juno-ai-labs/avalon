@@ -243,6 +243,79 @@ describe("skills in a run", () => {
     expect(systemPrompt(observed[1] as Record<string, unknown>)).not.toContain(huge.body);
   });
 
+  it("does not offer a skill whose owner plugin is outside the run's scope", async () => {
+    const owned: HarnessSkill = { ...triage, name: "drafting-with-web", ownerPlugin: "avalon:web" };
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: owned.name }),
+      textResponse("could not"),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    // No `plugins`, so `avalon:web` is not in the frozen scope.
+    await runHarness({ ...runInput(fetcher), skills: [owned, triage] });
+
+    const first = systemPrompt(bodies[0]!);
+    expect(first).toContain(triage.name);
+    expect(first).not.toContain(owned.name);
+    const toolMessage = messagesOf(bodies[1]).find((message) => message.role === "tool");
+    expect(String(toolMessage?.content)).toContain("skill_not_available");
+  });
+
+  it("persists an activation once, however many times the skill is loaded", async () => {
+    const persisted: string[] = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: triage.name }),
+      toolCallResponse("load_skill", { name: triage.name }),
+      textResponse("done"),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    await runHarness({
+      ...runInput(fetcher),
+      skills: [triage],
+      persistSkillActivation: (ref) => {
+        persisted.push(ref);
+      },
+    });
+    // A repeat load reaches a state the run is already in; re-persisting it
+    // would be a redundant durable write on a path a looping model repeats.
+    expect(persisted).toEqual(["platform:triaging-inbound-work"]);
+  });
+
+  it("bounds a resource read and says so rather than returning it whole", async () => {
+    const big: HarnessSkill = {
+      ...handover,
+      resources: [{ path: "references/big.md", body: "x".repeat(5_000) }],
+    };
+    const responses = [
+      toolCallResponse("load_skill", { name: big.name }),
+      toolCallResponse("read_skill_resource", { name: big.name, path: "references/big.md" }),
+      textResponse("read it"),
+    ];
+    const observed: unknown[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    const base = runInput(fetcher);
+    await runHarness({
+      ...base,
+      config: { ...base.config, maxIterations: 6, maxSkillResourceBytes: 1_000 },
+      skills: [big],
+    });
+
+    const read = messagesOf(observed[2]).filter((message) => message.role === "tool").pop();
+    const payload = String(read?.content);
+    expect(payload).toContain('"truncated":true');
+    expect(payload).toContain("exceeds the 1000-byte read limit");
+    // The cap holds: the whole 5,000-byte body never reaches the transcript.
+    expect(payload.length).toBeLessThan(3_000);
+  });
+
   it("adds no skill surface at all to a run without skills", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
