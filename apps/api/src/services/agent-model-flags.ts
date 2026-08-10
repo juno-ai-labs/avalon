@@ -9,8 +9,12 @@ import { logStructuredEvent } from "../observability/logger";
  *
  * The first five names match `AgentInferenceSource` in
  * `agent-inference-logging.ts`, so a ledger row and a flag key describe the
- * same agent. The last two are the standalone structured-output classifiers,
- * which call OpenRouter directly rather than through the harness.
+ * same agent. The rest are the standalone structured-output agents, which call
+ * OpenRouter directly rather than through the harness.
+ *
+ * A new model-using service belongs here. One that reads `OPENROUTER_*`
+ * directly cannot be retargeted or rolled out, and nothing in the type system
+ * will point that out.
  */
 export const AGENT_MODEL_ROLES = [
   "workstream",
@@ -20,6 +24,8 @@ export const AGENT_MODEL_ROLES = [
   "meeting_notes",
   "addressing_classifier",
   "activity_structured",
+  "work_opportunity_admission",
+  "work_opportunity_ranking",
 ] as const;
 
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
@@ -33,6 +39,8 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
   activity_structured: "agent-model-activity-structured",
+  work_opportunity_admission: "agent-model-work-opportunity-admission",
+  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
 };
 
 /** One agent's OpenRouter route plan: the default model, then its fallbacks in order. */
@@ -66,6 +74,15 @@ function splitModelIds(value: string | undefined): string[] {
 }
 
 /**
+ * `Env` types the model variables as required strings, but a Worker or test
+ * environment can leave one unset. Normalizing to `""` keeps `model` a string
+ * for every caller instead of an `undefined` that only surfaces downstream.
+ */
+function modelId(value: string | undefined): string {
+  return value?.trim() ?? "";
+}
+
+/**
  * The route plan a role runs on when Flagship has nothing to say — the Worker
  * variables that owned model selection before the flags existed. This is also
  * the default handed to Flagship, so an absent flag, an unbound binding, and a
@@ -77,13 +94,15 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "workstream":
     case "inline_child":
     case "meeting_notes":
-      return { model: env.OPENROUTER_PRIMARY_MODEL, fallbackModels };
+      return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
     case "automation_compiler":
-      return { model: env.OPENROUTER_AUTOMATION_MODEL, fallbackModels };
+      return { model: modelId(env.OPENROUTER_AUTOMATION_MODEL), fallbackModels };
     case "addressing_classifier":
-      return { model: env.OPENROUTER_CLASSIFIER_MODEL, fallbackModels };
+      return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
     case "activity_structured":
-      return { model: env.OPENROUTER_STRUCTURED_MODEL, fallbackModels };
+    case "work_opportunity_admission":
+    case "work_opportunity_ranking":
+      return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     case "hypersight":
       // HyperSight blocks pin one model and never route onward, so a refreshed
       // block cannot silently change voice partway through a configuration.
