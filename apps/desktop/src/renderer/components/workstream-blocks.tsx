@@ -827,6 +827,7 @@ export function MessageBlock({
         <header>
           {human && <span aria-hidden="true" className="message-author-dot" />}
           <span className="message-author">{human ? humanAuthorName : 'Avalon'}</span>
+          {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
         </header>
       )}

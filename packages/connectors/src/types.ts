@@ -44,6 +44,193 @@ export interface ConnectorPollResult {
   activities: Omit<NormalizedActivity, "id">[];
   cursor: Record<string, unknown>;
   nextPollAt?: string;
+  streamErrors?: ConnectorActivityStreamError[];
+}
+
+/** One independently checkpointed provider activity feed. */
+export interface ConnectorPollingActivityStream {
+  /** Stable within a connector type and suitable for persistence keys. */
+  id: string;
+  /** Optional legacy connection-cursor key retained during cursor migrations. */
+  legacyCursorKey?: string;
+  idlePollIntervalSeconds: number;
+  backlogPollIntervalSeconds?: number;
+  failurePollIntervalSeconds?: number;
+}
+
+export interface ConnectorPollingActivityResult {
+  activities: Omit<NormalizedActivity, "id">[];
+  /**
+   * Provider-native next checkpoint. It may be a sequence, date, cursor, or
+   * composite object; the source's normalization hook canonicalizes it before
+   * the host persists it.
+   */
+  highWatermark: unknown;
+  hasMore: boolean;
+}
+
+/**
+ * Activity interface for providers whose canonical feed must be pulled.
+ * The host owns checkpoint persistence, retry scheduling, and deduplication;
+ * providers only enumerate streams and translate one bounded page.
+ */
+export interface ConnectorPollingActivitySource {
+  streams(connection: ConnectorConnectionContext): readonly ConnectorPollingActivityStream[];
+  /**
+   * Canonicalize provider-native and legacy checkpoints into a durable record.
+   * This hook must be deterministic and idempotent, accept `undefined` for a
+   * first poll, and accept its own prior output when a checkpoint is reloaded.
+   */
+  normalizeHighWatermark(
+    connection: ConnectorConnectionContext,
+    stream: ConnectorPollingActivityStream,
+    highWatermark: unknown,
+  ): Record<string, unknown>;
+  pollStream(
+    connection: ConnectorConnectionContext,
+    stream: ConnectorPollingActivityStream,
+    highWatermark: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<ConnectorPollingActivityResult>;
+}
+
+export interface ConnectorWebhookVerificationInput {
+  rawBody: string;
+  /** Exact request bytes when signature verification must not re-encode text. */
+  rawBodyBytes?: Uint8Array;
+  headers: Headers;
+  receivedAt: string;
+  maxBytes: number;
+  now: number;
+  /** Host-managed secret for providers whose verification material rotates outside OAuth. */
+  verificationSecret?: string;
+  expectedProviderAccountId?: string;
+  replayWindowMs?: number;
+}
+
+export interface ConnectorVerifiedActivityWebhook {
+  deliveryId: string;
+  eventType: string;
+  providerAccountId: string | null;
+  routingAccountIds?: string[];
+  routingUserId?: string;
+  bodyHash: string;
+  /** Provider receipt identity when it differs from the canonical event ID. */
+  receiptKey?: string;
+  event: unknown;
+}
+
+/**
+ * Activity interface for providers that push signed events to Avalon. The host
+ * still owns connection routing, raw-payload storage, receipts, and queueing.
+ */
+export interface ConnectorWebhookActivitySource {
+  verify(input: ConnectorWebhookVerificationInput): Promise<ConnectorVerifiedActivityWebhook>;
+  normalize(
+    connection: ConnectorConnectionContext,
+    event: ConnectorVerifiedActivityWebhook,
+    payloadRef: string | null,
+  ): Omit<NormalizedActivity, "id"> | null;
+}
+
+export interface ConnectorActivityStreamError {
+  streamId: string;
+  code: string;
+  message: string;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function streamFailure(error: unknown, streamId: string): ConnectorActivityStreamError {
+  return {
+    streamId,
+    code: error instanceof ConnectorError ? error.code : "poll_failed",
+    message: (error instanceof Error ? error.message : "Connector activity stream failed").slice(0, 500),
+  };
+}
+
+/** Shared bounded orchestration for every checkpointed polling provider. */
+export async function pollCheckpointedActivityStreams(
+  source: ConnectorPollingActivitySource,
+  connection: ConnectorConnectionContext,
+  signal: AbortSignal,
+): Promise<ConnectorPollResult> {
+  const streams = [...source.streams(connection)];
+  if (new Set(streams.map((stream) => stream.id)).size !== streams.length) {
+    throw new ConnectorError("invalid_configuration", "Connector activity stream IDs must be unique");
+  }
+  const storedStreams = recordValue(connection.cursor.activityStreams);
+  const results = await Promise.all(streams.map(async (stream) => {
+    const stored = recordValue(storedStreams[stream.id]);
+    try {
+      const hasStoredHighWatermark = Object.prototype.hasOwnProperty.call(stored, "highWatermark");
+      const rawHighWatermark = hasStoredHighWatermark
+        ? stored.highWatermark
+        : stream.legacyCursorKey
+          ? connection.cursor[stream.legacyCursorKey]
+          : undefined;
+      const highWatermark = source.normalizeHighWatermark(connection, stream, rawHighWatermark);
+      return {
+        stream,
+        result: await source.pollStream(
+          connection,
+          stream,
+          highWatermark,
+          signal,
+        ),
+        error: null,
+      };
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof ConnectorError && error.code === "unauthorized") throw error;
+      return { stream, result: null, error: streamFailure(error, stream.id) };
+    }
+  }));
+
+  const nextStreams: Record<string, unknown> = { ...storedStreams };
+  const cursor: Record<string, unknown> = { ...connection.cursor };
+  const activities: Omit<NormalizedActivity, "id">[] = [];
+  const streamErrors: ConnectorActivityStreamError[] = [];
+  let nextDelaySeconds = Number.POSITIVE_INFINITY;
+  for (const item of results) {
+    if (item.result) {
+      const highWatermark = source.normalizeHighWatermark(
+        connection,
+        item.stream,
+        item.result.highWatermark,
+      );
+      activities.push(...item.result.activities);
+      nextStreams[item.stream.id] = {
+        highWatermark,
+        checkpointedAt: new Date().toISOString(),
+      };
+      if (item.stream.legacyCursorKey) cursor[item.stream.legacyCursorKey] = highWatermark;
+      nextDelaySeconds = Math.min(
+        nextDelaySeconds,
+        item.result.hasMore
+          ? item.stream.backlogPollIntervalSeconds ?? 5
+          : item.stream.idlePollIntervalSeconds,
+      );
+    } else if (item.error) {
+      streamErrors.push(item.error);
+      nextDelaySeconds = Math.min(
+        nextDelaySeconds,
+        item.stream.failurePollIntervalSeconds ?? 60,
+      );
+    }
+  }
+  cursor.activityStreams = nextStreams;
+  if (!Number.isFinite(nextDelaySeconds)) nextDelaySeconds = 300;
+  return {
+    activities,
+    cursor,
+    nextPollAt: new Date(Date.now() + nextDelaySeconds * 1_000).toISOString(),
+    ...(streamErrors.length > 0 ? { streamErrors } : {}),
+  };
 }
 
 export interface ConnectorAgentExecutionContext {
@@ -163,6 +350,9 @@ export interface ConnectorAdapter {
   handleAuthorizationCallback?(input: ConnectorAuthorizationCallbackInput): Promise<Record<string, unknown>>;
   refreshCredentials?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<Record<string, unknown>>;
   revoke?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<void>;
+  webhookActivity?: ConnectorWebhookActivitySource;
+  pollingActivity?: ConnectorPollingActivitySource;
+  /** @deprecated Implement pollingActivity for new connectors. */
   poll?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<ConnectorPollResult>;
   hydrateResource?(connection: ConnectorConnectionContext, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
@@ -193,6 +383,7 @@ export class ConnectorError extends Error {
       | "invalid_configuration"
       | "unauthorized"
       | "invalid_signature"
+      | "invalid_payload"
       | "provider_error"
       | "unsupported_capability"
       | "payload_too_large"

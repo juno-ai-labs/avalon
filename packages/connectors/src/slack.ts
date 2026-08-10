@@ -142,7 +142,11 @@ const query = { type: "string", minLength: 1 };
 const boundedLimit = { type: "integer", minimum: 1, maximum: 100 };
 
 export const slackTools: ToolDefinition[] = [
-  tool("search", "Search Slack messages, files, channels, and users visible to the authorized principal. Prefer search_messages when only messages are needed.", SlackCapabilities.search, "read", { query, limit: { type: "integer", minimum: 1, maximum: 20 } }, ["query"]),
+  tool("search", "Search Slack messages, files, channels, and users visible to the authorized principal. Prefer search_messages when only messages are needed.", SlackCapabilities.search, "read", {
+    query,
+    limit: { type: "integer", minimum: 1, maximum: 20 },
+    cursor: { type: ["string", "null"], maxLength: 2_000 },
+  }, ["query"]),
   tool("search_messages", "Search Slack messages relevant to a query. Workspace-bot search is limited by Slack to a user-initiated event and public-channel access.", SlackCapabilities.search, "read", {
     query,
     channel_id: { type: ["string", "null"] },
@@ -153,6 +157,7 @@ export const slackTools: ToolDefinition[] = [
     sort_dir: { type: "string", enum: ["asc", "desc"] },
     include_bots: { type: "boolean" },
     limit: { type: "integer", minimum: 1, maximum: 20 },
+    cursor: { type: ["string", "null"], maxLength: 2_000 },
   }, ["query"]),
   tool("find_users", "Find Slack users by name, display name, real name, email address, or user ID.", SlackCapabilities.usersRead, "read", {
     query,
@@ -276,6 +281,8 @@ const SlackUserSchema = z.object({
   deleted: z.boolean().optional(),
   is_bot: z.boolean().optional(),
   is_app_user: z.boolean().optional(),
+  is_restricted: z.boolean().optional(),
+  is_ultra_restricted: z.boolean().optional(),
   profile: z.object({
     display_name: z.string().optional(),
     real_name: z.string().optional(),
@@ -525,7 +532,11 @@ const SlackMcpInputSchemas = {
 export type SlackMcpTool = keyof typeof SlackMcpInputSchemas;
 
 const SlackDirectInputSchemas = {
-  search: z.object({ query: z.string().min(1).max(4_000), limit: z.number().int().min(1).max(20).optional() }).strict(),
+  search: z.object({
+    query: z.string().min(1).max(4_000),
+    limit: z.number().int().min(1).max(20).optional(),
+    cursor: z.string().min(1).max(2_000).nullable().optional(),
+  }).strict(),
   search_messages: z.object({
     query: z.string().min(1).max(4_000),
     channel_id: SlackIdSchema.nullable().optional(),
@@ -536,6 +547,7 @@ const SlackDirectInputSchemas = {
     sort_dir: z.enum(["asc", "desc"]).optional(),
     include_bots: z.boolean().optional(),
     limit: z.number().int().min(1).max(20).optional(),
+    cursor: z.string().min(1).max(2_000).nullable().optional(),
   }).strict(),
   find_users: z.object({
     query: z.string().min(1).max(500),
@@ -1109,6 +1121,7 @@ async function executeSlackDirectTool(
         content_types: ["messages", "files", "channels", "users"],
         include_context_messages: true,
         limit: args.limit ?? 20,
+        ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
       return { output: result.results, summary: "Searched Slack messages, files, channels, and users" };
     }
@@ -1130,6 +1143,7 @@ async function executeSlackDirectTool(
         sort: args.sort ?? "score",
         sort_dir: args.sort_dir ?? "desc",
         limit: args.limit ?? 20,
+        ...(args.cursor ? { cursor: args.cursor } : {}),
       }, context.signal, fetcher);
       return { output: result.results, summary: "Searched Slack messages" };
     }

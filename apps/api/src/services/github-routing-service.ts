@@ -5,7 +5,6 @@ import {
 } from "@avalon/connectors";
 import type { Region } from "@avalon/contracts";
 import type { Env } from "../env";
-import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";
 import {
@@ -18,7 +17,6 @@ import {
 } from "./provider-webhook-service";
 
 export const DEFAULT_GITHUB_INGRESS_BASE_URL = "https://github.with-avalon.com";
-const PENDING_DELIVERY_TTL_MS = 15 * 60_000;
 
 export interface GitHubRegionalWebhookInput {
   rawBody: ArrayBuffer;
@@ -33,6 +31,17 @@ export interface GitHubRegionalSetupInput {
 export interface GitHubRegionalSetupFailureInput {
   state: string;
   errorCode: string;
+}
+
+export interface GitHubRouteStatusInput {
+  installationId: string;
+  region: Region;
+  workspaceId: string;
+  status: "active" | "disabled";
+}
+
+export interface GlobalGitHubRouterRpcBinding {
+  setGitHubRouteStatus(input: GitHubRouteStatusInput): Promise<GitHubRegionalRpcResult<{ updated: true }>>;
 }
 
 export interface GitHubRegionalBridgeRpcBinding {
@@ -156,6 +165,40 @@ export class GitHubRoutingService {
     return this.failSetupInRegion(region, state, errorCode);
   }
 
+  async setInstallationRouteStatus(input: GitHubRouteStatusInput): Promise<void> {
+    validateGitHubRouteStatus(input);
+    if (this.env.AVALON_REGION === "global") {
+      await this.setStatusInGlobal(input);
+      return;
+    }
+    if (!this.env.GLOBAL_GITHUB_ROUTER) {
+      throw new ApiError(503, "github_router_unavailable", "The shared GitHub router is unavailable");
+    }
+    unwrapRegionalResult(await this.env.GLOBAL_GITHUB_ROUTER.setGitHubRouteStatus(input));
+  }
+
+  async setStatusInGlobal(input: GitHubRouteStatusInput): Promise<{ updated: true }> {
+    this.assertGlobalIngress();
+    validateGitHubRouteStatus(input);
+    const at = new Date(this.now()).toISOString();
+    const result = await this.env.DB.prepare(
+      `UPDATE github_installation_routes
+       SET status = ?, updated_at = ?, disabled_at = ?
+       WHERE installation_id = ? AND region = ? AND workspace_id = ?`,
+    ).bind(
+      input.status,
+      at,
+      input.status === "disabled" ? at : null,
+      input.installationId,
+      input.region,
+      input.workspaceId,
+    ).run();
+    if (Number(result.meta.changes ?? 0) !== 1) {
+      throw new ApiError(409, "github_route_not_found", "The GitHub installation route could not be updated");
+    }
+    return { updated: true };
+  }
+
   async ingestGitHub(
     rawBody: Uint8Array | ArrayBuffer,
     inputHeaders: Headers | HeadersInit,
@@ -185,7 +228,9 @@ export class GitHubRoutingService {
     await this.replayPendingBestEffort(delivery.installationId);
     const regions = await this.activeRegions(delivery.installationId);
     if (regions.length === 0) {
-      return this.retainPending(bytes, headers, delivery);
+      // The Global control plane may route opaque bytes, but it must never
+      // retain workspace content before a regional route exists.
+      throw new ApiError(503, "github_route_pending", "The GitHub installation route is not ready; retry this delivery");
     }
 
     const result = await this.dispatch(bytes, headers, delivery, regions);
@@ -268,72 +313,6 @@ export class GitHubRoutingService {
        ORDER BY region`,
     ).bind(installationId).all<{ region: Region }>();
     return (result.results ?? []).map((row) => row.region);
-  }
-
-  private async retainPending(
-    rawBody: Uint8Array,
-    headers: Record<string, string>,
-    delivery: GitHubWebhookDelivery,
-  ): Promise<ProviderWebhookIngestionResult> {
-    const installationId = delivery.installationId;
-    if (installationId === null) {
-      throw new ConnectorError("provider_error", "The pending GitHub delivery has no installation identity");
-    }
-    const payloadRef = `global/github-ingress/pending/${delivery.deliveryId}-${delivery.rawContentHash}.json`;
-    const existing = await this.env.DB.prepare(
-      `SELECT event_type, payload_ref FROM github_ingress_pending_deliveries
-       WHERE delivery_id = ?`,
-    ).bind(delivery.deliveryId).first<{ event_type: string; payload_ref: string }>();
-    if (existing) {
-      if (existing.event_type !== delivery.event || existing.payload_ref !== payloadRef) {
-        throw new ConnectorError(
-          "provider_error",
-          "GitHub reused a pending delivery ID with different event content",
-        );
-      }
-      return { accepted: true, duplicate: true, activityCount: 0 };
-    }
-
-    await this.env.PAYLOADS.put(payloadRef, exactArrayBuffer(rawBody), {
-      httpMetadata: { contentType: "application/json" },
-    });
-    const receivedAt = new Date(this.now()).toISOString();
-    const expiresAt = new Date(this.now() + PENDING_DELIVERY_TTL_MS).toISOString();
-    const insert = await this.env.DB.prepare(
-      `INSERT INTO github_ingress_pending_deliveries
-       (delivery_id, installation_id, event_type, action, signature_header,
-        payload_ref, received_at, expires_at, dispatched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
-       ON CONFLICT(delivery_id) DO NOTHING`,
-    ).bind(
-      delivery.deliveryId,
-      installationId,
-      delivery.event,
-      delivery.action,
-      headers["x-hub-signature-256"],
-      payloadRef,
-      receivedAt,
-      expiresAt,
-    ).run();
-    const duplicate = resultChanges(insert) === 0;
-    if (duplicate) {
-      const winner = await this.env.DB.prepare(
-        `SELECT event_type, payload_ref FROM github_ingress_pending_deliveries
-         WHERE delivery_id = ?`,
-      ).bind(delivery.deliveryId).first<{ event_type: string; payload_ref: string }>();
-      if (!winner || winner.event_type !== delivery.event || winner.payload_ref !== payloadRef) {
-        await this.deletePendingPayloadBestEffort(payloadRef);
-        throw new ConnectorError(
-          "provider_error",
-          "GitHub reused a pending delivery ID with different event content",
-        );
-      }
-    }
-    return {
-      accepted: true,
-      duplicate,
-      activityCount: 0,
-    };
   }
 
   private async replayPending(installationId: string): Promise<void> {
@@ -434,11 +413,7 @@ export class GitHubRoutingService {
     rawBody: Uint8Array,
     headers: Record<string, string>,
   ): Promise<GitHubWebhookDelivery> {
-    const maxBytes = numericEnv(
-      this.env,
-      "PROVIDER_WEBHOOK_MAX_BYTES",
-      2_000_000,
-    );
+    const maxBytes = 25 * 1024 * 1024;
     if (rawBody.byteLength > maxBytes) {
       throw new ConnectorError("payload_too_large", "The GitHub webhook exceeded the configured size limit");
     }
@@ -471,6 +446,14 @@ export class GitHubRoutingService {
     if (this.env.AVALON_REGION !== "global") {
       throw new ApiError(503, "github_ingress_misconfigured", "The shared GitHub ingress must run in the Global control plane");
     }
+  }
+}
+
+function validateGitHubRouteStatus(input: GitHubRouteStatusInput): void {
+  if (!/^\d{1,32}$/u.test(input.installationId)
+    || !["global", "eu"].includes(input.region)
+    || !input.workspaceId) {
+    throw new ApiError(422, "invalid_github_route", "The GitHub installation route is invalid");
   }
 }
 
@@ -543,10 +526,6 @@ function exactArrayBuffer(value: Uint8Array): ArrayBuffer {
 
 function isInstallationDeleted(delivery: GitHubWebhookDelivery): boolean {
   return delivery.event === "installation" && delivery.action === "deleted";
-}
-
-function resultChanges(result: D1Result<unknown>): number {
-  return Number(result.meta?.changes ?? 0);
 }
 
 function unwrapRegionalResult<T>(result: GitHubRegionalRpcResult<T>): T {

@@ -256,6 +256,7 @@ export interface Message {
     | 'activity_suggestion'
     | 'system';
   text?: string;
+  contextLabel?: string;
   mentions?: MessageMention[];
   attachments?: MessageAttachment[];
   createdAt: string;
@@ -374,6 +375,14 @@ export interface CreatedWorkstream {
   messageId: string;
   clientMessageId: string;
   createdAt: string;
+}
+
+export interface WorkOpportunity {
+  id: string;
+  version: number;
+  displayPrompt: string;
+  icon: 'brand-github' | 'brand-google' | 'brand-google-drive' | 'brand-notion' | 'brand-slack' | 'linear' | 'plug' | 'webhook' | 'world-search';
+  sourceLabel: string;
 }
 
 export interface AutomationDetail extends AutomationSummary {

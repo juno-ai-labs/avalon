@@ -12,18 +12,16 @@ import {
   TriggerDefinitionSchema,
   WorkstreamWorkflowInputSchema,
   type ActivityQueueMessage,
-  type ActivityRoutingResult,
   type Message as AvalonMessage,
   type WorkstreamWorkflowInput
 } from "@avalon/contracts";
 import { z } from "zod";
 
-import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
-import { truncateUtf16Safe } from "../lib/text";
+import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 
 interface ActivityRow {
   id: string;
@@ -44,6 +42,7 @@ interface ActivityRow {
   summary: string;
   text_snippet: string;
   visibility_json: string;
+  target_user_ids_json: string;
   entity_keys_json: string;
   metadata_json: string;
   processing_status: "pending" | "processing" | "processed" | "failed";
@@ -54,6 +53,7 @@ interface SubscriptionRow {
   scope: "personal" | "workspace";
   owner_user_id: string | null;
   execution_principal_json: string;
+  connector_bindings_json: string;
   trigger_definitions_json: string;
   template_name: string;
   template_description: string;
@@ -141,10 +141,11 @@ function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boo
   if (activity.connection_scope === "personal") {
     return activity.connection_owner_user_id === ownerUserId;
   }
+  const explicitTargets = parseStrings(activity.target_user_ids_json);
   const visibility = parseRecord(activity.visibility_json);
-  const restricted = z.array(z.string()).safeParse(
-    visibility.targetUserIds ?? visibility.allowedUserIds
-  );
+  const restricted = z.array(z.string()).safeParse(explicitTargets.length > 0
+    ? explicitTargets
+    : visibility.targetUserIds ?? visibility.allowedUserIds);
   return !restricted.success || restricted.data.length === 0 || restricted.data.includes(ownerUserId);
 }
 
@@ -154,6 +155,34 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
 }
 
 export const activityQueueConsumer = consumeActivityQueue;
+
+/** Repairs the commit-before-queue-send window for every connector ingress. */
+export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
+  const staleBefore = new Date(Date.now() - 60_000).toISOString();
+  const pending = await env.DB.prepare(
+    `SELECT a.id, a.workspace_id, w.region
+     FROM activities a
+     JOIN workspaces w ON w.id = a.workspace_id
+     WHERE a.processing_status = 'pending' AND a.received_at <= ?
+       AND w.region = ?
+     ORDER BY a.received_at ASC, a.id ASC
+     LIMIT ?`,
+  ).bind(staleBefore, env.AVALON_REGION, Math.max(1, Math.min(limit, 100))).all<{
+    id: string;
+    workspace_id: string;
+    region: "global" | "eu";
+  }>();
+  if (pending.results.length === 0) return 0;
+  await env.ACTIVITY_QUEUE.sendBatch(pending.results.map((activity) => ({
+    body: ActivityQueueMessageSchema.parse({
+      region: activity.region,
+      workspaceId: activity.workspace_id,
+      activityId: activity.id,
+      attempt: 0,
+    }),
+  })));
+  return pending.results.length;
+}
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
@@ -229,7 +258,10 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     const directWorkstreamIds = await routeDirectWatches(env, activity);
     const automationWorkstreamIds = await runMatchingAutomations(env, activity);
     for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
-    await routeContextually(env, activity, directWorkstreamIds);
+    const routedContextually = await routeContextually(env, activity, directWorkstreamIds);
+    if (directWorkstreamIds.size === 0 && !routedContextually) {
+      await enqueueActivityOpportunity(env, activity.id);
+    }
 
     await env.DB.prepare(
       `UPDATE activities
@@ -405,7 +437,7 @@ async function injectActivityMessage(
     createdAt,
     editedAt: null
   };
-  await publishRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
+  await publishWorkstreamRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
     type: "message_created",
     message: canonicalMessage
   });
@@ -415,6 +447,7 @@ async function injectActivityMessage(
 async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<Set<string>> {
   const subscriptions = await env.DB.prepare(
     `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
+            s.connector_bindings_json,
             tv.trigger_definitions_json, t.name AS template_name,
             t.description AS template_description
        FROM automation_subscriptions s
@@ -444,10 +477,11 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
     }
     const parsedTriggers = z.array(TriggerDefinitionSchema).safeParse(triggerDefinitions);
     if (!parsedTriggers.success) continue;
+    const connectorBindings = parseRecord(subscription.connector_bindings_json);
 
     let matched = false;
     for (const trigger of parsedTriggers.data) {
-      if (await triggerMatches(env, activity, trigger, resourceIds)) {
+      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings)) {
         matched = true;
         break;
       }
@@ -483,8 +517,15 @@ async function triggerMatches(
   env: Env,
   activity: ActivityRow,
   trigger: TriggerDefinition,
-  resourceIds: Set<string>
+  resourceIds: Set<string>,
+  connectorBindings: Record<string, unknown>
 ): Promise<boolean> {
+  if (
+    (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") &&
+    !Object.values(connectorBindings).includes(activity.connection_id)
+  ) {
+    return false;
+  }
   if (trigger.type === "connector_activity") {
     return (
       (trigger.connectorType === activity.connector_type || trigger.connectorType === activity.provider) &&
@@ -647,8 +688,8 @@ async function routeContextually(
   env: Env,
   activity: ActivityRow,
   excludedWorkstreamIds: Set<string>
-): Promise<void> {
-  if (!env.OPENROUTER_API_KEY) return;
+): Promise<boolean> {
+  if (!env.OPENROUTER_API_KEY) return false;
   const personalOwner = activity.connection_scope === "personal" ? activity.connection_owner_user_id : null;
   const candidates = await env.DB.prepare(
     `SELECT w.id, w.title, w.objective, w.last_activity_at
@@ -666,7 +707,7 @@ async function routeContextually(
     .bind(activity.workspace_id, personalOwner)
     .all<WorkstreamCandidate>();
   const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
-  if (eligible.length === 0) return;
+  if (eligible.length === 0) return false;
 
   const result = await structuredClient(env).structured({
     messages: renderActivityRoutingMessages({
@@ -690,54 +731,20 @@ async function routeContextually(
     parse: (value) => ActivityRoutingResultSchema.parse(value)
   });
 
-  if (!result.suggest || result.confidence < 0.8 || !result.candidateWorkstreamId) return;
-  if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return;
-  await createSuggestion(env, activity, result);
-}
-
-async function createSuggestion(
-  env: Env,
-  activity: ActivityRow,
-  result: ActivityRoutingResult
-): Promise<void> {
-  const workstreamId = result.candidateWorkstreamId;
-  if (!workstreamId) return;
-  const id = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const inserted = await env.DB.prepare(
-    `INSERT OR IGNORE INTO activity_suggestions (
-       id, workspace_id, activity_id, workstream_id, confidence, reason,
-       matched_entities_json, status, created_at, resolved_at, resolved_by_user_id
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, NULL, NULL)`
-  )
-    .bind(
-      id,
-      activity.workspace_id,
-      activity.id,
-      workstreamId,
-      result.confidence,
-      result.reason,
-      JSON.stringify(result.matchedEntities),
-      createdAt
-    )
-    .run();
-  if ((inserted.meta.changes ?? 0) === 0) return;
-
-  await publishRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
-    type: "activity_suggestion_created",
-    suggestion: {
-      id,
-      activityId: activity.id,
-      workstreamId,
-      title: truncateUtf16Safe(activity.title, 300),
-      summary: truncateUtf16Safe(activity.summary, 2_000),
-      confidence: result.confidence,
-      reason: truncateUtf16Safe(result.reason, 1_200),
-      status: "pending",
-      createdAt,
-      resolvedAt: null
-    }
+  if (!result.suggest || result.confidence < 0.8 || !result.candidateWorkstreamId) return false;
+  if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return false;
+  await createActivitySuggestion(env, {
+    region: activity.workspace_region,
+    workspaceId: activity.workspace_id,
+    activityId: activity.id,
+    activityTitle: activity.title,
+    activitySummary: activity.summary,
+    workstreamId: result.candidateWorkstreamId,
+    confidence: result.confidence,
+    reason: result.reason,
+    matchedEntities: result.matchedEntities,
   });
+  return true;
 }
 
 function structuredClient(env: Env): OpenRouterClient {
@@ -768,24 +775,4 @@ async function isWorkstreamVisibleToUser(
     .bind(workstreamId, userId)
     .first();
   return Boolean(visible);
-}
-
-async function publishRoomEvent(
-  env: Env,
-  region: "global" | "eu",
-  workspaceId: string,
-  workstreamId: string,
-  event: unknown
-): Promise<void> {
-  const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, region, env.APP_ENV);
-  const id = rooms.idFromName(workstreamRoomName(region, workspaceId, workstreamId));
-  const response = await rooms.get(id).fetch(
-    "https://workstream-room/internal/events",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event })
-    }
-  );
-  if (!response.ok) throw new Error(`workstream_event_rejected:${response.status}`);
 }

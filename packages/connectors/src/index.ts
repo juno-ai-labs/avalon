@@ -1,5 +1,6 @@
 import {
   ConnectorManifestSchema,
+  NormalizedActivitySchema,
   type ConnectorManifest,
   type ConnectorSurface,
   type NormalizedActivity,
@@ -10,8 +11,10 @@ import {
   assertPrincipalAccess,
   ConnectorError,
   defineConnectorAgentPlugin,
+  pollCheckpointedActivityStreams,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
+  type ConnectorPollingActivitySource,
   type ResolvedConnectorAdapter,
 } from "./types";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
@@ -30,18 +33,26 @@ export {
   defineConnectorAgentPlugin,
   type ConnectorAgentAdapter,
   type ConnectorAgentExecutionContext,
+  pollCheckpointedActivityStreams,
+  type ConnectorActivityStreamError,
   type ConnectorAgentPluginDescriptor,
   type ConnectorAdapter,
   type ConnectorAuthorizationCallbackInput,
   type ConnectorAuthorizationInput,
   type ConnectorConnectionContext,
   type ConnectorPollResult,
+  type ConnectorPollingActivityResult,
+  type ConnectorPollingActivitySource,
+  type ConnectorPollingActivityStream,
   type ResolvedConnectorAdapter,
   type ConnectorToolContext,
   type ConnectorToolResult,
   type ConnectorNativeAgentAdapter,
   type ConnectorNativeAgentExecutionContext,
   type ConnectorMessagingAgentAdapter,
+  type ConnectorVerifiedActivityWebhook,
+  type ConnectorWebhookActivitySource,
+  type ConnectorWebhookVerificationInput,
 } from "./types";
 export {
   callSlackMcp,
@@ -89,6 +100,7 @@ export {
 } from "./granola";
 export {
   createGitHubConnector,
+  assertGitHubCapabilitiesGranted,
   createGitHubAppJwt,
   getGitHubInstallation,
   mintGitHubInstallationToken,
@@ -224,7 +236,11 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { query: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 25 } },
+      properties: {
+        query: { type: "string" },
+        maxResults: { type: "integer", minimum: 1, maximum: 25 },
+        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+      },
       required: ["query"]
     }
   },
@@ -279,7 +295,10 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { maxResults: { type: "integer", minimum: 1, maximum: 250 } }
+      properties: {
+        maxResults: { type: "integer", minimum: 1, maximum: 250 },
+        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+      }
     }
   },
   {
@@ -296,7 +315,8 @@ export const googleTools: ToolDefinition[] = [
         timeMin: { type: "string", format: "date-time" },
         timeMax: { type: "string", format: "date-time" },
         query: { type: "string" },
-        maxResults: { type: "integer", minimum: 1, maximum: 100 }
+        maxResults: { type: "integer", minimum: 1, maximum: 100 },
+        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
       },
       required: ["timeMin", "timeMax"]
     }
@@ -342,7 +362,11 @@ export const googleTools: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      properties: { query: { type: "string" }, maxResults: { type: "integer", minimum: 1, maximum: 100 } },
+      properties: {
+        query: { type: "string" },
+        maxResults: { type: "integer", minimum: 1, maximum: 100 },
+        pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
+      },
       required: ["query"]
     }
   },
@@ -428,6 +452,7 @@ export const googleTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         documentId: { type: "string" },
+        tabId: { type: "string", minLength: 1, maxLength: 500 },
         text: { type: "string", minLength: 1, maxLength: 100000 }
       },
       required: ["documentId", "text"]
@@ -697,6 +722,7 @@ type GmailChangeRef = z.infer<typeof GmailChangeRefSchema>;
 const GmailPollCursorSchema = z.object({
   historyId: z.string().min(1).optional(),
   pageToken: z.string().min(1).optional(),
+  pageChangeOffset: z.number().int().min(0).max(1_000_000).optional(),
   pendingHistoryId: z.string().min(1).optional(),
   reconciliationHistoryId: z.string().min(1).optional(),
   reconciliationPageToken: z.string().min(1).optional(),
@@ -720,12 +746,6 @@ const DrivePollCursorSchema = z.object({
 type GmailPollCursor = z.infer<typeof GmailPollCursorSchema>;
 type CalendarPollCursor = z.infer<typeof CalendarPollCursorSchema>;
 type DrivePollCursor = z.infer<typeof DrivePollCursorSchema>;
-
-interface GooglePollCursor extends Record<string, unknown> {
-  gmail?: GmailPollCursor;
-  calendar?: CalendarPollCursor;
-  drive?: DrivePollCursor;
-}
 
 export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorAdapter {
   if (!config.clientId || !config.clientSecret || !config.redirectUri) {
@@ -758,12 +778,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     const payload = await safeJsonBounded(response, 256_000);
     if (!response.ok) {
       const reason = readString(payload, "error") ?? "token_refresh_failed";
+      const invalidGrant = reason === "invalid_grant";
+      const retryAfterMs = googleRetryAfterMs(response.headers.get("retry-after"));
       throw new ConnectorError(
-        "unauthorized",
-        reason === "invalid_grant"
+        invalidGrant ? "unauthorized" : "provider_error",
+        invalidGrant
           ? "Google authorization was revoked; reconnect this account"
           : "Google token refresh failed",
-        { reconnectRequired: true, reason, provider: "google", payload }
+        {
+          reconnectRequired: invalidGrant,
+          reason,
+          provider: "google",
+          status: response.status,
+          ...(retryAfterMs != null ? { retryAfterMs } : {}),
+          payload
+        }
       );
     }
     const refreshed = {
@@ -841,15 +870,18 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
 
     let historyId = input.historyId;
     let pageToken = input.pageToken;
+    let pageChangeOffset = input.pageChangeOffset ?? 0;
     let pendingHistoryId = input.pendingHistoryId;
     let pendingChanges = [...input.pendingChanges];
     let pagesFetched = 0;
+    let changesProcessed = 0;
     const activities: Omit<NormalizedActivity, "id">[] = [];
 
-    while (activities.length < GOOGLE_MAX_GMAIL_CHANGES) {
+    while (changesProcessed < GOOGLE_MAX_GMAIL_CHANGES) {
       if (pendingChanges.length > 0) {
-        const batch = pendingChanges.splice(0, GOOGLE_MAX_GMAIL_CHANGES - activities.length);
+        const batch = pendingChanges.splice(0, GOOGLE_MAX_GMAIL_CHANGES - changesProcessed);
         activities.push(...(await hydrateGmailChanges(connection, batch, signal)));
+        changesProcessed += batch.length;
         if (pendingChanges.length > 0) break;
         if (!pageToken && pendingHistoryId) {
           historyId = pendingHistoryId;
@@ -860,6 +892,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
 
       if (pagesFetched >= GOOGLE_MAX_POLL_PAGES) break;
+      const requestedPageToken = pageToken;
       const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/history");
       url.searchParams.set("startHistoryId", historyId);
       url.searchParams.set("maxResults", String(GOOGLE_POLL_PAGE_SIZE));
@@ -882,16 +915,24 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       const payload = await safeJsonBounded(response, GOOGLE_POLL_RESPONSE_BYTES);
       pagesFetched += 1;
-      pendingChanges = extractGmailChangeRefs(payload);
-      if (pendingChanges.length > GOOGLE_MAX_GMAIL_PENDING) {
-        throw new ConnectorError(
-          "payload_too_large",
-          `A Gmail history page contains more than ${GOOGLE_MAX_GMAIL_PENDING} message changes`
-        );
+      const pageChanges = extractGmailChangeRefs(payload).slice(pageChangeOffset);
+      const batch = pageChanges.slice(0, GOOGLE_MAX_GMAIL_CHANGES - changesProcessed);
+      activities.push(...(await hydrateGmailChanges(connection, batch, signal)));
+      changesProcessed += batch.length;
+      if (batch.length < pageChanges.length) {
+        // Gmail can return one history record containing hundreds of nested
+        // message changes. Re-fetch that provider page and resume by offset so
+        // the durable cursor stays bounded instead of dropping or rejecting it.
+        pageToken = requestedPageToken;
+        pageChangeOffset += batch.length;
+        pendingChanges = [];
+        pendingHistoryId = readString(payload, "historyId") ?? historyId;
+        break;
       }
+      pageChangeOffset = 0;
       pageToken = readString(payload, "nextPageToken") ?? undefined;
       pendingHistoryId = readString(payload, "historyId") ?? historyId;
-      if (pendingChanges.length === 0 && !pageToken) {
+      if (!pageToken) {
         historyId = pendingHistoryId;
         pendingHistoryId = undefined;
         break;
@@ -903,6 +944,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       cursor: GmailPollCursorSchema.parse({
         historyId,
         ...(pageToken ? { pageToken } : {}),
+        ...(pageChangeOffset > 0 ? { pageChangeOffset } : {}),
         ...(pendingHistoryId ? { pendingHistoryId } : {}),
         pendingChanges
       })
@@ -970,7 +1012,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(change.messageId)}`
         );
         url.searchParams.set("format", "metadata");
-        for (const header of ["From", "Subject", "Date"]) url.searchParams.append("metadataHeaders", header);
+        for (const header of ["From", "To", "Cc", "Subject", "Date"]) url.searchParams.append("metadataHeaders", header);
         url.searchParams.set(
           "fields",
           "id,threadId,labelIds,snippet,historyId,internalDate,payload(headers)"
@@ -1050,6 +1092,25 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     };
   }
 
+  async function googleCalendarTimeZone(
+    connection: ConnectorConnectionContext,
+    calendarId: string,
+    signal: AbortSignal
+  ): Promise<string> {
+    const configured = typeof connection.config.calendarTimeZone === "string"
+      ? connection.config.calendarTimeZone
+      : null;
+    if (configured) return validGoogleTimeZone(configured);
+    const url = new URL(
+      `https://www.googleapis.com/calendar/v3/users/me/calendarList/${encodeURIComponent(calendarId)}`
+    );
+    url.searchParams.set("fields", "timeZone");
+    const payload = await api(connection, url.toString(), { signal }).then((response) =>
+      safeJsonBounded(response, GOOGLE_POLL_RESPONSE_BYTES)
+    );
+    return validGoogleTimeZone(requiredString(payload, "timeZone", "Google Calendar did not return its time zone"));
+  }
+
   async function pollCalendarCompletions(
     connection: ConnectorConnectionContext,
     input: CalendarPollCursor,
@@ -1063,6 +1124,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       return { activities: [], cursor: { completionCheckedAt: now } };
     }
     const calendarId = googleCalendarId(connection);
+    const calendarTimeZone = await googleCalendarTimeZone(connection, calendarId, signal);
     const completionUntil = input.completionUntil ?? now;
     let pageToken = input.completionPageToken;
     const activities: Omit<NormalizedActivity, "id">[] = [];
@@ -1078,7 +1140,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       url.searchParams.set("maxResults", String(GOOGLE_POLL_PAGE_SIZE));
       url.searchParams.set(
         "fields",
-        "nextPageToken,items(id,status,summary,updated,location,organizer,start,end,recurringEventId,eventType)"
+        "nextPageToken,items(id,status,summary,updated,location,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,start,end,recurringEventId,eventType)"
       );
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       const payload = await api(connection, url.toString(), { signal }).then((response) =>
@@ -1090,7 +1152,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           calendarId,
           event,
           input.completionCheckedAt,
-          completionUntil
+          completionUntil,
+          calendarTimeZone
         );
         if (activity) activities.push(activity);
       }
@@ -1167,6 +1230,62 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     return { activities, cursor: { pageToken, continuing: true } };
   }
 
+  const pollingActivity: ConnectorPollingActivitySource = {
+    streams(connection) {
+      const intervalSeconds = z
+        .number()
+        .int()
+        .min(60)
+        .max(86_400)
+        .parse(connection.config.pollIntervalSeconds ?? 300);
+      return [
+        ...(connection.grantedScopes.includes("gmail.read")
+          ? [{ id: "gmail", legacyCursorKey: "gmail", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5 }]
+          : []),
+        ...(connection.grantedScopes.includes("calendar.read")
+          ? [{ id: "calendar", legacyCursorKey: "calendar", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5 }]
+          : []),
+        ...(connection.grantedScopes.includes("drive.read")
+          ? [{ id: "drive", legacyCursorKey: "drive", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5 }]
+          : []),
+      ];
+    },
+    normalizeHighWatermark(_connection, stream, highWatermark) {
+      const candidate = highWatermark ?? {};
+      if (stream.id === "gmail") return GmailPollCursorSchema.parse(candidate);
+      if (stream.id === "calendar") return CalendarPollCursorSchema.parse(candidate);
+      if (stream.id === "drive") return DrivePollCursorSchema.parse(candidate);
+      throw new ConnectorError("invalid_configuration", `Unknown Google activity stream: ${stream.id}`);
+    },
+    async pollStream(connection, stream, highWatermark, signal) {
+      if (stream.id === "gmail") {
+        const result = await pollGmail(connection, GmailPollCursorSchema.parse(highWatermark), signal);
+        return {
+          activities: result.activities,
+          highWatermark: result.cursor,
+          hasMore: googleStreamHasBacklog("gmail", result.cursor),
+        };
+      }
+      if (stream.id === "calendar") {
+        const result = await pollCalendar(connection, CalendarPollCursorSchema.parse(highWatermark), signal);
+        return {
+          activities: result.activities,
+          highWatermark: result.cursor,
+          hasMore: googleStreamHasBacklog("calendar", result.cursor),
+        };
+      }
+      if (stream.id === "drive") {
+        const result = await pollDrive(connection, DrivePollCursorSchema.parse(highWatermark), signal);
+        return {
+          activities: result.activities,
+          highWatermark: result.cursor,
+          hasMore: googleStreamHasBacklog("drive", result.cursor),
+        };
+      }
+      throw new ConnectorError("invalid_configuration", `Unknown Google activity stream: ${stream.id}`);
+    },
+  };
+
   return {
     agentPlugin: GoogleAgentPluginDescriptor,
     manifest: {
@@ -1237,6 +1356,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         ...credentials,
         providerAccountId: requiredString(identity, "sub", "Google account identity did not include a subject"),
         providerAccountEmail: readString(identity, "email"),
+        providerAccountEmailVerified: identity.email_verified === true,
         providerAccountName: readString(identity, "name")
       };
     },
@@ -1259,51 +1379,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
     },
 
+    pollingActivity,
+
     async poll(connection, signal) {
-      const previous = parseGooglePollCursor(connection.cursor);
-      const cursor: GooglePollCursor = { ...previous };
-      const activities: Omit<NormalizedActivity, "id">[] = [];
-
-      if (connection.grantedScopes.includes("gmail.read")) {
-        const result = await pollGmail(
-          connection,
-          GmailPollCursorSchema.parse(previous.gmail ?? {}),
-          signal
-        );
-        activities.push(...result.activities);
-        cursor.gmail = result.cursor;
-      }
-      if (connection.grantedScopes.includes("calendar.read")) {
-        const result = await pollCalendar(
-          connection,
-          CalendarPollCursorSchema.parse(previous.calendar ?? {}),
-          signal
-        );
-        activities.push(...result.activities);
-        cursor.calendar = result.cursor;
-      }
-      if (connection.grantedScopes.includes("drive.read")) {
-        const result = await pollDrive(
-          connection,
-          DrivePollCursorSchema.parse(previous.drive ?? {}),
-          signal
-        );
-        activities.push(...result.activities);
-        cursor.drive = result.cursor;
-      }
-
-      const intervalSeconds = z
-        .number()
-        .int()
-        .min(60)
-        .max(86_400)
-        .parse(connection.config.pollIntervalSeconds ?? 300);
-      const nextDelaySeconds = googleCursorHasBacklog(cursor) ? 5 : intervalSeconds;
-      return {
-        activities,
-        cursor,
-        nextPollAt: new Date(Date.now() + nextDelaySeconds * 1000).toISOString()
-      };
+      return pollCheckpointedActivityStreams(pollingActivity, connection, signal);
     },
 
     async hydrateResource(connection, resource, signal) {
@@ -1341,7 +1420,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         url.searchParams.set("maxAttendees", "50");
         url.searchParams.set(
           "fields",
-          "id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType"
+          "id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType"
         );
         const payload = await api(connection, url.toString(), { signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_HYDRATION_RESPONSE_BYTES)
@@ -1436,10 +1515,15 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         throw new ConnectorError("unsupported_capability", `Connection has not granted ${tool?.capability ?? name}`);
       }
       if (name === "gmail.search") {
-        const args = z.object({ query: z.string().max(2_000), maxResults: z.number().int().min(1).max(25).default(10) }).parse(rawArgs);
+        const args = z.object({
+          query: z.string().max(2_000),
+          maxResults: z.number().int().min(1).max(25).default(10),
+          pageToken: z.string().min(1).max(2_000).optional()
+        }).parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         url.searchParams.set("q", args.query);
         url.searchParams.set("maxResults", String(args.maxResults));
+        if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
         url.searchParams.set("fields", "messages(id,threadId),nextPageToken,resultSizeEstimate");
         const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
@@ -1525,9 +1609,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "calendar.list_calendars") {
-        const args = z.object({ maxResults: z.number().int().min(1).max(250).default(100) }).parse(rawArgs);
+        const args = z.object({
+          maxResults: z.number().int().min(1).max(250).default(100),
+          pageToken: z.string().min(1).max(2_000).optional()
+        }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
         url.searchParams.set("maxResults", String(args.maxResults));
+        if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
         url.searchParams.set(
           "fields",
           "nextPageToken,items(id,summary,description,location,timeZone,summaryOverride,colorId,backgroundColor,foregroundColor,hidden,selected,primary,accessRole,deleted)"
@@ -1548,7 +1636,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             timeMin: z.string().datetime({ offset: true }),
             timeMax: z.string().datetime({ offset: true }),
             query: z.string().max(2_000).optional(),
-            maxResults: z.number().int().min(1).max(100).default(25)
+            maxResults: z.number().int().min(1).max(100).default(25),
+            pageToken: z.string().min(1).max(2_000).optional()
           })
           .parse(rawArgs);
         const calendarId = args.calendarId ?? googleCalendarId(context.connection);
@@ -1560,9 +1649,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         url.searchParams.set("maxResults", String(args.maxResults));
         url.searchParams.set("singleEvents", "true");
         url.searchParams.set("orderBy", "startTime");
+        if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
         url.searchParams.set(
           "fields",
-          "nextPageToken,items(id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType)"
+          "nextPageToken,items(id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType)"
         );
         if (args.query) url.searchParams.set("q", args.query);
         const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
@@ -1588,7 +1678,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         url.searchParams.set("maxAttendees", "50");
         url.searchParams.set(
           "fields",
-          "id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType"
+          "id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType"
         );
         const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
@@ -1682,10 +1772,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "docs.append_text") {
         const args = z.object({
           documentId: z.string().min(1).max(500),
+          tabId: z.string().min(1).max(500).optional(),
           text: z.string().min(1).max(100_000)
         }).parse(rawArgs);
         const payload = await updateGoogleDocument(api, context.connection, args.documentId, [{
-          insertText: { endOfSegmentLocation: { segmentId: "" }, text: args.text }
+          insertText: {
+            endOfSegmentLocation: { segmentId: "", ...(args.tabId ? { tabId: args.tabId } : {}) },
+            text: args.text
+          }
         }], context.signal);
         return {
           output: boundedToolOutput({
@@ -1791,7 +1885,11 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         if (append) url.searchParams.set("insertDataOption", args.insertDataOption ?? "INSERT_ROWS");
         const payload = await api(context.connection, url.toString(), {
           method: append ? "POST" : "PUT",
-          body: JSON.stringify({ range: args.range, majorDimension: "ROWS", values: args.values }),
+          body: JSON.stringify({
+            range: args.range,
+            majorDimension: "ROWS",
+            values: args.values.map((row) => row.map((value) => value === null ? "" : value))
+          }),
           signal: context.signal
         }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         return {
@@ -1801,10 +1899,17 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "drive.search") {
-        const args = z.object({ query: z.string().max(1_000), maxResults: z.number().int().min(1).max(100).default(25) }).parse(rawArgs);
+        const args = z.object({
+          query: z.string().max(1_000),
+          maxResults: z.number().int().min(1).max(100).default(25),
+          pageToken: z.string().min(1).max(2_000).optional()
+        }).parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
         url.searchParams.set("q", `name contains '${escapeDriveQuery(args.query)}' and trashed = false`);
         url.searchParams.set("pageSize", String(args.maxResults));
+        url.searchParams.set("supportsAllDrives", "true");
+        url.searchParams.set("includeItemsFromAllDrives", "true");
+        if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
         url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,modifiedTime,createdTime,webViewLink,trashed,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress),size,md5Checksum,parents)");
         const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
@@ -1883,28 +1988,22 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
   };
 }
 
-function parseGooglePollCursor(value: Record<string, unknown>): GooglePollCursor {
-  const cursor = z.record(z.string(), z.unknown()).parse(value) as GooglePollCursor;
-  return {
-    ...cursor,
-    ...(cursor.gmail ? { gmail: GmailPollCursorSchema.parse(cursor.gmail) } : {}),
-    ...(cursor.calendar ? { calendar: CalendarPollCursorSchema.parse(cursor.calendar) } : {}),
-    ...(cursor.drive ? { drive: DrivePollCursorSchema.parse(cursor.drive) } : {})
-  };
-}
-
-function googleCursorHasBacklog(cursor: GooglePollCursor): boolean {
-  return Boolean(
-    cursor.gmail?.pageToken ||
-      cursor.gmail?.pendingHistoryId ||
-      cursor.gmail?.reconciliationHistoryId ||
-      cursor.gmail?.reconciliationPageToken ||
-      (cursor.gmail?.pendingChanges.length ?? 0) > 0 ||
-      cursor.calendar?.pageToken ||
-      cursor.calendar?.baselining ||
-      cursor.calendar?.completionPageToken ||
-      cursor.drive?.continuing
-  );
+function googleStreamHasBacklog(
+  streamId: "gmail" | "calendar" | "drive",
+  highWatermark: Record<string, unknown>,
+): boolean {
+  if (streamId === "gmail") {
+    const cursor = GmailPollCursorSchema.parse(highWatermark);
+    return Boolean(
+      cursor.pageToken || cursor.pendingHistoryId || cursor.reconciliationHistoryId
+      || cursor.reconciliationPageToken || cursor.pendingChanges.length > 0
+    );
+  }
+  if (streamId === "calendar") {
+    const cursor = CalendarPollCursorSchema.parse(highWatermark);
+    return Boolean(cursor.pageToken || cursor.baselining || cursor.completionPageToken);
+  }
+  return Boolean(DrivePollCursorSchema.parse(highWatermark).continuing);
 }
 
 function extractGmailChangeRefs(payload: Record<string, unknown>): GmailChangeRef[] {
@@ -1949,6 +2048,8 @@ function normalizeGmailActivity(
   const labelIds = readStringArray(message, "labelIds");
   const subjectHeader = gmailHeader(message, "Subject")?.trim();
   const fromHeader = gmailHeader(message, "From")?.trim();
+  const toHeader = gmailHeader(message, "To")?.trim();
+  const ccHeader = gmailHeader(message, "Cc")?.trim();
   const subject = truncateText(subjectHeader || "(no subject)", 300);
   const snippet = truncateText(readString(message, "snippet") ?? "", 1000);
   const occurredAt =
@@ -1978,6 +2079,11 @@ function normalizeGmailActivity(
     entityKeys: [`google:gmail:thread:${threadId}`, `google:gmail:message:${change.messageId}`],
     dedupeKey: identity,
     rawContentHash: null,
+    externalPeople: [
+      ...googleMailboxPeople(connection, fromHeader, "sender"),
+      ...googleMailboxPeople(connection, toHeader, "recipient"),
+      ...googleMailboxPeople(connection, ccHeader, "recipient"),
+    ],
     metadata: {
       changeType: change.kind,
       labelIds,
@@ -1997,7 +2103,7 @@ function calendarEventsUrl(calendarId: string, syncToken?: string, pageToken?: s
   url.searchParams.set("singleEvents", "true");
   url.searchParams.set(
     "fields",
-    "nextPageToken,nextSyncToken,items(id,etag,status,updated,summary,location,htmlLink,creator,organizer,start,end,recurringEventId,originalStartTime,eventType)"
+    "nextPageToken,nextSyncToken,items(id,etag,status,updated,summary,location,htmlLink,creator,organizer,attendees(email,displayName,self,organizer,responseStatus),attendeesOmitted,start,end,recurringEventId,originalStartTime,eventType)"
   );
   if (syncToken) url.searchParams.set("syncToken", syncToken);
   if (pageToken) url.searchParams.set("pageToken", pageToken);
@@ -2018,6 +2124,8 @@ function normalizeCalendarActivity(
   const start = sanitizeCalendarDateTime(readRecord(event, "start"));
   const end = sanitizeCalendarDateTime(readRecord(event, "end"));
   const organizer = sanitizeGooglePerson(readRecord(event, "organizer"));
+  const creator = sanitizeGooglePerson(readRecord(event, "creator"));
+  const attendees = recordArray(event, "attendees");
   const version = readString(event, "etag") ?? updatedAt;
   const identity = `calendar:${calendarId}:${eventId}:${version}`;
   const cancelled = status === "cancelled";
@@ -2042,11 +2150,17 @@ function normalizeCalendarActivity(
     entityKeys: [`google:calendar:${calendarId}:event:${eventId}`],
     dedupeKey: identity,
     rawContentHash: null,
+    externalPeople: googleStructuredPeople(connection, [
+      { person: organizer, role: "organizer" },
+      { person: creator, role: "creator" },
+      ...attendees.map((person) => ({ person, role: "attendee" })),
+    ]),
     metadata: {
       status,
       recurringEventId: readString(event, "recurringEventId"),
       eventType: readString(event, "eventType"),
-      htmlLink: readString(event, "htmlLink")
+      htmlLink: readString(event, "htmlLink"),
+      attendeesOmitted: readBoolean(event, "attendeesOmitted") ?? false
     }
   };
 }
@@ -2056,14 +2170,13 @@ function normalizeCalendarCompletionActivity(
   calendarId: string,
   event: Record<string, unknown>,
   checkedAt: string,
-  completionUntil: string
+  completionUntil: string,
+  calendarTimeZone: string
 ): Omit<NormalizedActivity, "id"> | null {
   const eventId = readString(event, "id");
   if (!eventId || readString(event, "status") === "cancelled") return null;
   const end = sanitizeCalendarDateTime(readRecord(event, "end"));
-  const endedAt = timestampFromValue(
-    typeof end.dateTime === "string" ? end.dateTime : typeof end.date === "string" ? end.date : null
-  );
+  const endedAt = calendarBoundaryInstant(end, calendarTimeZone);
   if (!endedAt || endedAt <= checkedAt || endedAt > completionUntil) return null;
   const title = truncateText(readString(event, "summary")?.trim() || "Untitled event", 300);
   const identity = `calendar:${calendarId}:${eventId}:completed:${endedAt}`;
@@ -2094,10 +2207,16 @@ function normalizeCalendarCompletionActivity(
     entityKeys: [`google:calendar:${calendarId}:event:${eventId}`],
     dedupeKey: identity,
     rawContentHash: null,
+    externalPeople: googleStructuredPeople(connection, [
+      { person: sanitizeGooglePerson(readRecord(event, "organizer")), role: "organizer" },
+      { person: sanitizeGooglePerson(readRecord(event, "creator")), role: "creator" },
+      ...recordArray(event, "attendees").map((person) => ({ person, role: "attendee" })),
+    ]),
     metadata: {
       completedAt: endedAt,
       recurringEventId: readString(event, "recurringEventId"),
-      eventType: readString(event, "eventType")
+      eventType: readString(event, "eventType"),
+      attendeesOmitted: readBoolean(event, "attendeesOmitted") ?? false
     }
   };
 }
@@ -2129,6 +2248,7 @@ function normalizeDriveActivity(
     timestampFromValue(file ? readString(file, "modifiedTime") : null) ??
     now;
   const actor = sanitizeGooglePerson(file ? readRecord(file, "lastModifyingUser") : null);
+  const owners = file ? recordArray(file, "owners") : [];
   const version = [occurredAt, file ? readString(file, "md5Checksum") : null, removed ? "removed" : "changed"]
     .filter((value): value is string => Boolean(value))
     .join(":");
@@ -2151,6 +2271,10 @@ function normalizeDriveActivity(
     entityKeys: [`google:drive:file:${fileId}`],
     dedupeKey: identity,
     rawContentHash: null,
+    externalPeople: googleStructuredPeople(connection, [
+      { person: actor, role: "actor" },
+      ...owners.map((person) => ({ person, role: "owner" })),
+    ]),
     metadata: {
       removed,
       trashed: file ? readBoolean(file, "trashed") : null,
@@ -2159,6 +2283,64 @@ function normalizeDriveActivity(
       mimeType
     }
   };
+}
+
+function googleProviderTenantId(connection: ConnectorConnectionContext): string | null {
+  return readString(connection.credentials, "providerAccountId")
+    ?? readString(connection.credentials, "sub")
+    ?? null;
+}
+
+function googleMailboxPeople(
+  connection: ConnectorConnectionContext,
+  header: string | null | undefined,
+  role: string,
+): NonNullable<NormalizedActivity["externalPeople"]> {
+  if (!header) return [];
+  const seen = new Set<string>();
+  return [...header.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu)].flatMap((match) => {
+    const email = match[0]!.toLowerCase();
+    if (seen.has(email)) return [];
+    seen.add(email);
+    return [{
+      provider: "google",
+      providerTenantId: googleProviderTenantId(connection),
+      providerUserId: null,
+      handle: null,
+      email,
+      displayName: null,
+      role,
+      sourceText: header.slice(0, 1_000),
+    }];
+  }).slice(0, 100);
+}
+
+function googleStructuredPeople(
+  connection: ConnectorConnectionContext,
+  candidates: Array<{ person: Record<string, unknown>; role: string }>,
+): NonNullable<NormalizedActivity["externalPeople"]> {
+  const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
+  const seen = new Set<string>();
+  for (const { person, role } of candidates) {
+    const providerUserId = readString(person, "id");
+    const email = readString(person, "emailAddress") ?? readString(person, "email");
+    const displayName = readString(person, "displayName");
+    if (!providerUserId && !email && !displayName) continue;
+    const key = `${role}:${providerUserId ?? ""}:${email ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    people.push({
+      provider: "google",
+      providerTenantId: googleProviderTenantId(connection),
+      providerUserId,
+      handle: null,
+      email,
+      displayName,
+      role,
+      sourceText: JSON.stringify(person).slice(0, 1_000),
+    });
+  }
+  return people.slice(0, 100);
 }
 
 function googleDriveResourceType(mimeType: string | null): "drive_file" | "google_doc" | "google_sheet" {
@@ -2369,6 +2551,7 @@ function sanitizeCalendarEvent(payload: Record<string, unknown>, calendarId: str
       organizer: readBoolean(attendee, "organizer") ?? false
     })),
     attendeesTruncated: recordArray(payload, "attendees").length > 50,
+    attendeesOmitted: readBoolean(payload, "attendeesOmitted") ?? false,
     attachments: recordArray(payload, "attachments").slice(0, 20).map((attachment) => ({
       fileId: readString(attachment, "fileId"),
       title: truncateNullable(readString(attachment, "title"), 1000),
@@ -2702,6 +2885,62 @@ function googleCalendarId(connection: ConnectorConnectionContext): string {
   return z.string().min(1).max(1024).parse(connection.config.calendarId ?? "primary");
 }
 
+function validGoogleTimeZone(value: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: value }).resolvedOptions().timeZone;
+  } catch {
+    throw new ConnectorError("provider_error", `Google Calendar returned an invalid time zone: ${value}`);
+  }
+}
+
+function calendarBoundaryInstant(
+  value: Record<string, unknown>,
+  calendarTimeZone: string
+): string | null {
+  if (typeof value.dateTime === "string") return timestampFromValue(value.dateTime);
+  if (typeof value.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value.date)) return null;
+  const [year, month, day] = value.date.split("-").map(Number);
+  if (year == null || month == null || day == null) return null;
+  const target = Date.UTC(year, month - 1, day);
+  let guess = target;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: calendarTimeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23"
+      }).formatToParts(new Date(guess))
+        .filter((part) => part.type !== "literal")
+        .map((part) => [part.type, Number(part.value)])
+    );
+    const represented = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second)
+    );
+    const difference = target - represented;
+    if (difference === 0) break;
+    guess += difference;
+  }
+  return new Date(guess).toISOString();
+}
+
+function googleRetryAfterMs(value: string | null): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^\d+(?:\.\d+)?$/u.test(trimmed)) return Math.max(0, Math.ceil(Number(trimmed) * 1_000));
+  const at = Date.parse(trimmed);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
 function assertGoogleCapability(connection: ConnectorConnectionContext, capability: string): void {
   if (!connection.grantedScopes.includes(capability)) {
     throw new ConnectorError("unsupported_capability", `Connection has not granted ${capability}`);
@@ -2871,10 +3110,30 @@ export interface VerifiedWebhook {
   signatureHash: string;
 }
 
+const GenericWebhookEventSchema = z.object({
+  provider_event_id: z.string().trim().min(1).max(500).optional(),
+  id: z.string().trim().min(1).max(500).optional(),
+  event_type: z.string().trim().min(1).max(500).optional(),
+  resource_type: z.string().trim().min(1).max(200).nullable().optional(),
+  provider_resource_id: z.string().trim().min(1).max(500).nullable().optional(),
+  actor: z.record(z.string(), z.unknown()).optional(),
+  subject: z.record(z.string(), z.unknown()).optional(),
+  occurred_at: z.string().datetime({ offset: true }).optional(),
+  title: z.string().trim().min(1).max(500).optional(),
+  summary: z.string().max(4_000).optional(),
+  text: z.string().max(50_000).optional(),
+  text_snippet: z.string().max(4_000).optional(),
+  entity_keys: z.array(z.string().trim().min(1).max(500)).max(100).optional(),
+  dedupe_key: z.string().trim().min(1).max(500).optional(),
+  target_user_ids: z.array(z.string().uuid()).max(100).optional(),
+  external_people: z.array(z.unknown()).max(100).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}).passthrough();
+
 export async function verifyGenericWebhook(input: {
   secret: string;
   signatureHeader: string | null;
-  body: string;
+  body: string | Uint8Array;
   now?: number;
   replayWindowSeconds?: number;
 }): Promise<VerifiedWebhook> {
@@ -2885,27 +3144,41 @@ export async function verifyGenericWebhook(input: {
       .filter((entry): entry is [string, string] => entry.length === 2)
   );
   const timestamp = Number(components.t);
-  const signature = components.v1;
-  if (!Number.isFinite(timestamp) || !signature) {
+  const signature = components.v1?.toLowerCase();
+  if (!Number.isFinite(timestamp) || !signature || !/^[0-9a-f]{64}$/u.test(signature)) {
     throw new ConnectorError("invalid_signature", "Missing webhook timestamp or signature");
   }
   const now = input.now ?? Math.floor(Date.now() / 1000);
   if (Math.abs(now - timestamp) > (input.replayWindowSeconds ?? 300)) {
     throw new ConnectorError("invalid_signature", "Webhook timestamp is outside the replay window");
   }
-  const expected = await hmacHex(input.secret, `${timestamp}.${input.body}`);
-  if (!constantTimeEqual(expected, signature.toLowerCase())) {
+  const bodyBytes = typeof input.body === "string" ? new TextEncoder().encode(input.body) : input.body;
+  const prefix = new TextEncoder().encode(`${timestamp}.`);
+  const signedBytes = new Uint8Array(prefix.byteLength + bodyBytes.byteLength);
+  signedBytes.set(prefix);
+  signedBytes.set(bodyBytes, prefix.byteLength);
+  const expected = await hmacHex(input.secret, signedBytes);
+  if (!constantTimeEqual(expected, signature)) {
     throw new ConnectorError("invalid_signature", "Webhook signature does not match");
   }
   let event: unknown;
   try {
-    event = JSON.parse(input.body) as unknown;
-  } catch {
-    throw new ConnectorError("invalid_signature", "Webhook body is not valid JSON");
+    const text = typeof input.body === "string"
+      ? input.body
+      : new TextDecoder("utf-8", { fatal: true }).decode(input.body);
+    event = JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new ConnectorError("invalid_payload", "Webhook body is not valid UTF-8 JSON", error);
+  }
+  const parsed = GenericWebhookEventSchema.safeParse(event);
+  if (!parsed.success) {
+    throw new ConnectorError("invalid_payload", "Webhook body does not match the generic activity schema", {
+      issues: parsed.error.issues.slice(0, 20).map((issue) => ({ path: issue.path.join("."), message: issue.message })),
+    });
   }
   return {
     timestamp,
-    event: z.record(z.string(), z.unknown()).parse(event),
+    event: parsed.data,
     signatureHash: await sha256(signature)
   };
 }
@@ -2928,6 +3201,65 @@ export const GenericWebhookAgentPluginDescriptor = defineConnectorAgentPlugin({
 export function createGenericWebhookConnector(): ConnectorAdapter {
   return {
     agentPlugin: GenericWebhookAgentPluginDescriptor,
+    webhookActivity: {
+      async verify(input) {
+        if (!input.verificationSecret) {
+          throw new ConnectorError("invalid_configuration", "Generic webhook verification is not configured");
+        }
+        const rawBody = input.rawBodyBytes ?? new TextEncoder().encode(input.rawBody);
+        if (rawBody.byteLength > input.maxBytes) {
+          throw new ConnectorError("payload_too_large", "Generic webhook payload exceeds the configured limit");
+        }
+        const verified = await verifyGenericWebhook({
+          secret: input.verificationSecret,
+          signatureHeader: input.headers.get("x-avalon-signature"),
+          body: rawBody,
+          now: Math.floor(input.now / 1_000),
+          replayWindowSeconds: Math.floor((input.replayWindowMs ?? 300_000) / 1_000),
+        });
+        return {
+          deliveryId: readString(verified.event, "provider_event_id")
+            ?? readString(verified.event, "id")
+            ?? verified.signatureHash,
+          eventType: readString(verified.event, "event_type") ?? "webhook.received",
+          providerAccountId: null,
+          bodyHash: await sha256(rawBody),
+          receiptKey: verified.signatureHash,
+          event: verified.event,
+        };
+      },
+      normalize(connection, delivery, payloadRef) {
+        const event = GenericWebhookEventSchema.parse(delivery.event);
+        const providerResourceId = readString(event, "provider_resource_id");
+        const now = new Date().toISOString();
+        const activityScope = googleActivityScope(connection);
+        const requestedTargets = event.target_user_ids ?? [];
+        return NormalizedActivitySchema.omit({ id: true }).parse({
+          ...activityScope,
+          targetUserIds: connection.scope === "workspace"
+            ? requestedTargets
+            : activityScope.targetUserIds,
+          provider: "generic_webhook",
+          providerEventId: delivery.deliveryId,
+          eventType: delivery.eventType,
+          resourceType: readString(event, "resource_type"),
+          providerResourceId,
+          actor: readRecord(event, "actor") ?? {},
+          subject: readRecord(event, "subject") ?? {},
+          occurredAt: timestampFromValue(readString(event, "occurred_at")) ?? now,
+          receivedAt: now,
+          title: readString(event, "title") ?? "Webhook event received",
+          summary: readString(event, "summary") ?? "",
+          textSnippet: truncateText(readString(event, "text") ?? readString(event, "text_snippet") ?? "", 4_000),
+          payloadRef,
+          entityKeys: readStringArray(event, "entity_keys"),
+          dedupeKey: readString(event, "dedupe_key") ?? delivery.deliveryId,
+          rawContentHash: delivery.bodyHash,
+          externalPeople: normalizeGenericWebhookExternalPeople(event.external_people),
+          metadata: readRecord(event, "metadata") ?? {},
+        });
+      },
+    },
     manifest: {
       type: "generic_webhook",
       displayName: "Generic webhook",
@@ -2955,6 +3287,30 @@ export class ConnectorRegistry {
   constructor(adapters: ConnectorAdapter[]) {
     for (const adapter of adapters) {
       const manifest = ConnectorManifestSchema.parse(adapter.manifest);
+      if (manifest.supportsPolling && manifest.activityTypes.length > 0 && !adapter.pollingActivity && !adapter.poll) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          `Connector ${manifest.type} declares polled activity without a polling activity source`,
+        );
+      }
+      if (adapter.pollingActivity && !manifest.supportsPolling) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          `Connector ${manifest.type} implements polling activity but does not declare it`,
+        );
+      }
+      if (manifest.supportsWebhooks && manifest.activityTypes.length > 0 && !adapter.webhookActivity) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          `Connector ${manifest.type} declares webhook activity without a webhook activity source`,
+        );
+      }
+      if (adapter.webhookActivity && !manifest.supportsWebhooks) {
+        throw new ConnectorError(
+          "invalid_configuration",
+          `Connector ${manifest.type} implements webhook activity but does not declare it`,
+        );
+      }
       const plugin = adapter.agentPlugin;
       if (plugin.providerType !== manifest.type) {
         throw new ConnectorError(
@@ -3254,7 +3610,7 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-async function hmacHex(secret: string, message: string): Promise<string> {
+async function hmacHex(secret: string, message: string | Uint8Array): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -3262,12 +3618,19 @@ async function hmacHex(secret: string, message: string): Promise<string> {
     false,
     ["sign"]
   );
-  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    toArrayBuffer(typeof message === "string" ? new TextEncoder().encode(message) : message),
+  );
   return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+async function sha256(value: string | Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    toArrayBuffer(typeof value === "string" ? new TextEncoder().encode(value) : value),
+  );
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -3284,6 +3647,43 @@ function readString(value: unknown, key: string): string | null {
   if (!value || typeof value !== "object") return null;
   const nested = (value as Record<string, unknown>)[key];
   return typeof nested === "string" ? nested : null;
+}
+
+function normalizeGenericWebhookExternalPeople(
+  value: unknown,
+): NonNullable<NormalizedActivity["externalPeople"]> {
+  if (!Array.isArray(value)) return [];
+  const schema = NormalizedActivitySchema.shape.externalPeople.unwrap().element;
+  const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
+  for (const candidate of value.slice(0, 100)) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const record = candidate as Record<string, unknown>;
+    const required = (key: string, maximum: number): string | null => {
+      const raw = readString(record, key)?.trim();
+      return raw ? raw.slice(0, maximum) : null;
+    };
+    const nullable = (key: string, maximum: number): string | null => {
+      const raw = readString(record, key)?.trim();
+      return raw ? raw.slice(0, maximum) : null;
+    };
+    const emailCandidate = nullable("email", 254)?.toLowerCase() ?? null;
+    const email = emailCandidate && z.string().email().safeParse(emailCandidate).success
+      ? emailCandidate
+      : null;
+    const normalized = {
+      provider: required("provider", 80),
+      providerTenantId: nullable("providerTenantId", 200),
+      providerUserId: nullable("providerUserId", 200),
+      handle: nullable("handle", 200),
+      email,
+      displayName: nullable("displayName", 180),
+      role: required("role", 80),
+      sourceText: required("sourceText", 1_000),
+    };
+    const parsed = schema.safeParse(normalized);
+    if (parsed.success) people.push(parsed.data);
+  }
+  return people;
 }
 
 function readNestedString(value: unknown, parent: string, key: string): string | null {

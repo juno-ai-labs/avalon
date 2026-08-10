@@ -40,7 +40,7 @@ The capability check is enforced for every tool invocation. The current Google t
 
 Docs and Sheets operations use their native provider APIs. Docs reads return bounded document structure and text; writes create a document, append plain text, or replace exact text. Sheets reads return bounded spreadsheet metadata or formatted values from an explicit A1 range; writes create a spreadsheet or update/append bounded row values. Drive download/export remains available for file-oriented retrieval, but it does not replace the native Docs and Sheets operations.
 
-Google activity ingestion is polling-only. Gmail history IDs, Calendar sync/completion cursors, and Drive change page tokens are retained and committed only after canonical activities are persisted. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Avalon does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Avalon resource watches route the normalized polled activity and must not be confused with provider push delivery.
+Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Avalon does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Avalon resource watches route the normalized polled activity and must not be confused with provider push delivery.
 
 A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
 
@@ -56,7 +56,7 @@ The agent can list repositories and commits, read files, inspect and create/upda
 
 Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Avalon owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants `app:assignable` and `app:mentionable` for activation plus `write` for the deterministic source-comment acknowledgement; resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams, create/update issues, and create comments.
 
-Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning Global/EU workspace app connection, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Personal connections support interactive tools and scheduled queries but do not yet consume organization-wide real-time deliveries; that prevents private-team events from crossing user boundaries before durable per-resource authorization is available. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
+Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning Global/EU connections, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Workspace app connections receive matching resource events directly. A personal connection receives a delivery only after its own token proves access to the signed resource or a signed parent in one bounded GraphQL probe; its normalized activity remains personal and targets only its Avalon owner. Authorization loss marks that connection `needs_reconnect`, and lifecycle/native-agent events never fan out to personal connections. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
 
 The native-agent surface is a control-plane protocol, not a model-callable tool. `ConnectorAdapter.nativeAgent` supplies the typed invocation and outbound protocol facet; the manifest separately records `runtimeStatus`. Linear is currently `protocol_only`: the provider schemas and GraphQL operations exist, but the coordinating session-to-workstream runtime is deliberately not advertised as operational. Its descriptor records preview maturity, delegation/mention/follow-up invocation, authored activity kinds, cancellation, links, plans, proactive sessions, Linear's five-second webhook response deadline, and the ten-second first-activity deadline.
 
@@ -72,13 +72,13 @@ Notion's one-time webhook verification token is accepted through a guarded regio
 
 Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes Granola's six read tools for querying meetings, listing folders and meetings, reading meeting details and transcripts, and inspecting the connected account. A personal connection remains available only to its Avalon owner.
 
-A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Avalon creates the Granola webhook endpoint during installation with the required `workspace` scope and note access/edit/generation events. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
+A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Avalon creates the Granola webhook endpoint during installation with Granola's required `workspace` scope and note access/edit/generation events. This admits notes visible through that Workspace API key. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Granola's delivery is a change signal, so Avalon hydrates the current note through `GET /v1/notes/{note_id}` before opportunity admission. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
 
 The workspace key and the webhook signing secret are encrypted in the workspace's regional D1 database with AES-GCM and connection-ID additional authenticated data. The plaintext key is accepted only by the admin-only setup request, is never stored in connection configuration, provider identifiers, or audit data, and is never returned to the desktop. One active Granola workspace connection is allowed per Avalon workspace; one active personal Granola connection is allowed per member and workspace.
 
 ## X
 
-X is a workspace-only, read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
+X is a workspace-only, read-only public-data connector backed by Avalon's regional TwitterAPI.io account; it is not an X OAuth connection and does not represent an authorized X user. It provides public user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
 
 ## Web discovery
 
@@ -94,7 +94,31 @@ X-Avalon-Signature: t=<seconds>,v1=<hex HMAC-SHA256 of "<seconds>.<raw body>">
 
 Avalon validates time, signature, replay receipt, body schema, scope, and dedupe key before normalizing an activity. Transcript providers can use this connector, but the product must not label it a native Granola integration.
 
+Settings exposes personal and administrator-only workspace webhook creation. Creation accepts an idempotency key so a retried response returns the same endpoint and still-current one-time secret. Owners can rotate a webhook secret later; rotation keeps the endpoint stable and invalidates the old secret immediately.
+
+The request body must be a JSON object no larger than the regional provider-webhook limit. The supported fields are:
+
+- `provider_event_id` or `id`: stable source delivery identity, up to 500 characters. If both are absent, Avalon derives an identity from the normalized signature.
+- `event_type`: source event name, up to 500 characters. Omission becomes `webhook.received`; a connection configured with allowed event types rejects names outside that allowlist.
+- `resource_type` and `provider_resource_id`: optional stable source resource identity.
+- `occurred_at`: optional ISO 8601 timestamp with an explicit offset.
+- `title`, `summary`, and `text` or `text_snippet`: bounded human-readable evidence. Only the compact normalized snippet enters activity metadata; the exact signed body remains in regional payload storage.
+- `actor` and `subject`: optional JSON objects describing the source actor and object.
+- `entity_keys`: up to 100 stable correlation keys; `dedupe_key`: an optional stable idempotency key.
+- `target_user_ids`: for workspace connections only, up to 100 active members of that same Avalon workspace. Personal connections always target their owner and ignore supplied targets.
+- `external_people`: up to 100 bounded external-person references. Generic-webhook claims remain unverified source evidence and can never create a reusable verified identity mapping.
+- `metadata`: optional provider-specific JSON metadata.
+
+Avalon verifies the HMAC over the exact received bytes before UTF-8 decoding or JSON parsing. Invalid signatures return `401`, malformed or schema-invalid bodies return `400`, disallowed events or non-member targets return `422`, identity/dedupe collisions return `409`, oversized bodies return `413`, and new deliveries return `202` (`200` when the same delivery is already known). Senders should retry network failures and `5xx` responses with exponential backoff using the same identity and exact body; they must not reuse an identity or dedupe key with changed content.
+
 ## Activity ingestion
+
+Connectors expose one of two provider-facing activity facets while sharing the same normalized activity, persistence, queue, identity, and opportunity pipeline:
+
+- `webhookActivity.verify` verifies exact raw bytes and returns a provider-neutral delivery envelope; `normalize` applies connection scope and provider-specific semantics. GitHub, Granola, Linear, Notion, and generic webhook use this facet.
+- `pollingActivity` declares named streams and polls each from an opaque provider-native high-watermark. Its required `normalizeHighWatermark` hook canonicalizes sequences, dates, cursors, legacy values, or composite provider state both when checkpoints are loaded and before they are committed. The shared checkpoint runner bounds retries and backlog scheduling while leaving provider hooks in control of checkpoint semantics, pagination, reset/reconciliation rules, and activity normalization. Google currently supplies Gmail, Calendar, and Drive streams.
+
+Manifests and facets are cross-validated at registry construction: a connector that declares provider activity cannot claim webhook or polling support without the corresponding implementation. Slack message events remain addressed Agent ingress rather than a workspace activity feed. X remains an on-demand read connector because a connection does not yet select a monitored user, list, or stream rule from which a safe feed could be constructed.
 
 1. Verify or poll the provider.
 2. Normalize compact metadata and store any large raw body in R2.

@@ -370,12 +370,17 @@ describe("Linear connector", () => {
   it("proves personal webhook visibility against the signed resource or parent and fails closed", async () => {
     const queries: string[] = [];
     const fetcher: FetchLike = async (_input, init) => {
-      const request = JSON.parse(String(init?.body)) as { query: string; variables: { id: string } };
+      const request = JSON.parse(String(init?.body)) as {
+        query: string;
+        variables: Record<string, string>;
+      };
       queries.push(request.query);
-      if (request.query.includes("resource: comment")) return jsonResponse({
-        data: { resource: null },
-        errors: [{ message: "Comment was removed", extensions: { code: "ENTITY_NOT_FOUND" } }],
-      });
+      if (request.query.includes("resource: comment") && request.variables.id === "comment-1") {
+        return jsonResponse({
+          data: { resource: null },
+          errors: [{ message: "Comment was removed", extensions: { code: "ENTITY_NOT_FOUND" } }],
+        }, 400);
+      }
       if (request.query.includes("resource: issue") && request.variables.id === "issue-1") {
         return jsonResponse({ data: { resource: { id: "issue-1" } } });
       }
@@ -410,7 +415,7 @@ describe("Linear connector", () => {
     await expect(canPersonalLinearConnectionAccessWebhook({
       config: linearConfig(fetcher),
       connection,
-      verified: verifiedLinearEvent("Initiative", { id: "initiative-1" }),
+      verified: verifiedLinearEvent("Customer", { id: "customer-1" }),
     })).resolves.toBe(false);
     expect(queries).toHaveLength(queryCount);
 
@@ -420,6 +425,32 @@ describe("Linear connector", () => {
       verified: verifiedLinearEvent("Issue", { id: "issue-2" }),
     })).resolves.toBe(false);
     expect(queries).toHaveLength(queryCount + 1);
+  });
+
+  it("propagates personal webhook authorization failures for reconnect handling", async () => {
+    const connection = personalLinearConnection([LinearCapabilities.read]);
+    delete connection.credentials.accessToken;
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(async () => {
+        throw new Error("Access probing should fail before a provider request");
+      }),
+      connection,
+      verified: verifiedLinearEvent("Issue", { id: "issue-1" }),
+    })).rejects.toMatchObject({
+      code: "unauthorized",
+      details: { reconnectRequired: true },
+    });
+  });
+
+  it("propagates transient personal access-probe failures so the webhook can retry", async () => {
+    await expect(canPersonalLinearConnectionAccessWebhook({
+      config: linearConfig(async () => jsonResponse({
+        data: null,
+        errors: [{ message: "Linear is temporarily unavailable", extensions: { code: "INTERNAL_ERROR" } }],
+      })),
+      connection: personalLinearConnection([LinearCapabilities.read]),
+      verified: verifiedLinearEvent("Issue", { id: "issue-1" }),
+    })).rejects.toMatchObject({ code: "provider_error" });
   });
 
   it("normalizes pre-filtered personal resource events but rejects native-agent events", () => {

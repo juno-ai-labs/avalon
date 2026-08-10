@@ -51,8 +51,11 @@ Set these shared Worker secrets separately in each regional deployment:
 - `SESSION_SIGNING_KEY`
 - `OAUTH_STATE_ENCRYPTION_KEY`
 - `CONNECTOR_CREDENTIALS_KEY`
+- `CONNECTOR_CREDENTIALS_KEYS_JSON` during credential-key rotation; a JSON object mapping old numeric versions to their regional keys
 
 Generate independent signing/encryption material per region. Cloudflare administration credentials belong only in the local deployment environment; they must never become Worker variables.
+
+To rotate connector credentials in one region, keep the old key, set `CONNECTOR_CREDENTIALS_KEY` to a newly generated key, increment `CONNECTOR_CREDENTIALS_KEY_VERSION`, and set `CONNECTOR_CREDENTIALS_KEYS_JSON` to a JSON object such as `{"1":"<old key>"}`. Deploy, exercise connector reads/health checks until every row reports the new version, then remove the old mapping. Never increment the version without retaining every key version still referenced by a row; those rows fail closed until that historical key is restored.
 
 Configure the Azure values in every region where dictation is enabled. `AZURE_OPENAI_ENDPOINT` is the HTTPS resource endpoint, and `AZURE_OPENAI_REALTIME_DEPLOYMENT` is the name of an Azure deployment backed by `gpt-live-transcribe`. Azure's GA transcription contract connects to `/openai/v1/realtime?intent=transcription` and identifies that deployment in `session.audio.input.transcription.model`. Do not place any Azure value behind a `VITE_` prefix. Local development may use one unsuffixed set or `_GLOBAL` and `_EU` overrides in `.env.local`.
 

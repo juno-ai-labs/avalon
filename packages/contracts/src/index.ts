@@ -797,6 +797,24 @@ export const CreateWorkstreamRequestSchema = z.object({
   message: "An opening message must include text or an attachment",
 });
 
+export const WorkOpportunitySchema = z.object({
+  id: IdSchema,
+  version: z.number().int().positive(),
+  displayPrompt: z.string().min(1).max(180),
+  icon: AutomationPluginIconSchema,
+  sourceLabel: z.string().min(1).max(180),
+});
+export const WorkOpportunityPageSchema = z.object({
+  items: z.array(WorkOpportunitySchema).max(4),
+});
+export const RecordWorkOpportunityImpressionsRequestSchema = z.object({
+  opportunityIds: z.array(IdSchema).max(4),
+});
+export const StartWorkOpportunityRequestSchema = z.object({
+  version: z.number().int().positive(),
+  idempotencyKey: z.string().trim().min(1).max(120),
+});
+
 export const UpdateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(4000).optional(),
@@ -856,7 +874,8 @@ export const CompileAutomationRequestSchema = z.object({
 export const CreateWebhookConnectionRequestSchema = z.object({
   displayName: z.string().min(1).max(180),
   scope: ScopeSchema,
-  eventTypes: z.array(z.string().min(1)).default([])
+  eventTypes: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
+  idempotencyKey: z.string().trim().min(1).max(120).optional()
 });
 
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
@@ -975,7 +994,17 @@ export const NormalizedActivitySchema = z.object({
   entityKeys: z.array(z.string()),
   dedupeKey: z.string().min(1),
   rawContentHash: z.string().nullable(),
-  metadata: z.record(z.string(), z.unknown())
+  metadata: z.record(z.string(), z.unknown()),
+  externalPeople: z.array(z.object({
+    provider: z.string().min(1).max(80),
+    providerTenantId: z.string().min(1).max(200).nullable(),
+    providerUserId: z.string().min(1).max(200).nullable(),
+    handle: z.string().min(1).max(200).nullable(),
+    email: z.string().email().max(254).nullable(),
+    displayName: z.string().min(1).max(180).nullable(),
+    role: z.string().min(1).max(80),
+    sourceText: z.string().min(1).max(1000),
+  }).strict()).max(100).optional()
 });
 
 export const ActivityQueueMessageSchema = z.object({
@@ -1023,7 +1052,14 @@ export const SlackOriginContextSchema = z.object({
   matchedAvalonUserId: IdSchema.nullable(),
   nearbyMessagesStatus: z.enum(["available", "unavailable", "not_applicable"]),
   nearbyMessages: z.array(SlackOriginNearbyMessageSchema).max(8),
-  attachments: z.array(SlackOriginAttachmentSchema).max(10)
+  attachments: z.array(SlackOriginAttachmentSchema).max(10),
+  appContext: z.object({
+    entities: z.array(z.object({
+      type: z.string().min(1).max(255),
+      value: z.string().min(1).max(1000),
+      teamId: z.string().min(1).max(255).nullable()
+    }).strict()).max(32)
+  }).strict().nullable().optional()
 }).strict();
 
 /**
@@ -1341,6 +1377,8 @@ export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
+export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
+export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
 export type HyperSight = z.infer<typeof HyperSightSchema>;
 export type HyperSightBlock = z.infer<typeof HyperSightBlockSchema>;
 export type HyperSightBlockRun = z.infer<typeof HyperSightBlockRunSchema>;

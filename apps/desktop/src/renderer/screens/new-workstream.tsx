@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Plus } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatRelative } from '../lib/format';
 import { useFileAttachments } from '../lib/use-file-attachments';
-import type { Message, MessageAttachment, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot } from '../components/primitives';
+import { withSuggestedPrompts } from '../components/suggested-prompts';
 
 interface CreateWorkstreamInput {
   attachmentIds: string[];
@@ -17,6 +18,32 @@ interface CreateWorkstreamInput {
   openingMessage: string;
   participantIds: string[];
 }
+
+const WorkSuggestedPrompts = withSuggestedPrompts<{
+  items: WorkOpportunity[];
+  pendingId: string | null;
+  error?: string;
+  onSelect: (item: WorkOpportunity) => void;
+  onDismiss: (item: WorkOpportunity) => void;
+}>(({ items, pendingId, error, onSelect, onDismiss }) => ({
+  label: 'Suggested work',
+  items: items.map((item) => ({
+    id: item.id,
+    text: item.displayPrompt,
+    icon: item.icon,
+    sourceLabel: item.sourceLabel,
+  })),
+  pendingId,
+  ...(error ? { error } : {}),
+  onSelect: (selected) => {
+    const opportunity = items.find((item) => item.id === selected.id);
+    if (opportunity) onSelect(opportunity);
+  },
+  onDismiss: (selected) => {
+    const opportunity = items.find((item) => item.id === selected.id);
+    if (opportunity) onDismiss(opportunity);
+  },
+}));
 
 function WaitingWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
   const summary = workstream.preview ?? workstream.objective ?? workstream.automationName;
@@ -85,6 +112,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const opportunityKeys = useRef(new Map<string, string>());
   const [message, setMessage] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -102,6 +130,13 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     enabled: Boolean(api),
     refetchInterval: 15_000,
     staleTime: 10_000,
+  });
+  const opportunities = useQuery({
+    queryKey: ['work-opportunities'],
+    queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
+    enabled: Boolean(api),
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
   });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
   const waitingWorkstreams = useMemo(
@@ -165,6 +200,31 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     },
   });
 
+  const startOpportunity = useMutation({
+    mutationFn: (opportunity: WorkOpportunity) => {
+      const key = opportunityKeys.current.get(opportunity.id) ?? crypto.randomUUID();
+      opportunityKeys.current.set(opportunity.id, key);
+      return api!.startWorkOpportunity(opportunity.id, opportunity.version, key);
+    },
+    onSuccess: (created, opportunity) => {
+      opportunityKeys.current.delete(opportunity.id);
+      void queryClient.invalidateQueries({ queryKey: ['work-opportunities'] });
+      void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+      void navigate(`/workstreams/${created.workstream.id}`);
+    },
+  });
+
+  const dismissOpportunity = useMutation({
+    mutationFn: (opportunity: WorkOpportunity) => api!.dismissWorkOpportunity(opportunity.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['work-opportunities'] }),
+  });
+
+  const impressionKey = (opportunities.data ?? []).map((item) => `${item.id}:${item.version}`).join('|');
+  useEffect(() => {
+    const ids = (opportunities.data ?? []).map((item) => item.id);
+    if (ids.length > 0) void api?.recordWorkOpportunityImpressions(ids);
+  }, [api, impressionKey]);
+
   const submit = (): void => {
     const openingMessage = message.trim();
     const readyAttachments = attachmentDraft.ready;
@@ -211,6 +271,16 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             </div>
           </section>
         )}
+
+        <WorkSuggestedPrompts
+          error={opportunities.error?.message ?? startOpportunity.error?.message ?? dismissOpportunity.error?.message}
+          items={opportunities.data ?? []}
+          onDismiss={(opportunity) => dismissOpportunity.mutate(opportunity)}
+          onSelect={(opportunity) => startOpportunity.mutate(opportunity)}
+          pendingId={startOpportunity.isPending
+            ? startOpportunity.variables?.id ?? null
+            : dismissOpportunity.isPending ? dismissOpportunity.variables?.id ?? null : null}
+        />
 
       </div>
 

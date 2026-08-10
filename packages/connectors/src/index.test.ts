@@ -8,6 +8,7 @@ import {
   createGenericWebhookConnector,
   createGoogleConnector,
   CredentialCipher,
+  pollCheckpointedActivityStreams,
   verifyGenericWebhook,
   type ConnectorConnectionContext
 } from "./index";
@@ -96,6 +97,190 @@ describe("connectors", () => {
         now: timestamp
       })
     ).resolves.toMatchObject({ timestamp, event: { type: "transcript.completed" } });
+  });
+
+  it("verifies generic webhook HMACs over the exact received bytes", async () => {
+    const secret = "test-secret";
+    const timestamp = 1_700_000_000;
+    const json = new TextEncoder().encode(JSON.stringify({ event_type: "transcript.completed" }));
+    const body = new Uint8Array(3 + json.byteLength);
+    body.set([0xef, 0xbb, 0xbf]);
+    body.set(json, 3);
+    const prefix = new TextEncoder().encode(`${timestamp}.`);
+    const signed = new Uint8Array(prefix.byteLength + body.byteLength);
+    signed.set(prefix);
+    signed.set(body, prefix.byteLength);
+    const signature = await __testing.hmacHex(secret, signed);
+
+    await expect(verifyGenericWebhook({
+      secret,
+      signatureHeader: `t=${timestamp},v1=${signature.toUpperCase()}`,
+      body,
+      now: timestamp,
+    })).resolves.toMatchObject({
+      timestamp,
+      event: { event_type: "transcript.completed" },
+    });
+  });
+
+  it("classifies signed malformed generic webhook payloads as invalid payloads", async () => {
+    const secret = "test-secret";
+    const timestamp = 1_700_000_000;
+    const body = "[]";
+    const signature = await __testing.hmacHex(secret, `${timestamp}.${body}`);
+
+    await expect(verifyGenericWebhook({
+      secret,
+      signatureHeader: `t=${timestamp},v1=${signature}`,
+      body,
+      now: timestamp,
+    })).rejects.toMatchObject({ code: "invalid_payload" });
+  });
+
+  it("bounds generic webhook person evidence without dropping the activity", () => {
+    const source = createGenericWebhookConnector().webhookActivity!;
+    const activity = source.normalize({
+      id: TEST_CONNECTION_ID,
+      workspaceId: TEST_WORKSPACE_ID,
+      scope: "workspace",
+      ownerUserId: null,
+      grantedScopes: [],
+      credentials: {},
+      cursor: {},
+      config: {},
+    }, {
+      deliveryId: "generic-event-1",
+      eventType: "ticket.updated",
+      providerAccountId: null,
+      bodyHash: "body-hash",
+      event: {
+        title: "Ticket updated",
+        external_people: [
+          {
+            provider: "p".repeat(100),
+            providerTenantId: "t".repeat(250),
+            providerUserId: "person-1",
+            handle: "h".repeat(250),
+            email: "not-an-email",
+            displayName: "D".repeat(250),
+            role: "mentioned",
+            sourceText: "S".repeat(1_200),
+            ignored: "untrusted extra field",
+          },
+          { displayName: "Missing required evidence" },
+        ],
+      },
+    }, null);
+
+    expect(activity?.externalPeople).toEqual([expect.objectContaining({
+      provider: "p".repeat(80),
+      providerTenantId: "t".repeat(200),
+      handle: "h".repeat(200),
+      email: null,
+      displayName: "D".repeat(180),
+      sourceText: "S".repeat(1_000),
+    })]);
+    expect(() => NormalizedActivitySchema.parse({
+      id: "00000000-0000-7000-8000-000000000099",
+      ...activity,
+    })).not.toThrow();
+  });
+
+  it("checkpoints polling streams independently and isolates transient failures", async () => {
+    const connection = googleConnection([]);
+    connection.cursor = {
+      activityStreams: {
+        calendar: { highWatermark: { syncToken: "calendar-old" } },
+      },
+    };
+    const result = await pollCheckpointedActivityStreams({
+      streams: () => [
+        { id: "gmail", idlePollIntervalSeconds: 300, backlogPollIntervalSeconds: 5 },
+        { id: "calendar", idlePollIntervalSeconds: 300, failurePollIntervalSeconds: 60 },
+      ],
+      normalizeHighWatermark(_connection, _stream, value) {
+        return value && typeof value === "object" && !Array.isArray(value)
+          ? value as Record<string, unknown>
+          : {};
+      },
+      async pollStream(_connection, stream, highWatermark) {
+        if (stream.id === "calendar") {
+          expect(highWatermark).toEqual({ syncToken: "calendar-old" });
+          throw new Error("temporary calendar outage");
+        }
+        return { activities: [], highWatermark: { historyId: "gmail-new" }, hasMore: true };
+      },
+    }, connection, AbortSignal.timeout(1_000));
+
+    expect(result.cursor).toMatchObject({
+      activityStreams: {
+        gmail: { highWatermark: { historyId: "gmail-new" } },
+        calendar: { highWatermark: { syncToken: "calendar-old" } },
+      },
+    });
+    expect(result.streamErrors).toEqual([expect.objectContaining({ streamId: "calendar" })]);
+    expect(Date.parse(result.nextPollAt!)).toBeLessThanOrEqual(Date.now() + 6_000);
+  });
+
+  it("normalizes provider-native sequence, date, and cursor watermarks on load and commit", async () => {
+    const connection = googleConnection([]);
+    connection.cursor = {
+      sequenceLegacy: 41,
+      activityStreams: {
+        date: { highWatermark: "2026-08-10T10:00:00-07:00" },
+        cursor: { highWatermark: "cursor-old" },
+      },
+    };
+    const seen = new Map<string, Record<string, unknown>>();
+    const result = await pollCheckpointedActivityStreams({
+      streams: () => [
+        { id: "sequence", legacyCursorKey: "sequenceLegacy", idlePollIntervalSeconds: 300 },
+        { id: "date", idlePollIntervalSeconds: 300 },
+        { id: "cursor", idlePollIntervalSeconds: 300 },
+      ],
+      normalizeHighWatermark(_connection, stream, value) {
+        if (value == null) return {};
+        if (stream.id === "sequence") {
+          const sequence = typeof value === "object" && value
+            ? (value as Record<string, unknown>).sequence
+            : value;
+          return { sequence: Number(sequence) };
+        }
+        if (stream.id === "date") {
+          const date = typeof value === "object" && value
+            ? (value as Record<string, unknown>).occurredAfter
+            : value;
+          return { occurredAfter: new Date(String(date)).toISOString() };
+        }
+        const cursor = typeof value === "object" && value
+          ? (value as Record<string, unknown>).cursor
+          : value;
+        return { cursor: String(cursor) };
+      },
+      async pollStream(_connection, stream, highWatermark) {
+        seen.set(stream.id, highWatermark);
+        return {
+          activities: [],
+          highWatermark: stream.id === "sequence"
+            ? 42
+            : stream.id === "date"
+              ? "2026-08-10T18:00:00Z"
+              : "cursor-new",
+          hasMore: false,
+        };
+      },
+    }, connection, AbortSignal.timeout(1_000));
+
+    expect(Object.fromEntries(seen)).toEqual({
+      sequence: { sequence: 41 },
+      date: { occurredAfter: "2026-08-10T17:00:00.000Z" },
+      cursor: { cursor: "cursor-old" },
+    });
+    expect(result.cursor.activityStreams).toMatchObject({
+      sequence: { highWatermark: { sequence: 42 } },
+      date: { highWatermark: { occurredAfter: "2026-08-10T18:00:00.000Z" } },
+      cursor: { highWatermark: { cursor: "cursor-new" } },
+    });
   });
 
   it("encrypts credentials with authenticated context", async () => {
@@ -286,6 +471,9 @@ describe("connectors", () => {
   it("emits a deduplicated Calendar completion when an event end crosses the poll window", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
+      if (url.pathname.includes("/users/me/calendarList/")) {
+        return googleJson({ timeZone: "UTC" });
+      }
       if (url.searchParams.has("syncToken")) {
         return googleJson({ items: [], nextSyncToken: "calendar-sync-new" });
       }

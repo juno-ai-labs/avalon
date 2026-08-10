@@ -115,9 +115,10 @@ describe("automation template version adoption", () => {
 
     expect(database.executed).toHaveLength(3);
     expect(database.executed[0]).toMatchObject({
-      sql: expect.stringContaining("SET template_version_id = ?, next_run_at = ?, updated_at = ?"),
+      sql: expect.stringContaining("SET template_version_id = ?, connector_bindings_json = ?, next_run_at = ?, updated_at = ?"),
       values: [
         "version-2",
+        "{}",
         "2026-08-01T01:00:00.000Z",
         "2026-08-01T00:00:00.000Z",
         "subscription-1",

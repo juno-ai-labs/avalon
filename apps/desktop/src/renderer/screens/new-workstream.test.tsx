@@ -11,6 +11,10 @@ const api = vi.hoisted(() => ({
   deleteDraftResource: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkstreams: vi.fn(),
+  getWorkOpportunities: vi.fn(),
+  recordWorkOpportunityImpressions: vi.fn(),
+  dismissWorkOpportunity: vi.fn(),
+  startWorkOpportunity: vi.fn(),
   uploadResource: vi.fn(),
 }));
 
@@ -83,6 +87,10 @@ describe('New work-stream home', () => {
       workstream('completed', 'Release notes', 'completed'),
       workstream('failed', 'Broken connector', 'failed'),
     ]);
+    api.getWorkOpportunities.mockResolvedValue([]);
+    api.recordWorkOpportunityImpressions.mockResolvedValue(undefined);
+    api.dismissWorkOpportunity.mockResolvedValue(undefined);
+    api.startWorkOpportunity.mockResolvedValue(createdWorkstream);
     api.createWorkstream.mockResolvedValue(createdWorkstream);
     api.deleteDraftResource.mockResolvedValue(undefined);
     api.uploadResource.mockResolvedValue({
@@ -108,6 +116,33 @@ describe('New work-stream home', () => {
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
     expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
     expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
+  });
+
+  it('shows only the short ranked prompt, records its impression, and starts the displayed version', async () => {
+    api.getWorkOpportunities.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000099',
+      version: 3,
+      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
+      icon: 'brand-slack',
+      sourceLabel: 'From slack',
+    }]);
+    renderScreen();
+
+    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
+    expect(within(suggestions).getByText('Prepare the follow-up for the unresolved launch blocker')).toBeVisible();
+    expect(within(suggestions).getByText('From slack')).toBeVisible();
+    await waitFor(() => expect(api.recordWorkOpportunityImpressions).toHaveBeenCalledWith([
+      '00000000-0000-7000-8000-000000000099',
+    ]));
+
+    fireEvent.click(within(suggestions).getByRole('button', {
+      name: 'Prepare the follow-up for the unresolved launch blocker',
+    }));
+    await waitFor(() => expect(api.startWorkOpportunity).toHaveBeenCalledWith(
+      '00000000-0000-7000-8000-000000000099',
+      3,
+      expect.any(String),
+    ));
   });
 
   it('uses the shared mention, attachment, and dictation controls', async () => {
