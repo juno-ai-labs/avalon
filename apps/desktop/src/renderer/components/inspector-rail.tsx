@@ -5,7 +5,6 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
-  Cloud,
   Copy,
   Download,
   ExternalLink,
@@ -16,7 +15,6 @@ import {
   Maximize2,
   Minimize2,
   Plus,
-  RefreshCcw,
   Trash2,
   UserPlus,
   X,
@@ -29,7 +27,6 @@ import type {
   AutomationRunSummary,
   BackgroundTask,
   Message,
-  WorkstreamConnection,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
@@ -50,7 +47,6 @@ interface InspectorRailProps {
   onOpenRun?: (run: AutomationRunSummary) => void;
   onJumpToMessage?: (messageId: string) => void;
   onDownloadArtifact?: (artifact: ArtifactData) => void;
-  onReconnectConnection?: (connection: WorkstreamConnection) => void;
   dropTarget?: {
     dragging: boolean;
     onDragEnter: React.DragEventHandler<HTMLElement>;
@@ -169,34 +165,6 @@ function ContextContent({
                   <span aria-hidden="true" />
                   <small>{resource.watchStatus === 'unsupported' ? 'Watch unavailable' : resource.watchStatus === 'error' ? 'Watch needs attention' : resource.watchEnabled ? 'Watching' : 'Watch'}</small>
                 </label>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Section>
-
-      <Section title="Connections">
-        {workstream.connections.length === 0 ? (
-          <p className="rail-empty-line">No connections available to this work stream</p>
-        ) : (
-          <ul className="rail-card-list">
-            {workstream.connections.map((connection) => (
-              <li key={connection.id}>
-                <button className="rail-card connection-row" onClick={() => inspect({ type: 'connection', id: connection.id })} type="button">
-                  <span className="rail-card-icon"><Cloud size={15} /></span>
-                  <span className="connection-copy">
-                    <strong>{connection.displayName}</strong>
-                    <small>{connection.ownerName ? `${connection.ownerName} · ` : ''}{connection.scope === 'you' ? 'You' : 'Workspace'}</small>
-                  </span>
-                  <span
-                    aria-label={connection.status === 'healthy' ? 'Connected' : connection.status === 'reconnect_required' ? 'Reconnect required' : 'Disabled'}
-                    className={clsx('connection-health', connection.status)}
-                    role="img"
-                  >
-                    {connection.status === 'healthy' ? <Check aria-hidden="true" size={12} /> : <CircleAlert aria-hidden="true" size={12} />}
-                  </span>
-                  <ChevronRight aria-hidden="true" size={14} />
-                </button>
               </li>
             ))}
           </ul>
@@ -486,11 +454,10 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
   );
 }
 
-function InspectorDetail({ workstream, onDetachResource, onReconnectConnection }: Pick<InspectorRailProps, 'workstream' | 'onDetachResource' | 'onReconnectConnection'>): React.JSX.Element | null {
+function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailProps, 'workstream' | 'onDetachResource'>): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
-  const connection = inspector.type === 'connection' ? workstream.connections.find((item) => item.id === inspector.id) : undefined;
 
   if (resource) {
     return (
@@ -510,28 +477,7 @@ function InspectorDetail({ workstream, onDetachResource, onReconnectConnection }
       </div>
     );
   }
-  if (connection) return <ConnectionDetail connection={connection} onReconnect={onReconnectConnection} />;
   return <EmptyState title="Item unavailable" description="It may have been removed or changed in another session." />;
-}
-
-function ConnectionDetail({ connection, onReconnect }: { connection: WorkstreamConnection; onReconnect?: (connection: WorkstreamConnection) => void }): React.JSX.Element {
-  return (
-    <div className="inspector-detail">
-      <span className="inspector-hero-icon"><Cloud size={18} /></span>
-      <h3>{connection.displayName}</h3>
-      <p>{connection.connectorType}</p>
-      <dl className="detail-list">
-        <div><dt>Scope</dt><dd>{connection.scope === 'you' ? 'You' : 'Workspace'}</dd></div>
-        {connection.ownerName && <div><dt>Owner</dt><dd>{connection.ownerName}</dd></div>}
-        <div><dt>Status</dt><dd>{connection.status === 'healthy' ? 'Connected' : connection.status === 'reconnect_required' ? 'Reconnect required' : 'Disabled'}</dd></div>
-      </dl>
-      {connection.capabilities?.length ? (
-        <div className="capability-list">{connection.capabilities.map((capability) => <Badge key={capability}>{capability}</Badge>)}</div>
-      ) : null}
-      {connection.status === 'reconnect_required' && <Button onClick={() => onReconnect?.(connection)}><RefreshCcw size={14} /> Reconnect</Button>}
-      <p className="credential-note">Credentials remain encrypted on the regional backend and are never shown here.</p>
-    </div>
-  );
 }
 
 const railTitle: Record<RailVariant, string> = {
@@ -628,7 +574,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         <div className="rail-scroll">
           {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
           {inspector ? (
-            <InspectorDetail onDetachResource={props.onDetachResource} onReconnectConnection={props.onReconnectConnection} workstream={props.workstream} />
+            <InspectorDetail onDetachResource={props.onDetachResource} workstream={props.workstream} />
           ) : railVariant === 'context' ? (
             <ContextContent {...props} />
           ) : railVariant === 'background' ? (
