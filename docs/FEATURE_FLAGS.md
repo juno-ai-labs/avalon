@@ -123,6 +123,13 @@ Wrangler also provisions an app automatically on the first deploy of a binding
 that has no `app_id`, and writes the id into the configuration file either way.
 Commit the resulting `app_id` values.
 
+Both paths need a Cloudflare API token carrying **Flagship write** access. A
+read-only Flagship grant is enough to list apps and flags but returns
+`Authentication error [code: 10000]` on any create, so a token that passes
+`wrangler whoami` and `wrangler flagship apps list` can still fail to provision.
+[The runbook](RUNBOOK.md#required-hosted-resources) lists the full token
+permission set.
+
 Then create one JSON flag per agent, seeded with the model ids currently in that
 region's Wrangler variables so provisioning changes nothing:
 
