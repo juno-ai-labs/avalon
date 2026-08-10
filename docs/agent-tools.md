@@ -80,11 +80,16 @@ the write happens for real. The fix is not to special-case that tool; it is to
 **not have the parameter anywhere in the family**. A capability that is silently
 ignored is worse than one that does not exist.
 
-Do instead: declare `additionalProperties: false` on the input schema so an
-undeclared key is a visible rejection rather than a silent drop (the
-`avalon_skills` tools in
-[`skills.ts`](../packages/agent-harness/src/skills.ts) are the pattern), and
-keep the parameter surface small and uniform across a family. When you must
+Do instead: **make the executor parse its own arguments with a strict schema.**
+`additionalProperties: false` on `inputSchema` is a *declaration to the model*,
+not an enforcement point — nothing in the harness validates arguments against it
+(see [Mechanics](#mechanics--where-the-rules-are-enforced)). What actually
+rejects an undeclared key is a `.strict()` zod parse at the top of the executor,
+which is why the connector tools parse `rawArgs` per tool before doing anything
+with them. Declare both: the JSON Schema so the model sees the shape, the strict
+zod parse so a violation is an error rather than a silent drop.
+
+Then keep the parameter surface small and uniform across a family. When you must
 reject input, reject it with an error, never by dropping it.
 
 ### 2. Use industry-standard names so pretraining does the work
@@ -135,15 +140,20 @@ Two different jobs:
   distinction itself is the disclosure. [`SECURITY.md`](SECURITY.md) owns which
   boundaries these are.
 - **Be recoverable everywhere else.** Every other failure carries a
-  fixed-vocabulary error code in `output.error` plus a `summary` that says what
-  to do next — "narrow the range", "the connection is no longer authorized,
-  load it again", "pass the repository as `owner/name`". The harness's own
-  vocabulary is the model:
-  [`skills.ts`](../packages/agent-harness/src/skills.ts) returns
-  `skill_not_available`, `skill_limit_reached`, `skill_not_loaded`, and
-  `resource_not_found`, each with a summary naming the fix. A small model can
-  branch on a stable code and a hint; it cannot infer a recovery path from a
-  500 or a vague string.
+  fixed-vocabulary error code **and its remediation inside `output`** — "narrow
+  the range", "the connection is no longer authorized, load it again", "pass the
+  repository as `owner/name`". A small model can branch on a stable code and a
+  hint; it cannot infer a recovery path from a 500 or a vague string.
+
+  **`summary` is not model-visible.** Only `output` is serialized into the tool
+  message the model reads; `summary` travels on the host's `tool_completed`
+  event and drives human-facing display. So a hint that lives only in `summary`
+  reaches the person watching and never the model that has to recover. Put the
+  fix in `output` — as a `reason`, a list of what is available, or an explicit
+  `hint` field — and let `summary` be the human sentence. The skill loader shows
+  both halves of this: `skill_limit_reached` returns its `reason` and the
+  already-loaded list in `output`, while `skill_not_available` returns a bare
+  code and keeps the fix in its summary, which is the shape to avoid.
 
 Opacity is a deliberate, scoped cost. Pay it only where disclosure is the risk.
 
@@ -253,9 +263,15 @@ must be a particular identifier, validate the family and hint on mismatch.
   every tool call and between model turns. Loading never widens the scope, and
   revocation drops the plugin mid-run. Resolve the target server-side so a
   forged id cannot reach another workspace's data.
-- **Validate at the boundary.** Author the schema with zod and convert it to
-  JSON Schema for `inputSchema`, as the connectors do; the harness parses
-  arguments against it before the executor runs. Never cast across the boundary.
+- **Validate in the executor — nothing upstream does it for you.** Bind is
+  handed `z.unknown()` as the executable schema and carries `inputSchema` only
+  as `rawJsonSchema`, the provider-facing declaration; the runtime `JSON.parse`s
+  the model's arguments and passes the value straight to `execute`. So the JSON
+  Schema shapes what the model *sends* and constrains nothing on arrival.
+  Author the real schema with zod, convert it for `inputSchema`, and parse
+  `rawArgs` with it as the first statement of the executor, as the connector
+  tools do. Make it `.strict()` if an unexpected key should be an error. Never
+  cast across the boundary.
 - **Choose `serial` deliberately.** This one is not a `ToolDefinition` field: it
   lives on the `HarnessTool` wrapper beside `definition` and `execute`, because
   it orders *execution* rather than describing policy. Bind already runs writes
@@ -277,13 +293,15 @@ must be a particular identifier, validate the family and hint on mismatch.
 
 1. Name and parameters use industry-standard terms and match the rest of the
    family; the canonical name does not repeat its plugin prefix.
-2. No silently ignored params; `additionalProperties: false`; the surface is
-   uniform across the family.
+2. No silently ignored params: `additionalProperties: false` declared *and* a
+   strict zod parse in the executor enforcing it; the surface is uniform across
+   the family.
 3. References accept names where a person would use a name; ambiguity is an
    error, never a guess.
 4. There is a discovery path for any id, type, or enum the tool requires.
 5. Errors are opaque only across a trust boundary; everywhere else a stable code
-   plus an actionable `summary`.
+   plus its remediation **inside `output`**, since `summary` never reaches the
+   model.
 6. Limits are hard and predictable, with no role-dependent silent behavior;
    truncation is marked.
 7. `mode` and `idempotency` are correct for what the tool actually does, and the
