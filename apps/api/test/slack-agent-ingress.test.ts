@@ -4,6 +4,7 @@ import { ConnectorError, SlackWorkspaceBotScopes } from "@avalon/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
+import { workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -540,7 +541,7 @@ describe("work-stream link unfurl card", () => {
   }
 
   it("shows title, status, last activity, and automation origin", () => {
-    const blocks = __slackAgentTesting.workstreamUnfurlBlocks({
+    const blocks = workstreamUnfurlBlocks({
       title: "Daily product brief",
       harnessStatus: "needs_input",
       lastActivityAt: "2026-08-10T12:00:00.000Z",
@@ -558,7 +559,7 @@ describe("work-stream link unfurl card", () => {
   });
 
   it("omits the origin for an ad-hoc work stream", () => {
-    const text = cardText(__slackAgentTesting.workstreamUnfurlBlocks({
+    const text = cardText(workstreamUnfurlBlocks({
       title: "Pricing restructure",
       harnessStatus: "running",
       lastActivityAt: "2026-08-10T12:00:00.000Z",
@@ -570,7 +571,7 @@ describe("work-stream link unfurl card", () => {
   });
 
   it("escapes a title that would otherwise inject mrkdwn", () => {
-    const text = cardText(__slackAgentTesting.workstreamUnfurlBlocks({
+    const text = cardText(workstreamUnfurlBlocks({
       title: "<https://evil.example|Click me> & co",
       harnessStatus: "completed",
       lastActivityAt: null,
@@ -582,7 +583,7 @@ describe("work-stream link unfurl card", () => {
   });
 
   it("survives a work stream with no title, unknown status, and no activity stamp", () => {
-    const text = cardText(__slackAgentTesting.workstreamUnfurlBlocks({
+    const text = cardText(workstreamUnfurlBlocks({
       title: "   ",
       harnessStatus: "some_future_status",
       lastActivityAt: "not-a-date",
@@ -593,7 +594,7 @@ describe("work-stream link unfurl card", () => {
   });
 
   it("falls back to an anonymous card when no summary is available", () => {
-    const blocks = __slackAgentTesting.workstreamUnfurlBlocks(null, url);
+    const blocks = workstreamUnfurlBlocks(null, url);
     const text = cardText(blocks);
 
     expect(text).toContain("*Avalon*");
@@ -603,8 +604,8 @@ describe("work-stream link unfurl card", () => {
 
   it("always offers the same open action, summary or not", () => {
     for (const blocks of [
-      __slackAgentTesting.workstreamUnfurlBlocks(null, url),
-      __slackAgentTesting.workstreamUnfurlBlocks({
+      workstreamUnfurlBlocks(null, url),
+      workstreamUnfurlBlocks({
         title: "Daily product brief",
         harnessStatus: "failed",
         lastActivityAt: null,
