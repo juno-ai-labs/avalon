@@ -1,6 +1,6 @@
 # Agent harness
 
-Avalon's production loop is an adapter over `@juno-ai/bind` 10.0.0. Bind owns turn/tool iteration, plugin activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
+Avalon's production loop is an adapter over `@juno-ai/bind` 11.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. Avalon's Cloudflare Workflow host and regional D1/R2 stores remain the durable authority for admission, authorization, side effects, accounting, and terminal state.
 
 Each run is one bounded, server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
 
@@ -49,6 +49,20 @@ Bound connections, attached resources, and previously used plugins are activatio
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `avalon_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `avalon_core` plugin owns exact time and structured elicitation, and `avalon_automation_architect` owns automation research and draft submission. Workstream agents load `avalon_workstream` by default for current-workstream context, resources, artifacts, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `avalon_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Avalon revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and health. Revocation drops a plugin. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
+
+## Skills
+
+A plugin gives the model a capability; a **skill** gives it a procedure. Skills are markdown instruction modules — how this workspace triages a queue, what a handover note must carry, the house voice — disclosed in the same three tiers the plugin catalog uses, because a workspace's accumulated know-how does not fit in a context window while a catalog line costs about fifty tokens.
+
+A run's skills are **frozen with its scope**, exactly like its plugins. The host resolves them against the execution principal before admission and passes them on `RunHarnessInput.skills`; nothing in the loop reaches a store, so `load_skill` can only surface a body the run was already authorized to read. When a run has no skills, neither prompt section nor either tool appears.
+
+The always-active `avalon_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
+
+**Loading a skill grants no authority.** Where a skill declares an owner plugin it is offered only to a run whose scope already includes that plugin, and loading it *names* the plugin for the model to load separately rather than activating it: an auto-activation would let a document issue a capability grant. Skill bodies are also not trusted prose about the world — they are workspace-authored instructions, and are wrapped in a `<skill_content name=…>` element so the model can tell them apart from platform policy and from one another.
+
+Two bounds keep a looping model from loading its way into a context-limit error: a count cap and a budget over the total tokens of loaded bodies. Bind judges both (`admitSkillLoad`); Avalon measures the token half by resolving the bodies the load would actually inject. Both are configurable through `maxActiveSkills` and `maxActiveSkillBodyTokens`.
+
+The prompt sections are a pure render of run state. Bodies are rebuilt from the active set on every turn in Bind's total order (origin, then name) rather than spliced into the previous prompt, so a resumed attempt produces the same bytes as a fresh one and the provider's cached prefix survives. Loaded refs are durably recorded through `persistSkillActivation` and restored on the next attempt through `skillActivationHints` — a hint, like a plugin activation hint, so a ref the narrowed scope no longer resolves is dropped rather than restored.
 
 ## Loop
 
