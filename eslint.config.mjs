@@ -13,6 +13,10 @@ export default tseslint.config(
       "**/.playwright-cli/**",
       "**/output/**",
       "**/coverage/**",
+      // Vendored Claude Design reference package, not application source.
+      // It has its own adherence check — see .claude/skills/avalon-design/eslint.adherence.mjs
+      // and the `lint:design-system` script — run separately from the app's quality gate.
+      ".claude/skills/**",
     ],
   },
   eslint.configs.recommended,
