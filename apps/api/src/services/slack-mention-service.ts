@@ -3,9 +3,9 @@ import { nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
-import { decryptString } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 
 const SlackMentionConnectionSchema = z.object({
   id: z.string().uuid(),
@@ -13,6 +13,7 @@ const SlackMentionConnectionSchema = z.object({
   provider_account_id: z.string().min(1),
   encrypted_credentials: z.string().min(1),
   credential_iv: z.string().min(1),
+  credential_key_version: z.coerce.number().int().positive(),
   linked_slack_user_id: z.string().min(1).nullable(),
 }).strict();
 
@@ -54,7 +55,7 @@ export async function sendWorkstreamMentionSlack(
   try {
     const rawConnections = await env.DB.prepare(
       `SELECT cc.id, cc.workspace_id, cc.provider_account_id,
-         cc.encrypted_credentials, cc.credential_iv,
+         cc.encrypted_credentials, cc.credential_iv, cc.credential_key_version,
          CASE WHEN l.status = 'active' THEN l.slack_user_id ELSE NULL END AS linked_slack_user_id
        FROM connector_connections cc
        LEFT JOIN slack_user_links l
@@ -218,12 +219,9 @@ async function workspaceBotToken(
   env: Env,
   connection: SlackMentionConnection,
 ): Promise<string> {
-  const credentials = SlackCredentialsSchema.parse(JSON.parse(await decryptString(
-    connection.encrypted_credentials,
-    connection.credential_iv,
-    env.CONNECTOR_CREDENTIALS_KEY,
-    connection.id,
-  )));
+  const credentials = SlackCredentialsSchema.parse(JSON.parse(
+    await decryptVersionedConnectorCredentials(env, connection),
+  ));
   const context = {
     id: connection.id,
     workspaceId: connection.workspace_id,

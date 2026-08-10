@@ -343,14 +343,75 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     // Keep rotating-refresh-token access serialized for one connection.
     const page = await request(connection, signal, "GET", `/pages/${encodeURIComponent(pageId)}`);
     const markdown = await request(connection, signal, "GET", `/pages/${encodeURIComponent(pageId)}/markdown`);
+    const descendants: Record<string, unknown>[] = [];
+    const pending = notionUnknownBlockIds(markdown);
+    const visited = new Set<string>([pageId]);
+    // The markdown API can truncate large pages and returns subtree roots that
+    // should be fetched through this same endpoint. Follow a bounded number of
+    // those roots while treating 404s as inaccessible, per Notion's contract.
+    while (pending.length > 0 && descendants.length < 16) {
+      const blockId = pending.shift()!;
+      if (visited.has(blockId)) continue;
+      visited.add(blockId);
+      try {
+        const subtree = await request(
+          connection,
+          signal,
+          "GET",
+          `/pages/${encodeURIComponent(blockId)}/markdown`,
+        );
+        descendants.push(boundMarkdown(subtree));
+        for (const childId of notionUnknownBlockIds(subtree)) {
+          if (!visited.has(childId)) pending.push(childId);
+        }
+      } catch (error) {
+        if (error instanceof ConnectorError
+          && isRecord(error.details)
+          && Number(error.details.status) === 404) continue;
+        throw error;
+      }
+    }
     return {
       page: boundNotionValue(page),
       markdown: boundMarkdown(markdown),
+      descendants,
+      remainingUnknownBlockIds: [...new Set(pending.filter((id) => !visited.has(id)))].slice(0, 100),
     };
   };
 
   return {
     agentPlugin: NotionAgentPluginDescriptor,
+    webhookActivity: {
+      async verify(input) {
+        if (!input.verificationSecret) {
+          throw new ConnectorError("invalid_configuration", "Notion webhook verification is not configured");
+        }
+        const verified = await verifyNotionWebhook({
+          secret: input.verificationSecret,
+          rawBody: input.rawBody,
+          signatureHeader: input.headers.get("x-notion-signature"),
+          ...((input.expectedProviderAccountId ?? config.integrationId)
+            ? { expectedIntegrationId: input.expectedProviderAccountId ?? config.integrationId }
+            : {}),
+          maxBytes: input.maxBytes,
+        });
+        return {
+          deliveryId: verified.eventId,
+          eventType: verified.eventType,
+          providerAccountId: verified.workspaceId,
+          routingAccountIds: verified.accessibleBotIds,
+          bodyHash: verified.bodyHash,
+          event: verified,
+        };
+      },
+      normalize(connection, event, payloadRef) {
+        return normalizeNotionWebhook(
+          connection,
+          event.event as VerifiedNotionWebhook,
+          payloadRef,
+        );
+      },
+    },
     manifest: {
       type: "notion",
       displayName: "Notion",
@@ -438,7 +499,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     refreshCredentials: refresh,
 
     async revoke(connection, signal) {
-      const token = stringValue(connection.credentials, "refreshToken") ?? stringValue(connection.credentials, "accessToken");
+      const token = stringValue(connection.credentials, "accessToken");
       if (!token) return;
       await providerJson(fetcher, NOTION_REVOKE_URL, {
         method: "POST",
@@ -457,6 +518,12 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       assertPersonalConnection(connection);
       const resourceId = idSchema.parse(resource.provider_resource_id);
       const resourceType = z.string().parse(resource.resource_type);
+      const requiredCapability = resourceType === "notion_comment"
+        ? NotionCapabilities.commentRead
+        : NotionCapabilities.read;
+      if (!connection.grantedScopes.includes(requiredCapability)) {
+        throw new ConnectorError("unsupported_capability", `The Notion connection has not granted ${requiredCapability}`);
+      }
       if (resourceType === "notion_page") return retrievePage(connection, resourceId, signal);
       if (resourceType === "notion_data_source") {
         return boundNotionValue(await request(connection, signal, "GET", `/data_sources/${encodeURIComponent(resourceId)}`));
@@ -744,6 +811,20 @@ export function normalizeNotionWebhook(
     entityKeys,
     dedupeKey: verified.eventId,
     rawContentHash: verified.bodyHash,
+    externalPeople: authors.flatMap((author) => {
+      const providerUserId = stringValue(author, "id");
+      if (!providerUserId) return [];
+      return [{
+        provider: "notion",
+        providerTenantId: verified.workspaceId,
+        providerUserId,
+        handle: null,
+        email: null,
+        displayName: stringValue(author, "name") ?? null,
+        role: "author",
+        sourceText: JSON.stringify(author).slice(0, 1_000),
+      }];
+    }),
     metadata: {
       subscriptionId: verified.subscriptionId,
       integrationId: verified.integrationId,
@@ -771,6 +852,7 @@ function normalizeToken(payload: Record<string, unknown>, previous: Record<strin
     ...(ownerUser && stringValue(ownerUser, "id") ? { notionOwnerUserId: stringValue(ownerUser, "id") } : {}),
     ...(ownerUser && stringValue(ownerUser, "name") ? { notionOwnerUserName: stringValue(ownerUser, "name") } : {}),
     ...(ownerPerson && stringValue(ownerPerson, "email") ? { notionOwnerUserEmail: stringValue(ownerPerson, "email") } : {}),
+    ...(ownerPerson?.email_verified === true ? { notionOwnerUserEmailVerified: true } : {}),
     ...(stringValue(payload, "duplicated_template_id") ? { duplicatedTemplateId: stringValue(payload, "duplicated_template_id") } : {}),
   };
 }
@@ -784,6 +866,12 @@ function boundMarkdown(payload: Record<string, unknown>): Record<string, unknown
     avalonTruncated: bounded.truncated,
     avalonTotalChars: bounded.totalChars,
   };
+}
+
+function notionUnknownBlockIds(payload: Record<string, unknown>): string[] {
+  return Array.isArray(payload.unknown_block_ids)
+    ? payload.unknown_block_ids.filter((value): value is string => typeof value === "string" && value.length > 0)
+    : [];
 }
 
 function boundNotionValue(value: unknown, depth = 0): unknown {

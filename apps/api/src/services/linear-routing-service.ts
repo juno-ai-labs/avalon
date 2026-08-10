@@ -227,7 +227,7 @@ export class LinearRoutingService {
       eventHeader: headers["linear-event"] || null,
       timestampHeader: headers["linear-timestamp"] || null,
       now: this.now(),
-      replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
+      replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 60) * 1_000,
       maxBytes,
     });
   }

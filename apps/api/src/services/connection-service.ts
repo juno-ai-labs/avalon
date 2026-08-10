@@ -1,5 +1,6 @@
 import {
   ConnectorError,
+  assertGitHubCapabilitiesGranted,
   connectorCapabilitySupportsScope,
   createGranolaWebhookEndpoint,
   createWebhookSecret,
@@ -11,11 +12,10 @@ import {
   LinearCapabilityScopes,
   SlackCapabilityScopes,
   SlackWorkspaceCapabilities,
-  verifyGenericWebhook,
-  verifyGranolaWebhook,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
+  type VerifiedGranolaWebhook,
 } from "@avalon/connectors";
 import type {
   Connection,
@@ -32,11 +32,13 @@ import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectionFromRow } from "../mappers/connection";
 import { connectorRegistryForEnv, githubConnectorConfig, xConnectorConfig } from "../lib/connector-registry";
-import { decryptString, encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
+import { encryptString, openString, randomToken, sealString, sha256 } from "../lib/crypto";
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
@@ -63,6 +65,9 @@ interface StoredConnection extends Record<string, unknown> {
   scope: Scope;
   owner_user_id: string | null;
   model_plugin_id: string;
+  encrypted_credentials?: string | null;
+  credential_iv?: string | null;
+  credential_key_version?: number;
 }
 
 type OAuthConnectorProvider = Exclude<ConnectorOAuthProvider, "google" | "github">;
@@ -99,6 +104,11 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
 
 export class ConnectionService {
   constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
+
+  availableConnectorTypes(): string[] {
+    this.requireAuth();
+    return this.registry().list().map((manifest) => manifest.type).sort();
+  }
 
   async list(): Promise<Connection[]> {
     const auth = this.requireAuth();
@@ -163,6 +173,7 @@ export class ConnectionService {
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
     ) as { provider?: "google"; attemptId?: unknown; verifier: string; scope: Scope; capabilities: string[]; connectionId: string | null };
+    await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
     const attemptId = oauthAttemptIdValue(stateData.attemptId);
     const adapter = this.registry().get("google");
     const incomingCredentials = await adapter.handleAuthorizationCallback?.({ code, codeVerifier: stateData.verifier });
@@ -429,6 +440,7 @@ export class ConnectionService {
     const stateData = JSON.parse(
       await openString(String(row.code_verifier_encrypted), this.env.OAUTH_STATE_ENCRYPTION_KEY),
     ) as { provider: "github"; attemptId?: unknown; verifier: string; installationId: string; scope: Scope; capabilities: string[]; connectionId: string | null };
+    await this.assertOAuthStatePrincipalAllowed(row, stateData.scope);
     const attemptId = oauthAttemptIdValue(stateData.attemptId);
     const adapter = this.registry().get("github");
     const incomingCredentials = await adapter.handleAuthorizationCallback?.({
@@ -438,6 +450,7 @@ export class ConnectionService {
       connectionScope: stateData.scope,
     });
     if (!incomingCredentials) throw new ApiError(502, "github_token_exchange_failed", "GitHub did not return connector credentials");
+    assertGitHubCapabilitiesGranted(stateData.capabilities, incomingCredentials);
     const providerAccountId = stringField(incomingCredentials, "providerAccountId");
     if (!providerAccountId || providerAccountId !== stateData.installationId) {
       throw new ApiError(502, "github_installation_mismatch", "GitHub did not authorize the expected App installation");
@@ -759,7 +772,7 @@ export class ConnectionService {
         throw error;
       }
     }
-    if (provider === "linear" && stateData.scope === "workspace") {
+    if (provider === "linear") {
       try {
         await new LinearRoutingService(this.env).registerConnection({
           organizationId: providerAccountId,
@@ -998,7 +1011,7 @@ export class ConnectionService {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
       result = { ok: false, message: error.message, reconnectRequired: true };
     }
-    if (result.ok && connection.connector_type === "linear" && connection.scope === "workspace") {
+    if (result.ok && connection.connector_type === "linear") {
       const organizationId = connection.provider_account_id == null
         ? null
         : String(connection.provider_account_id);
@@ -1037,6 +1050,31 @@ export class ConnectionService {
     if (JSON.stringify(context.credentials) !== before) {
       await this.persistCredentials(connection, context.credentials);
     }
+    if (result.ok && connection.connector_type === "granola" && connection.scope === "personal") {
+      const providerAccountId = stringField(context.credentials, "providerAccountId");
+      if (!providerAccountId) {
+        result = { ok: false, message: "Granola did not return the active account identity", reconnectRequired: true };
+      } else {
+        const displayLabel = stringField(context.credentials, "providerAccountName")
+          ?? stringField(context.credentials, "workspaceName")
+          ?? providerAccountId;
+        await this.env.DB.prepare(
+          `UPDATE connector_connections
+           SET provider_account_id = ?, display_name = ?, config_json = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND connector_type = 'granola' AND scope = 'personal'`,
+        ).bind(
+          providerAccountId,
+          `Granola · ${displayLabel}`.slice(0, 180),
+          JSON.stringify({
+            region: this.env.AVALON_REGION,
+            ...verifiedIdentityConfig("granola", context.credentials, providerAccountId),
+          }),
+          nowIso(),
+          connection.id,
+          connection.workspace_id,
+        ).run();
+      }
+    }
     await this.env.DB.prepare(
       `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
     ).bind(
@@ -1051,17 +1089,10 @@ export class ConnectionService {
   async disable(id: string): Promise<void> {
     const connection = await this.loadAuthorized(id);
     const adapter = this.registry().get(connection.connector_type);
-    const sibling =
-      connection.connector_type === "google" && typeof connection.provider_account_id === "string"
-        ? await this.env.DB.prepare(
-            `SELECT id FROM connector_connections
-             WHERE connector_type = 'google' AND provider_account_id = ?
-               AND id != ? AND status != 'disabled' LIMIT 1`,
-          ).bind(connection.provider_account_id, connection.id).first<{ id: string }>()
-        : null;
-    const mayRevokeRemotely =
-      connection.connector_type !== "google" ||
-      (typeof connection.provider_account_id === "string" && !sibling);
+    // Google OAuth revocation is project-wide for the token grant. A regional
+    // database cannot prove that no sibling connection exists in another
+    // region, so disabling one Google connection must remain a local action.
+    const mayRevokeRemotely = connection.connector_type !== "google";
     let remoteRevocation: "skipped" | "succeeded" | "failed" = "skipped";
     try {
       if (mayRevokeRemotely && adapter.revoke) {
@@ -1078,9 +1109,36 @@ export class ConnectionService {
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
       await this.refreshScheduler(connection.workspace_id);
+      if (connection.connector_type === "github" && connection.provider_account_id) {
+        const sibling = await this.env.DB.prepare(
+          `SELECT id FROM connector_connections
+           WHERE workspace_id = ? AND connector_type = 'github'
+             AND provider_account_id = ? AND status <> 'disabled' AND id <> ?
+           LIMIT 1`,
+        ).bind(
+          connection.workspace_id,
+          connection.provider_account_id,
+          connection.id,
+        ).first<{ id: string }>();
+        if (!sibling) {
+          try {
+            await new GitHubRoutingService(this.env).setInstallationRouteStatus({
+              installationId: String(connection.provider_account_id),
+              region: this.env.AVALON_REGION,
+              workspaceId: connection.workspace_id,
+              status: "disabled",
+            });
+          } catch (error) {
+            console.warn("GitHub route deactivation failed", {
+              region: this.env.AVALON_REGION,
+              connection_id: connection.id,
+              reason: error instanceof Error ? error.message : "unknown route error",
+            });
+          }
+        }
+      }
       if (
         connection.connector_type === "linear"
-        && connection.scope === "workspace"
         && connection.provider_account_id
       ) {
         try {
@@ -1136,6 +1194,16 @@ export class ConnectionService {
   async createWebhook(input: CreateWebhookInput) {
     const auth = this.requireAuth();
     this.assertScopeAllowed(input.scope);
+    if (input.idempotencyKey) {
+      const existing = await this.findIdempotentWebhookConnection(
+        input.scope,
+        input.idempotencyKey,
+      );
+      if (existing) {
+        this.assertWebhookCreationReplay(existing, input);
+        return this.webhookConnectionResult(existing);
+      }
+    }
     const id = newId();
     const secret = createWebhookSecret();
     const encrypted = await encryptString(
@@ -1145,20 +1213,90 @@ export class ConnectionService {
     );
     const at = nowIso();
     const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "generic_webhook");
-    await this.env.DB.prepare(
-      `INSERT INTO connector_connections
-       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-        encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-        model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-       VALUES (?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, '[]', ?, 'healthy', '{}', ?, ?, ?)`,
-    ).bind(id, auth.workspaceId, input.scope, input.scope === "personal" ? auth.userId : null, input.displayName, encrypted.ciphertext, encrypted.iv, Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1), modelPluginId, JSON.stringify({ eventTypes: input.eventTypes }), at, at).run();
+    try {
+      await this.env.DB.prepare(
+        `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+          encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
+          model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
+         VALUES (?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, '[]', ?, 'healthy', '{}', ?, ?, ?)`,
+      ).bind(
+        id,
+        auth.workspaceId,
+        input.scope,
+        input.scope === "personal" ? auth.userId : null,
+        input.displayName,
+        encrypted.ciphertext,
+        encrypted.iv,
+        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+        modelPluginId,
+        JSON.stringify({
+          eventTypes: [...new Set(input.eventTypes)],
+          ...(input.idempotencyKey ? { creationIdempotencyKey: input.idempotencyKey } : {}),
+        }),
+        at,
+        at,
+      ).run();
+    } catch (error) {
+      if (!input.idempotencyKey || !isUniqueConstraintError(error)) throw error;
+      const winner = await this.findIdempotentWebhookConnection(input.scope, input.idempotencyKey);
+      if (!winner) throw error;
+      this.assertWebhookCreationReplay(winner, input);
+      return this.webhookConnectionResult(winner);
+    }
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
     });
+    return this.webhookConnectionResult({
+      id,
+      workspace_id: auth.workspaceId,
+      connector_type: "generic_webhook",
+      scope: input.scope,
+      owner_user_id: input.scope === "personal" ? auth.userId : null,
+      model_plugin_id: modelPluginId,
+      encrypted_credentials: encrypted.ciphertext,
+      credential_iv: encrypted.iv,
+      credential_key_version: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+    }, secret);
+  }
+
+  async rotateWebhookSecret(id: string) {
+    const auth = this.requireAuth();
+    const connection = await this.env.DB.prepare(
+      `SELECT * FROM connector_connections
+       WHERE id = ? AND workspace_id = ? AND connector_type = 'generic_webhook'
+         AND status = 'healthy'`,
+    ).bind(id, auth.workspaceId).first<StoredConnection>();
+    if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
+    if (connection.scope === "personal" && connection.owner_user_id !== auth.userId) {
+      throw new ApiError(403, "connection_forbidden", "This personal webhook belongs to another user");
+    }
+    this.assertScopeAllowed(connection.scope);
+    const signingSecret = createWebhookSecret();
+    const encrypted = await encryptString(
+      JSON.stringify({ signingSecret }),
+      this.env.CONNECTOR_CREDENTIALS_KEY,
+      connection.id,
+    );
+    await this.env.DB.prepare(
+      `UPDATE connector_connections
+       SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+    ).bind(
+      encrypted.ciphertext,
+      encrypted.iv,
+      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      nowIso(),
+      connection.id,
+      auth.workspaceId,
+    ).run();
+    await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.credentials_rotated", id, {
+      provider: "generic_webhook",
+      scope: connection.scope,
+    });
     return {
-      connection: (await this.list()).find((item) => item.id === id),
       endpoint: new URL(`/ingest/webhook/${id}`, this.env.PUBLIC_API_BASE_URL).toString(),
-      signingSecret: secret,
+      signingSecret,
       signatureFormat: "t=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>",
     };
   }
@@ -1192,6 +1330,18 @@ export class ConnectionService {
       );
     }
 
+    const health = await adapter.healthCheck({
+      id: "x-installation-probe",
+      workspaceId: auth.workspaceId,
+      scope: "workspace",
+      ownerUserId: null,
+      grantedScopes: capabilities,
+      credentials: {},
+      cursor: {},
+      config: { region: this.env.AVALON_REGION },
+    });
+    if (!health.ok) throw new ApiError(503, "x_connector_unhealthy", health.message);
+
     const id = newId();
     const encrypted = await encryptString("{}", this.env.CONNECTOR_CREDENTIALS_KEY, id);
     const at = nowIso();
@@ -1201,7 +1351,7 @@ export class ConnectionService {
        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
         encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
         model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-       VALUES (?, ?, 'x', ?, ?, 'X', ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
+       VALUES (?, ?, 'x', ?, ?, 'Public X via TwitterAPI.io', ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
     ).bind(
       id,
       auth.workspaceId,
@@ -1329,26 +1479,35 @@ export class ConnectionService {
     const context = await this.context(connection);
     const signingSecret = stringField(context.credentials, "webhookSigningSecret");
     if (!signingSecret) throw new ApiError(401, "webhook_secret_unavailable", "Granola webhook verification is unavailable");
-    const verified = await verifyGranolaWebhook({
-      signingSecret,
-      rawBody,
-      webhookId: headers.webhookId,
-      webhookTimestamp: headers.webhookTimestamp,
-      webhookSignature: headers.webhookSignature,
-      replayWindowSeconds: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300),
+    let rawBodyText: string;
+    try {
+      rawBodyText = new TextDecoder("utf-8", { fatal: true }).decode(rawBody);
+    } catch {
+      throw new ApiError(400, "invalid_webhook_body", "Granola webhook body is not valid UTF-8");
+    }
+    const source = this.registry().get("granola").webhookActivity;
+    if (!source) throw new ApiError(500, "webhook_source_unavailable", "Granola webhook ingestion is unavailable");
+    const webhookHeaders = new Headers();
+    if (headers.webhookId) webhookHeaders.set("webhook-id", headers.webhookId);
+    if (headers.webhookTimestamp) webhookHeaders.set("webhook-timestamp", headers.webhookTimestamp);
+    if (headers.webhookSignature) webhookHeaders.set("webhook-signature", headers.webhookSignature);
+    const envelope = await source.verify({
+      rawBody: rawBodyText,
+      headers: webhookHeaders,
+      receivedAt: nowIso(),
+      maxBytes: numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000),
+      now: Date.now(),
+      verificationSecret: signingSecret,
+      replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
     });
+    const verified = envelope.event as VerifiedGranolaWebhook;
     const receivedAt = nowIso();
-    const rawBodyText = new TextDecoder().decode(rawBody);
     const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/granola-${verified.event_id}.json`;
     await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
+    const normalized = source.normalize(context, envelope, payloadKey);
+    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Granola webhook event is not supported");
     const activityId = newId();
     const receiptId = newId();
-    const eventTitle = {
-      "note.access_granted": "Granola note access granted",
-      "note.edited": "Granola note edited",
-      "note.generated": "Granola note generated",
-      "note.regenerated": "Granola note regenerated",
-    }[verified.event_type];
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
@@ -1356,7 +1515,7 @@ export class ConnectionService {
       ).bind(
         receiptId,
         connection.id,
-        verified.signatureHash,
+        envelope.receiptKey ?? envelope.deliveryId,
         receivedAt,
         new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
       ),
@@ -1366,27 +1525,30 @@ export class ConnectionService {
           provider, provider_event_id, event_type, resource_type, provider_resource_id,
           actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
           payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+          target_user_ids_json, external_people_json,
           processing_status, metadata_json)
          VALUES (?, ?, ?, 'workspace', NULL, 'granola', ?, ?, 'granola_note', ?,
-                 '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, 'pending', ?)
+                 '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
         activityId,
         connection.workspace_id,
         connection.id,
         verified.event_id,
-        verified.event_type,
-        verified.note_id,
-        JSON.stringify({ id: verified.note_id, type: "granola_note" }),
-        verified.occurred_at,
+        normalized.eventType,
+        normalized.providerResourceId,
+        JSON.stringify(normalized.subject),
+        normalized.occurredAt,
         receivedAt,
-        eventTitle,
+        normalized.title,
         payloadKey,
-        JSON.stringify({ scope: "workspace", ownerUserId: null }),
-        JSON.stringify([`granola:note:${verified.note_id}`]),
-        verified.event_id,
-        await sha256(rawBodyText),
-        JSON.stringify({ changedFields: verified.data?.changed_fields ?? [] }),
+        JSON.stringify(normalized.visibility),
+        JSON.stringify(normalized.entityKeys),
+        normalized.dedupeKey,
+        normalized.rawContentHash,
+        JSON.stringify(normalized.targetUserIds),
+        JSON.stringify(normalized.externalPeople ?? []),
+        JSON.stringify(normalized.metadata),
       ),
     ]);
     const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
@@ -1413,9 +1575,16 @@ export class ConnectionService {
     };
   }
 
-  async ingestWebhook(connectionId: string, rawBody: string, signatureHeader: string | null) {
-    if (rawBody.length > numericEnv(this.env, "WEB_FETCH_MAX_BYTES", 2_000_000)) {
+  async ingestWebhook(connectionId: string, rawBody: Uint8Array, signatureHeader: string | null) {
+    const maxBytes = numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000);
+    if (rawBody.byteLength > maxBytes) {
       throw new ApiError(413, "webhook_too_large", "Webhook payload exceeds the configured limit");
+    }
+    let rawBodyText: string;
+    try {
+      rawBodyText = new TextDecoder("utf-8", { fatal: true }).decode(rawBody);
+    } catch {
+      throw new ApiError(400, "invalid_webhook_body", "Webhook body is not valid UTF-8");
     }
     const connection = await this.env.DB.prepare(
       `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status = 'healthy'`,
@@ -1423,35 +1592,86 @@ export class ConnectionService {
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     const context = await this.context(connection);
     const signingSecret = String(context.credentials.signingSecret ?? "");
-    const verified = await verifyGenericWebhook({
-      secret: signingSecret,
-      signatureHeader,
-      body: rawBody,
-      replayWindowSeconds: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300),
+    const source = this.registry().get("generic_webhook").webhookActivity;
+    if (!source) throw new ApiError(500, "webhook_source_unavailable", "Webhook ingestion is unavailable");
+    const webhookHeaders = new Headers();
+    if (signatureHeader) webhookHeaders.set("x-avalon-signature", signatureHeader);
+    const envelope = await source.verify({
+      rawBody: rawBodyText,
+      rawBodyBytes: rawBody,
+      headers: webhookHeaders,
+      receivedAt: nowIso(),
+      maxBytes,
+      now: Date.now(),
+      verificationSecret: signingSecret,
+      replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
     });
+    const configuredEventTypes = parseJson<Record<string, unknown>>(connection.config_json, {}).eventTypes;
+    const allowedEventTypes = Array.isArray(configuredEventTypes)
+      ? configuredEventTypes.filter((value): value is string => typeof value === "string")
+      : [];
+    if (allowedEventTypes.length > 0 && !allowedEventTypes.includes(envelope.eventType)) {
+      throw new ApiError(422, "webhook_event_not_allowed", "This webhook connection does not accept that event type");
+    }
     const receiptId = newId();
-    const event = verified.event;
-    const dedupeKey = stringField(event, "dedupe_key") ?? stringField(event, "id") ?? verified.signatureHash;
-    const providerEventId = stringField(event, "provider_event_id") ?? stringField(event, "id") ?? dedupeKey;
-    const occurredAt = validDateField(event, "occurred_at") ?? nowIso();
-    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/webhook-${verified.signatureHash}.json`;
+    const payloadKey = `${this.env.AVALON_REGION}/${connection.workspace_id}/activities/webhook-${envelope.bodyHash}.json`;
+    const normalized = source.normalize(context, envelope, payloadKey);
+    if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Webhook event is not supported");
+    if (connection.scope === "workspace" && normalized.targetUserIds.length > 0) {
+      const uniqueTargets = [...new Set(normalized.targetUserIds)];
+      const members = await this.env.DB.prepare(
+        `SELECT user_id FROM workspace_members
+         WHERE workspace_id = ? AND status = 'active'
+           AND user_id IN (${uniqueTargets.map(() => "?").join(", ")})`,
+      ).bind(connection.workspace_id, ...uniqueTargets).all<{ user_id: string }>();
+      if ((members.results ?? []).length !== uniqueTargets.length) {
+        throw new ApiError(422, "invalid_target_user", "Every webhook target must be an active member of this workspace");
+      }
+    }
+    await this.env.DB.prepare(
+      `DELETE FROM webhook_receipts
+       WHERE id IN (
+         SELECT id FROM webhook_receipts
+         WHERE connection_id = ? AND expires_at <= ?
+         ORDER BY expires_at ASC LIMIT 100
+       )`,
+    ).bind(connectionId, nowIso()).run();
+    const existingReceipt = await this.env.DB.prepare(
+      `SELECT id FROM webhook_receipts
+       WHERE connection_id = ? AND signature_hash = ? AND expires_at > ?
+       LIMIT 1`,
+    ).bind(connectionId, envelope.receiptKey ?? envelope.deliveryId, nowIso()).first<{ id: string }>();
+    if (existingReceipt) {
+      const existing = await this.resolveCanonicalWebhookActivity(connectionId, normalized);
+      if (existing) {
+        if (existing.processing_status === "pending" || existing.processing_status === "failed") {
+          await this.env.ACTIVITY_QUEUE.send({
+            region: this.env.AVALON_REGION,
+            workspaceId: connection.workspace_id,
+            activityId: existing.id,
+            attempt: 0,
+          });
+        }
+        return { duplicate: true, activityId: existing.id };
+      }
+    }
     await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
     const activityId = newId();
-    const eventType = stringField(event, "event_type") ?? "webhook.received";
     const receivedAt = nowIso();
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
          VALUES (?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
-      ).bind(receiptId, connectionId, verified.signatureHash, receivedAt, new Date(Date.now() + 24 * 60 * 60_000).toISOString()),
+      ).bind(receiptId, connectionId, envelope.receiptKey ?? envelope.deliveryId, receivedAt, new Date(Date.now() + 24 * 60 * 60_000).toISOString()),
       this.env.DB.prepare(
         `INSERT INTO activities
          (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
           provider, provider_event_id, event_type, resource_type, provider_resource_id,
           actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash, external_people_json,
+          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+          target_user_ids_json, external_people_json,
           processing_status, metadata_json)
-         VALUES (?, ?, ?, ?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+         VALUES (?, ?, ?, ?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
         activityId,
@@ -1459,45 +1679,137 @@ export class ConnectionService {
         connection.id,
         connection.scope,
         connection.owner_user_id,
-        providerEventId,
-        eventType,
-        stringField(event, "resource_type"),
-        stringField(event, "provider_resource_id"),
-        JSON.stringify(recordField(event, "actor")),
-        JSON.stringify(recordField(event, "subject")),
-        occurredAt,
+        normalized.providerEventId,
+        normalized.eventType,
+        normalized.resourceType,
+        normalized.providerResourceId,
+        JSON.stringify(normalized.actor),
+        JSON.stringify(normalized.subject),
+        normalized.occurredAt,
         receivedAt,
-        stringField(event, "title") ?? "Webhook event received",
-        stringField(event, "summary") ?? "",
-        (stringField(event, "text") ?? stringField(event, "text_snippet") ?? "").slice(0, 4_000),
+        normalized.title,
+        normalized.summary,
+        normalized.textSnippet,
         payloadKey,
-        JSON.stringify({ scope: connection.scope, ownerUserId: connection.owner_user_id }),
-        JSON.stringify(arrayField(event, "entity_keys")),
-        dedupeKey,
-        await sha256(rawBody),
-        JSON.stringify(arrayField(event, "external_people")),
-        JSON.stringify(recordField(event, "metadata")),
+        JSON.stringify(normalized.visibility),
+        JSON.stringify(normalized.entityKeys),
+        normalized.dedupeKey,
+        normalized.rawContentHash,
+        JSON.stringify(normalized.targetUserIds),
+        JSON.stringify(normalized.externalPeople ?? []),
+        JSON.stringify(normalized.metadata),
       ),
     ]);
     const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
-    const canonical = insertedActivity
-      ? { id: activityId }
-      : await this.env.DB.prepare(
-          `SELECT id FROM activities WHERE connection_id = ?
-           AND (dedupe_key = ? OR (provider_event_id = ? AND event_type = ?))
-           ORDER BY received_at DESC LIMIT 1`,
-        ).bind(connectionId, dedupeKey, providerEventId, eventType).first<{ id: string }>();
+    let canonical: { id: string; processing_status: string } | null = insertedActivity
+      ? { id: activityId, processing_status: "pending" }
+      : null;
+    if (!canonical) {
+      canonical = await this.resolveCanonicalWebhookActivity(connectionId, normalized);
+    }
     if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The webhook activity could not be stored");
-    await this.env.ACTIVITY_QUEUE.send({
-      region: this.env.AVALON_REGION,
-      workspaceId: connection.workspace_id,
-      activityId: canonical.id,
-      attempt: 0,
-    });
+    if (insertedActivity || canonical.processing_status === "pending" || canonical.processing_status === "failed") {
+      await this.env.ACTIVITY_QUEUE.send({
+        region: this.env.AVALON_REGION,
+        workspaceId: connection.workspace_id,
+        activityId: canonical.id,
+        attempt: 0,
+      });
+    }
     return {
       duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
       activityId: canonical.id,
     };
+  }
+
+  private async findIdempotentWebhookConnection(
+    scope: Scope,
+    idempotencyKey: string,
+  ): Promise<StoredConnection | null> {
+    const auth = this.requireAuth();
+    return this.env.DB.prepare(
+      `SELECT * FROM connector_connections
+       WHERE workspace_id = ? AND connector_type = 'generic_webhook'
+         AND scope = ? AND COALESCE(owner_user_id, '') = ?
+         AND status != 'disabled'
+         AND json_extract(config_json, '$.creationIdempotencyKey') = ?
+       LIMIT 1`,
+    ).bind(
+      auth.workspaceId,
+      scope,
+      scope === "personal" ? auth.userId : "",
+      idempotencyKey,
+    ).first<StoredConnection>();
+  }
+
+  private async resolveCanonicalWebhookActivity(
+    connectionId: string,
+    normalized: {
+      dedupeKey: string;
+      providerEventId: string;
+      eventType: string;
+      rawContentHash: string | null;
+    },
+  ): Promise<{ id: string; processing_status: string } | null> {
+    type ExistingActivity = {
+      id: string;
+      raw_content_hash: string | null;
+      processing_status: string;
+    };
+    const [byDedupe, byProviderEvent] = await Promise.all([
+      this.env.DB.prepare(
+        `SELECT id, raw_content_hash, processing_status FROM activities
+         WHERE connection_id = ? AND dedupe_key = ? LIMIT 1`,
+      ).bind(connectionId, normalized.dedupeKey).first<ExistingActivity>(),
+      this.env.DB.prepare(
+        `SELECT id, raw_content_hash, processing_status FROM activities
+         WHERE connection_id = ? AND provider_event_id = ? AND event_type = ? LIMIT 1`,
+      ).bind(connectionId, normalized.providerEventId, normalized.eventType).first<ExistingActivity>(),
+    ]);
+    if (byDedupe && byProviderEvent && byDedupe.id !== byProviderEvent.id) {
+      throw new ApiError(409, "webhook_dedupe_collision", "The webhook dedupe key and provider event identity refer to different activities");
+    }
+    const existing = byDedupe ?? byProviderEvent;
+    if (existing && existing.raw_content_hash !== normalized.rawContentHash) {
+      throw new ApiError(409, "webhook_identity_reused", "The webhook reused an activity identity with different content");
+    }
+    return existing
+      ? { id: existing.id, processing_status: existing.processing_status }
+      : null;
+  }
+
+  private async webhookConnectionResult(connection: StoredConnection, signingSecret?: string) {
+    let secret = signingSecret;
+    if (!secret) {
+      const context = await this.context(connection);
+      secret = typeof context.credentials.signingSecret === "string"
+        ? context.credentials.signingSecret
+        : undefined;
+    }
+    if (!secret) throw new ApiError(500, "webhook_secret_unavailable", "The webhook signing secret is unavailable");
+    const item = (await this.list()).find((candidate) => candidate.id === connection.id);
+    if (!item) throw new ApiError(500, "webhook_connection_unavailable", "The webhook connection could not be loaded");
+    return {
+      connection: item,
+      endpoint: new URL(`/ingest/webhook/${connection.id}`, this.env.PUBLIC_API_BASE_URL).toString(),
+      signingSecret: secret,
+      signatureFormat: "t=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>",
+    };
+  }
+
+  private assertWebhookCreationReplay(connection: StoredConnection, input: CreateWebhookInput): void {
+    const config = parseJson<Record<string, unknown>>(connection.config_json, {});
+    const storedEventTypes = Array.isArray(config.eventTypes)
+      ? config.eventTypes.filter((value): value is string => typeof value === "string").sort()
+      : [];
+    const requestedEventTypes = [...new Set(input.eventTypes)].sort();
+    if (
+      connection.scope !== input.scope
+      || String(connection.display_name ?? "") !== input.displayName
+      || JSON.stringify(storedEventTypes) !== JSON.stringify(requestedEventTypes)
+    ) {
+      throw new ApiError(409, "idempotency_key_reused", "This idempotency key was already used with different webhook settings");
+    }
   }
 
   private registry() {
@@ -1790,12 +2102,12 @@ export class ConnectionService {
   private async context(row: StoredConnection): Promise<ConnectorConnectionContext> {
     let credentials: Record<string, unknown> = {};
     if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
-      credentials = JSON.parse(await decryptString(
-        row.encrypted_credentials,
-        row.credential_iv,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        row.id,
-      )) as Record<string, unknown>;
+      credentials = JSON.parse(await decryptVersionedConnectorCredentials(this.env, {
+        id: row.id,
+        encrypted_credentials: row.encrypted_credentials,
+        credential_iv: row.credential_iv,
+        credential_key_version: row.credential_key_version ?? null,
+      })) as Record<string, unknown>;
     }
     return {
       id: row.id,
@@ -1874,14 +2186,6 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   const value = record[key];
   return typeof value === "string" && value.length > 0 ? value : null;
 }
-function validDateField(record: Record<string, unknown>, key: string): string | null {
-  const value = stringField(record, key);
-  return value && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
-}
-function recordField(record: Record<string, unknown>, key: string): Record<string, unknown> {
-  const value = record[key];
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
 function arrayField(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -1896,7 +2200,9 @@ function verifiedIdentityConfig(
     providerTenantId: providerAccountId,
     providerUserId: providerAccountId,
     handle: null,
-    verifiedEmail: stringField(credentials, "providerAccountEmail"),
+    verifiedEmail: credentials["providerAccountEmailVerified"] === true
+      ? stringField(credentials, "providerAccountEmail")
+      : null,
     identityDisplayName: stringField(credentials, "providerAccountName"),
   };
   if (provider === "github") return {
@@ -1917,8 +2223,17 @@ function verifiedIdentityConfig(
     providerTenantId: stringField(credentials, "notionWorkspaceId") ?? providerAccountId,
     providerUserId: stringField(credentials, "notionOwnerUserId"),
     handle: null,
-    verifiedEmail: stringField(credentials, "notionOwnerUserEmail"),
+    verifiedEmail: credentials["notionOwnerUserEmailVerified"] === true
+      ? stringField(credentials, "notionOwnerUserEmail")
+      : null,
     identityDisplayName: stringField(credentials, "notionOwnerUserName"),
+  };
+  if (provider === "granola") return {
+    providerTenantId: stringField(credentials, "workspaceId") ?? providerAccountId,
+    providerUserId: stringField(credentials, "userId") ?? stringField(credentials, "providerUserId"),
+    handle: null,
+    verifiedEmail: stringField(credentials, "verifiedEmail") ?? stringField(credentials, "userEmail"),
+    identityDisplayName: stringField(credentials, "userName") ?? stringField(credentials, "providerAccountName"),
   };
   return {
     providerTenantId: stringField(credentials, "teamId") ?? providerAccountId.split(":")[0] ?? providerAccountId,

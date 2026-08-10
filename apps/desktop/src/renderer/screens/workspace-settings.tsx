@@ -25,6 +25,7 @@ import {
   UserRound,
   Users,
   Wifi,
+  Webhook,
   Workflow,
   X,
   type LucideIcon,
@@ -69,6 +70,7 @@ const reconnectableConnectorTypes = new Set<WorkstreamConnection['connectorType'
 
 const installedConnectorTypes = new Set<WorkstreamConnection['connectorType']>([
   ...reconnectableConnectorTypes,
+  'generic_webhook',
   'x',
 ]);
 
@@ -190,10 +192,19 @@ const connectorProviders = [
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
   },
   {
+    id: 'generic-webhook' as const,
+    provider: 'generic_webhook' as const,
+    name: 'Inbound webhook',
+    description: 'Receive signed activity from systems that do not have a native Avalon connector.',
+    icon: Webhook,
+    scopes: ['you', 'workspace'] as const,
+    capabilities: [],
+  },
+  {
     id: 'x' as const,
     provider: 'x' as const,
-    name: 'X',
-    description: 'User timelines, threads, replies, and List timelines.',
+    name: 'Public X via TwitterAPI.io',
+    description: 'Read-only public X timelines, threads, replies, and Lists using an Avalon-managed third-party API key.',
     icon: AtSign,
     scopes: ['workspace'] as const,
     capabilities: ['x.read'],
@@ -219,7 +230,7 @@ function providerHasConnection(
   ];
   return connections.some((connection) =>
     connection.connectorType === provider.provider &&
-    capabilities.some((capability) => connection.capabilities?.includes(capability)),
+    (capabilities.length === 0 || capabilities.some((capability) => connection.capabilities?.includes(capability))),
   );
 }
 
@@ -287,6 +298,17 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   const [connectorOAuthError, setConnectorOAuthError] = useState<string | null>(null);
   const [granolaWorkspaceModalOpen, setGranolaWorkspaceModalOpen] = useState(false);
   const [granolaWorkspaceApiKey, setGranolaWorkspaceApiKey] = useState('');
+  const [webhookModalScope, setWebhookModalScope] = useState<'you' | 'workspace' | null>(null);
+  const [webhookDisplayName, setWebhookDisplayName] = useState('Inbound webhook');
+  const [webhookEventTypes, setWebhookEventTypes] = useState('');
+  const [webhookIdempotencyKey, setWebhookIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [webhookSecretResult, setWebhookSecretResult] = useState<{
+    endpoint: string;
+    signingSecret: string;
+    signatureFormat: string;
+  } | null>(null);
+  const [webhookCopied, setWebhookCopied] = useState<'endpoint' | 'secret' | null>(null);
+  const [webhookRotationTarget, setWebhookRotationTarget] = useState<WorkstreamConnection | null>(null);
   const timezoneOptions = useMemo(
     () => [...new Set([...supportedTimezones, userTimezone, workspaceTimezone])].sort(),
     [userTimezone, workspaceTimezone],
@@ -311,6 +333,12 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     enabled: Boolean(api),
     refetchOnWindowFocus: 'always',
     staleTime: 5_000,
+  });
+  const connectorCatalog = useQuery({
+    queryKey: ['connector-catalog'],
+    queryFn: ({ signal }) => api!.getAvailableConnectorTypes(signal),
+    enabled: Boolean(api),
+    staleTime: 30_000,
   });
   const connectProvider = useMutation({
     mutationFn: async (input: { provider: 'google' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x'; scope: 'you' | 'workspace'; capabilities: string[] }) => {
@@ -345,6 +373,22 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
       setGranolaWorkspaceModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['connections'] });
     },
+  });
+  const createWebhookConnection = useMutation({
+    mutationFn: () => api!.createWebhookConnection(
+      webhookDisplayName.trim(),
+      webhookModalScope ?? 'you',
+      [...new Set(webhookEventTypes.split(/[\s,]+/u).map((value) => value.trim()).filter(Boolean))],
+      webhookIdempotencyKey,
+    ),
+    onSuccess: (result) => {
+      setWebhookSecretResult(result);
+      void queryClient.invalidateQueries({ queryKey: ['connections'] });
+    },
+  });
+  const rotateWebhookSecret = useMutation({
+    mutationFn: (connection: WorkstreamConnection) => api!.rotateWebhookSecret(connection.id),
+    onSuccess: (result) => setWebhookSecretResult(result),
   });
   const reconnectConnection = useMutation({
     mutationFn: async (connection: WorkstreamConnection) => {
@@ -794,6 +838,24 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                           <RefreshCcw aria-hidden="true" size={14} />
                         </button>
                       )}
+                      {connection.connectorType === 'generic_webhook' && (
+                        <button
+                          aria-label={`Rotate secret for ${connection.displayName}`}
+                          className="settings-icon-action"
+                          disabled={rotateWebhookSecret.isPending}
+                          onClick={() => {
+                            setWebhookModalScope(connection.scope);
+                            setWebhookDisplayName(connection.displayName);
+                            setWebhookEventTypes('');
+                            setWebhookSecretResult(null);
+                            setWebhookCopied(null);
+                            setWebhookRotationTarget(connection);
+                          }}
+                          type="button"
+                        >
+                          <RefreshCcw aria-hidden="true" size={14} />
+                        </button>
+                      )}
                       <button aria-label={`Disconnect ${connection.displayName}`} className="settings-icon-action" disabled={disconnectConnection.isPending} onClick={() => disconnectConnection.mutate(connection.id)} type="button"><Trash2 aria-hidden="true" size={14} /></button>
                     </div>
                   ))}
@@ -817,21 +879,28 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     {visibleProviders.map((provider) => {
                       const Icon = provider.icon;
                       const connected = providerHasConnection(provider, connections.data ?? []);
+                      const providerAvailable = connectorCatalog.data?.includes(provider.provider) ?? false;
                       const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
-                      const hasActivePersonalConnection = providerHasActivePersonalConnection(provider, connections.data ?? []);
-                      const hasActiveWorkspaceConnection = providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
+                      const hasActivePersonalConnection = provider.provider !== 'generic_webhook'
+                        && providerHasActivePersonalConnection(provider, connections.data ?? []);
+                      const hasActiveWorkspaceConnection = provider.provider !== 'generic_webhook'
+                        && providerHasActiveWorkspaceConnection(provider, connections.data ?? []);
                       const personalConnectionStateUnavailable = provider.provider === 'granola' && (connections.isLoading || connections.isError);
-                      const personalConnectDisabled = personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
+                      const personalConnectDisabled = !providerAvailable || personalConnectionStateUnavailable || connectProvider.isPending || Boolean(pendingConnectorOAuth) || hasActivePersonalConnection;
                       const personalConnectTitle = hasActivePersonalConnection
                         ? `A ${provider.name} personal connection is already installed. Manage it above.`
+                        : !providerAvailable && !connectorCatalog.isLoading
+                          ? `${provider.name} is not configured in this Avalon region.`
                         : provider.provider === 'granola' && connections.isLoading
                           ? 'Checking installed personal connections…'
                           : provider.provider === 'granola' && connections.isError
                             ? 'Installed personal connections could not be loaded.'
                             : undefined;
-                      const workspaceConnectDisabled = connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
+                      const workspaceConnectDisabled = !providerAvailable || connections.isLoading || connections.isError || connectProvider.isPending || createGranolaWorkspaceConnection.isPending || Boolean(pendingConnectorOAuth) || hasActiveWorkspaceConnection;
                       const workspaceConnectTitle = hasActiveWorkspaceConnection
-                        ? `${provider.provider === 'x' ? 'An' : 'A'} ${provider.name} workspace connection is already installed. Manage it above.`
+                        ? `A ${provider.name} workspace connection is already installed. Manage it above.`
+                        : !providerAvailable && !connectorCatalog.isLoading
+                          ? `${provider.name} is not configured in this Avalon region.`
                         : connections.isLoading
                           ? 'Checking installed workspace connections…'
                           : connections.isError
@@ -841,14 +910,26 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <article className="provider-card" key={provider.id}>
                           <div className="provider-card-heading">
                             <div className="provider-icon"><Icon aria-hidden="true" size={18} /></div>
-                            <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : 'Available'}</span></div>
+                            <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>
                             <div className="provider-actions">
                               {provider.scopes.includes('you' as never) && (
                                 <Button
                                   disabled={personalConnectDisabled}
-                                  onClick={() => connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') })}
+                                  onClick={() => {
+                                    if (provider.provider === 'generic_webhook') {
+                                      setWebhookModalScope('you');
+                                      setWebhookDisplayName('Inbound webhook');
+                                      setWebhookEventTypes('');
+                                      setWebhookIdempotencyKey(crypto.randomUUID());
+                                      setWebhookSecretResult(null);
+                                      setWebhookCopied(null);
+                                      setWebhookRotationTarget(null);
+                                      return;
+                                    }
+                                    connectProvider.mutate({ provider: provider.provider, scope: 'you', capabilities: providerCapabilitiesForScope(provider, 'you') });
+                                  }}
                                   title={personalConnectTitle}
                                 >{awaitingProvider ? <><LoaderCircle aria-hidden="true" className="spin" size={13} /> Waiting…</> : 'Connect for me'}</Button>
                               )}
@@ -858,6 +939,16 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                                 onClick={() => {
                                   if (provider.provider === 'granola') {
                                     setGranolaWorkspaceModalOpen(true);
+                                    return;
+                                  }
+                                  if (provider.provider === 'generic_webhook') {
+                                    setWebhookModalScope('workspace');
+                                    setWebhookDisplayName('Workspace inbound webhook');
+                                    setWebhookEventTypes('');
+                                    setWebhookIdempotencyKey(crypto.randomUUID());
+                                    setWebhookSecretResult(null);
+                                    setWebhookCopied(null);
+                                    setWebhookRotationTarget(null);
                                     return;
                                   }
                                   connectProvider.mutate({ provider: provider.provider, scope: 'workspace', capabilities: providerCapabilitiesForScope(provider, 'workspace') });
@@ -875,8 +966,8 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   </div>
                 </div>
                 {connectorOAuthMessage && <p className="settings-oauth-status" role="status"><Check aria-hidden="true" size={14} />{connectorOAuthMessage}</p>}
-                {(connectorOAuthError || connections.error || connectProvider.error || createGranolaWorkspaceConnection.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
-                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
+                {(connectorOAuthError || connections.error || connectorCatalog.error || connectProvider.error || createGranolaWorkspaceConnection.error || createWebhookConnection.error || rotateWebhookSecret.error || reconnectConnection.error || testConnection.error || disconnectConnection.error) && (
+                  <InlineError>{connectorOAuthError ?? connections.error?.message ?? connectorCatalog.error?.message ?? connectProvider.error?.message ?? createGranolaWorkspaceConnection.error?.message ?? createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message ?? reconnectConnection.error?.message ?? testConnection.error?.message ?? disconnectConnection.error?.message}</InlineError>
                 )}
               </section>
             )}
@@ -931,6 +1022,103 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
             )}
           </div>
         </main>
+        <Modal
+          description={webhookRotationTarget
+            ? 'Rotate the endpoint signing secret. The previous secret stops working immediately.'
+            : `Create a ${webhookModalScope === 'workspace' ? 'workspace' : 'personal'} signed activity endpoint.`}
+          footer={webhookSecretResult ? (
+            <Button className="button-primary" onClick={() => setWebhookModalScope(null)}>Done</Button>
+          ) : (
+            <>
+              <Button onClick={() => setWebhookModalScope(null)}>Cancel</Button>
+              {webhookRotationTarget ? (
+                <Button
+                  className="button-primary"
+                  disabled={rotateWebhookSecret.isPending}
+                  onClick={() => rotateWebhookSecret.mutate(webhookRotationTarget)}
+                >
+                  {rotateWebhookSecret.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                  Rotate secret
+                </Button>
+              ) : (
+                <Button
+                  className="button-primary"
+                  disabled={!webhookDisplayName.trim() || createWebhookConnection.isPending}
+                  onClick={() => createWebhookConnection.mutate()}
+                >
+                  {createWebhookConnection.isPending && <LoaderCircle aria-hidden="true" className="spin" size={14} />}
+                  Create webhook
+                </Button>
+              )}
+            </>
+          )}
+          onOpenChange={(open) => {
+            if (open || createWebhookConnection.isPending || rotateWebhookSecret.isPending) return;
+            setWebhookModalScope(null);
+            setWebhookRotationTarget(null);
+            setWebhookSecretResult(null);
+            setWebhookCopied(null);
+          }}
+          open={webhookModalScope !== null}
+          title={webhookRotationTarget ? `Rotate ${webhookDisplayName}` : 'Create inbound webhook'}
+        >
+          {webhookSecretResult ? (
+            <div className="settings-list-card">
+              <p>Copy the endpoint and secret now. Avalon will not show this secret again.</p>
+              <label className="form-field">
+                <span>Endpoint</span>
+                <input aria-label="Webhook endpoint" readOnly spellCheck={false} value={webhookSecretResult.endpoint} />
+              </label>
+              <Button onClick={() => {
+                void bridge.copyText(webhookSecretResult.endpoint);
+                setWebhookCopied('endpoint');
+              }}>
+                {webhookCopied === 'endpoint' ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+                {webhookCopied === 'endpoint' ? 'Endpoint copied' : 'Copy endpoint'}
+              </Button>
+              <label className="form-field">
+                <span>Signing secret</span>
+                <input aria-label="Webhook signing secret" readOnly spellCheck={false} type="password" value={webhookSecretResult.signingSecret} />
+              </label>
+              <Button onClick={() => {
+                void bridge.copyText(webhookSecretResult.signingSecret);
+                setWebhookCopied('secret');
+              }}>
+                {webhookCopied === 'secret' ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+                {webhookCopied === 'secret' ? 'Secret copied' : 'Copy secret'}
+              </Button>
+              <small>Sign the exact UTF-8 JSON bytes using: <code>{webhookSecretResult.signatureFormat}</code></small>
+            </div>
+          ) : webhookRotationTarget ? (
+            <p>Update the sender as soon as you rotate. Deliveries signed with the current secret will be rejected.</p>
+          ) : (
+            <>
+              <label className="form-field" htmlFor="webhook-display-name">
+                <span>Name</span>
+                <input
+                  autoFocus
+                  id="webhook-display-name"
+                  maxLength={180}
+                  onChange={(event) => setWebhookDisplayName(event.currentTarget.value)}
+                  value={webhookDisplayName}
+                />
+              </label>
+              <label className="form-field" htmlFor="webhook-event-types">
+                <span>Allowed event types <small>(optional)</small></span>
+                <input
+                  id="webhook-event-types"
+                  onChange={(event) => setWebhookEventTypes(event.currentTarget.value)}
+                  placeholder="ticket.updated, incident.created"
+                  value={webhookEventTypes}
+                />
+                <small>Separate names with commas or spaces. Leave empty to accept any valid event type.</small>
+              </label>
+            </>
+          )}
+          {(createWebhookConnection.error || rotateWebhookSecret.error) && (
+            <InlineError>{createWebhookConnection.error?.message ?? rotateWebhookSecret.error?.message}</InlineError>
+          )}
+        </Modal>
         <Modal
           description="A workspace-wide Granola connection requires a Workspace API key. Personal Granola connections use browser sign-in and do not need a key."
           footer={(

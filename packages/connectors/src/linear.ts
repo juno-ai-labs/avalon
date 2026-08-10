@@ -7,6 +7,7 @@ import {
   jsonHeaders,
   numberValue,
   providerJson,
+  readResponseBytes,
   recordValue,
   sha256Hex,
   stringValue,
@@ -42,6 +43,7 @@ export interface LinearConnectorConfig {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
+  webhookSecret?: string;
   fetch?: FetchLike;
   now?: () => number;
 }
@@ -298,7 +300,10 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           id name summary description url createdAt updatedAt startDate targetDate
           status { id name type }
           lead { id name }
-          teams { nodes { id key name } }
+          teams(first: 50) {
+            nodes { id key name }
+            pageInfo { hasNextPage endCursor }
+          }
         }
       }
     `, { id: projectId });
@@ -309,6 +314,39 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
 
   return {
     agentPlugin: LinearAgentPluginDescriptor,
+    webhookActivity: {
+      async verify(input) {
+        const secret = input.verificationSecret ?? config.webhookSecret;
+        if (!secret) throw new ConnectorError("invalid_configuration", "Linear webhook verification is not configured");
+        const verified = await verifyLinearWebhook({
+          secret,
+          rawBody: input.rawBody,
+          signatureHeader: input.headers.get("linear-signature"),
+          deliveryHeader: input.headers.get("linear-delivery")
+            ?? input.headers.get("linear-delivery-id")
+            ?? input.headers.get("x-linear-delivery"),
+          eventHeader: input.headers.get("linear-event") ?? input.headers.get("x-linear-event"),
+          timestampHeader: input.headers.get("linear-timestamp") ?? input.headers.get("x-linear-timestamp"),
+          now: input.now,
+          ...(input.replayWindowMs === undefined ? {} : { replayWindowMs: input.replayWindowMs }),
+          maxBytes: input.maxBytes,
+        });
+        return {
+          deliveryId: verified.deliveryId,
+          eventType: verified.eventName,
+          providerAccountId: verified.organizationId,
+          bodyHash: verified.bodyHash,
+          event: verified,
+        };
+      },
+      normalize(connection, event, payloadRef) {
+        return normalizeLinearWebhook(
+          connection,
+          event.event as VerifiedLinearWebhook,
+          payloadRef,
+        );
+      },
+    },
     manifest: {
       type: "linear",
       displayName: "Linear",
@@ -346,7 +384,14 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         "linear.cycle.create", "linear.cycle.update", "linear.cycle.remove",
         "linear.document.create", "linear.document.update", "linear.document.remove",
         "linear.user.create", "linear.user.update", "linear.user.remove",
-        "linear.oauth_app.revoked", "linear.permission_change.team_access_changed",
+        "linear.initiative.create", "linear.initiative.update", "linear.initiative.remove",
+        "linear.initiative_update.create", "linear.initiative_update.update", "linear.initiative_update.remove",
+        "linear.customer.create", "linear.customer.update", "linear.customer.remove",
+        "linear.customer_need.create", "linear.customer_need.update", "linear.customer_need.remove",
+        "linear.release.create", "linear.release.update", "linear.release.remove",
+        "linear.release_note.create", "linear.release_note.update", "linear.release_note.remove",
+        "linear.oauth_app.revoked", "linear.oauth_authorization.revoked",
+        "linear.permission_change.team_access_changed", "linear.app_user_notification.create",
         "linear.agent_session_event.created", "linear.agent_session_event.prompted",
       ],
       resourceTypes: [
@@ -769,28 +814,23 @@ export async function canPersonalLinearConnectionAccessWebhook(
   const now = input.config.now ?? Date.now;
   const signal = input.signal ?? AbortSignal.timeout(15_000);
   assertConfig(input.config);
-
+  // Linear can null the entire GraphQL data object when one non-null root
+  // rejects access. Probe candidates independently so an inaccessible child
+  // cannot hide an accessible signed parent from the personal route check.
   for (const candidate of candidates) {
-    try {
-      const data = await withLinearAccess(
-        input.config,
-        fetcher,
-        now,
-        input.connection,
-        signal,
-        (token) => linearGraphql(fetcher, token, `
-          query AvalonPersonalWebhookAccess($id: String!) {
-            resource: ${candidate.field}(id: $id) { id }
-          }
-        `, { id: candidate.id }, signal),
-      );
-      if (recordValue(data, "resource")) return true;
-    } catch (error) {
-      signal.throwIfAborted();
-      if (error instanceof ConnectorError && error.code === "unauthorized") return false;
-      // Deleted child resources commonly return a provider-level not-found
-      // error. Continue to a signed parent relationship when one exists.
-    }
+    const data = await withLinearAccess(
+      input.config,
+      fetcher,
+      now,
+      input.connection,
+      signal,
+      (token) => linearGraphqlAccessProbe(fetcher, token, `
+        query AvalonPersonalWebhookAccess($id: String!) {
+          resource: ${candidate.field}(id: $id) { id }
+        }
+      `, { id: candidate.id }, signal),
+    );
+    if (recordValue(data, "resource")) return true;
   }
   return false;
 }
@@ -894,6 +934,7 @@ export function normalizeLinearWebhook(
     entityKeys,
     dedupeKey: `linear:${verified.deliveryId}`,
     rawContentHash: verified.bodyHash,
+    externalPeople: linearWebhookPeople(event, data, verified.organizationId),
     metadata: {
       deliveryId: verified.deliveryId,
       webhookId: verified.webhookId,
@@ -903,6 +944,63 @@ export function normalizeLinearWebhook(
       updatedFrom: recordValue(event, "updatedFrom") ?? {},
     },
   };
+}
+
+function linearWebhookPeople(
+  event: Record<string, unknown>,
+  data: Record<string, unknown>,
+  providerTenantId: string,
+): NonNullable<NormalizedActivity["externalPeople"]> {
+  const candidates: Array<{ value: unknown; role: string }> = [
+    { value: event.actor, role: "actor" },
+    { value: data.assignee, role: "assignee" },
+    { value: data.assignees, role: "assignee" },
+    { value: typeof data.assigneeId === "string" ? { id: data.assigneeId } : null, role: "assignee" },
+    { value: data.creator, role: "author" },
+    { value: typeof data.creatorId === "string" ? { id: data.creatorId } : null, role: "author" },
+    { value: data.user, role: "user" },
+    { value: typeof data.userId === "string" ? { id: data.userId } : null, role: "user" },
+    { value: data.subscriber, role: "subscriber" },
+    { value: data.subscribers, role: "subscriber" },
+    {
+      value: Array.isArray(data.subscriberIds)
+        ? data.subscriberIds.map((id) => typeof id === "string" ? { id } : null)
+        : null,
+      role: "subscriber",
+    },
+  ];
+  const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const values = Array.isArray(candidate.value) ? candidate.value : [candidate.value];
+    for (const value of values) {
+      if (!isRecord(value)) continue;
+      const externalType = stringValue(value, "type")?.toLowerCase() ?? null;
+      // Linear webhook actors may be applications or integrations. Do not
+      // feed those IDs/names into the human identity resolver.
+      if (externalType && externalType !== "user") continue;
+      if (candidate.role === "actor" && !externalType && !stringValue(value, "email")) continue;
+      const providerUserId = stringValue(value, "id") ?? null;
+      const handle = stringValue(value, "username") ?? null;
+      const email = stringValue(value, "email") ?? null;
+      const displayName = stringValue(value, "displayName") ?? stringValue(value, "name") ?? null;
+      if (!providerUserId && !handle && !email && !displayName) continue;
+      const key = `${candidate.role}:${providerUserId ?? ""}:${handle ?? ""}:${email ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      people.push({
+        provider: "linear",
+        providerTenantId,
+        providerUserId,
+        handle,
+        email,
+        displayName,
+        role: candidate.role,
+        sourceText: JSON.stringify(value).slice(0, 1_000),
+      });
+    }
+  }
+  return people.slice(0, 100);
 }
 
 function normalizeLinearAgentSessionEvent(
@@ -1004,6 +1102,8 @@ type LinearWebhookAccessField =
   | "document"
   | "issue"
   | "issueLabel"
+  | "initiative"
+  | "initiativeUpdate"
   | "project"
   | "projectLabel"
   | "projectUpdate"
@@ -1021,6 +1121,7 @@ function personalLinearWebhookAccessCandidates(
   const eventType = toSnakeCase(verified.eventName);
   if (eventType.startsWith("agent_")
     || eventType.startsWith("oauth_app")
+    || eventType.startsWith("oauth_authorization")
     || eventType.startsWith("permission_change")) return [];
   const data = recordValue(verified.event, "data") ?? {};
   const candidates: LinearWebhookAccessCandidate[] = [];
@@ -1059,6 +1160,8 @@ function personalLinearWebhookAccessCandidates(
     case "reaction":
       add("comment", relationId("commentId"));
       add("issue", relationId("issueId"));
+      add("projectUpdate", relationId("projectUpdateId"));
+      add("initiativeUpdate", relationId("initiativeUpdateId"));
       break;
     case "project":
       add("project", resourceId);
@@ -1082,6 +1185,13 @@ function personalLinearWebhookAccessCandidates(
     case "document":
       add("document", resourceId);
       add("project", relationId("projectId"));
+      break;
+    case "initiative":
+      add("initiative", resourceId);
+      break;
+    case "initiative_update":
+      add("initiativeUpdate", resourceId);
+      add("initiative", relationId("initiativeId"));
       break;
     case "user":
       add("user", resourceId);
@@ -1158,24 +1268,146 @@ async function linearGraphql(
   variables: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const payload = await providerJson(fetcher, LINEAR_GRAPHQL_URL, {
-    method: "POST",
-    headers: jsonHeaders(token),
-    body: JSON.stringify({ query, variables }),
-    signal,
-  }, LINEAR_RESPONSE_BYTES);
-  const errors = Array.isArray(payload.errors) ? payload.errors.filter(isRecord) : [];
-  if (errors.length) {
-    const first = errors[0]!;
-    const extensions = recordValue(first, "extensions") ?? {};
-    const code = stringValue(extensions, "code") ?? "GRAPHQL_ERROR";
-    const message = stringValue(first, "message") ?? "Linear GraphQL request failed";
-    if (["AUTHENTICATION_ERROR", "UNAUTHENTICATED", "INVALID_TOKEN"].includes(code)) {
-      throw new ConnectorError("unauthorized", message, { status: 401, reconnectRequired: true, reason: "api_unauthorized" });
-    }
-    throw new ConnectorError("provider_error", message, { code });
-  }
+  const response = await linearGraphqlResponse(fetcher, token, query, variables, signal);
+  const { payload } = response;
+  throwLinearGraphqlErrors(payload, response);
   return requiredRecord(payload, "data", "Linear returned no GraphQL data");
+}
+
+/**
+ * Access probes intentionally accept partial GraphQL data. A removed child
+ * resource can produce an ENTITY_NOT_FOUND error while its signed parent is
+ * still readable. Authentication failures must continue through the normal
+ * refresh/reconnect path; other field errors simply leave that candidate
+ * unresolved.
+ */
+async function linearGraphqlAccessProbe(
+  fetcher: FetchLike,
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const response = await linearGraphqlResponse(fetcher, token, query, variables, signal);
+  const { payload } = response;
+  const errors = Array.isArray(payload.errors) ? payload.errors.filter(isRecord) : [];
+  for (const error of errors) {
+    const extensions = recordValue(error, "extensions") ?? {};
+    const code = stringValue(extensions, "code") ?? "GRAPHQL_ERROR";
+    if (!["ENTITY_NOT_FOUND", "FORBIDDEN", "AUTHORIZATION_ERROR"].includes(code)) {
+      throwLinearGraphqlErrors(payload, response);
+    }
+  }
+  return recordValue(payload, "data") ?? {};
+}
+
+interface LinearGraphqlResponse {
+  payload: Record<string, unknown>;
+  headers: Headers;
+  status: number;
+}
+
+async function linearGraphqlResponse(
+  fetcher: FetchLike,
+  token: string,
+  query: string,
+  variables: Record<string, unknown>,
+  signal: AbortSignal,
+): Promise<LinearGraphqlResponse> {
+  let response: Response;
+  try {
+    response = await fetcher(LINEAR_GRAPHQL_URL, {
+      method: "POST",
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ query, variables }),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ConnectorError("provider_error", "The Linear GraphQL request could not be completed", error);
+  }
+  const bytes = await readResponseBytes(response, LINEAR_RESPONSE_BYTES);
+  const text = new TextDecoder().decode(bytes);
+  let parsed: unknown = {};
+  if (text) {
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch (error) {
+      throw new ConnectorError("provider_error", "Linear returned malformed GraphQL JSON", error);
+    }
+  }
+  if (!isRecord(parsed)) {
+    throw new ConnectorError("provider_error", "Linear returned an invalid GraphQL response", {
+      status: response.status,
+    });
+  }
+  const result = { payload: parsed, headers: new Headers(response.headers), status: response.status };
+  const errors = Array.isArray(parsed.errors) ? parsed.errors.filter(isRecord) : [];
+  // Linear commonly returns useful GraphQL envelopes with HTTP 400. Preserve
+  // those error codes instead of letting generic HTTP handling erase rate and
+  // authorization semantics.
+  if (!response.ok && errors.length === 0) {
+    const retryAfterMs = linearRetryAfterMs(result, null);
+    throw new ConnectorError(
+      response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error",
+      `Linear returned HTTP ${response.status}`,
+      {
+        status: response.status,
+        ...(retryAfterMs == null ? {} : { retryAfterMs }),
+        ...(response.status === 401 || response.status === 403
+          ? { reconnectRequired: true, reason: "api_unauthorized" }
+          : {}),
+      },
+    );
+  }
+  return result;
+}
+
+function throwLinearGraphqlErrors(
+  payload: Record<string, unknown>,
+  response: LinearGraphqlResponse,
+): void {
+  const errors = Array.isArray(payload.errors) ? payload.errors.filter(isRecord) : [];
+  if (errors.length === 0) return;
+  const first = errors[0]!;
+  const extensions = recordValue(first, "extensions") ?? {};
+  const code = (stringValue(extensions, "code") ?? "GRAPHQL_ERROR").toUpperCase();
+  const message = stringValue(first, "message") ?? "Linear GraphQL request failed";
+  if (["AUTHENTICATION_ERROR", "UNAUTHENTICATED", "INVALID_TOKEN"].includes(code)) {
+    throw new ConnectorError("unauthorized", message, {
+      status: 401,
+      reconnectRequired: true,
+      reason: "api_unauthorized",
+    });
+  }
+  if (["RATELIMITED", "RATE_LIMITED", "RATE_LIMIT_EXCEEDED"].includes(code)
+    || /rate\s*limit/iu.test(message)) {
+    const retryAfterMs = linearRetryAfterMs(response, extensions);
+    throw new ConnectorError("provider_error", message, {
+      code,
+      status: 429,
+      rateLimited: true,
+      ...(retryAfterMs == null ? {} : { retryAfterMs }),
+    });
+  }
+  throw new ConnectorError("provider_error", message, { code, status: response.status });
+}
+
+function linearRetryAfterMs(
+  response: LinearGraphqlResponse,
+  extensions: Record<string, unknown> | null,
+): number | null {
+  const retryAfterHeader = response.headers.get("retry-after")?.trim() ?? "";
+  if (/^\d+(?:\.\d+)?$/u.test(retryAfterHeader)) {
+    return Math.max(0, Math.ceil(Number(retryAfterHeader) * 1_000));
+  }
+  const retryAt = Date.parse(retryAfterHeader);
+  if (retryAfterHeader && Number.isFinite(retryAt)) return Math.max(0, retryAt - Date.now());
+  if (!extensions) return null;
+  const retryAfterMs = numberValue(extensions, "retryAfterMs");
+  if (retryAfterMs != null) return Math.max(0, Math.ceil(retryAfterMs));
+  const retryAfterSeconds = numberValue(extensions, "retryAfter");
+  return retryAfterSeconds == null ? null : Math.max(0, Math.ceil(retryAfterSeconds * 1_000));
 }
 
 function normalizeToken(payload: Record<string, unknown>, now: number): Record<string, unknown> {
@@ -1307,6 +1539,12 @@ function linearResourceType(type: string): string | null {
     "cycle",
     "document",
     "user",
+    "initiative",
+    "initiative_update",
+    "customer",
+    "customer_need",
+    "release",
+    "release_note",
   ].includes(type)) return `linear_${type}`;
   if (type === "project_update") return "linear_project_update";
   return null;

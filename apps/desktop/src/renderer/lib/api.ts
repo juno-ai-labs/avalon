@@ -1559,6 +1559,14 @@ export class AvalonApi {
     return page.items.map(mapConnection);
   }
 
+  async getAvailableConnectorTypes(signal?: AbortSignal): Promise<string[]> {
+    const result = await this.request('/connections/catalog', {
+      schema: z.object({ availableConnectorTypes: z.array(z.string().min(1)) }),
+      signal,
+    });
+    return result.availableConnectorTypes;
+  }
+
   async startGoogleConnection(scope: 'you' | 'workspace', capabilities: string[]): Promise<ConnectorOAuthStart> {
     return this.startProviderConnection('google', scope, capabilities);
   }
@@ -1593,6 +1601,50 @@ export class AvalonApi {
       schema: z.object({ connection: WireConnectionSchema }),
     });
     return mapConnection(response.connection);
+  }
+
+  async createWebhookConnection(
+    displayName: string,
+    scope: 'you' | 'workspace',
+    eventTypes: string[],
+    idempotencyKey: string,
+  ): Promise<{
+    connection: WorkstreamConnection;
+    endpoint: string;
+    signingSecret: string;
+    signatureFormat: string;
+  }> {
+    const response = await this.request('/connections/webhook', {
+      method: 'POST',
+      body: {
+        displayName,
+        scope: scope === 'you' ? 'personal' : 'workspace',
+        eventTypes,
+        idempotencyKey,
+      },
+      schema: z.object({
+        connection: WireConnectionSchema,
+        endpoint: z.string().url(),
+        signingSecret: z.string().min(1),
+        signatureFormat: z.string().min(1),
+      }),
+    });
+    return { ...response, connection: mapConnection(response.connection) };
+  }
+
+  async rotateWebhookSecret(id: string): Promise<{
+    endpoint: string;
+    signingSecret: string;
+    signatureFormat: string;
+  }> {
+    return this.request(`/connections/${encodeURIComponent(id)}/webhook-secret/rotate`, {
+      method: 'POST',
+      schema: z.object({
+        endpoint: z.string().url(),
+        signingSecret: z.string().min(1),
+        signatureFormat: z.string().min(1),
+      }),
+    });
   }
 
   async reconnectConnection(id: string): Promise<ConnectorOAuthStart> {

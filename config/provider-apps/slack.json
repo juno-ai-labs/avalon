@@ -6,7 +6,7 @@
   "display_information": {
     "name": "Avalon",
     "description": "A durable AI agent for cross-app work and personal automations.",
-    "long_description": "Avalon is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. The workspace bot joins public channels so @Avalon is consistently available, but Avalon does not subscribe to ordinary channel messages, scrape, or mirror Slack workspaces. In response to a user-initiated Slack message or mention, Avalon can use Slack's event-scoped Real-time Search API to find relevant public-channel messages. It can also read bounded context visible to the bot and, after confirmation where required, send bot-authored messages, add reactions, and create conversations. Slack members can start workspace-authorized tasks without linking an Avalon account; those tasks use only shared workspace connections and remain attributed to the initiating Slack identity. Linking is required to claim personal authority or use personal connectors. Avalon keeps the task's own work history in Avalon, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Avalon Agent DM. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
+    "long_description": "Avalon is a durable AI agent that carries work across Slack, Gmail, calendars, documents, issue trackers, and other connected services. Start a task from a DM, mention, shortcut, command, or message. The workspace bot subscribes to ordinary public- and private-channel message events only to detect explicit @Avalon mentions and follow-ups in Avalon-owned threads; other channel messages are discarded before task processing and Avalon does not scrape or mirror Slack workspaces. In response to a user-initiated Slack message or mention, Avalon can use Slack's event-scoped Real-time Search API with keyword and semantic search to find relevant public-channel messages. Semantic Real-time Search requires a Slack Business+ or Enterprise+ plan. It can also read bounded context visible to the bot and, after confirmation where required, send bot-authored messages, add reactions, and create conversations. Slack members can start workspace-authorized tasks without linking an Avalon account; those tasks use only shared workspace connections and remain attributed to the initiating Slack identity. Linking is required to claim personal authority or use personal connectors. Avalon keeps the task's own work history in Avalon, streams status and results back to the originating Slack thread, and can deliver personal scheduled briefings to the user's Avalon Agent DM. Personal Slack context and actions use the connected user's permissions. AI output can be incorrect; users should review important decisions and external actions.",
     "background_color": "#1B2400"
   },
   "features": {
@@ -133,6 +133,7 @@
     "event_subscriptions": {
       "request_url": "https://slack.with-avalon.com/slack/events",
       "bot_events": [
+        "app_context_changed",
         "app_home_opened",
         "app_mention",
         "app_uninstalled",

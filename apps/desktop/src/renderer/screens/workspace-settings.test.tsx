@@ -10,7 +10,10 @@ const api = vi.hoisted(() => ({
   getWorkspaceInvitations: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getConnections: vi.fn(),
+  getAvailableConnectorTypes: vi.fn(),
   createGranolaWorkspaceConnection: vi.fn(),
+  createWebhookConnection: vi.fn(),
+  rotateWebhookSecret: vi.fn(),
   createXConnection: vi.fn(),
   getConnectorOAuthAttempt: vi.fn(),
   startProviderConnection: vi.fn(),
@@ -122,6 +125,9 @@ describe('Workspace settings', () => {
     api.getWorkspaceMembers.mockResolvedValue([owner, member]);
     api.getWorkspaceInvitations.mockResolvedValue([invitation]);
     api.getConnections.mockResolvedValue([]);
+    api.getAvailableConnectorTypes.mockResolvedValue([
+      'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack', 'x',
+    ]);
     api.createGranolaWorkspaceConnection.mockResolvedValue({
       id: '00000000-0000-7000-8000-000000000018',
       connectorType: 'granola',
@@ -129,6 +135,24 @@ describe('Workspace settings', () => {
       displayName: 'Granola workspace',
       capabilities: ['granola.workspace.read'],
       status: 'healthy',
+    });
+    api.createWebhookConnection.mockResolvedValue({
+      connection: {
+        id: '00000000-0000-7000-8000-000000000019',
+        connectorType: 'generic_webhook',
+        scope: 'you',
+        displayName: 'Inbound webhook',
+        capabilities: [],
+        status: 'healthy',
+      },
+      endpoint: 'https://eu.api.with-avalon.com/ingest/webhook/00000000-0000-7000-8000-000000000019',
+      signingSecret: 'whsec_one-time-secret',
+      signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
+    });
+    api.rotateWebhookSecret.mockResolvedValue({
+      endpoint: 'https://eu.api.with-avalon.com/ingest/webhook/00000000-0000-7000-8000-000000000099',
+      signingSecret: 'whsec_rotated-secret',
+      signatureFormat: 't=<unix-seconds>,v1=<hex-hmac-sha256(t.raw-body)>',
     });
     api.startProviderConnection.mockResolvedValue({
       url: 'https://accounts.google.com/o/oauth2/v2/auth?state=opaque',
@@ -499,7 +523,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const xCard = (await screen.findByText('X')).closest('article');
+    const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
     expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
 
@@ -507,6 +531,50 @@ describe('Workspace settings', () => {
     fireEvent.click(within(xCard!).getByRole('button', { name: 'Connect workspace' }));
     await waitFor(() => expect(api.createXConnection).toHaveBeenCalledWith(['x.read']));
     expect(api.startProviderConnection).not.toHaveBeenCalledWith('x', expect.anything(), expect.anything());
+  });
+
+  it('creates a signed generic webhook and exposes its endpoint and secret once', async () => {
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const webhookCard = (await screen.findByText('Inbound webhook')).closest('article');
+    expect(webhookCard).not.toBeNull();
+    fireEvent.click(within(webhookCard!).getByRole('button', { name: 'Connect for me' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create inbound webhook' });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Support intake' } });
+    fireEvent.change(within(dialog).getByLabelText(/Allowed event types/u), {
+      target: { value: 'ticket.created, ticket.updated' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create webhook' }));
+
+    await waitFor(() => expect(api.createWebhookConnection).toHaveBeenCalledWith(
+      'Support intake',
+      'you',
+      ['ticket.created', 'ticket.updated'],
+      expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    ));
+    expect(await within(dialog).findByLabelText('Webhook endpoint')).toHaveValue(
+      'https://eu.api.with-avalon.com/ingest/webhook/00000000-0000-7000-8000-000000000019',
+    );
+    expect(within(dialog).getByLabelText('Webhook signing secret')).toHaveAttribute('type', 'password');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Copy secret' }));
+    expect(copyText).toHaveBeenLastCalledWith('whsec_one-time-secret');
+  });
+
+  it('marks X unavailable when the regional backend has no TwitterAPI.io credential', async () => {
+    api.getAvailableConnectorTypes.mockResolvedValue([
+      'generic_webhook', 'github', 'google', 'granola', 'linear', 'notion', 'slack',
+    ]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
+    expect(xCard).not.toBeNull();
+    expect(within(xCard!).getByText('Unavailable')).toBeVisible();
+    const connect = within(xCard!).getByRole('button', { name: 'Connect workspace' });
+    expect(connect).toBeDisabled();
+    expect(connect).toHaveAttribute('title', 'Public X via TwitterAPI.io is not configured in this Avalon region.');
   });
 
   it('disables duplicate workspace X connections', async () => {
@@ -522,7 +590,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const xCard = (await screen.findByText('X')).closest('article');
+    const xCard = (await screen.findByText('Public X via TwitterAPI.io')).closest('article');
     expect(xCard).not.toBeNull();
     expect(within(xCard!).queryByRole('button', { name: 'Connect for me' })).not.toBeInTheDocument();
     const workspaceButton = within(xCard!).getByRole('button', { name: 'Connect workspace' });
@@ -530,7 +598,7 @@ describe('Workspace settings', () => {
       expect(workspaceButton).toBeDisabled();
       expect(workspaceButton).toHaveAttribute(
         'title',
-        'An X workspace connection is already installed. Manage it above.',
+        'A Public X via TwitterAPI.io workspace connection is already installed. Manage it above.',
       );
     });
     expect(screen.queryByRole('button', { name: 'Reconnect X' })).not.toBeInTheDocument();
@@ -724,7 +792,7 @@ describe('Workspace settings', () => {
     expect(screen.queryByText('Google Drive + Docs + Sheets')).not.toBeInTheDocument();
   });
 
-  it('counts only connections rendered in the installed list', async () => {
+  it('renders generic webhooks in the installed list', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000099',
       connectorType: 'generic_webhook',
@@ -738,9 +806,9 @@ describe('Workspace settings', () => {
 
     const installedHeading = await screen.findByRole('heading', { level: 2, name: 'Installed connections' });
     const headingGroup = installedHeading.closest<HTMLElement>('.settings-pane-heading');
-    expect(within(headingGroup!).getByText('0')).toBeVisible();
-    expect(screen.getByText('No connections yet')).toBeVisible();
-    expect(screen.queryByText('Inbound webhook')).not.toBeInTheDocument();
+    expect(within(headingGroup!).getByText('1')).toBeVisible();
+    expect(screen.getAllByText('Inbound webhook')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Rotate secret for Inbound webhook' })).toBeVisible();
   });
 
   it('shows the immutable EU region and lets an owner create, copy, and revoke an invite', async () => {

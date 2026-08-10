@@ -1,6 +1,6 @@
 import { app } from "./app";
 import type { Env } from "./env";
-import { consumeActivityQueue } from "./queues/activity-consumer";
+import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { processMemoryIndexOutbox } from "./services/memory-service";
 import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
@@ -44,6 +44,7 @@ export { WorkstreamLoopWorkflow } from "./workflows/workstream-loop";
 export { ConnectorPollWorkflow } from "./workflows/connector-poll";
 export { RegionalIdentityBridge } from "./regional-identity-bridge";
 export { GitHubRegionalBridge } from "./github-regional-bridge";
+export { GitHubRoutingBridge } from "./github-routing-bridge";
 export { InboundEmailRegionalBridge } from "./inbound-email-regional-bridge";
 export { WorkstreamEmailRoutingBridge } from "./workstream-email-routing-bridge";
 export { LinearRegionalBridge } from "./linear-regional-bridge";
@@ -63,6 +64,7 @@ export default {
       processMemoryIndexOutbox(env),
       new SlackAgentService(env).maintainIngress(),
       processDueOpportunityWindows(env),
+      recoverPendingActivityQueue(env),
     ]));
   },
 } satisfies ExportedHandler<Env>;

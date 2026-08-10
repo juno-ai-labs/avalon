@@ -174,6 +174,7 @@ to:
 
 | Event | What Avalon uses it for |
 | --- | --- |
+| `app_context_changed` | Store the user's bounded active-view entity metadata so the next Agent prompt can understand the channel, thread, canvas, or list the user is viewing. |
 | `app_home_opened` | Publish the linked, unlinked, or administrator App Home view. |
 | `app_mention` | Start or continue a channel task when a user explicitly mentions Avalon. |
 | `app_uninstalled` | Mark the workspace installation disconnected and stop routing work to it. |
@@ -195,11 +196,12 @@ A Slack-originated task receives this source provenance in its system prompt:
 - thread timestamp;
 - invocation type and channel type;
 - the matched Avalon member ID when a confirmed link exists;
-- up to eight nearby messages and attachment metadata when the bot can read
-  them.
+- bounded active-view entity metadata supplied by Slack; and
+- attachment metadata from the triggering interaction.
 
-Nearby message text and attachment metadata are labeled as untrusted evidence,
-not system instructions. The short-lived search `action_token` is hidden runtime
+Avalon does not durably copy surrounding Slack messages. Active-view and
+attachment metadata are labeled as untrusted evidence, not system instructions.
+The short-lived search `action_token` is hidden runtime
 authorization: it is never placed in the system prompt, workstream transcript,
 model tool arguments, tool output, or inference-payload logs. Search results are
 transient model context and are excluded from durable tool-result replay.
