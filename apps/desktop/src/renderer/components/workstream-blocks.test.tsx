@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ElicitationData, Message } from '../lib/types';
-import { ElicitationPanel, MessageBlock, withConnectorMentionLinks } from './workstream-blocks';
+import { createConnectorMentionToken, ElicitationPanel, MessageBlock, withConnectorMentionLinks } from './workstream-blocks';
 
 const copyText = vi.hoisted(() => vi.fn());
 
@@ -380,29 +380,26 @@ describe('MessageBlock markdown', () => {
   it('escapes connection labels and ignores overlapping or malformed ranges', () => {
     expect(withConnectorMentionLinks('Ping @Ops [beta]', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 16 },
-    ]).text).toBe('Ping [@Ops \\[beta\\]](connector:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector:tok:ops)');
 
-    expect(withConnectorMentionLinks('Ping @Ops *now*', [
-      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 15 },
-    ]).text).toBe('Ping [@Ops \\*now\\*](connector:ops)');
+    expect(withConnectorMentionLinks('Ping @Ops *now* & co', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 20 },
+    ], 'tok')).toBe('Ping [@Ops \\*now\\* \\& co](connector:tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
       { type: 'connector', connectorType: 'ops', startOffset: 6, endOffset: 9 },
-    ]).text).toBe('Ping [@Ops](connector:ops)');
+    ], 'tok')).toBe('Ping [@Ops](connector:tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 40 },
       { type: 'person', personId: 'user-1', startOffset: 0, endOffset: 4 },
-    ]).text).toBe('Ping @Ops');
+    ], 'tok')).toBe('Ping @Ops');
   });
 
-  it('reports only the labels it emitted, so a forged link cannot borrow one', () => {
-    const { labels } = withConnectorMentionLinks('Ping @Ops now', [
-      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
-    ]);
-    expect([...labels.get('ops') ?? []]).toEqual(['@Ops']);
-    expect(withConnectorMentionLinks('Ping @Ops now', []).labels.size).toBe(0);
+  it('mints a distinct connector token per call', () => {
+    expect(createConnectorMentionToken()).not.toBe(createConnectorMentionToken());
+    expect(createConnectorMentionToken()).toMatch(/^[0-9a-z]+$/u);
   });
 
   it('does not chip a hand-authored connector link that no mention backs', () => {
@@ -419,6 +416,26 @@ describe('MessageBlock markdown', () => {
     expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
     expect(screen.getByText('@Slack workspace')).toHaveClass('mention-text-fallback');
     expect(screen.queryByRole('link', { name: '@Slack workspace' })).not.toBeInTheDocument();
+  });
+
+  it('does not let a forged link borrow a label from a genuine mention beside it', () => {
+    const text = 'Ping @Ops and [@Ops](connector:ops) again';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-borrowed',
+      authorType: 'agent',
+      author: undefined,
+      text,
+      mentions: [{ type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    // The genuine occurrence chips; the hand-authored one beside it does not.
+    const chips = [...document.querySelectorAll('.mention-chip')];
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveAttribute('data-connector-type', 'ops');
+    expect(document.querySelector('.mention-text-fallback')).toHaveTextContent('@Ops');
   });
 
   it('renders a message carrying a malformed connector escape without throwing', () => {

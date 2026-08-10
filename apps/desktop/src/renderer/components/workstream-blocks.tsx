@@ -26,7 +26,7 @@ import {
   TerminalSquare,
   X,
 } from 'lucide-react';
-import { Children, useEffect, useRef, useState } from 'react';
+import { Children, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -167,17 +167,32 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
 }
 
 const PERSON_LINK_PATTERN = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
-const CONNECTOR_LINK_PATTERN = /^connector:(.+)$/u;
+const CONNECTOR_LINK_PATTERN = /^connector:([0-9a-z]+):(.+)$/u;
 
 function personIdFromHref(href: string | undefined): string | undefined {
   return href?.match(PERSON_LINK_PATTERN)?.[1]?.toLowerCase();
 }
 
-function connectorTypeFromHref(href: string | undefined): string | undefined {
-  const encoded = href?.match(CONNECTOR_LINK_PATTERN)?.[1];
-  if (encoded === undefined) return undefined;
+/**
+ * A `connector:` link counts only when it carries this render's token. The token
+ * is minted in the browser and never appears in the stored message, so a link
+ * someone wrote into the text cannot carry it — no guessing at labels or offsets.
+ */
+export function createConnectorMentionToken(): string {
+  return globalThis.crypto?.randomUUID?.().replace(/-/gu, '')
+    ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+}
+
+/** Any `connector:` href, tokened or not — all of them stay inert rather than navigating. */
+function isConnectorHref(href: string | undefined): boolean {
+  return href !== undefined && href.startsWith('connector:');
+}
+
+function connectorTypeFromHref(href: string | undefined, token: string): string | undefined {
+  const match = href?.match(CONNECTOR_LINK_PATTERN);
+  if (!match || match[1] !== token) return undefined;
   try {
-    return decodeURIComponent(encoded);
+    return decodeURIComponent(match[2] ?? '');
   } catch {
     // Message text is authored by people and models, so `[x](connector:%)` is a
     // reachable input. A malformed escape is simply not a connector reference —
@@ -186,9 +201,12 @@ function connectorTypeFromHref(href: string | undefined): string | undefined {
   }
 }
 
-/** Keeps a label literal: brackets would end the link, emphasis marks would style it. */
+/**
+ * Keeps a label literal: brackets would end the link, emphasis marks would style
+ * it, and `&` would let a character reference decode into something else.
+ */
 function escapeMarkdownLabel(label: string): string {
-  return label.replace(/[\\[\]*_`~]/gu, (character) => `\\${character}`);
+  return label.replace(/[\\[\]*_`~&]/gu, (character) => `\\${character}`);
 }
 
 /** The rendered label of a link, when it is a single plain string. */
@@ -198,13 +216,6 @@ function linkLabelText(children: React.ReactNode): string | undefined {
   return typeof parts[0] === 'string' ? parts[0] : undefined;
 }
 
-export interface ConnectorMentionMarkdown {
-  /** The message text with each stored connector range rewritten as a link. */
-  text: string;
-  /** Per connector type, the labels this rewrite emitted — the only ones a chip may use. */
-  labels: Map<string, Set<string>>;
-}
-
 /**
  * Person mentions arrive as durable `[@Name](person:<id>)` Markdown, but a
  * connection mention stays human-readable text because Avalon has no
@@ -212,16 +223,15 @@ export interface ConnectorMentionMarkdown {
  * authoritative, so this turns them into the same link shape at render time —
  * presentation only, leaving the message text models and Slack see untouched.
  *
- * The emitted labels are returned alongside the text: a `connector:` link that
- * this rewrite did not produce is text someone wrote, not a mention, and the
- * renderer must not dress it as one.
+ * Each emitted link carries `token`, which is what makes it authoritative: a
+ * `connector:` link already present in the message text is something a person or
+ * a model wrote, cannot carry the token, and must not be dressed as a mention.
  */
-export function withConnectorMentionLinks(text: string, mentions: MessageMention[]): ConnectorMentionMarkdown {
-  const labels = new Map<string, Set<string>>();
+export function withConnectorMentionLinks(text: string, mentions: MessageMention[], token: string): string {
   const connectors = mentions
     .filter((mention) => mention.type === 'connector' && mention.connectorType)
     .sort((left, right) => left.startOffset - right.startOffset);
-  if (connectors.length === 0) return { text, labels };
+  if (connectors.length === 0) return text;
 
   let cursor = 0;
   let output = '';
@@ -231,13 +241,10 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
     const source = text.slice(startOffset, endOffset);
     if (!source.startsWith('@')) continue;
     output += text.slice(cursor, startOffset);
-    output += `[${escapeMarkdownLabel(source)}](connector:${encodeURIComponent(connectorType)})`;
+    output += `[${escapeMarkdownLabel(source)}](connector:${token}:${encodeURIComponent(connectorType)})`;
     cursor = endOffset;
-    const known = labels.get(connectorType) ?? new Set<string>();
-    known.add(source);
-    labels.set(connectorType, known);
   }
-  return { text: output + text.slice(cursor), labels };
+  return output + text.slice(cursor);
 }
 
 function mentionInitials(label: string): string {
@@ -281,7 +288,9 @@ function MentionChip({ fallbackLabel, mention, personId }: {
 }
 
 export function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
-  const connectorMentions = withConnectorMentionLinks(children, mentions);
+  // One token per mounted body, so the links keep stable identity across renders.
+  const token = useMemo(createConnectorMentionToken, []);
+  const markdown = withConnectorMentionLinks(children, mentions, token);
   return (
     <div className="markdown-body">
       <ReactMarkdown
@@ -296,12 +305,12 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
               if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
               return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
             }
-            const connectorType = connectorTypeFromHref(href);
-            if (connectorType !== undefined) {
+            if (isConnectorHref(href)) {
+              const connectorType = connectorTypeFromHref(href, token);
               const label = linkLabelText(linkChildren);
-              // Only a label this render produced from a stored mention range earns
-              // a chip; a hand-authored `connector:` link is text, not a mention.
-              if (label === undefined || !connectorMentions.labels.get(connectorType)?.has(label)) {
+              // Without this render's token the link is text someone wrote, not a
+              // mention: it neither earns a chip nor becomes something clickable.
+              if (connectorType === undefined || label === undefined) {
                 return <span className="mention-text-fallback">{linkChildren}</span>;
               }
               return (
@@ -318,12 +327,14 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
         }}
         remarkPlugins={[remarkGfm]}
         urlTransform={(url, key, node) => (
-          key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || connectorTypeFromHref(url))
+          // Both schemes reach the `a` component intact so it can decide there;
+          // neither is ever rendered as a navigable link.
+          key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || isConnectorHref(url))
             ? url
             : defaultUrlTransform(url)
         )}
       >
-        {connectorMentions.text}
+        {markdown}
       </ReactMarkdown>
     </div>
   );

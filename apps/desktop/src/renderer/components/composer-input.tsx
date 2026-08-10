@@ -14,7 +14,7 @@ import {
   useState,
 } from 'react';
 import type { AvalonApi } from '../lib/api';
-import { splitMentionHighlights } from '../lib/mention-highlight';
+import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
 import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import type { PendingAttachment } from '../lib/use-file-attachments';
@@ -110,9 +110,11 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   // aside and lets the textarea paint itself until the composition commits.
   const [composing, setComposing] = useState(false);
   const highlighting = mentionLabels.length > 0;
+  // Normalized once per label set, not once per keystroke.
+  const labels = useMemo(() => normalizeMentionLabels(mentionLabels), [mentionLabels]);
   const segments = useMemo(
-    () => highlighting ? splitMentionHighlights(value, mentionLabels) : [],
-    [highlighting, mentionLabels, value],
+    () => highlighting ? splitMentionHighlights(value, labels) : [],
+    [highlighting, labels, value],
   );
   const syncHighlightScroll = useCallback((): void => {
     const textarea = textareaRef.current;
