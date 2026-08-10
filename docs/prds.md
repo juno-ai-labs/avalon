@@ -44,13 +44,17 @@ several folders that link to each other, not several PRDs in one folder.
 
 **Where a PRD has got to is recorded in `state.md`, not in the folder name.**
 Every PRD folder has one. It opens with this checklist — these three lines, in
-this order, worded this way — and carries nothing else except the note described
-under [Abandoned and superseded PRDs](#abandoned-and-superseded-prds):
+this order, worded this way — and the only thing that may follow is a short note
+beneath it. There are two kinds: the supersession note described under
+[Abandoned and superseded PRDs](#abandoned-and-superseded-prds), and the
+standing-contract note that says the freeze rule does not apply, which only [the
+implementation brief](PRDs/2026-08-05_avalon-implementation-brief/state.md)
+carries.
 
 ```
-[ ] planned
-[ ] in progress
-[ ] completed
+- [ ] planned
+- [ ] in progress
+- [ ] completed
 ```
 
 The boxes are **cumulative** — a PRD that is being built has both `planned` and
@@ -58,17 +62,17 @@ The boxes are **cumulative** — a PRD that is being built has both `planned` an
 construction reads:
 
 ```
-[x] planned
-[x] in progress
-[ ] completed
+- [x] planned
+- [x] in progress
+- [ ] completed
 ```
 
 and a shipped one reads:
 
 ```
-[x] planned
-[x] in progress
-[x] completed
+- [x] planned
+- [x] in progress
+- [x] completed
 ```
 
 Advancing a PRD is therefore ticking a box, and nothing else moves. Do it in the
@@ -86,9 +90,9 @@ A PRD replaced by a newer one, or dropped without being built, never reaches
 saying what happened, with a link:
 
 ```
-[x] planned
-[ ] in progress
-[ ] completed
+- [x] planned
+- [ ] in progress
+- [ ] completed
 
 Superseded by [`2026-09-02_workstream-notification-rules`](../2026-09-02_workstream-notification-rules/prd.md).
 Design only — no code shipped. Do not build against this PRD.
@@ -125,7 +129,7 @@ contract, and it is edited whenever the contract itself changes.
 | File | Purpose |
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
-| `state.md` | **Required.** The three-line state checklist above, plus a note if the PRD was superseded or abandoned. Nothing else. |
+| `state.md` | **Required.** The three-line state checklist above, plus a supersession or standing-contract note where one applies. Nothing else. |
 | `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Add it when the work is large enough that sequencing matters. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
