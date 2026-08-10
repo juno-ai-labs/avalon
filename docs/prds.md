@@ -1,92 +1,124 @@
 # Product requirement documents
 
 This document defines **where a product requirement document lives, how its
-folder is named, and when it stops being editable**. Read it before writing a
-PRD, before renaming one, and before citing one as current guidance.
+folder is named, and how its state is recorded**. Read it before writing a PRD,
+before advancing one, and before citing one as current guidance.
 
 A PRD here is a *point-in-time* document: it argues for a change, defines its
 scope, and records the decisions taken while it was being built. It is not the
 durable reference for the subsystem it created — that is the matching document
 in [the documentation index](README.md), which is updated alongside the code
-long after the PRD is frozen.
+long after the PRD is finished.
 
-**This is not [`PRD.md`](PRD.md).** That document is the standing product
-contract for Avalon as a whole — what a work stream is, what the agent may do,
-what the visual language is — and it stays current. The documents this file
-governs are the numbered, dated proposals under `docs/PRDs/`, each covering one
-change.
+One PRD is the exception and stays current: [the Avalon implementation
+brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md), the standing product
+contract for what Avalon *is*. Everything else under `docs/PRDs/` covers one
+proposed change and stops being edited once it is complete. The brief predates
+this specification and keeps its own shape — it is the contract every later PRD
+is written *against*, not an instance of the form below.
 
 ## Where a PRD lives
 
 Every PRD is a **folder** under `docs/PRDs/`, named:
 
 ```
-<yyyy>-<mm>-<dd>_<status>_<kebab-case-short-description>
+<yyyy>-<mm>-<dd>_<kebab-case-short-description>
 ```
 
 For example:
 
 ```
-docs/PRDs/2026-08-10_in-progress_workstream-mute-windows/prd.md
+docs/PRDs/2026-08-10_workstream-mute-windows/prd.md
 ```
 
 The date is the date the PRD was **created**, and it never changes — not when
-work starts, not when it ships, not when something supersedes it. The folder is
-therefore stable enough to link to, and a directory listing sorts into a
-chronological record of what the product has proposed.
+work starts, not when it ships, not when something supersedes it. Nothing else
+in the folder name changes either: the path is fixed for the life of the PRD, so
+a link to it never rots, and a directory listing sorts into a chronological
+record of what the product has proposed.
 
 One folder is one PRD. A change large enough to split into focused parts becomes
 several folders that link to each other, not several PRDs in one folder.
 
-## The status segment
+## `state.md`
 
-The status segment is one of exactly four values, so that enumerating PRDs — by
-a person or by an agent — always lands every document in a defined bucket:
+**Where a PRD has got to is recorded in `state.md`, not in the folder name.**
+Every PRD folder has one, and it holds exactly this checklist:
 
-| Status | Meaning |
-| --- | --- |
-| `todo` | Proposed and agreed as a direction. No implementation has started. |
-| `in-progress` | Being built now. The PRD is live and may still change. |
-| `completed` | Shipped. A historical document. |
-| `superseded` | Replaced by one or more newer PRDs, or abandoned in favour of a different direction. A historical document. |
-
-`todo` and `in-progress` are the active buckets; `completed` and `superseded` are
-the historical ones. There is no fifth value — a PRD that was written and never
-pursued is `superseded`, with the banner saying so.
-
-**Changing status means renaming the folder**, leaving the date and description
-segments alone:
-
-```bash
-git mv docs/PRDs/2026-08-10_todo_workstream-mute-windows \
-       docs/PRDs/2026-08-10_in-progress_workstream-mute-windows
+```
+[ ] planned
+[ ] in progress
+[ ] completed
 ```
 
-Update the status banner in the body in the same commit, so the folder name and
-the document never disagree. When they do disagree, **the folder name is
-authoritative** — it is what enumeration reads.
+The boxes are **cumulative** — a PRD that is being built has both `planned` and
+`in progress` ticked, because it was planned and it still is. So a PRD under
+construction reads:
 
-## Historical documents are frozen
+```
+[x] planned
+[x] in progress
+[ ] completed
+```
 
-**Once a PRD is `completed` or `superseded`, it is not edited again.** It records
-what was decided at the time, and its value is that a later reader can trust it
-to say what was actually believed and agreed then, rather than a version quietly
-reconciled with what shipped afterwards.
+and a shipped one reads:
+
+```
+[x] planned
+[x] in progress
+[x] completed
+```
+
+Advancing a PRD is therefore ticking a box, and nothing else moves. Do it in the
+commit that makes it true: `in progress` when the first implementing change
+lands, `completed` when the last one does.
+
+`state.md` is the **only** authority on state. Don't restate it in the PRD body,
+in the documentation index, or in the folder name — a second copy is a copy that
+goes stale.
+
+### Abandoned and superseded PRDs
+
+A PRD replaced by a newer one, or dropped without being built, never reaches
+`completed`. Leave its boxes as they stand and add a line beneath the checklist
+saying what happened, with a link:
+
+```
+[x] planned
+[ ] in progress
+[ ] completed
+
+Superseded by `../2026-09-02_workstream-notification-rules/`. Design only — no
+code shipped. Do not build against this PRD.
+```
+
+That line is what stands between a future reader and a design that was
+deliberately abandoned, so make it unambiguous. The successor's own PRD should
+point back at what it replaced.
+
+## Completed PRDs are frozen
+
+**Once `completed` is ticked, the PRD is not edited again.** It records what was
+decided at the time, and its value is that a later reader can trust it to say
+what was actually believed and agreed then, rather than a version quietly
+reconciled with what shipped afterwards. The same applies to an abandoned PRD
+from the moment its `state.md` says so.
 
 If the shipped system drifts from a completed PRD, the drift is recorded in the
 subsystem document that owns the area — not by editing the PRD. If the direction
-itself changes, write a new PRD and mark the old one `superseded`.
+itself changes, write a new PRD.
 
-Two edits are still allowed on a frozen PRD, because they are about *finding*
-it rather than about its content: adding or correcting the status banner
-(including links to the successors that replaced it), and fixing a link that
-broke when another document moved.
+Two edits are still allowed on a frozen PRD, because they are about *finding* it
+rather than about its content: adding or correcting the note in `state.md`
+(including links to whatever replaced it), and fixing a link that broke when
+another document moved.
 
 ## Files inside the folder
 
 | File | Purpose |
 | --- | --- |
 | `prd.md` | **Required.** The PRD itself: the problem, the goals and non-goals, the proposed product behavior, and the decisions. This is the file other documents link to. |
+| `state.md` | **Required.** The three-line state checklist above, plus a note if the PRD was superseded or abandoned. Nothing else. |
 | `plan.md` | The phased build checklist for the PRD, with an acceptance gate per phase. Add it when the work is large enough that sequencing matters. |
 | `design.md` | Architecture and rationale too detailed for the PRD body — schemas, protocols, migration strategy. |
 | `research.md` | Prior art, competitor behavior, or investigation that informed the PRD but is not itself a proposal. |
@@ -96,38 +128,157 @@ Anything else follows the same shape — lower-kebab, `.md`, descriptive of its
 role. Split a file out when it is long enough that the PRD body suffers for
 carrying it; keep everything in `prd.md` otherwise.
 
-## The status banner
+## The PRD header
 
-Every `prd.md` opens with an H1 title and then a blockquote banner, before any
-other prose:
+Every `prd.md` opens with an H1 title and then a blockquote, before any other
+prose:
 
 ```markdown
 # Work-stream mute windows
 
-> **Status: in-progress.** Created 2026-08-10. Owner: <name>.
+> Created 2026-08-10.
 >
 > A participant can silence a busy work stream for a fixed period without
 > leaving it. Companion plan: [`plan.md`](./plan.md). Standing contract:
-> [`../../PRD.md`](../../PRD.md).
+> [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 ```
 
-The banner carries the status, the creation date, the owner, a one-line scope,
-and links to the companion files and to the documents a reader needs alongside
-it. Keep it to what orients a reader who arrived from a search result.
+It carries the creation date, a one-line scope, and links to the companion files
+and to the documents a reader needs alongside it. Keep it to what orients a
+reader who arrived from a search result.
 
-A `superseded` PRD's banner must **name its successors and link them**, because
-that banner is the only thing standing between a future reader and a design that
-was deliberately abandoned:
+**No state and no owner in the header.** State lives in `state.md` and nowhere
+else; an owner line in a document that outlives the assignment is stale the day
+someone changes teams, and the commit history says who wrote it.
+
+## The sections of a PRD
+
+A PRD body is Markdown `##` headings in the order below. The first six are
+**required**; the rest are included when they apply and omitted entirely — no
+empty headings — when they do not. A required section with genuinely nothing to
+say keeps its heading and gets `N/A — <reason>`, because a reader needs to know
+the question was asked and answered rather than skipped.
+
+### Required sections
+
+1. **Summary** — One or two paragraphs stating what changes, for whom, and what
+   becomes possible that was not before. Written so that someone who reads only
+   this section knows whether the rest concerns them. Lead with the outcome a
+   user would notice, not with the mechanism.
+
+2. **Motivation** — The case for making this change *now*: the problem someone
+   actually hit, how often, and what it costs to leave it alone. Cite the
+   evidence — a support thread, a recurring request, an incident, a measurement.
+   A reviewer who was not in the room should finish this section agreeing there
+   is a problem, before reading a word about the solution. "It would be nice" is
+   not motivation; "every participant in a busy automation stream leaves it, and
+   leaving loses their place in the transcript" is.
+
+3. **Goals** — What the change must achieve, as a numbered list of outcomes, not
+   tasks. Each one should be specific enough that you could later say plainly
+   whether it happened. "Participants can silence a work stream for a fixed
+   period without leaving it" is a goal; "add a mute table" is a task.
+
+4. **Non-goals** — What this change explicitly does *not* cover, numbered the
+   same way, each with the reason it is out of scope and a note on whether it is
+   deferred or rejected outright. This is the highest-value section in the
+   document: an unstated non-goal is the thing that gets built anyway, and the
+   thing a reviewer argues about for a week. Say what is deliberately left for
+   later, and say what the product will never do.
+
+5. **Product behavior** — The proposed experience in enough detail to build
+   against: what the user does, what the surface shows, and how it behaves in
+   each state — empty, loading, populated, error, and offline. Name the real
+   surfaces (the sidebar, the transcript, the composer, the contextual right
+   rail) and the real vocabulary (work stream, participant, automation,
+   subscription, activity, elicitation), so the PRD and the product use the same
+   words. Where behavior is conditional, give the condition. Where a mock or a
+   screenshot settles it faster than prose, link the image.
+
+6. **Impact on the product contract** — How the change sits against [the Avalon
+   implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md).
+   Most PRDs write "none — this refines behavior within the existing contract",
+   and that one line is the point: it forces the author to check. If the change
+   *does* alter the contract — what a work stream is, whether viewing implies
+   participation, what the agent is allowed to do, the absence of channels, a
+   global inbox, or global search — say exactly which clause moves and why. That
+   is a bigger conversation than the feature, and it belongs at the top of it.
+
+### Optional sections
+
+- **Key design decisions** — Decisions a reader might otherwise second-guess,
+  numbered, each with its rationale *and* the alternative that was rejected.
+  Recording the road not taken is what stops the same debate reopening in six
+  months.
+- **Data model** — The tables, columns, and relationships the change implies,
+  and whether existing rows need backfilling. Sketch level is fine; the
+  authoritative record is the migration and [`DATA_MODEL.md`](DATA_MODEL.md).
+- **Regional impact** — What differs between Global and the European Union, what
+  crosses the boundary, and where the data comes to rest. **Required in spirit**
+  for anything touching identity, the Global registry, cross-region bridges,
+  provider ingress routing, or data residency; read
+  [`REGIONALIZATION.md`](REGIONALIZATION.md) first.
+- **Security and trust model** — The trust surface the change opens or closes:
+  renderer isolation, connector credential scope, session and ticket handling,
+  webhook signature verification, untrusted model or provider payloads, secrets
+  placement. **Required in spirit** whenever the change touches any of those;
+  [`SECURITY.md`](SECURITY.md) defines the boundaries.
+- **Agent behavior** — What the agent may now do, which typed tools it gains,
+  what it is still forbidden, and what a user sees while it works. Required
+  whenever the change touches the harness or adds a tool; see
+  [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
+- **Provider configuration** — Any Slack, GitHub, Linear, Notion, Google,
+  Resend, or Cloudflare setting that must change outside the repository, in
+  which region, and what breaks if it is not applied before the change ships.
+- **Rollout** — Flags, phases, migration or backfill order, and how the change
+  is turned off if it goes wrong. Name the flag, per
+  [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md).
+- **Acceptance** — How anyone can tell the PRD is done: the flows to walk and
+  what each must show. Where these become durable checks, they land in
+  [`E2E.md`](E2E.md).
+- **Open questions** — What is genuinely undecided, and what each answer would
+  change. An open question that blocks the build says so. Delete each one as it
+  is resolved — resolved questions belong in **Key design decisions**.
+
+### Conventions
+
+- Markdown `##` per section; `###` beneath only when a section genuinely has
+  parts. Numbered lists for goals, non-goals, and decisions, so a reviewer can
+  cite "non-goal 3" and be understood.
+- Present tense for proposed behavior ("a participant mutes a work stream…"),
+  not future or conditional. A PRD describes the product it is asking for as
+  though it exists.
+- Refer to surfaces, tables, tools, and flags by their real names so a reader
+  can go find them.
+- Length follows the change. A one-surface refinement is a page; a subsystem is
+  not. Move anything longer than the argument it supports into `design.md`.
+
+### Skeleton
 
 ```markdown
-> **Status: superseded** by
-> [`2026-09-02_in-progress_workstream-notification-rules`](../2026-09-02_in-progress_workstream-notification-rules/prd.md),
-> which replaces per-work-stream mute windows with general notification rules.
-> Design only — no code shipped from this PRD. Do not build against it.
-```
+# <Title>
 
-The successor's own banner should point back, so the pair reads correctly from
-either end.
+> Created <yyyy-mm-dd>.
+>
+> <one-line scope, companion links>
+
+## Summary
+## Motivation
+## Goals
+## Non-goals
+## Product behavior
+## Impact on the product contract
+
+## Key design decisions      <!-- optional -->
+## Data model                <!-- optional -->
+## Regional impact           <!-- optional -->
+## Security and trust model  <!-- optional -->
+## Agent behavior            <!-- optional -->
+## Provider configuration    <!-- optional -->
+## Rollout                   <!-- optional -->
+## Acceptance                <!-- optional -->
+## Open questions            <!-- optional -->
+```
 
 ## Relationship to the rest of `docs/`
 
@@ -135,7 +286,8 @@ either end.
   index](README.md).** That index registers the durable documents that own an
   area, and it would churn beyond usefulness with one row per proposal. This
   document is the `docs/PRDs/` tree's entry in it; the folder listing is the
-  tree's own index.
+  tree's own index. The implementation brief is the single exception, because it
+  is the product contract rather than a proposal.
 - **A PRD does not replace the subsystem document.** When a PRD ships, the
   behavior it introduced is described in the document that owns the area —
   [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md),
@@ -144,9 +296,8 @@ either end.
   subsystem that no existing document covers, add `docs/<NAME>.md` and register
   it in the index.
 - **A subsystem document may cite a PRD** for the reasoning behind a decision.
-  Link to the folder's `prd.md` by its full path, not by its status — the status
-  segment is part of the path and the link breaks when the folder is renamed, so
-  re-point the link in the renaming commit.
+  Link to the folder's `prd.md` by its full path; the path is stable for the life
+  of the PRD, so such a link does not need revisiting when the PRD advances.
 - **[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)** remains the phased
   checklist for the product build as a whole. A PRD's own `plan.md` covers only
   that PRD.
@@ -155,18 +306,17 @@ either end.
 
 ## Creating one
 
-1. Pick today's date, a status of `todo` or `in-progress`, and a short
-   kebab-case description. Create
-   `docs/PRDs/<yyyy>-<mm>-<dd>_<status>_<description>/prd.md`.
-2. Write the title, then the status banner: status, creation date, owner,
-   one-line scope, companion links.
-3. Write the body — the problem, the goals, the explicit non-goals, the proposed
-   behavior, and the decisions with their rationale. Say what is *not* in scope
-   as plainly as what is; an unstated non-goal is the thing that gets built
-   anyway.
-4. Split out `plan.md`, `design.md`, or `research.md` if the body is carrying
+1. Pick today's date and a short kebab-case description. Create
+   `docs/PRDs/<yyyy>-<mm>-<dd>_<description>/prd.md`.
+2. Add `state.md` next to it with the three-line checklist, `planned` ticked.
+3. Write the title, then the header blockquote: creation date, a one-line scope,
+   companion links.
+4. Write the body against [the sections above](#the-sections-of-a-prd) — the six
+   required ones in order, then whichever optional ones apply. Start with
+   **Non-goals** if the scope is contested; the rest gets easier once the edges
+   are fixed.
+5. Split out `plan.md`, `design.md`, or `research.md` if the body is carrying
    material that belongs in one of them.
-5. As work proceeds, rename the folder's status segment and update the banner in
-   the same commit.
-6. When it ships, rename to `completed`, make sure the subsystem documents
-   describe the shipped behavior, and stop editing the PRD.
+6. Tick `in progress` in the commit where implementation starts.
+7. When it ships, tick `completed`, make sure the subsystem documents describe
+   the shipped behavior, and stop editing the PRD.
