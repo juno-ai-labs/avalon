@@ -904,6 +904,11 @@ export class AvalonApi {
     return this.getAutomation(id);
   }
 
+  async archiveDraftAutomation(id: string): Promise<void> {
+    await this.requestVoid(`/automations/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+    this.automationDetails.delete(id);
+  }
+
   async runAutomation(id: string): Promise<WorkstreamSummary> {
     const idempotencyKey = this.pendingRunKeys.get(id) ?? crypto.randomUUID();
     this.pendingRunKeys.set(id, idempotencyKey);
