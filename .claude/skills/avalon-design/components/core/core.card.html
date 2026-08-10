@@ -1,0 +1,49 @@
+<!-- @dsCard group="Components" viewport="700x230" name="Core" subtitle="Buttons, icon buttons, badges, status dots, the mark" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<style>:root{--avalon-mark-src:url("../../assets/brand/avalon-mark.png")}html,body{margin:0}body{background:var(--surface);color:var(--ink);font-family:var(--font-sans);padding:16px}
+.row{align-items:center;display:flex;flex-wrap:wrap;gap:10px}.col{display:grid;gap:8px}.lbl{color:var(--muted-2);font-family:var(--font-mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head><body><div id="root"></div>
+<script type="text/babel">
+const NS = window.AvalonDesignSystem_5d1c5e;
+const MARK = "../../assets/brand/avalon-mark.png";
+
+const { Button, IconButton, Badge, StatusDot, AvalonMark, Icon } = NS;
+function Demo() {
+  return (
+    <div className="col" style={{ gap: 16 }}>
+      <div className="col"><span className="lbl">Button</span>
+        <div className="row">
+          <Button variant="primary" icon={<Icon name="plus" size={14} />}>New work stream</Button>
+          <Button>Open</Button>
+          <Button variant="secondary">Retry run</Button>
+          <Button variant="quiet">Skip</Button>
+          <Button variant="danger">Revoke</Button>
+          <Button disabled>Disabled</Button>
+          <Button size="small">Small</Button>
+        </div>
+      </div>
+      <div className="col"><span className="lbl">Icon button · mark</span>
+        <div className="row">
+          <IconButton label="Attach"><Icon name="paperclip" size={15} /></IconButton>
+          <IconButton label="Rail"><Icon name="panel-right" size={15} /></IconButton>
+          <IconButton active label="HyperSight"><Icon name="sparkles" size={15} /></IconButton>
+          <IconButton disabled label="Disabled"><Icon name="trash-2" size={15} /></IconButton>
+          <AvalonMark size={22} src={MARK} />
+          <AvalonMark color="var(--ink)" size={22} src={MARK} />
+        </div>
+      </div>
+      <div className="col"><span className="lbl">Badge · status</span>
+        <div className="row">
+          <Badge>Workspace</Badge><Badge>You</Badge><Badge tone="brand">Automation</Badge><Badge tone="blue">Live</Badge>
+          <span style={{ width: 12 }} />
+          <StatusDot status="running" /><StatusDot status="needs_input" /><StatusDot status="completed" /><StatusDot status="failed" /><StatusDot status="scheduled" />
+        </div>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script></body></html>
