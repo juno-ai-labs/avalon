@@ -18,6 +18,8 @@ import {
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
+  parseWorkstreamLink,
+  workstreamCanonicalUrl,
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginContext,
@@ -2220,11 +2222,12 @@ export class SlackAgentService {
     const unfurls: Record<string, unknown> = {};
     for (const link of links) {
       if (typeof link.url !== "string") continue;
-      const url = new URL(link.url);
-      if (url.origin !== new URL(this.env.PUBLIC_WEB_BASE_URL).origin) continue;
-      const match = /^\/workstreams\/([0-9a-f-]{36})$/iu.exec(url.pathname);
-      if (!match) continue;
-      unfurls[link.url] = { blocks: [{ type: "section", text: { type: "mrkdwn", text: "*Avalon*\nOpen this item in Avalon to view it with your existing workspace permissions." } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open in Avalon" }, url: desktopHandoffUrl(this.env.PUBLIC_WEB_BASE_URL, `avalon://workstreams/${match[1]}`), action_id: "avalon_open_unfurl" }] }] };
+      // Slack only delivers link_shared for the app's registered unfurl domain,
+      // so only the HTTPS shapes below can ever arrive here. The shared parser
+      // still accepts the raw deep link, and it never throws on a malformed URL.
+      const workstreamId = parseWorkstreamLink(link.url, { webBaseUrl: this.env.PUBLIC_WEB_BASE_URL });
+      if (!workstreamId) continue;
+      unfurls[link.url] = { blocks: [{ type: "section", text: { type: "mrkdwn", text: "*Avalon*\nOpen this item in Avalon to view it with your existing workspace permissions." } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open in Avalon" }, url: workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId), action_id: "avalon_open_unfurl" }] }] };
     }
     if (Object.keys(unfurls).length) await slackApi(await this.botToken(connection), "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
   }
@@ -2823,7 +2826,7 @@ function linkedHome(name: string, tasks: Record<string, unknown>[], automations:
       : task.harness_status === "running"
         ? ":large_green_circle: Running"
         : `Recent · ${escapeMrkdwn(String(task.harness_status).replaceAll("_", " "))}`;
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${desktopHandoffUrl(webBase, `avalon://workstreams/${String(task.id)}`)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, String(task.id))}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
   blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
   if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Avalon DM." } });
@@ -2843,7 +2846,7 @@ function linkedHome(name: string, tasks: Record<string, unknown>[], automations:
 
 function responseActionBlocks(workstreamId: string, webBase: string, linked: boolean): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
-    { type: "button", text: { type: "plain_text", text: "Open task" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_task" },
+    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_task" },
     ...(linked ? [{ type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "avalon_feedback", value: workstreamId }] : []),
   ] }, aiResponseDisclaimerBlock()];
 }
@@ -2867,7 +2870,7 @@ function workspaceClaimBlocks(sessionId: string, includeConnectHint: boolean): R
 }
 
 function automationActionBlocks(title: string, workstreamId: string, webBase: string): Record<string, unknown>[] {
-  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_automation_result" }] }, aiResponseDisclaimerBlock()];
+  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_automation_result" }] }, aiResponseDisclaimerBlock()];
 }
 
 function aiResponseDisclaimerBlock(): Record<string, unknown> {

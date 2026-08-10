@@ -535,13 +535,13 @@ async function clearStoredSession(): Promise<void> {
   await withSessionMutation(clearStoredSessionUnlocked);
 }
 
-function parseApiUrl(value: string | undefined, fallback: string): string {
+function parseAvalonBaseUrl(value: string | undefined, fallback: string): string {
   const parsed = new URL(value ?? fallback);
   if (!allowedExternalProtocols.has(parsed.protocol)) {
-    throw new Error(`Unsupported API URL protocol: ${parsed.protocol}`);
+    throw new Error(`Unsupported Avalon endpoint protocol: ${parsed.protocol}`);
   }
   if (app.isPackaged && parsed.protocol !== 'https:') {
-    throw new Error('Packaged Avalon API endpoints must use HTTPS');
+    throw new Error('Packaged Avalon endpoints must use HTTPS');
   }
   return parsed.toString().replace(/\/$/u, '');
 }
@@ -553,15 +553,19 @@ function runtimeConfig(): RuntimeConfig {
     isPackaged: packaged,
     platform: process.platform,
     api: {
-      global: parseApiUrl(
+      global: parseAvalonBaseUrl(
         packaged ? undefined : process.env['VITE_API_GLOBAL_URL'],
         packaged ? 'https://api.with-avalon.com' : 'http://127.0.0.1:8787',
       ),
-      eu: parseApiUrl(
+      eu: parseAvalonBaseUrl(
         packaged ? undefined : process.env['VITE_API_EU_URL'],
         packaged ? 'https://eu.api.with-avalon.com' : 'http://127.0.0.1:8788',
       ),
     },
+    webBaseUrl: parseAvalonBaseUrl(
+      packaged ? undefined : process.env['PUBLIC_WEB_BASE_URL'],
+      packaged ? 'https://with-avalon.com' : 'http://127.0.0.1:5174',
+    ),
     devAuthEnabled: process.env['AVALON_DEV_AUTH'] !== 'false' && !app.isPackaged,
   };
 }

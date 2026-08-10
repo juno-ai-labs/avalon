@@ -84,6 +84,10 @@ html[data-theme='afterlight'] .hero-landscape { background: linear-gradient(180d
 .eyebrow, .kicker { color: rgba(240,239,232,.58); font-family: 'SFMono-Regular', Consolas, monospace; font-size: 9px; letter-spacing: .12em; margin: 0; text-transform: uppercase; }
 .eyebrow span { color: var(--accent); margin-right: 12px; }
 .hero-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 2rem; }
+/* Every handoff page hides its open button by setting `hidden` when the link is
+   invalid. A class that sets `display` beats the user-agent rule for `[hidden]`,
+   so without this the button stays on screen pointing at nothing. */
+[hidden] { display: none !important; }
 .button { align-items: center; border: 1px solid var(--line); border-radius: calc(var(--radius) * .72); display: inline-flex; font-size: 12px; font-weight: 600; gap: 10px; justify-content: center; min-height: 48px; padding: 11px 16px; transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease; }
 .button img { display: block; filter: brightness(0); }.button span { margin-left: 12px; transition: transform 180ms ease; }
 a.button:hover { transform: translateY(-2px); }a.button:hover span { transform: translate(2px, 2px); }

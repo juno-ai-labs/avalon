@@ -1,4 +1,5 @@
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@avalon/connectors";
+import { workstreamCanonicalUrl } from "@avalon/contracts";
 import { nowIso } from "@avalon/db";
 import { z } from "zod";
 
@@ -114,7 +115,7 @@ export async function sendWorkstreamMentionSlack(
       AbortSignal.timeout(10_000),
       request,
     );
-    const target = desktopHandoffUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
+    const target = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
     const chunks = slackMentionChunks(input, target, 40_000);
     let threadTs: string | undefined;
     for (const [index, chunk] of chunks.entries()) {
@@ -241,11 +242,6 @@ async function workspaceBotToken(
   return SlackCredentialsSchema.parse(context.credentials).botAccessToken;
 }
 
-function desktopHandoffUrl(webBase: string, workstreamId: string): string {
-  const url = new URL("/open", webBase);
-  url.hash = new URLSearchParams({ target: `avalon://workstreams/${workstreamId}` }).toString();
-  return url.toString();
-}
 
 function humanReadableMessage(value: string): string {
   return value.replace(

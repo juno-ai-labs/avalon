@@ -2,6 +2,14 @@ import { z } from "zod";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
+export {
+  WORKSTREAM_LINK_PATH_PREFIX,
+  isWorkstreamId,
+  parseWorkstreamLink,
+  parseWorkstreamLinkPath,
+  workstreamCanonicalUrl,
+  workstreamDeepLink,
+} from "./workstream-links";
 
 export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
