@@ -112,7 +112,31 @@ test('a dispatch replays the tag it names without creating one', () => {
 });
 
 test('a manual dispatch without a tag fails rather than guessing', () => {
-  assert.throws(() => planRelease({ eventName: 'workflow_dispatch' }), /must name an existing tag/u);
+  assert.throws(() => planRelease({ eventName: 'workflow_dispatch' }), /must name the tag to replay/u);
+});
+
+test('a malformed dispatch tag fails on the cheap runner, not the macOS one', () => {
+  // The planner exists so nothing claims a 90-minute signed build to discover
+  // it has nothing to ship. A typo in the dispatch input is exactly that case:
+  // validate-release-tag.mjs would reject it, but only after the runner and the
+  // whole install-and-verify prologue had been spent.
+  for (const tag of ['1.34.0', 'v1.34.1', 'v1.34.0-rc.1', 'not-a-tag', 'v']) {
+    assert.throws(
+      () => planRelease({ eventName: 'workflow_dispatch', inputTag: tag }),
+      /Release tag must have the form|patch 0|Invalid semantic version/u,
+      `dispatching ${tag} must not reach a macOS runner`,
+    );
+  }
+});
+
+test('a dispatch tag is judged on shape alone, never on existence', () => {
+  // A dispatch is the break-glass path — replaying a tag after a release failed
+  // past publication. A planner that could wrongly decide a tag is missing
+  // would block that during an incident, so existence stays with the checkout
+  // and validate-release-tag.mjs.
+  const plan = planRelease({ eventName: 'workflow_dispatch', inputTag: 'v9.99.0' });
+  assert.equal(plan.shouldRelease, true);
+  assert.equal(plan.version, '9.99.0');
 });
 
 test('tags are never consulted, so a hand-cut tag changes nothing', () => {

@@ -28,10 +28,19 @@ export function assertMinorReleaseVersion(version) {
   return version;
 }
 
-export function assertReleaseTag(tag, rootVersion, desktopVersion) {
+// The shape half of assertReleaseTag: everything that can be judged from the
+// tag alone, with no checkout to compare against. The planner uses this to
+// reject a malformed dispatch before a macOS runner is claimed; assertReleaseTag
+// then adds the checks that need the working tree.
+export function parseReleaseTag(tag) {
   if (!tag?.startsWith('v')) throw new Error(`Release tag must have the form v<semver>; received ${tag || '(empty)'}`);
   const taggedVersion = tag.slice(1);
   assertMinorReleaseVersion(taggedVersion);
+  return taggedVersion;
+}
+
+export function assertReleaseTag(tag, rootVersion, desktopVersion) {
+  const taggedVersion = parseReleaseTag(tag);
   if (rootVersion !== taggedVersion) {
     throw new Error(`Root package version ${rootVersion} does not match tag ${tag}`);
   }
