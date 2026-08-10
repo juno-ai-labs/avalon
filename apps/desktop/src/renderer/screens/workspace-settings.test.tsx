@@ -27,6 +27,7 @@ const setApplicationIcon = vi.hoisted(() => vi.fn());
 const resetApplicationIcon = vi.hoisted(() => vi.fn());
 const getApplicationSettings = vi.hoisted(() => vi.fn());
 const setLockdownMode = vi.hoisted(() => vi.fn());
+const setDebugEnabled = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
@@ -51,6 +52,7 @@ vi.mock('../lib/platform', () => ({
     copyText,
     getApplicationSettings,
     setLockdownMode,
+    setDebugEnabled,
     onApplicationSettingsChanged: () => () => undefined,
     getApplicationIcon,
     setApplicationIcon,
@@ -155,10 +157,20 @@ describe('Workspace settings', () => {
     copyText.mockResolvedValue(undefined);
     openExternal.mockResolvedValue(undefined);
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
-    getApplicationSettings.mockResolvedValue({ lockdownMode: false, lockdownAvailable: true });
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+    });
     setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
       lockdownMode,
       lockdownAvailable: true,
+      debugEnabled: false,
+    }));
+    setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled,
     }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
@@ -836,7 +848,11 @@ describe('Workspace settings', () => {
   });
 
   it('shows the automatic off state when the operating-system keystore is unavailable', async () => {
-    getApplicationSettings.mockResolvedValue({ lockdownMode: false, lockdownAvailable: false });
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: false,
+      debugEnabled: false,
+    });
     renderSettings();
     openSettingsSection('Application');
 
@@ -848,7 +864,11 @@ describe('Workspace settings', () => {
   });
 
   it('still allows an in-app off transition from a stale unavailable-keystore state', async () => {
-    getApplicationSettings.mockResolvedValue({ lockdownMode: true, lockdownAvailable: false });
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: true,
+      lockdownAvailable: false,
+      debugEnabled: false,
+    });
     renderSettings();
     openSettingsSection('Application');
 
@@ -858,6 +878,22 @@ describe('Workspace settings', () => {
     fireEvent.click(toggle);
 
     await waitFor(() => expect(setLockdownMode).toHaveBeenCalledWith(false));
+  });
+
+  it('toggles the Developer debug preference and leaves it off by default', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Debug enabled' });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setDebugEnabled).toHaveBeenCalledWith(true));
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setDebugEnabled).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
   });
 
   it('shows application-setting load failures inline', async () => {

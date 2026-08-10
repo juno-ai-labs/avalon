@@ -1,4 +1,4 @@
-import type { DesktopApplicationSettings } from '../common/desktop';
+import type { DesktopLockdownSettings } from '../common/desktop';
 import type { StoredApplicationSettings } from './application-settings';
 import {
   LockdownDowngradeRequiresReloginError,
@@ -9,7 +9,7 @@ import {
 export interface LockdownModeControllerDependencies {
   safeStorage: SessionSafeStorage;
   readSettings: () => Promise<StoredApplicationSettings>;
-  writeSettings: (settings: StoredApplicationSettings) => Promise<void>;
+  writeSettings: (settings: Partial<StoredApplicationSettings>) => Promise<void>;
   migrateSession: (
     mode: SessionEncryptionMode,
     options?: { allowLockdownToGlobal?: boolean },
@@ -17,7 +17,7 @@ export interface LockdownModeControllerDependencies {
   recoverGlobalSessionWithoutKeystore: () => Promise<void>;
   clearCredentialsForRelogin: () => Promise<void>;
   runExclusive: <T>(operation: () => Promise<T>) => Promise<T>;
-  onChange: (settings: DesktopApplicationSettings) => void;
+  onChange: (settings: DesktopLockdownSettings) => void;
 }
 
 export class LockdownModeController {
@@ -29,14 +29,14 @@ export class LockdownModeController {
     return this.lockdownMode ? 'lockdown' : 'global';
   }
 
-  state(): DesktopApplicationSettings {
+  state(): DesktopLockdownSettings {
     return {
       lockdownMode: this.lockdownMode,
       lockdownAvailable: this.dependencies.safeStorage.isEncryptionAvailable(),
     };
   }
 
-  async initialize(): Promise<DesktopApplicationSettings> {
+  async initialize(): Promise<DesktopLockdownSettings> {
     this.lockdownMode = (await this.dependencies.readSettings()).lockdownMode;
     if (this.lockdownMode && !this.dependencies.safeStorage.isEncryptionAvailable()) {
       return this.automaticFallbackOff();
@@ -52,7 +52,7 @@ export class LockdownModeController {
     return this.state();
   }
 
-  async settings(): Promise<DesktopApplicationSettings> {
+  async settings(): Promise<DesktopLockdownSettings> {
     if (!this.lockdownMode || this.dependencies.safeStorage.isEncryptionAvailable()) {
       return this.state();
     }
@@ -64,12 +64,12 @@ export class LockdownModeController {
     });
   }
 
-  async set(rawEnabled: unknown): Promise<DesktopApplicationSettings> {
+  async set(rawEnabled: unknown): Promise<DesktopLockdownSettings> {
     if (typeof rawEnabled !== 'boolean') throw new Error('Invalid Lockdown mode value');
     return this.dependencies.runExclusive(() => this.transition(rawEnabled));
   }
 
-  private async transition(enabled: boolean): Promise<DesktopApplicationSettings> {
+  private async transition(enabled: boolean): Promise<DesktopLockdownSettings> {
     if (enabled && !this.dependencies.safeStorage.isEncryptionAvailable()) {
       throw new Error('Lockdown mode requires an available operating-system keystore');
     }
@@ -90,7 +90,7 @@ export class LockdownModeController {
     return settings;
   }
 
-  private async automaticFallbackOff(): Promise<DesktopApplicationSettings> {
+  private async automaticFallbackOff(): Promise<DesktopLockdownSettings> {
     await this.dependencies.clearCredentialsForRelogin();
     await this.dependencies.writeSettings({ lockdownMode: false });
     this.lockdownMode = false;
