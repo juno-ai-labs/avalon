@@ -4,30 +4,27 @@
 //
 // Nobody bumps a version by hand. The release record in
 // apps/site/release.config.json holds the last published version *and the
-// commit it was built from*, and that commit is the watermark: if anything
-// affecting the desktop app has landed on main since it, the next minor is due
-// and the pipeline stamps it onto the manifests itself (apply-release-version
-// .mjs), commits that bump, and builds it.
+// commit it was built from*, and that commit is the watermark: if anything has
+// landed on main since it, the next minor is due and the pipeline stamps it
+// onto the manifests itself (apply-release-version.mjs), commits that bump,
+// and builds it.
 //
-// The watermark replaces the older version-ahead-of-record gate, which made the
-// bump the release trigger. That gate was correct but silent in the failure
-// case everyone actually hit: a merge that changed the desktop app and forgot
-// the bump did not release, and — because the workflow is unfiltered by path —
-// looked exactly like a merge that had nothing to ship. Desktop work then piled
-// up on main until some later change happened to carry a bump.
-//
-// So the path filter that used to be absent now lives here, where it can be
-// tested and where it decides the release rather than the workflow trigger:
-// DESKTOP_RELEASE_PATHS lists what actually goes into the built app. A docs or
-// Worker-only merge changes nothing a user could install and does not spend a
-// 90-minute signed, notarized macOS build.
+// The workflow's `paths:` filter decides whether a push is release-worthy at
+// all, so by the time this runs the push has already touched something the
+// installed app is built from. What is left for the planner is the version and
+// the durable half of the question: `paths:` sees only this push's diff, so it
+// cannot tell whether the last release actually shipped. The watermark can, and
+// it is what makes a re-run after a discarded or failed run pick up everything
+// still unreleased rather than only the newest push's contents.
 //
 // It also closes the loop the pipeline's own commits would otherwise create.
-// The release writes two commits back to main — the version bump (which becomes
-// the new watermark, so it is never re-examined) and the recorded release
-// config (which touches apps/site/release.config.json only, and so matches
-// nothing here). Neither can trigger a release, and neither could anyway:
-// GITHUB_TOKEN pushes do not start workflow runs.
+// The release writes two commits back to main. The recorded release config
+// touches apps/site/release.config.json only, which the `paths:` filter
+// excludes. The version bump does match that filter — it edits package.json —
+// but it becomes the new watermark, so this planner sees nothing since it and
+// skips. Neither could trigger a run anyway: GITHUB_TOKEN pushes do not start
+// workflow runs. That is deliberately two independent guards, because a release
+// loop is unrecoverable by hand.
 //
 // Tags are an artifact of a release, never an input: nothing here reads them,
 // and nothing triggers on them. Keeping the decision on durable committed state
@@ -46,26 +43,6 @@ import { nextReleaseVersion } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
-
-// What ends up inside the installed application, plus the workspace manifests
-// that determine how it is built. A trailing slash matches a directory.
-//
-// Deliberately absent: docs, the Workers under apps/api, the landing site, the
-// retention Worker, repository-root tooling under scripts/, and the CI and
-// deployment workflows. None of them change a byte a user installs.
-export const DESKTOP_RELEASE_PATHS = [
-  'apps/desktop/',
-  'packages/',
-  'package.json',
-  'pnpm-lock.yaml',
-  'pnpm-workspace.yaml',
-  'tsconfig.base.json',
-  '.github/workflows/release-desktop-macos.yml',
-];
-
-export function affectsDesktopRelease(path) {
-  return DESKTOP_RELEASE_PATHS.some((entry) => (entry.endsWith('/') ? path.startsWith(entry) : path === entry));
-}
 
 export function planRelease({
   eventName,
@@ -104,16 +81,11 @@ export function planRelease({
     return release(`the recorded release commit is unreachable, so ${version} ships the current tree`);
   }
 
-  const affecting = changedPaths.filter((path) => affectsDesktopRelease(path));
   const short = releasedCommit.slice(0, 7);
-  if (affecting.length === 0) {
-    return skip(
-      changedPaths.length === 0
-        ? `nothing has landed since the released commit ${short}`
-        : `none of the ${changedPaths.length} paths changed since ${short} affect the desktop app`,
-    );
+  if (changedPaths.length === 0) {
+    return skip(`nothing has landed since the released commit ${short}`);
   }
-  return release(`${affecting.length} desktop path(s) changed since ${short}: ${affecting.slice(0, 5).join(', ')}`);
+  return release(`${changedPaths.length} path(s) changed since ${short}: ${changedPaths.slice(0, 5).join(', ')}`);
 }
 
 // Returns null when the watermark is not reachable in this checkout — a

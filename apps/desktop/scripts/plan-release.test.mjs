@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { affectsDesktopRelease, planRelease } from './plan-release.mjs';
+import { planRelease } from './plan-release.mjs';
 
 const RELEASED = '1111111111111111111111111111111111111111';
 
@@ -31,49 +31,37 @@ test('nobody has to bump a version for the change to ship', () => {
   assert.equal(plan.version, '1.34.0');
 });
 
-test('a merge that changes nothing shipped in the app does not spend a build', () => {
-  const plan = planRelease(branchPush({
-    changedPaths: ['docs/RUNBOOK.md', 'apps/api/src/index.ts', 'README.md'],
-  }));
-  assert.equal(plan.shouldRelease, false);
-  assert.match(plan.reason, /affect the desktop app/u);
-});
-
 test('a merge with nothing at all since the release skips', () => {
   const plan = planRelease(branchPush({ changedPaths: [] }));
   assert.equal(plan.shouldRelease, false);
   assert.match(plan.reason, /nothing has landed/u);
 });
 
-test("the release's own recorded config cannot trigger another release", () => {
-  // The last thing a release does is commit apps/site/release.config.json back
-  // to main. If that commit looked like desktop work, every release would cut
-  // another one for ever.
-  const plan = planRelease(branchPush({ changedPaths: ['apps/site/release.config.json'] }));
-  assert.equal(plan.shouldRelease, false);
-});
-
 test("the release's own version bump cannot trigger another release", () => {
-  // The bump commit becomes the watermark, so it is the diff base rather than
-  // part of the diff. Simulate the state right after a successful release.
+  // The bump commit matches the workflow's paths filter — it edits
+  // package.json — so this skip is the guard that stops a release loop, and it
+  // works because the bump becomes the watermark rather than part of the diff.
   const plan = planRelease(branchPush({ changedPaths: [] }));
   assert.equal(plan.shouldRelease, false);
 });
 
 test('a bump left behind by a failed release is picked back up', () => {
   // The bump pushed to main before a build that then failed is not the
-  // watermark, so it shows as unreleased desktop work and the same version is
-  // retried — apply-release-version.mjs finds the manifests already stamped.
+  // watermark, so it shows as unreleased work and the same version is retried
+  // — apply-release-version.mjs finds the manifests already stamped.
   const plan = planRelease(branchPush({ changedPaths: ['package.json', 'apps/desktop/package.json'] }));
   assert.equal(plan.shouldRelease, true);
   assert.equal(plan.version, '1.34.0');
 });
 
-test('one desktop path among many ignorable ones still releases', () => {
+test('work stranded by an earlier discarded run ships with the next release', () => {
+  // The `paths:` filter only sees the newest push. The watermark is what makes
+  // a release carry everything since the last one that actually published.
   const plan = planRelease(branchPush({
-    changedPaths: ['docs/README.md', 'apps/api/src/index.ts', 'packages/contracts/src/index.ts'],
+    changedPaths: ['apps/desktop/src/main/older-merge.ts', 'apps/desktop/src/main/newest-merge.ts'],
   }));
   assert.equal(plan.shouldRelease, true);
+  assert.match(plan.reason, /2 path\(s\) changed/u);
 });
 
 test('an unrecorded watermark fails open rather than retiring work silently', () => {
@@ -140,40 +128,10 @@ test('the plan is idempotent across repeated merges', () => {
   assert.deepEqual(planRelease(branchPush()), planRelease(branchPush()));
 });
 
-test('the release path set covers what ships and excludes what does not', () => {
-  for (const path of [
-    'apps/desktop/src/main/index.ts',
-    'apps/desktop/package.json',
-    'apps/desktop/electron-builder.yml',
-    'packages/contracts/src/index.ts',
-    'package.json',
-    'pnpm-lock.yaml',
-    'pnpm-workspace.yaml',
-    'tsconfig.base.json',
-    '.github/workflows/release-desktop-macos.yml',
-  ]) {
-    assert.equal(affectsDesktopRelease(path), true, `${path} ships in the desktop app`);
-  }
-
-  for (const path of [
-    'docs/RUNBOOK.md',
-    'README.md',
-    'apps/api/src/index.ts',
-    'apps/site/release.config.json',
-    'apps/site/src/pages/index.astro',
-    'apps/release-retention/src/index.ts',
-    'scripts/check-regional-health.mjs',
-    'assets/brand/logo.svg',
-    'config/provider-apps/github.json',
-    'eslint.config.mjs',
-    '.github/workflows/ci.yml',
-    '.github/workflows/deploy-api.yml',
-  ]) {
-    assert.equal(affectsDesktopRelease(path), false, `${path} does not change the installed app`);
-  }
-});
-
-test('a directory entry never matches a sibling that merely shares its prefix', () => {
-  assert.equal(affectsDesktopRelease('apps/desktop-notes/README.md'), false);
-  assert.equal(affectsDesktopRelease('packages-archive/old/index.ts'), false);
+test('the planner no longer second-guesses the trigger it sits behind', () => {
+  // The `paths:` filter decides release-worthiness now. Re-applying a path list
+  // here would mean two lists to keep in sync, and the stricter of the two
+  // would silently win — so any change at all since the watermark releases.
+  const plan = planRelease(branchPush({ changedPaths: ['docs/RUNBOOK.md'] }));
+  assert.equal(plan.shouldRelease, true);
 });
