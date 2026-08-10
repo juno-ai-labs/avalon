@@ -13,18 +13,21 @@ update it in the same change.
   to read before running any setup, server, or browser-automation command.
 - **Investigating a bug?** The owning document usually states the invariant that
   was violated, and often names the exception you are looking at.
-- **Onboarding?** [`PRD.md`](PRD.md) for what Avalon is, then
-  [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it is put together, then
+- **Onboarding?** [the Avalon implementation
+  brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) for what Avalon is,
+  then [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it is put together, then
   [`DATA_MODEL.md`](DATA_MODEL.md) and [`SECURITY.md`](SECURITY.md).
 - **Adding a document?** Create `docs/<NAME>.md`, register it in the correct
   table below, and add it to the Documentation list in the root
-  [`README.md`](../README.md).
+  [`README.md`](../README.md). **A PRD is the exception**: it goes in a dated
+  folder under `docs/PRDs/` per [`prds.md`](prds.md), and is registered in
+  neither this index nor the root README.
 
 ## Product and architecture
 
 | Document | Scope — read and update when changing… |
 | --- | --- |
-| [`PRD.md`](PRD.md) | The product contract: work streams as the organizing unit, the agent's role, and the visual language. Read before changing what Avalon *is*. |
+| [`prds.md`](prds.md) | How a product requirement document under `docs/PRDs/` is named, which sections it must contain, how its `state.md` records progress, and when it freezes. Read before writing one. The PRD folders themselves are not listed in this index; this row is the tree's entry, and [the Avalon implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) is the standing product contract it defers to. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The monorepo's three deployment surfaces, the Electron main/renderer split, the Hono Worker and its runtime components, and how the packages depend on each other. |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | Identity, tenancy, and the D1 schema — the checked-in migrations are authoritative. Read before adding a table, column, or migration. |
 | [`REGIONALIZATION.md`](REGIONALIZATION.md) | The Global/EU boundary: single identity endpoint, the Global control plane's membership and invitation discovery, immutable workspace region. Read before touching anything cross-region. |
