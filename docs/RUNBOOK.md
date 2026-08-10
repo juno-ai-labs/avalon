@@ -91,6 +91,11 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 - Account: D1 Write/Edit
 - Account: Workers R2 Storage Write/Edit
 - Account: Queues Write/Edit
+- Account: Flagship Write/Edit — the permission is still in open beta and is
+  absent from the published permissions reference; find it by searching
+  `Flagship` in the dashboard's API-token editor. Read access alone lists apps
+  but fails `wrangler flagship apps create` with `Authentication error [code:
+  10000]`, and automatic provisioning on deploy fails the same way.
 - Zone `with-avalon.com`: Zone Read
 - Zone `with-avalon.com`: Workers Routes Write/Edit
 
