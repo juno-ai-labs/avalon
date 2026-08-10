@@ -49,7 +49,12 @@ function parseArguments(argv) {
       result.dryRun = true;
       continue;
     }
-    if (argument === '--confirm' || argument === '--release-dir' || argument === '--site-config') {
+    if (
+      argument === '--confirm'
+      || argument === '--release-dir'
+      || argument === '--site-config'
+      || argument === '--commit'
+    ) {
       const value = argv[index + 1];
       if (!value) throw new Error(`${argument} requires a value`);
       result[argument.slice(2).replaceAll('-', '_')] = value;
@@ -89,6 +94,11 @@ const arguments_ = parseArguments(process.argv.slice(2));
 const releaseDirectory = resolve(arguments_.release_dir ?? defaultReleaseDirectory);
 const siteConfigPath = resolve(arguments_.site_config ?? defaultSiteConfigPath);
 const currentSiteConfig = await readSiteReleaseConfig(siteConfigPath);
+// The commit this release was built from, recorded so the planner can tell
+// later desktop work apart from work that already shipped. A publish run
+// outside the pipeline may not know it; the record then carries no watermark
+// and the next plan fails open rather than measuring against the wrong commit.
+const releaseCommit = arguments_.commit ?? (process.env.AVALON_RELEASE_COMMIT?.trim() || undefined);
 const bucket = configured('AVALON_RELEASE_R2_BUCKET', currentSiteConfig.bucket);
 if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u.test(bucket)) {
   throw new Error(`Invalid R2 release bucket: ${bucket}`);
@@ -406,6 +416,7 @@ try {
     prefix,
     downloadBaseUrl: baseUrl.origin,
     sha256,
+    commit: releaseCommit,
   };
   const proposedSiteConfig = createPublishedSiteReleaseConfig(currentSiteConfig, {
     ...publicationOptions,
