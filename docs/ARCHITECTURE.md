@@ -25,7 +25,7 @@ flowchart LR
   C --> D
   C --> S["WorkspaceScheduler DO"]
   S --> W["Generic Workstream Workflow"]
-  W --> A["Avalon Bind 10 adapter"]
+  W --> A["Avalon Bind 11 adapter"]
   A --> O["OpenRouter"]
   A --> T["Authorized connection plugins"]
   W --> R
@@ -71,7 +71,7 @@ Viewing is presence only. Participant persistence occurs only through explicit a
 
 A lightweight structured classifier decides whether a human message is `agent_action`, `human_only`, `both`, or `uncertain`. Eligible messages start one generic Cloudflare Workflow instance parameterized by opaque IDs.
 
-The production entry point adapts `@juno-ai/bind` 10.0.0 to Avalon's OpenRouter transport and durable ports. Bind owns transcript healing, plugin activation, turn/tool iteration, completion-defect recovery, epoch-aware streaming, and classified route traversal. Avalon owns authorization, regional persistence, admission, accounting, and terminal state.
+The production entry point adapts `@juno-ai/bind` 11.0.0 to Avalon's OpenRouter transport and durable ports. Bind owns transcript healing, plugin and skill activation, turn/tool iteration, completion-defect recovery, epoch-aware streaming, and classified route traversal. Avalon owns authorization, regional persistence, admission, accounting, and terminal state.
 
 Each Workflow attempt holds a renewable D1 lease; run-scope, plugin-activation, tool receipt-plan/completion, checkpoint, and terminal commits are fenced by attempt and lease ownership. The run freezes its principal, eligible connections/capabilities, trigger policy, routing/prompt versions, tool-surface hash, and limits. The host revalidates principal and work-stream state, automation subscription and pinned template version, trigger evidence, connection ownership/grants, and health at admission, before credential decryption and tools, and between model turns. Later checks may revoke authority but cannot add a new connection or grant. Expired attempts are compare-and-swap reaped, and completion commits only after the final agent message is durable.
 
@@ -109,7 +109,7 @@ apps/
 packages/
   contracts/               Zod API, WebSocket, agent, connector contracts
   db/                      D1 migrations, repositories, region-aware queries
-  agent-harness/           Bind 10/OpenRouter adapter, prompts, classifiers, tools
+  agent-harness/           Bind 11/OpenRouter adapter, prompts, skills, classifiers, tools
   connectors/              Core adapters and credential-plugin descriptors
 docs/                      Product, architecture, security, setup, runbooks
 ```

@@ -1,0 +1,56 @@
+import { partitionSkillCatalog, type SkillSummary } from "@juno-ai/bind/skills";
+
+const DEFAULT_SKILL_CATALOG_TOKENS = 2_500;
+
+export interface RenderPromptSkillCatalogInput {
+  activeSkillRefs: ReadonlySet<string>;
+  skills: readonly SkillSummary[];
+  maxCatalogTokens?: number;
+}
+
+function skillLine(skill: SkillSummary, namesOnly: boolean): string {
+  if (namesOnly) return `- ${skill.name}`;
+  const hint = skill.whenToUse ? ` — ${skill.whenToUse}` : "";
+  return `- ${skill.name}: ${skill.description}${hint}`;
+}
+
+/**
+ * Render the compact skill directory placed in an agent system prompt.
+ *
+ * The active/loadable split and the budget belong to Bind
+ * (`partitionSkillCatalog`); the wording belongs here, because this text sits
+ * in the stable system prefix that Avalon re-renders on every activation and
+ * that must come out byte-identical for unchanged inputs.
+ *
+ * Overflow is demoted to names only rather than dropped: unlike the plugin
+ * catalog, there is no `search_skills` to recover a hidden entry from, so a
+ * name the model can still pass to `load_skill` is the whole fallback.
+ */
+export function renderPromptSkillCatalog(input: RenderPromptSkillCatalogInput): string {
+  if (!input.skills.length) return "";
+
+  const { active, loadable, truncated } = partitionSkillCatalog(
+    input.activeSkillRefs,
+    input.skills,
+    {
+      tokenBudget: input.maxCatalogTokens ?? DEFAULT_SKILL_CATALOG_TOKENS,
+      cost: (summary, detail) =>
+        Math.ceil(skillLine(summary, detail === "name_only").length / 4),
+    },
+  );
+
+  const sections: string[] = [];
+  if (active.length) {
+    sections.push(`Currently active:\n${active.map((skill) => skillLine(skill, false)).join("\n")}`);
+  }
+  if (loadable.length) {
+    const lines = loadable.map((entry) => skillLine(entry.summary, entry.detail === "name_only"));
+    if (truncated > 0) {
+      lines.push(
+        `- … ${truncated} more shown by name only; call load_skill with the exact name to read one.`,
+      );
+    }
+    sections.push(`Available to load:\n${lines.join("\n")}`);
+  }
+  return sections.join("\n\n");
+}
