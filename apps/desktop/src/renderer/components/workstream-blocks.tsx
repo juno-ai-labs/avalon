@@ -167,9 +167,46 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
 }
 
 const PERSON_LINK_PATTERN = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
+const CONNECTOR_LINK_PATTERN = /^connector:(.+)$/u;
 
 function personIdFromHref(href: string | undefined): string | undefined {
   return href?.match(PERSON_LINK_PATTERN)?.[1]?.toLowerCase();
+}
+
+function connectorTypeFromHref(href: string | undefined): string | undefined {
+  const encoded = href?.match(CONNECTOR_LINK_PATTERN)?.[1];
+  return encoded === undefined ? undefined : decodeURIComponent(encoded);
+}
+
+function escapeMarkdownLabel(label: string): string {
+  return label.replace(/\\/gu, '\\\\').replace(/\[/gu, '\\[').replace(/\]/gu, '\\]');
+}
+
+/**
+ * Person mentions arrive as durable `[@Name](person:<id>)` Markdown, but a
+ * connection mention stays human-readable text because Avalon has no
+ * identity-bearing connector reference yet. Its stored offsets are still
+ * authoritative, so this turns them into the same link shape at render time —
+ * presentation only, leaving the message text models and Slack see untouched.
+ */
+export function withConnectorMentionLinks(text: string, mentions: MessageMention[]): string {
+  const connectors = mentions
+    .filter((mention) => mention.type === 'connector' && mention.connectorType)
+    .sort((left, right) => left.startOffset - right.startOffset);
+  if (connectors.length === 0) return text;
+
+  let cursor = 0;
+  let output = '';
+  for (const mention of connectors) {
+    const { connectorType, startOffset, endOffset } = mention;
+    if (connectorType === undefined || startOffset < cursor || endOffset > text.length) continue;
+    const source = text.slice(startOffset, endOffset);
+    if (!source.startsWith('@')) continue;
+    output += text.slice(cursor, startOffset);
+    output += `[${escapeMarkdownLabel(source)}](connector:${encodeURIComponent(connectorType)})`;
+    cursor = endOffset;
+  }
+  return output + text.slice(cursor);
 }
 
 function mentionInitials(label: string): string {
@@ -227,6 +264,14 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
               if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
               return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
             }
+            const connectorType = connectorTypeFromHref(href);
+            if (connectorType !== undefined) {
+              return (
+                <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
+                  <span className="mention-chip-label">{linkChildren}</span>
+                </span>
+              );
+            }
             return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
           },
           code: MarkdownCode,
@@ -235,12 +280,12 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
         }}
         remarkPlugins={[remarkGfm]}
         urlTransform={(url, key, node) => (
-          key === 'href' && node.tagName === 'a' && personIdFromHref(url)
+          key === 'href' && node.tagName === 'a' && (personIdFromHref(url) || connectorTypeFromHref(url))
             ? url
             : defaultUrlTransform(url)
         )}
       >
-        {children}
+        {withConnectorMentionLinks(children, mentions)}
       </ReactMarkdown>
     </div>
   );

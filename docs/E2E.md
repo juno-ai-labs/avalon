@@ -28,6 +28,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 7. Send a human-only acknowledgment and confirm no agent run starts; then submit an actionable request and confirm streaming/tool events appear once despite reconnects.
 8. Mention a workspace member who is not participating and confirm that no participant is added until the person accepts the confirmation prompt.
 9. Type `@` mentions in the composer and confirm each participant or connection Avalon recognizes is highlighted in the brand color as soon as its full name is typed or picked, while half-typed and unknown handles stay plain. Confirm the highlight tracks the caret, wrapping, and scrolling exactly, and that an IME composition still shows its in-flight text.
+10. Send that message and confirm the transcript keeps the same brand treatment: the person mention becomes an avatar chip and the connection mention becomes a label chip, both in the brand color, in human and agent messages alike. Confirm neither chip navigates, and that a connection named in text without a stored mention range stays plain.
 
 ## Desktop signup, invitations, and settings
 
