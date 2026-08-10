@@ -1,9 +1,17 @@
-import type { AutomationPluginActivity } from '@avalon/contracts';
+import type {
+  AutomationPluginActivity,
+  NoteDetail as ContractNoteDetail,
+  NoteSummary as ContractNoteSummary,
+  NoteTranscriptSegment as ContractNoteTranscriptSegment,
+} from '@avalon/contracts';
 
 export type Region = 'global' | 'eu';
 export type Scope = 'you' | 'workspace';
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed';
 export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
+export type NoteSummary = ContractNoteSummary;
+export type NoteDetail = ContractNoteDetail;
+export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
 
 export interface WorkspaceMember {
   id: string;
@@ -175,6 +183,37 @@ export interface ActivitySuggestionData {
   occurredAt?: string;
   reason: string;
   status: 'pending' | 'accepted' | 'dismissed';
+}
+
+export interface HyperSightBlockRun {
+  id: string;
+  blockId: string;
+  configurationVersionId: string;
+  triggerSequence: number;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped';
+  markdown: string | null;
+  error: { code: string; message: string } | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface HyperSightBlock {
+  id: string;
+  prompt: string;
+  latestRun: HyperSightBlockRun | null;
+}
+
+export interface HyperSight {
+  versionId: string | null;
+  versionNumber: number;
+  blocks: HyperSightBlock[];
+  updatedAt: string | null;
+}
+
+export interface HyperSightPreference {
+  visible: boolean;
+  updatedAt: string | null;
 }
 
 export interface MessageMention {

@@ -1,8 +1,10 @@
 import {
   ClientSocketEventSchema,
   IdSchema,
+  PersonalSocketEventSchema,
   ServerSocketEventSchema,
   WorkstreamDetailSchema,
+  type PersonalSocketEvent,
   type ServerSocketEvent,
   type User,
   type WorkstreamDetail
@@ -11,6 +13,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { connectionFromRow } from "../mappers/connection";
+import { launchHyperSightRefresh } from "../services/hypersight-service";
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
@@ -22,13 +25,42 @@ const SocketAttachmentSchema = z.object({
   subscribed: z.boolean().default(false)
 });
 
-const BroadcastRequestSchema = z.object({ event: z.unknown() });
+const BroadcastRequestSchema = z.object({
+  event: z.unknown(),
+  audienceUserId: IdSchema.optional(),
+}).strict();
 const RoomIdentitySchema = z.object({ workspaceId: IdSchema, workstreamId: IdSchema });
 const SOCKET_TICKET_PREFIX = "socket-ticket:";
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
+const HYPERSIGHT_DEBOUNCE_MS = 1_200;
+const HYPERSIGHT_MAX_DEBOUNCE_MS = 5_000;
+const HYPERSIGHT_REFRESH_EVENT_TYPES = new Set([
+  "message_created",
+  "stream_completed",
+  "participant_added",
+  "participant_removed",
+  "resource_attached",
+  "resource_updated",
+  "elicitation_created",
+  "elicitation_answered",
+  "activity_suggestion_created",
+  "activity_suggestion_resolved",
+  "hypersight_configuration_updated",
+]);
 
 type SocketAttachment = z.infer<typeof SocketAttachmentSchema>;
+
+export function isPersonalEventAudience(socketUserId: string, audienceUserId: string): boolean {
+  return socketUserId === audienceUserId;
+}
+
+interface PendingHyperSightRefresh {
+  workspaceId: string;
+  workstreamId: string;
+  triggerSequence: number;
+  firstQueuedAt: number;
+}
 
 interface WorkstreamRow {
   id: string;
@@ -90,6 +122,34 @@ export function workstreamRoomName(
   workstreamId: string
 ): string {
   return `${region}:${workspaceId}:${workstreamId}`;
+}
+
+export async function loadVisibleWorkstreamRoomResources(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+  viewerUserId: string,
+): Promise<Record<string, unknown>[]> {
+  const result = await env.DB.prepare(
+    `SELECT r.*, CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled
+       FROM workstream_resources wr
+       JOIN resources r ON r.id = wr.resource_id
+       LEFT JOIN resource_watches rw
+        ON rw.workstream_id = wr.workstream_id
+        AND rw.resource_id = wr.resource_id
+        AND rw.enabled = 1
+      WHERE wr.workstream_id = ?1
+        AND (r.provider != 'avalon_note' OR EXISTS (
+          SELECT 1 FROM notes visible_note
+          WHERE visible_note.resource_id = r.id
+            AND visible_note.workspace_id = ?2
+            AND visible_note.workspace_id = r.workspace_id
+            AND visible_note.archived_at IS NULL
+            AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?3)
+        ))
+      ORDER BY wr.attached_at`,
+  ).bind(workstreamId, workspaceId, viewerUserId).all<Record<string, unknown>>();
+  return result.results ?? [];
 }
 
 export async function consumeSocketTicket(
@@ -255,6 +315,33 @@ export class WorkstreamRoom {
     );
   }
 
+  async alarm(): Promise<void> {
+    const pending = await this.state.storage.get<PendingHyperSightRefresh>("pendingHyperSightRefresh");
+    if (!pending) return;
+    await this.state.storage.delete("pendingHyperSightRefresh");
+    try {
+      const runs = await launchHyperSightRefresh(
+        this.env,
+        pending.workspaceId,
+        pending.workstreamId,
+        pending.triggerSequence,
+      );
+      for (const run of runs) {
+        const event = ServerSocketEventSchema.parse({
+          type: "hypersight_block_run_updated",
+          sequence: await this.allocateSequence(),
+          occurredAt: new Date().toISOString(),
+          run,
+        });
+        this.recordRecentEvent(event);
+        this.broadcast(event);
+      }
+    } catch {
+      await this.state.storage.put("pendingHyperSightRefresh", pending);
+      await this.state.storage.setAlarm(Date.now() + HYPERSIGHT_DEBOUNCE_MS);
+    }
+  }
+
   async webSocketClose(
     socket: WebSocket,
     code: number,
@@ -393,7 +480,39 @@ export class WorkstreamRoom {
       return jsonResponse({ error: "invalid_event" }, 400);
     }
 
+    const requestIdentity = RoomIdentitySchema.safeParse({
+      workspaceId: request.headers.get("x-avalon-workspace-id"),
+      workstreamId: request.headers.get("x-avalon-workstream-id"),
+    });
+    if (requestIdentity.success) {
+      const storedIdentity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
+      if (!storedIdentity.success) {
+        await this.state.storage.put("roomIdentity", requestIdentity.data);
+      } else if (
+        storedIdentity.data.workspaceId !== requestIdentity.data.workspaceId
+        || storedIdentity.data.workstreamId !== requestIdentity.data.workstreamId
+      ) {
+        return jsonResponse({ error: "room_identity_mismatch" }, 409);
+      }
+    }
+
     const rawEvent = unvalidatedEvent as Record<string, unknown>;
+    if (wrapped.success && wrapped.data.audienceUserId) {
+      const personalEvent = PersonalSocketEventSchema.safeParse({
+        ...rawEvent,
+        occurredAt:
+          typeof rawEvent.occurredAt === "string" ? rawEvent.occurredAt : new Date().toISOString(),
+      });
+      if (!personalEvent.success) {
+        return jsonResponse(
+          { error: "invalid_event", details: personalEvent.error.flatten().fieldErrors },
+          400,
+        );
+      }
+      this.broadcast(personalEvent.data, undefined, wrapped.data.audienceUserId);
+      return jsonResponse({ accepted: true }, 202);
+    }
+
     const requestedSequence =
       typeof rawEvent.sequence === "number" && Number.isSafeInteger(rawEvent.sequence)
         ? rawEvent.sequence
@@ -416,7 +535,27 @@ export class WorkstreamRoom {
 
     this.recordRecentEvent(event.data);
     this.broadcast(event.data);
+    if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.data.type)) {
+      await this.scheduleHyperSightRefresh(event.data.sequence);
+    }
     return jsonResponse({ accepted: true, sequence: event.data.sequence }, 202);
+  }
+
+  private async scheduleHyperSightRefresh(triggerSequence: number): Promise<void> {
+    const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
+    if (!identity.success) return;
+    const now = Date.now();
+    const existing = await this.state.storage.get<PendingHyperSightRefresh>("pendingHyperSightRefresh");
+    const pending: PendingHyperSightRefresh = {
+      ...identity.data,
+      triggerSequence: Math.max(existing?.triggerSequence ?? 0, triggerSequence),
+      firstQueuedAt: existing?.firstQueuedAt ?? now,
+    };
+    await this.state.storage.put("pendingHyperSightRefresh", pending);
+    await this.state.storage.setAlarm(Math.min(
+      now + HYPERSIGHT_DEBOUNCE_MS,
+      pending.firstQueuedAt + HYPERSIGHT_MAX_DEBOUNCE_MS,
+    ));
   }
 
   private async fulfillSubscription(
@@ -495,7 +634,9 @@ export class WorkstreamRoom {
     knownSequence?: number,
   ): Promise<void> {
     try {
-      const workstream = await this.loadSnapshot(workspaceId, workstreamId);
+      const attachment = this.readAttachment(socket);
+      if (!attachment) throw new Error("Missing connection identity while loading snapshot");
+      const workstream = await this.loadSnapshot(workspaceId, workstreamId, attachment.userId);
       const sequence = knownSequence ?? await this.currentSequence(workstreamId);
       const event = ServerSocketEventSchema.parse({
         type: "snapshot",
@@ -509,7 +650,11 @@ export class WorkstreamRoom {
     }
   }
 
-  private async loadSnapshot(workspaceId: string, workstreamId: string): Promise<WorkstreamDetail> {
+  private async loadSnapshot(
+    workspaceId: string,
+    workstreamId: string,
+    viewerUserId: string,
+  ): Promise<WorkstreamDetail> {
     const row = await this.env.DB.prepare(
       `SELECT * FROM workstreams WHERE id = ?1 AND workspace_id = ?2 LIMIT 1`
     )
@@ -528,19 +673,7 @@ export class WorkstreamRoom {
         )
           .bind(workstreamId)
           .all<UserRow & { participation_reason: string; joined_at: string }>(),
-        this.env.DB.prepare(
-          `SELECT r.*, CASE WHEN rw.id IS NOT NULL THEN 1 ELSE 0 END AS attached_watch_enabled
-             FROM workstream_resources wr
-             JOIN resources r ON r.id = wr.resource_id
-             LEFT JOIN resource_watches rw
-              ON rw.workstream_id = wr.workstream_id
-              AND rw.resource_id = wr.resource_id
-              AND rw.enabled = 1
-            WHERE wr.workstream_id = ?1
-            ORDER BY wr.attached_at`
-        )
-          .bind(workstreamId)
-          .all<Record<string, unknown>>(),
+        loadVisibleWorkstreamRoomResources(this.env, workspaceId, workstreamId, viewerUserId),
         this.env.DB.prepare(
           `SELECT DISTINCT c.*, owner.name AS owner_name
              FROM workstream_resources wr
@@ -571,6 +704,7 @@ export class WorkstreamRoom {
         this.env.DB.prepare(
           `SELECT id FROM harness_runs
             WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
+              AND origin != 'hypersight_block'
             ORDER BY started_at DESC LIMIT 1`
         )
           .bind(workstreamId)
@@ -602,7 +736,7 @@ export class WorkstreamRoom {
         joinedAt: participant.joined_at
       })),
       viewers,
-      resources: resourceRows.results.map((resource) => ({
+      resources: resourceRows.map((resource) => ({
         id: resource.id,
         workspaceId: resource.workspace_id,
         connectionId: resource.connection_id,
@@ -714,7 +848,11 @@ export class WorkstreamRoom {
     }
   }
 
-  private broadcast(event: ServerSocketEvent, excluding?: WebSocket): void {
+  private broadcast(
+    event: ServerSocketEvent | PersonalSocketEvent,
+    excluding?: WebSocket,
+    audienceUserId?: string,
+  ): void {
     const payload = JSON.stringify(event);
     if (textEncoder.encode(payload).byteLength > 1_000_000) {
       throw new Error("Realtime event exceeds the bounded frame size");
@@ -722,7 +860,9 @@ export class WorkstreamRoom {
 
     for (const socket of this.state.getWebSockets()) {
       if (socket === excluding) continue;
-      if (!this.readAttachment(socket)?.subscribed) continue;
+      const attachment = this.readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      if (audienceUserId && !isPersonalEventAudience(attachment.userId, audienceUserId)) continue;
       try {
         socket.send(payload);
       } catch {

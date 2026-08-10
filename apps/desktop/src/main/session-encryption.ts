@@ -19,8 +19,16 @@ export interface EncryptedSessionValue {
 }
 
 export interface StoredEncryptedValue {
+  credentialBearing?: boolean;
   read: () => Promise<Uint8Array>;
   write: (value: Uint8Array) => Promise<void>;
+}
+
+export class LockdownDowngradeRequiresReloginError extends Error {
+  constructor() {
+    super('A Lockdown session cannot be downgraded outside the application');
+    this.name = 'LockdownDowngradeRequiresReloginError';
+  }
 }
 
 const GLOBAL_ENVELOPE_HEADER = Buffer.from('avalon-session/global/v1\0', 'utf8');
@@ -110,6 +118,15 @@ export function decryptSessionValue(
   };
 }
 
+export function storedSessionEncryptionMetadata(
+  encryptedValue: Uint8Array,
+): Pick<EncryptedSessionValue, 'mode' | 'legacy'> {
+  const value = Buffer.from(encryptedValue);
+  if (startsWith(value, GLOBAL_ENVELOPE_HEADER)) return { mode: 'global', legacy: false };
+  if (startsWith(value, LOCKDOWN_ENVELOPE_HEADER)) return { mode: 'lockdown', legacy: false };
+  return { mode: 'lockdown', legacy: true };
+}
+
 function errorCode(error: unknown): string | undefined {
   return error instanceof Error && 'code' in error ? String(error.code) : undefined;
 }
@@ -118,6 +135,7 @@ export async function migrateStoredSessionEncryption(
   values: readonly StoredEncryptedValue[],
   targetMode: SessionEncryptionMode,
   safeStorage: SessionSafeStorage,
+  options: { allowLockdownToGlobal?: boolean } = {},
 ): Promise<void> {
   for (const value of values) {
     let encrypted: Uint8Array;
@@ -126,6 +144,16 @@ export async function migrateStoredSessionEncryption(
     } catch (error) {
       if (errorCode(error) === 'ENOENT') continue;
       throw error;
+    }
+    const metadata = storedSessionEncryptionMetadata(encrypted);
+    if (
+      targetMode === 'global'
+      && metadata.mode === 'lockdown'
+      && !metadata.legacy
+      && value.credentialBearing !== false
+      && options.allowLockdownToGlobal === false
+    ) {
+      throw new LockdownDowngradeRequiresReloginError();
     }
     const decrypted = decryptSessionValue(encrypted, safeStorage);
     if (decrypted.mode === targetMode && !decrypted.legacy) continue;

@@ -71,14 +71,15 @@ describe("resource listing", () => {
       "WHERE r.workspace_id = ? AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
     );
     expect(statements[0]?.sql).toContain("ORDER BY r.updated_at DESC, r.id DESC");
-    expect(statements[0]?.values).toEqual([workspaceId, userId, userId, userId, 3]);
+    expect(statements[0]?.values).toEqual([workspaceId, userId, userId, userId, userId, 3]);
 
     await service.list({ query: "Release_100%", cursor: first.nextCursor!, limit: 2 });
     const second = statements[1]!;
     expect(second.sql).toContain("LOWER(r.title) LIKE ?");
     expect(second.sql).toContain("r.updated_at < ? OR (r.updated_at = ? AND r.id < ?)");
-    expect(second.values.slice(0, 8)).toEqual([
+    expect(second.values.slice(0, 9)).toEqual([
       workspaceId,
+      userId,
       userId,
       userId,
       userId,
@@ -141,6 +142,10 @@ describe("resource listing", () => {
       CREATE TABLE resource_watches (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, workstream_id TEXT NOT NULL,
         resource_id TEXT NOT NULL, enabled INTEGER NOT NULL
+      );
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+        scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
       );
       INSERT INTO automation_subscriptions (id, scope, owner_user_id)
         VALUES ('personal-subscription', 'personal', 'owner-user');

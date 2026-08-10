@@ -8,11 +8,11 @@ import {
 } from "./socket-service";
 
 const MAX_CLIENT_FRAME_CHARACTERS = 256_000;
-const MAX_CONNECTION_MS = 5 * 60 * 1_000;
-const MAX_AUDIO_BYTES = 24_000 * 2 * (MAX_CONNECTION_MS / 1_000);
 const MAX_CLIENT_FRAMES_PER_SECOND = 30;
 const MAX_CONCURRENT_USER_SESSIONS = 2;
 const MAX_CONCURRENT_WORKSPACE_SESSIONS = 20;
+const SESSION_LEASE_SECONDS = 2 * 60;
+const SESSION_LEASE_REFRESH_MS = 60 * 1_000;
 const RELEASE_RETRY_DELAYS_MS = [0, 50, 200] as const;
 
 type AllowedClientEvent =
@@ -154,7 +154,7 @@ async function reserveTranscriptionSession(
   }
 
   const sessionId = crypto.randomUUID();
-  const expiresAt = now + Math.ceil(MAX_CONNECTION_MS / 1_000);
+  const expiresAt = now + SESSION_LEASE_SECONDS;
   const reserved = await env.DB.prepare(
     `INSERT INTO realtime_transcription_sessions
        (id, ticket_id, workspace_id, user_id, started_at, expires_at)
@@ -192,6 +192,13 @@ async function releaseTranscriptionSession(env: Env, sessionId: string): Promise
   await env.DB.prepare("DELETE FROM realtime_transcription_sessions WHERE id = ?").bind(sessionId).run();
 }
 
+async function renewTranscriptionSession(env: Env, sessionId: string): Promise<void> {
+  const expiresAt = Math.floor(Date.now() / 1_000) + SESSION_LEASE_SECONDS;
+  await env.DB.prepare(
+    "UPDATE realtime_transcription_sessions SET expires_at = ? WHERE id = ?",
+  ).bind(expiresAt, sessionId).run();
+}
+
 export class RealtimeTranscriptionService {
   constructor(
     private readonly env: Env,
@@ -223,11 +230,9 @@ export class RealtimeTranscriptionService {
     const sessionId = await reserveTranscriptionSession(this.env, claims);
     let released = false;
     let releaseInFlight: Promise<void> | undefined;
-    let lifetimeTimer: ReturnType<typeof setTimeout> | undefined;
     const release = (): Promise<void> => {
       if (released) return Promise.resolve();
       if (releaseInFlight) return releaseInFlight;
-      if (lifetimeTimer !== undefined) clearTimeout(lifetimeTimer);
       releaseInFlight = releaseTranscriptionSession(this.env, sessionId)
         .then(() => { released = true; })
         .finally(() => { releaseInFlight = undefined; });
@@ -278,10 +283,9 @@ export class RealtimeTranscriptionService {
 
       upstream.accept({ allowHalfOpen: true });
       server.accept({ allowHalfOpen: true });
-      let audioBytes = 0;
-      const connectionStartedAt = Date.now();
-      let frameWindowStartedAt = connectionStartedAt;
+      let frameWindowStartedAt = Date.now();
       let frameCount = 0;
+      let leaseRefreshedAt = frameWindowStartedAt;
 
       const terminateForPolicy = (code: string, message: string): void => {
         sendJson(server, { type: "error", error: { code, message } });
@@ -290,16 +294,8 @@ export class RealtimeTranscriptionService {
         deferRelease();
       };
 
-      lifetimeTimer = setTimeout(() => {
-        terminateForPolicy("dictation_duration_limit", "Dictation is limited to five minutes per recording.");
-      }, MAX_CONNECTION_MS);
-
       server.addEventListener("message", (event) => {
         const now = Date.now();
-        if (now - connectionStartedAt >= MAX_CONNECTION_MS) {
-          terminateForPolicy("dictation_duration_limit", "Dictation is limited to five minutes per recording.");
-          return;
-        }
         if (now - frameWindowStartedAt >= 1_000) {
           frameWindowStartedAt = now;
           frameCount = 0;
@@ -309,6 +305,16 @@ export class RealtimeTranscriptionService {
           terminateForPolicy("dictation_frame_rate_limit", "Dictation audio arrived too quickly.");
           return;
         }
+        if (now - leaseRefreshedAt >= SESSION_LEASE_REFRESH_MS) {
+          leaseRefreshedAt = now;
+          const renewal = renewTranscriptionSession(this.env, sessionId).catch((error: unknown) => {
+            console.error("realtime_transcription_session_renewal_failed", {
+              sessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+          try { this.defer(renewal); } catch { void renewal; }
+        }
 
         const parsed = parseTranscriptionClientEvent(stringMessage(event.data));
         if (!parsed) {
@@ -317,13 +323,6 @@ export class RealtimeTranscriptionService {
             error: { code: "invalid_event", message: "Only realtime audio-buffer events are accepted." },
           });
           return;
-        }
-        if (parsed.type === "input_audio_buffer.append") {
-          audioBytes += base64DecodedByteLength(parsed.audio) ?? 0;
-          if (audioBytes > MAX_AUDIO_BYTES) {
-            terminateForPolicy("dictation_audio_limit", "Dictation is limited to five minutes of audio.");
-            return;
-          }
         }
         sendJson(upstream, parsed);
       });
@@ -366,13 +365,14 @@ export class RealtimeTranscriptionService {
 export const __realtimeTranscriptionTesting = {
   base64DecodedByteLength,
   limits: {
-    maxAudioBytes: MAX_AUDIO_BYTES,
     maxClientFramesPerSecond: MAX_CLIENT_FRAMES_PER_SECOND,
-    maxConnectionMs: MAX_CONNECTION_MS,
     maxConcurrentUserSessions: MAX_CONCURRENT_USER_SESSIONS,
     maxConcurrentWorkspaceSessions: MAX_CONCURRENT_WORKSPACE_SESSIONS,
+    sessionLeaseRefreshMs: SESSION_LEASE_REFRESH_MS,
+    sessionLeaseSeconds: SESSION_LEASE_SECONDS,
   },
   releaseTranscriptionSession,
+  renewTranscriptionSession,
   reserveTranscriptionSession,
   sendableCloseCode,
 };

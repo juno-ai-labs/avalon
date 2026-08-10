@@ -1,5 +1,4 @@
 export const desktopSettingsSections = [
-  'general',
   'account',
   'workspace',
   'connections',

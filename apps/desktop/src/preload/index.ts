@@ -3,7 +3,9 @@ import type {
   AvalonDesktopBridge,
   DesktopApplicationSettings,
   DesktopAuthAttempt,
+  DesktopMeetingAudioPermissions,
   DesktopSession,
+  DesktopSystemAudioCaptureInfo,
   DesktopWorkspaceOnboardingState,
   RuntimeConfig,
 } from '../common/desktop';
@@ -15,6 +17,8 @@ const deepLinkListeners = new Set<(url: string) => void>();
 const queuedDeepLinks: string[] = [];
 const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
 let queuedSettingsSection: DesktopSettingsSection | null = null;
+const meetingCloseListeners = new Set<() => void>();
+let meetingCloseQueued = false;
 
 // Install the privileged listener before React starts. Session changes can
 // briefly replace the renderer callback; a native OAuth/invitation callback
@@ -40,6 +44,14 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
     return;
   }
   for (const listener of settingsSectionListeners) listener(section);
+});
+
+ipcRenderer.on('meeting:close-requested', () => {
+  if (meetingCloseListeners.size === 0) {
+    meetingCloseQueued = true;
+    return;
+  }
+  for (const listener of meetingCloseListeners) listener();
 });
 
 const bridge: AvalonDesktopBridge = {
@@ -72,10 +84,42 @@ const bridge: AvalonDesktopBridge = {
   acceptInvitation: (input) => ipcRenderer.invoke('onboarding:accept-invitation', input) as Promise<DesktopSession>,
   declineInvitation: (input) => ipcRenderer.invoke('onboarding:decline-invitation', input) as Promise<void>,
   refreshSession: () => ipcRenderer.invoke('auth:refresh-session') as Promise<DesktopSession>,
+  hasStoredCredential: () => ipcRenderer.invoke('auth:has-stored-credential') as Promise<boolean>,
   logout: () => ipcRenderer.invoke('auth:logout') as Promise<void>,
   copyText: (text) => ipcRenderer.invoke('system:copy-text', text) as Promise<void>,
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
+  openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
+  closeMeetingNotes: () => ipcRenderer.invoke('system:close-meeting-notes') as Promise<void>,
+  getMeetingAudioPermissions: () =>
+    ipcRenderer.invoke('meeting-audio:get-permissions') as Promise<DesktopMeetingAudioPermissions>,
+  prepareMeetingAudioPermissions: () =>
+    ipcRenderer.invoke('meeting-audio:prepare-permissions') as Promise<DesktopMeetingAudioPermissions>,
+  startMeetingSystemAudioCapture: () =>
+    ipcRenderer.invoke('meeting-audio:start-system-capture') as Promise<DesktopSystemAudioCaptureInfo>,
+  stopMeetingSystemAudioCapture: () =>
+    ipcRenderer.invoke('meeting-audio:stop-system-capture') as Promise<void>,
+  onMeetingSystemAudioData: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, rawData: unknown, rawSampleRate: unknown): void => {
+      if (!(rawData instanceof Uint8Array) || typeof rawSampleRate !== 'number') return;
+      const data = rawData.buffer.slice(rawData.byteOffset, rawData.byteOffset + rawData.byteLength) as ArrayBuffer;
+      listener(data, rawSampleRate);
+    };
+    ipcRenderer.on('meeting-audio:data', handler);
+    return () => ipcRenderer.removeListener('meeting-audio:data', handler);
+  },
+  openMeetingAudioSettings: (permission) =>
+    ipcRenderer.invoke('meeting-audio:open-settings', permission) as Promise<void>,
+  onMeetingCloseRequested: (listener) => {
+    meetingCloseListeners.add(listener);
+    if (meetingCloseQueued) {
+      meetingCloseQueued = false;
+      queueMicrotask(() => {
+        if (meetingCloseListeners.has(listener)) listener();
+      });
+    }
+    return () => meetingCloseListeners.delete(listener);
+  },
   onSettingsSectionRequested: (listener) => {
     settingsSectionListeners.add(listener);
     const pending = queuedSettingsSection;

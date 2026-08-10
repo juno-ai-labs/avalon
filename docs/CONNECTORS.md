@@ -15,6 +15,12 @@ Each installed credential has two deliberately separate plugin identities. The o
 
 The model sees only these stable IDs in plugin catalogs, active-plugin instructions, and `load_plugin` arguments. Avalon resolves them back to canonical IDs before scope checks or persistence. Model-facing IDs are presentation and routing aliases, never security principals. Connector tool definitions use prefix-free names local to their plugin; the runtime adds the connection's stable short name when rendering model-facing tools. For example, canonical `drive.search` becomes `google_drive_search`, or `google_2_drive_search` for a second Google credential.
 
+## Agent activation acknowledgement
+
+Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
+
+The hook is deliberately optional. Slack uses an `eyes` reaction on the exact triggering message and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
+
 ## Google
 
 Google identity and connector authorization are separate. Connector authorization uses the web-server code flow, PKCE, offline access, and incremental scopes. Settings presents two product-facing presets, but both create ordinary `google` connections backed by the same adapter, credential lifecycle, OAuth callback, and tool registry. They are authorization bundles, not separate backend connector types, and a user may connect either or both.
@@ -48,7 +54,7 @@ The agent can list repositories and commits, read files, inspect and create/upda
 
 ## Linear
 
-Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Avalon owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants only `app:assignable` and `app:mentionable`, while resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams, create/update issues, and create comments.
+Linear is a composable connector with both `resource` and `native_agent` surfaces. One public OAuth app supports two identities through PKCE: personal connections use `actor=user` and remain private to their Avalon owner; workspace connections use `actor=app` and roll their tools down to every member. The native surface is bound explicitly to the workspace-only, non-tool `linear.agent` capability. It grants `app:assignable` and `app:mentionable` for activation plus `write` for the deterministic source-comment acknowledgement; resource tools independently grant `read`, `issues:create`, `comments:create`, and `write`. The resource agent can search/read issues and projects, list teams, create/update issues, and create comments.
 
 Linear's one public webhook is timestamp/signature verified at a dedicated smart ingress, routed by organization to the owning Global/EU workspace app connection, verified again, normalized, deduplicated by `Linear-Delivery`, and queued regionally. Personal connections support interactive tools and scheduled queries but do not yet consume organization-wide real-time deliveries; that prevents private-team events from crossing user boundaries before durable per-resource authorization is available. Agent-session events are represented explicitly rather than being flattened into ordinary resource updates.
 
@@ -62,9 +68,17 @@ Notion uses public connections with an `Any workspace` installation scope and th
 
 Notion's one-time webhook verification token is accepted through a guarded regional setup URL, encrypted in D1, and then used to verify every later webhook signature before normalization and queueing.
 
+## Granola
+
+Granola has two intentionally separate connection modes. A personal connection uses Granola's hosted Streamable HTTP MCP server and browser OAuth with PKCE and dynamic client registration. It follows the member's currently active Granola workspace and exposes Granola's six read tools for querying meetings, listing folders and meetings, reading meeting details and transcripts, and inspecting the connected account. A personal connection remains available only to its Avalon owner.
+
+A workspace connection uses one administrator-created Granola Workspace API key. It exposes bounded read operations for listing notes, reading a note with an optional transcript, and listing folders. Avalon creates the Granola webhook endpoint during installation with the required `workspace` scope and note access/edit/generation events. Deliveries are verified against their untouched raw body using the endpoint's Standard Webhooks signing secret before storage, deduplication, normalization, and queueing. Disconnecting the connection removes the remote endpoint when Granola accepts the request.
+
+The workspace key and the webhook signing secret are encrypted in the workspace's regional D1 database with AES-GCM and connection-ID additional authenticated data. The plaintext key is accepted only by the admin-only setup request, is never stored in connection configuration, provider identifiers, or audit data, and is never returned to the desktop. One active Granola workspace connection is allowed per Avalon workspace; one active personal Granola connection is allowed per member and workspace.
+
 ## X
 
-X is a read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
+X is a workspace-only, read-only resource connector for user timelines, thread context, replies, and List timelines. All four tools return one provider page at a time and expose the returned cursor for explicit pagination. Thread reads include the original post even when it is absent from the initial thread page.
 
 ## Web discovery
 
@@ -93,4 +107,4 @@ Avalon validates time, signature, replay receipt, body schema, scope, and dedupe
 
 Native GitHub, Linear, and Notion deliveries use the same compact queue envelope and routing pipeline. Their exact signed raw payload is retained regionally in R2, while D1 stores an idempotent delivery receipt and normalized metadata.
 
-Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Avalon does not create a global Slack activity feed, subscribe to broad channel message traffic, or mirror Slack content. See `docs/SLACK_INTEGRATION.md`.
+Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers channel message events so Avalon can recognize replies in its own threads, but unrelated messages are discarded before durable regional queueing and are never turned into a global activity feed or mirrored corpus. See `docs/SLACK_INTEGRATION.md` for the product and data flow and `docs/SLACK_PERMISSIONS.md` for the complete OAuth scope inventory.

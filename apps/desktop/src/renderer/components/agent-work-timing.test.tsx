@@ -3,8 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentWorkTiming } from './agent-work-timing';
 
 vi.mock('thinking-orbs', () => ({
-  ThinkingOrb: ({ paused = false, size, state }: { paused?: boolean; size: number; state: string }) => (
-    <span data-paused={String(paused)} data-size={size} data-state={state} data-testid="thinking-orb" />
+  ThinkingOrb: ({ paused = false, size, speed, state }: { paused?: boolean; size: number; speed?: number; state: string }) => (
+    <span
+      data-paused={String(paused)}
+      data-size={size}
+      data-speed={speed}
+      data-state={state}
+      data-testid="thinking-orb"
+    />
   ),
 }));
 
@@ -25,20 +31,28 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'solving');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '20');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'false');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '1');
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
     expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAccessibleName('Avalon is working');
-
-    rerender(<AgentWorkTiming active durationMs={83_000} />);
-    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
-    expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
-    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
 
     rerender(<AgentWorkTiming active={false} durationMs={83_000} />);
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveAccessibleName('worked for 1m 23s');
     expect(container.querySelector('.agent-work-timing')).not.toHaveClass('agent-work-timing-active');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '0');
+  });
+
+  it.each([
+    { active: true, label: 'working for 1m 23s', state: 'a paused active segment' },
+    { active: false, label: 'worked for 1m 23s', state: 'an initially completed segment' },
+  ])('renders $state at the paused first frame', ({ active, label }) => {
+    render(<AgentWorkTiming active={active} durationMs={83_000} />);
+
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
+    expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '0');
   });
 });

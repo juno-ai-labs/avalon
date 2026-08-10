@@ -5,9 +5,11 @@ import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useState 
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
-import { ApiError } from './lib/api';
-import { AppSessionProvider, useAppSession } from './lib/app-session';
+import { ApiError, isSessionRejection } from './lib/api';
+import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import { AutomationOverviewScreen } from './screens/automation-overview';
+import { MeetingNotesScreen } from './screens/meeting-notes';
+import { NoteDetailScreen } from './screens/note-detail';
 import { NewAutomationScreen } from './screens/new-automation';
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
@@ -105,8 +107,20 @@ function NotFoundScreen(): React.JSX.Element {
   );
 }
 
+/** A rejected bearer may just be expired, so main decides whether the session
+ * is over. Every other 401 — including ones the client synthesizes after a 200,
+ * like `session_profile_missing` — is deterministic, and only signing out
+ * recovers from it. */
+function endSessionFor(
+  error: unknown,
+  { signOut, signOutIfCredentialCleared }: Pick<AppSessionValue, 'signOut' | 'signOutIfCredentialCleared'>,
+): void {
+  if (!(error instanceof ApiError) || error.status !== 401) return;
+  void (isSessionRejection(error) ? signOutIfCredentialCleared() : signOut());
+}
+
 function WorkspaceApp(): React.JSX.Element {
-  const { api, session, signOut } = useAppSession();
+  const { api, session, signOut, signOutIfCredentialCleared } = useAppSession();
   const workspace = useQuery({
     queryKey: ['workspace', session?.workspace?.id, session?.user.id],
     queryFn: ({ signal }) => api!.getWorkspace(signal),
@@ -123,8 +137,8 @@ function WorkspaceApp(): React.JSX.Element {
   });
 
   useEffect(() => {
-    if (workspace.error instanceof ApiError && workspace.error.status === 401) void signOut();
-  }, [signOut, workspace.error]);
+    endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared });
+  }, [signOut, signOutIfCredentialCleared, workspace.error]);
 
   if (workspace.isLoading || !workspace.error && !workspace.data) return <LoadingState label="Opening workspace…" />;
   if (workspace.error) return <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />;
@@ -142,6 +156,18 @@ function WorkspaceApp(): React.JSX.Element {
     );
   }
 
+  const meetingSurface = new URLSearchParams(window.location.search).get('surface') === 'meeting';
+  if (meetingSurface) {
+    return (
+      <HashRouter>
+        <Routes>
+          <Route element={<MeetingNotesScreen />} path="/meeting" />
+          <Route element={<Navigate replace to="/meeting" />} path="*" />
+        </Routes>
+      </HashRouter>
+    );
+  }
+
   return (
     <HashRouter>
       <AppShell workspace={workspace.data}>
@@ -149,6 +175,7 @@ function WorkspaceApp(): React.JSX.Element {
           <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
           <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
           <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+          <Route element={<NoteDetailScreen />} path="/notes/:id" />
           <Route element={<NewAutomationScreen />} path="/automations/new" />
           <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
           <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
@@ -160,7 +187,9 @@ function WorkspaceApp(): React.JSX.Element {
 }
 
 function WorkspaceOnboardingGate(): React.JSX.Element {
-  const { activateWorkspace, getOnboardingState, runtime, session, signOut } = useAppSession();
+  const {
+    activateWorkspace, getOnboardingState, runtime, session, signOut, signOutIfCredentialCleared,
+  } = useAppSession();
   const [activatingWorkspaceId, setActivatingWorkspaceId] = useState<string | null>(null);
   const [activationError, setActivationError] = useState<Error | null>(null);
   const onboarding = useQuery({
@@ -181,8 +210,8 @@ function WorkspaceOnboardingGate(): React.JSX.Element {
   }, [activateWorkspace, activatingWorkspaceId, onboarding.data?.workspace]);
 
   useEffect(() => {
-    if (onboarding.error instanceof ApiError && onboarding.error.status === 401) void signOut();
-  }, [onboarding.error, signOut]);
+    endSessionFor(onboarding.error, { signOut, signOutIfCredentialCleared });
+  }, [onboarding.error, signOut, signOutIfCredentialCleared]);
 
   if (onboarding.isLoading || (!onboarding.error && !onboarding.data)) {
     return <LoadingState label="Checking your organizations…" />;

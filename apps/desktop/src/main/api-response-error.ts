@@ -25,3 +25,17 @@ export async function responseError(response: Response): Promise<AvalonApiRespon
 export function definitivelyInvalidatesStoredCredential(error: unknown): boolean {
   return error instanceof AvalonApiResponseError && error.status === 401;
 }
+
+/** A stored credential that can never produce a usable session: its binding no
+ * longer matches what the service returns, or the service answered with
+ * something this build cannot use. Retrying these is futile, so they are
+ * terminal even though no 401 was involved. */
+export class UnusableCredentialError extends Error {
+  override readonly name = 'UnusableCredentialError';
+}
+
+/** True when a refresh failure can never succeed on a later attempt, and the
+ * stored credential must therefore be surrendered rather than retried. */
+export function refreshFailureIsTerminal(error: unknown): boolean {
+  return definitivelyInvalidatesStoredCredential(error) || error instanceof UnusableCredentialError;
+}

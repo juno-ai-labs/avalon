@@ -83,7 +83,7 @@ const smokeUserDataDirectory = mode === 'local'
   ? await mkdtemp(join(tmpdir(), 'avalon-local-smoke-user-data-'))
   : undefined;
 try {
-  await run(process.execPath, [join(desktopDirectory, 'scripts', 'build-macos-icon-components.mjs')]);
+  await run(process.execPath, [join(desktopDirectory, 'scripts', 'build-macos-native-components.mjs')]);
   const builderArgs = [
     'exec',
     'electron-builder',

@@ -1,13 +1,26 @@
 import {
+  acknowledgeConnectorAgentActivation,
   ConnectorError,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
+  type ConnectorConnectionContext,
+  type SlackAgentInvocation,
   type SlackIngressEnvelope,
 } from "@avalon/connectors";
-import { ExternalActorSchema, SlackIngressQueueMessageSchema, type ExternalActor } from "@avalon/contracts";
+import {
+  ExternalActorSchema,
+  SlackIngressQueueMessageSchema,
+  SlackOriginContextSchema,
+  SlackSearchAuthorizationSchema,
+  type ExternalActor,
+  type SlackOriginAttachment,
+  type SlackOriginContext,
+  type SlackOriginNearbyMessage,
+  type SlackSearchAuthorization,
+} from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
@@ -24,6 +37,7 @@ interface SlackConnectionRow extends Record<string, unknown> {
   provider_account_id: string;
   encrypted_credentials: string;
   credential_iv: string;
+  granted_scopes_json: string;
   status: string;
 }
 
@@ -60,35 +74,43 @@ interface SlackSessionRow {
 type SlackPromptSource = {
   kind: "app_mention" | "direct_message" | "slash_command" | "shortcut";
   channelType: "public" | "private" | "im" | "unknown";
+  channelResolutionFailure: "missing_scope" | "lookup_failed" | null;
   channelId: string | null;
+  channelName: string | null;
   threadTs: string | null;
+  messageTs: string | null;
+  attachments: SlackOriginAttachment[];
 };
 
 const SlackModalContextSchema = z.object({
   kind: z.enum(["shortcut", "slash_command"]),
   channelType: z.enum(["public", "private", "im", "unknown"]),
+  channelResolutionFailure: z.enum(["missing_scope", "lookup_failed"]).nullable().optional().default(null),
   channelId: z.string().min(1).nullable(),
+  channelName: z.string().min(1).max(255).nullable().optional().default(null),
   threadTs: z.string().min(1).nullable(),
+  messageTs: z.string().min(1).nullable().optional().default(null),
+  attachments: z.array(z.object({
+    id: z.string().min(1).max(255).nullable(),
+    name: z.string().min(1).max(500),
+    title: z.string().max(500).nullable(),
+    mimeType: z.string().max(255).nullable(),
+    fileType: z.string().max(120).nullable(),
+    permalink: z.string().url().max(2000).nullable(),
+  }).strict()).max(10).optional().default([]),
 }).strict();
 
-const SlackAgentPolicySchema = z.object({
-  allow_unlinked_workspace_tasks: z.coerce.number().int().min(0).max(1),
-  public_channel_mode: z.enum(["all_invited", "allowlist", "disabled"]),
-  private_channel_mode: z.enum(["allowlist", "disabled"]),
-  allow_direct_messages: z.coerce.number().int().min(0).max(1),
-  allow_commands: z.coerce.number().int().min(0).max(1),
-  allow_shortcuts: z.coerce.number().int().min(0).max(1),
-});
+const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
+const SLACK_CONNECTION_DENIAL_TEXT = "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then reply `try again` in this thread.";
+const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Avalon` again and restate what you want me to do.";
+const SLACK_RETRYABLE_DENIAL_PREFIXES = [
+  "Avalon’s Slack workspace connection needs attention",
+  "Avalon workspace tasks are not enabled for this Slack surface",
+  "Avalon needs updated Slack permissions before it can start workspace tasks here",
+  "Avalon couldn’t verify whether this Slack channel is public or private",
+] as const;
 
-const DEFAULT_SLACK_AGENT_POLICY: z.infer<typeof SlackAgentPolicySchema> = {
-  allow_unlinked_workspace_tasks: 1,
-  public_channel_mode: "all_invited",
-  private_channel_mode: "disabled",
-  allow_direct_messages: 1,
-  allow_commands: 1,
-  allow_shortcuts: 1,
-};
-
+type SlackPendingDenialReason = "connection" | "channel_resolution" | "policy";
 const SlackQueuedJobRowSchema = z.object({
   id: z.string().min(1),
   workspace_id: z.string().uuid(),
@@ -187,6 +209,9 @@ export class SlackAgentService {
         "DELETE FROM slack_agent_thread_claims WHERE lease_expires_at < ?",
       ).bind(at),
       this.env.DB.prepare(
+        "DELETE FROM slack_agent_pending_prompts WHERE expires_at < ?",
+      ).bind(at),
+      this.env.DB.prepare(
         `DELETE FROM slack_ingress_jobs
          WHERE status = 'failed' AND attempt_count >= 20 AND updated_at < ?`,
       ).bind(retentionCutoff),
@@ -209,7 +234,8 @@ export class SlackAgentService {
     let afterId = "";
     while (true) {
       const page = await this.env.DB.prepare(
-        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+                granted_scopes_json, status
          FROM connector_connections
          WHERE connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy' AND id > ?
          ORDER BY id ASC LIMIT 100`,
@@ -238,6 +264,14 @@ export class SlackAgentService {
     if (envelope.type === "url_verification") return { ok: true };
     const invocation = parseSlackAgentInvocation({ kind: "event", envelope });
     if (invocation.kind !== "event") throw new ApiError(422, "slack_event_invalid", "Slack event identity is missing");
+    if (invocation.event.type === "message"
+      && !await this.shouldEnqueueSlackMessage(
+        invocation.teamId,
+        invocation.event,
+        authorizedBotUserId(envelope),
+      )) {
+      return { ok: true };
+    }
     return this.enqueueIngressJob({
       id: `event:${invocation.eventId}`,
       teamId: invocation.teamId,
@@ -326,23 +360,31 @@ export class SlackAgentService {
         await slackApi(token, "views.open", { trigger_id: triggerId, view: feedbackModal(String(action?.value ?? "")) }, AbortSignal.timeout(1_500));
         return {};
       }
-      const sourceText = type === "message_action" && asRecord(payload.message).text
-        ? String(asRecord(payload.message).text)
+      const shortcutMessage = asRecord(payload.message);
+      const sourceText = type === "message_action" && shortcutMessage.text
+        ? String(shortcutMessage.text)
         : "";
       const shortcutChannelId = nestedString(payload, "channel", "id");
       const shortcutThreadTs = type === "message_action"
-        ? String(asRecord(payload.message).thread_ts ?? asRecord(payload.message).ts ?? "") || null
+        ? String(shortcutMessage.thread_ts ?? shortcutMessage.ts ?? "") || null
         : null;
-      const shortcutChannelType = shortcutChannelId
+      const shortcutMessageTs = type === "message_action" && shortcutMessage.ts
+        ? String(shortcutMessage.ts)
+        : null;
+      const shortcutChannelResolution = shortcutChannelId
         ? await resolveSlackChannelType(token, shortcutChannelId, nestedString(payload, "channel", "type"))
-        : "unknown";
+        : { channelType: "unknown" as const, channelName: null, failure: null };
       await slackApi(token, "views.open", {
         trigger_id: triggerId,
         view: startTaskModal(sourceText, {
           kind: "shortcut",
-          channelType: shortcutChannelType,
+          channelType: shortcutChannelResolution.channelType,
+          channelResolutionFailure: shortcutChannelResolution.failure,
           channelId: shortcutChannelId || null,
+          channelName: nestedString(payload, "channel", "name") ?? shortcutChannelResolution.channelName,
           threadTs: shortcutThreadTs,
+          messageTs: shortcutMessageTs,
+          attachments: slackOriginAttachments(shortcutMessage),
         }),
       }, AbortSignal.timeout(1_500));
       return {};
@@ -364,8 +406,12 @@ export class SlackAgentService {
         view: startTaskModal("", {
           kind: "slash_command",
           channelType: slackChannelType(commandForm.channel_name || commandForm.channel_id),
+          channelResolutionFailure: null,
           channelId: commandForm.channel_id,
+          channelName: commandForm.channel_name || null,
           threadTs: null,
+          messageTs: null,
+          attachments: [],
         }),
       }, AbortSignal.timeout(1_500));
       return { response_type: "ephemeral", text: "Opening Avalon…" };
@@ -407,11 +453,16 @@ export class SlackAgentService {
          WHERE id = ? AND lease_id = ?`,
       ).bind(nowIso(), nowIso(), job.id, leaseId).run();
     } catch (error) {
+      const retryable = slackIngressRetryable(error);
+      if (slackReconnectRequired(error)) {
+        await this.markSlackReconnectRequired(job.connection_id, slackErrorReason(error));
+      }
       await this.env.DB.prepare(
         `UPDATE slack_ingress_jobs SET status = 'failed', lease_id = NULL,
-           lease_expires_at = NULL, error_code = ?, updated_at = ?
+           lease_expires_at = NULL, error_code = ?,
+           attempt_count = CASE WHEN ? THEN attempt_count ELSE 20 END, updated_at = ?
          WHERE id = ? AND lease_id = ?`,
-      ).bind(error instanceof ApiError ? error.code : "slack_ingress_failed", nowIso(), job.id, leaseId).run();
+      ).bind(slackIngressErrorCode(error), retryable ? 1 : 0, nowIso(), job.id, leaseId).run();
       throw error;
     }
   }
@@ -535,8 +586,12 @@ export class SlackAgentService {
       {
         kind: "slash_command",
         channelType: slackChannelType(form.channel_name || form.channel_id),
+        channelResolutionFailure: null,
         channelId: form.channel_id,
+        channelName: form.channel_name || null,
         threadTs: null,
+        messageTs: null,
+        attachments: [],
       },
     );
     if (form.response_url) {
@@ -544,7 +599,7 @@ export class SlackAgentService {
         await postSlackResponse(form.response_url, {
           response_type: "ephemeral",
           replace_original: false,
-          text: "Avalon started your task in the Agent conversation.",
+          text: "Avalon processed your request. Check your Agent conversation for the task or any required action.",
         });
       } catch (error) {
         console.warn("Slack command follow-up failed", { reason: error instanceof Error ? error.message : "unknown" });
@@ -617,7 +672,8 @@ export class SlackAgentService {
     ).bind(workspaceId, userId).first<{ active: number }>();
     if (!membership) return 0;
     const rawConnections = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+              granted_scopes_json, status
        FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
          AND status = 'healthy' ORDER BY id`,
@@ -641,6 +697,9 @@ export class SlackAgentService {
         );
       } catch (error) {
         if (slackErrorReason(error) === "users_not_found") continue;
+        if (slackReconnectRequired(error)) {
+          await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+        }
         console.warn("Slack workspace member assignment lookup failed", {
           workspace_id: workspaceId,
           connection_id: connection.id,
@@ -903,10 +962,17 @@ export class SlackAgentService {
     const type = String(event.type ?? "");
     if (type === "avalon_public_channel_sync") {
       const connection = await this.connectionForTeam(teamId);
-      const summary = await joinAllSlackPublicChannels(
-        await this.botToken(connection),
-        AbortSignal.timeout(3 * 60_000),
-      );
+      let summary;
+      try {
+        summary = await joinAllSlackPublicChannels(
+          await this.botToken(connection),
+          AbortSignal.timeout(3 * 60_000),
+        );
+      } catch (error) {
+        if (!slackReconnectRequired(error)) throw error;
+        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+        return;
+      }
       if (!summary.complete) {
         await this.schedulePublicChannelSync(connection.id, summary.retryAfterMs);
         console.info("Slack public-channel sync continuation scheduled", {
@@ -927,11 +993,18 @@ export class SlackAgentService {
       const channelId = asRecord(event.channel).id;
       if (typeof channelId !== "string" || !channelId) return;
       const connection = await this.connectionForTeam(teamId);
-      const result = await joinSlackPublicChannel(
-        await this.botToken(connection),
-        channelId,
-        AbortSignal.timeout(10_000),
-      );
+      let result;
+      try {
+        result = await joinSlackPublicChannel(
+          await this.botToken(connection),
+          channelId,
+          AbortSignal.timeout(10_000),
+        );
+      } catch (error) {
+        if (!slackReconnectRequired(error)) throw error;
+        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+        return;
+      }
       if (result === "skipped") {
         console.warn("Slack public channel could not be auto-joined", {
           connection_id: connection.id,
@@ -943,15 +1016,9 @@ export class SlackAgentService {
     }
     if (type === "app_home_opened") {
       const userId = String(event.user ?? "");
-      if (userId && event.context) await this.storeActiveContext(teamId, userId, event.context);
       if (event.tab !== "home") return;
       const viewHash = typeof asRecord(event.view).hash === "string" ? String(asRecord(event.view).hash) : undefined;
       if (userId) await this.publishHome(teamId, userId, viewHash);
-      return;
-    }
-    if (type === "app_context_changed") {
-      const userId = authorizedUserId(envelope);
-      if (userId) await this.storeActiveContext(teamId, userId, event.context ?? {});
       return;
     }
     if (type === "app_uninstalled") {
@@ -989,46 +1056,76 @@ export class SlackAgentService {
     }
     if (type !== "message" && type !== "app_mention") return;
     if (event.bot_id || event.subtype || !event.user || !event.channel || !event.ts) return;
+    const invocation = parseSlackAgentInvocation({ kind: "event", envelope });
     const slackUserId = String(event.user);
     const channelId = String(event.channel);
     const rootTs = typeof event.thread_ts === "string" ? event.thread_ts : String(event.ts);
-    const botUserId = type === "app_mention"
-      ? authorizedBotUserId(envelope) ?? await this.botUserId(await this.connectionForTeam(teamId))
+    const connection = await this.connectionForTeam(teamId);
+    const token = await this.botToken(connection);
+    const directMessage = type === "message" && isDirectSlackMessageEvent(event);
+    const existingSession = !directMessage
+      ? await this.loadSession(connection.id, channelId, rootTs)
       : null;
-    const prompt = (botUserId
+    const pendingPrompt = !directMessage && !existingSession
+      ? await this.loadPendingPrompt(connection.id, channelId, rootTs, slackUserId)
+      : null;
+    const botUserId = type === "app_mention" || !directMessage
+      ? authorizedBotUserId(envelope) ?? await this.botUserId(connection)
+      : null;
+    let prompt = (botUserId
       ? String(event.text ?? "").replaceAll(`<@${botUserId}>`, "")
       : String(event.text ?? "")).trim();
     if (!prompt) return;
+    if (type === "message" && !directMessage && !existingSession && !pendingPrompt) return;
+    if (type === "app_mention" && !existingSession && !pendingPrompt && isSlackRetryPrompt(prompt)) {
+      const recovered = await this.recoverLegacyDeniedPrompt(
+        token,
+        connection,
+        channelId,
+        rootTs,
+        slackUserId,
+      );
+      if (!recovered) {
+        await slackApi(token, "chat.postMessage", {
+          channel: channelId,
+          thread_ts: rootTs,
+          text: SLACK_RETRY_PROMPT_MISSING_TEXT,
+        }, AbortSignal.timeout(5_000));
+        return;
+      }
+      prompt = recovered;
+    }
     if (/^(?:help|\/help)$/iu.test(prompt)) {
-      const connection = await this.connectionForTeam(teamId);
-      await slackApi(await this.botToken(connection), "chat.postMessage", {
+      await slackApi(token, "chat.postMessage", {
         channel: channelId,
         thread_ts: rootTs,
         text: "Ask Avalon to investigate, summarize, coordinate, or create an automation. Use /avalon anywhere, a shortcut on a message, or Start a task in App Home. Open App Home to connect your Avalon account and manage notifications.",
       }, AbortSignal.timeout(5_000));
       return;
     }
-    const activeContext = event.app_context ?? event.context;
-    if (activeContext) await this.storeActiveContext(teamId, slackUserId, activeContext);
-    const effectivePrompt = await this.augmentPromptWithSlackContext(teamId, slackUserId, event, prompt);
-    const channelType = await resolveSlackChannelType(
-      await this.botToken(await this.connectionForTeam(teamId)),
-      channelId,
-      event.channel_type,
-    );
+    const channelResolution = existingSession
+      && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
+      ? { channelType: existingSession.channel_type, channelName: null, failure: null }
+      : await resolveSlackChannelType(token, channelId, event.channel_type);
     await this.startFromPrompt(
       teamId,
       slackUserId,
       channelId,
       rootTs,
-      effectivePrompt,
+      prompt,
       `event:${envelope.event_id}`,
       {
-        kind: type === "app_mention" ? "app_mention" : "direct_message",
-        channelType,
+        kind: type === "app_mention" || !directMessage ? "app_mention" : "direct_message",
+        channelType: channelResolution.channelType,
+        channelResolutionFailure: channelResolution.failure,
         channelId,
+        channelName: channelResolution.channelName,
         threadTs: rootTs,
+        messageTs: String(event.ts),
+        attachments: slackOriginAttachments(event),
       },
+      slackEventSearchAuthorization(event),
+      invocation,
     );
   }
 
@@ -1040,19 +1137,56 @@ export class SlackAgentService {
     prompt: string,
     clientMessageId: string,
     source: SlackPromptSource,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+    activationInvocation?: SlackAgentInvocation,
   ): Promise<void> {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
+    const pendingPrompt = channelId && threadTs && isSlackRetryPrompt(prompt)
+      ? await this.loadPendingPrompt(connection.id, channelId, threadTs, slackUserId)
+      : null;
+    const requestedPrompt = pendingPrompt?.prompt ?? prompt;
+    if (connection.status !== "healthy") {
+      const targetChannel = channelId ?? await this.openDm(token, slackUserId);
+      if (threadTs) {
+        await this.rememberPendingPrompt(
+          connection.id,
+          targetChannel,
+          threadTs,
+          slackUserId,
+          requestedPrompt,
+          "connection",
+        );
+      }
+      await slackApi(token, "chat.postMessage", {
+        channel: targetChannel,
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+        text: SLACK_CONNECTION_DENIAL_TEXT,
+      }, AbortSignal.timeout(5_000));
+      return;
+    }
     const identity = await this.linkedIdentity(teamId, slackUserId);
     let actor: ExternalActor | null = null;
-    let matchedWorkspaceUserId: string | null = null;
+    let matchedWorkspaceUserId: string | null = identity?.auth.userId ?? null;
     if (!identity) {
-      if (!await this.unlinkedWorkspaceExecutionAllowed(connection.id, source)) {
+      if (source.channelResolutionFailure) {
         const targetChannel = channelId ?? await this.openDm(token, slackUserId);
+        const resolutionDenial = slackChannelResolutionDenial(source.channelResolutionFailure);
+        if (resolutionDenial.reconnectRequired) await this.markSlackReconnectRequired(connection.id);
+        if (threadTs) {
+          await this.rememberPendingPrompt(
+            connection.id,
+            targetChannel,
+            threadTs,
+            slackUserId,
+            requestedPrompt,
+            "channel_resolution",
+          );
+        }
         await slackApi(token, "chat.postMessage", {
           channel: targetChannel,
           ...(threadTs ? { thread_ts: threadTs } : {}),
-          text: "Avalon workspace tasks are not enabled for this Slack surface. Ask an Avalon workspace admin to update the Slack agent policy, or connect your Avalon account in App Home.",
+          text: resolutionDenial.text,
         }, AbortSignal.timeout(5_000));
         return;
       }
@@ -1065,8 +1199,51 @@ export class SlackAgentService {
       actor = externalIdentity.actor;
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
     }
+    if (activationInvocation) {
+      const adapter = connectorRegistryForEnv(this.env).get("slack").messagingAgent;
+      if (!adapter) throw new ApiError(500, "slack_agent_adapter_missing", "Slack Agent is not configured");
+      const activationConnection: ConnectorConnectionContext = {
+        id: connection.id,
+        workspaceId: connection.workspace_id,
+        scope: "workspace",
+        ownerUserId: null,
+        grantedScopes: parseGrantedScopes(connection.granted_scopes_json),
+        credentials: { botAccessToken: token },
+        cursor: {},
+        config: {},
+      };
+      try {
+        await acknowledgeConnectorAgentActivation(adapter, activationInvocation, {
+          connection: activationConnection,
+          signal: AbortSignal.timeout(5_000),
+        });
+      } catch (error) {
+        // The host contract and capability checks remain fail-closed. Once the
+        // provider call begins, however, a supplemental reaction must not drop
+        // a durably accepted user request.
+        if (!(error instanceof ConnectorError)
+          || (error.code !== "provider_error" && error.code !== "unauthorized")) {
+          throw error;
+        }
+        if (slackReconnectRequired(error)) {
+          await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
+        }
+        console.warn("Slack activation acknowledgement failed", {
+          connection_id: connection.id,
+          team_id: teamId,
+          event_id: activationInvocation.kind === "event" ? activationInvocation.eventId : null,
+          reason: slackErrorReason(error),
+        });
+      }
+    }
+    const slackOrigin = await this.slackOriginContext(
+      token,
+      teamId,
+      source,
+      matchedWorkspaceUserId,
+    );
     const channel = channelId ?? await this.openDm(token, slackUserId);
-    const thread = threadTs ?? await this.createUserPromptRoot(token, channel, prompt);
+    const thread = threadTs ?? await this.createUserPromptRoot(token, channel, requestedPrompt);
     const openingClientMessageId = clientMessageId.slice(0, 120);
     let session = await this.loadSession(connection.id, channel, thread);
     if (session?.opening_client_message_id === openingClientMessageId) return;
@@ -1094,16 +1271,18 @@ export class SlackAgentService {
               slackUserId,
               channel,
               thread,
-              prompt,
+              prompt: requestedPrompt,
               clientMessageId,
               source,
+              slackOrigin,
+              ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
             });
             sessionCreatedThisCall = true;
             try {
               await slackApi(token, "assistant.threads.setTitle", {
                 channel_id: channel,
                 thread_ts: thread,
-                title: prompt,
+                title: requestedPrompt,
               }, AbortSignal.timeout(5_000));
             } catch (error) {
               console.warn("Slack thread title failed", {
@@ -1116,6 +1295,9 @@ export class SlackAgentService {
           await this.releaseThreadClaim(connection.id, channel, thread, claimId);
         }
       }
+    }
+    if (session) {
+      await this.clearPendingPrompt(connection.id, channel, thread, slackUserId);
     }
     if (session && session.workstream_id) {
       const justCreated = session.opening_client_message_id === openingClientMessageId;
@@ -1156,8 +1338,10 @@ export class SlackAgentService {
         const workspaceService = new SlackWorkspaceWorkstreamService(this.env, connection.workspace_id);
         const externalInput = {
           actor: externalIdentity.actor,
-          text: prompt,
+          text: requestedPrompt,
           clientMessageId: clientMessageId.slice(0, 120),
+          slackOrigin,
+          ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
         };
         if (!await workspaceService.answerOpenElicitation(session.workstream_id, externalInput)) {
           await workspaceService.createMessage(session.workstream_id, externalInput);
@@ -1175,16 +1359,18 @@ export class SlackAgentService {
         if (!await this.answerOpenElicitationAsUser(
           service,
           session.workstream_id,
-          prompt,
+          requestedPrompt,
           clientMessageId.slice(0, 120),
+          slackOrigin,
+          slackSearchAuthorization,
         )) {
           await service.createMessage(session.workstream_id, {
-            text: prompt,
+            text: requestedPrompt,
             clientMessageId: clientMessageId.slice(0, 120),
             mentions: [],
             confirmedParticipantUserIds: [],
             attachmentIds: [],
-          });
+          }, slackOrigin, slackSearchAuthorization);
         }
       } else if (!justCreated) {
         if (session.execution_scope !== "workspace") {
@@ -1231,6 +1417,8 @@ export class SlackAgentService {
     prompt: string;
     clientMessageId: string;
     source: SlackPromptSource;
+    slackOrigin: SlackOriginContext;
+    slackSearchAuthorization?: SlackSearchAuthorization;
   }): Promise<SlackSessionRow> {
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
@@ -1240,13 +1428,17 @@ export class SlackAgentService {
           openingMessage: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
           attachmentIds: [],
-        })
+        }, input.slackOrigin, input.slackSearchAuthorization)
       : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
           actor: ExternalActorSchema.parse(input.actor),
           title: slackTaskTitle(input.prompt),
           objective: input.prompt.slice(0, 4_000),
           text: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
+          slackOrigin: input.slackOrigin,
+          ...(input.slackSearchAuthorization
+            ? { slackSearchAuthorization: input.slackSearchAuthorization }
+            : {}),
         });
     const id = newId();
     const at = nowIso();
@@ -1277,7 +1469,11 @@ export class SlackAgentService {
       input.identity ? "explicit_link" : null,
       input.identity ? input.slackUserId : null,
       input.identity ? at : null,
-      JSON.stringify({ source: input.source, externalActor: input.actor }),
+      JSON.stringify({
+        source: input.source,
+        externalActor: input.actor,
+        slackOrigin: input.slackOrigin,
+      }),
       at,
       at,
     ).run();
@@ -1308,11 +1504,133 @@ export class SlackAgentService {
     ).bind(connectionId, channelId, threadTs).first<SlackSessionRow>();
   }
 
+  private async shouldEnqueueSlackMessage(
+    teamId: string,
+    event: Record<string, unknown>,
+    authorizedBotId: string | null,
+  ): Promise<boolean> {
+    const subtype = typeof event.subtype === "string" ? event.subtype : null;
+    if (event.bot_id
+      || (subtype && subtype !== "thread_broadcast")
+      || !event.user
+      || !event.channel
+      || !event.ts) return false;
+    if (isDirectSlackMessageEvent(event)) return true;
+    if (typeof event.thread_ts !== "string" || !event.thread_ts) return false;
+    const connection = await this.connectionForTeam(teamId);
+    const channelId = String(event.channel);
+    const threadTs = event.thread_ts;
+    const slackUserId = String(event.user);
+    const text = String(event.text ?? "");
+    if (text.includes("<@")) {
+      const botUserId = authorizedBotId ?? await this.botUserId(connection);
+      if (botUserId && text.includes(`<@${botUserId}>`)) return false;
+    }
+    const routable = await this.env.DB.prepare(
+      `SELECT 1 AS routable
+       WHERE EXISTS (
+         SELECT 1 FROM slack_agent_sessions
+         WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+       ) OR EXISTS (
+         SELECT 1 FROM slack_agent_pending_prompts
+         WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+           AND slack_user_id = ? AND expires_at > ?
+       )`,
+    ).bind(
+      connection.id,
+      channelId,
+      threadTs,
+      connection.id,
+      channelId,
+      threadTs,
+      slackUserId,
+      nowIso(),
+    ).first<{ routable: number }>();
+    return Boolean(routable);
+  }
+
+  private async loadPendingPrompt(
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+  ): Promise<{ prompt: string } | null> {
+    return this.env.DB.prepare(
+      `SELECT prompt FROM slack_agent_pending_prompts
+       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+         AND slack_user_id = ? AND expires_at > ?`,
+    ).bind(connectionId, channelId, threadTs, slackUserId, nowIso()).first<{ prompt: string }>();
+  }
+
+  private async rememberPendingPrompt(
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+    prompt: string,
+    denialReason: SlackPendingDenialReason,
+  ): Promise<void> {
+    const retainedPrompt = prompt.trim().slice(0, 40_000);
+    if (!retainedPrompt) return;
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `INSERT INTO slack_agent_pending_prompts
+       (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
+        denial_reason, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(connection_id, slack_channel_id, slack_thread_ts, slack_user_id)
+       DO UPDATE SET prompt = excluded.prompt, denial_reason = excluded.denial_reason,
+         expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
+    ).bind(
+      connectionId,
+      channelId,
+      threadTs,
+      slackUserId,
+      retainedPrompt,
+      denialReason,
+      new Date(Date.now() + SLACK_PENDING_PROMPT_TTL_MS).toISOString(),
+      at,
+      at,
+    ).run();
+  }
+
+  private async clearPendingPrompt(
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+  ): Promise<void> {
+    await this.env.DB.prepare(
+      `DELETE FROM slack_agent_pending_prompts
+       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
+         AND slack_user_id = ?`,
+    ).bind(connectionId, channelId, threadTs, slackUserId).run();
+  }
+
+  private async recoverLegacyDeniedPrompt(
+    token: string,
+    connection: SlackConnectionRow,
+    channelId: string,
+    threadTs: string,
+    slackUserId: string,
+  ): Promise<string | null> {
+    const botUserId = await this.botUserId(connection);
+    if (!botUserId) return null;
+    const result = await slackApi(token, "conversations.replies", {
+      channel: channelId,
+      ts: threadTs,
+      limit: 15,
+    }, AbortSignal.timeout(8_000));
+    return recoverSlackDeniedPrompt(result.messages, slackUserId, botUserId);
+  }
+
   private async answerOpenElicitationAsUser(
     service: WorkstreamService,
     workstreamId: string,
     response: string,
     clientMessageId: string,
+    slackOrigin: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
   ): Promise<boolean> {
     const elicitation = await this.env.DB.prepare(
       `SELECT id, response_type, options_json FROM elicitations
@@ -1328,6 +1646,8 @@ export class SlackAgentService {
       elicitation.id,
       slackElicitationRequest(elicitation, response),
       clientMessageId,
+      slackOrigin,
+      slackSearchAuthorization,
     );
     return true;
   }
@@ -1399,45 +1719,16 @@ export class SlackAgentService {
     }, AbortSignal.timeout(5_000));
   }
 
-  private async unlinkedWorkspaceExecutionAllowed(
-    connectionId: string,
-    source: SlackPromptSource,
-  ): Promise<boolean> {
-    const rawPolicy = await this.env.DB.prepare(
-      `SELECT allow_unlinked_workspace_tasks, public_channel_mode, private_channel_mode,
-              allow_direct_messages, allow_commands, allow_shortcuts
-       FROM slack_agent_policies WHERE connection_id = ?`,
-    ).bind(connectionId).first<Record<string, unknown>>();
-    const policy = rawPolicy ? SlackAgentPolicySchema.parse(rawPolicy) : DEFAULT_SLACK_AGENT_POLICY;
-    if (policy.allow_unlinked_workspace_tasks !== 1) return false;
-    if (source.kind === "direct_message") return policy.allow_direct_messages === 1;
-    if (source.kind === "slash_command") return policy.allow_commands === 1;
-    if (source.kind === "shortcut" && policy.allow_shortcuts !== 1) return false;
-    if (source.channelType === "public") {
-      if (policy.public_channel_mode === "all_invited") return true;
-      if (policy.public_channel_mode === "disabled") return false;
-      return this.channelAllowlisted(connectionId, source.channelId, "public");
-    }
-    if (source.channelType === "private") {
-      if (policy.private_channel_mode === "disabled") return false;
-      return this.channelAllowlisted(connectionId, source.channelId, "private");
-    }
-    return source.kind === "shortcut" && source.channelId === null
-      ? policy.allow_shortcuts === 1
-      : false;
-  }
-
-  private async channelAllowlisted(
-    connectionId: string,
-    channelId: string | null,
-    channelType: "public" | "private",
-  ): Promise<boolean> {
-    if (!channelId) return false;
-    const row = await this.env.DB.prepare(
-      `SELECT 1 AS enabled FROM slack_agent_channel_allowlist
-       WHERE connection_id = ? AND slack_channel_id = ? AND channel_type = ? AND enabled = 1`,
-    ).bind(connectionId, channelId, channelType).first<{ enabled: number }>();
-    return Boolean(row);
+  private async markSlackReconnectRequired(connectionId: string, reason = "missing_scope"): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE connector_connections
+       SET status = 'needs_reconnect', error_json = ?, updated_at = ?
+       WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+    ).bind(JSON.stringify({
+      code: "slack_bot_scope_missing",
+      message: `Slack workspace authorization needs reconnect (${reason})`,
+      reconnectRequired: true,
+    }), nowIso(), connectionId).run();
   }
 
   private async externalSlackActor(
@@ -1471,6 +1762,68 @@ export class SlackAgentService {
         ).bind(workspaceId, profile.email).first<{ id: string }>()
       : null;
     return { actor, matchedWorkspaceUserId: matched?.id ?? null };
+  }
+
+  private async slackOriginContext(
+    token: string,
+    teamId: string,
+    source: SlackPromptSource,
+    matchedAvalonUserId: string | null,
+  ): Promise<SlackOriginContext> {
+    const nearby = await this.nearbySlackMessages(token, source);
+    return SlackOriginContextSchema.parse({
+      teamId,
+      channelId: source.channelId,
+      channelName: source.channelName,
+      threadTs: source.threadTs,
+      invocationType: source.kind,
+      channelType: source.channelType,
+      matchedAvalonUserId,
+      nearbyMessagesStatus: nearby.status,
+      nearbyMessages: nearby.messages,
+      attachments: source.attachments,
+    });
+  }
+
+  private async nearbySlackMessages(
+    token: string,
+    source: SlackPromptSource,
+  ): Promise<{
+    status: SlackOriginContext["nearbyMessagesStatus"];
+    messages: SlackOriginNearbyMessage[];
+  }> {
+    if (!source.channelId || !source.messageTs) {
+      return { status: "not_applicable", messages: [] };
+    }
+    try {
+      const result = source.threadTs && source.threadTs !== source.messageTs
+        ? await slackApi(token, "conversations.replies", {
+            channel: source.channelId,
+            ts: source.threadTs,
+            latest: source.messageTs,
+            inclusive: false,
+            limit: 8,
+          }, AbortSignal.timeout(5_000))
+        : await slackApi(token, "conversations.history", {
+            channel: source.channelId,
+            latest: source.messageTs,
+            inclusive: false,
+            limit: 8,
+          }, AbortSignal.timeout(5_000));
+      const messages = result.messages
+        .filter((message) => message.ts !== source.messageTs)
+        .map(slackOriginNearbyMessage)
+        .sort((left, right) => left.timestamp.localeCompare(right.timestamp))
+        .slice(-8);
+      return { status: "available", messages };
+    } catch (error) {
+      console.warn("Slack nearby context lookup failed", {
+        channel_id: source.channelId,
+        thread_ts: source.threadTs,
+        reason: slackErrorReason(error),
+      });
+      return { status: "unavailable", messages: [] };
+    }
   }
 
   private async claimThread(connectionId: string, channelId: string, threadTs: string): Promise<string | null> {
@@ -1562,46 +1915,6 @@ export class SlackAgentService {
     }
   }
 
-  private async storeActiveContext(teamId: string, slackUserId: string, context: unknown): Promise<void> {
-    const connection = await this.connectionForTeam(teamId);
-    await this.env.DB.prepare(
-      `INSERT INTO slack_agent_contexts (connection_id, slack_user_id, context_json, updated_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(connection_id, slack_user_id) DO UPDATE SET
-         context_json = excluded.context_json, updated_at = excluded.updated_at`,
-    ).bind(connection.id, slackUserId, JSON.stringify(context), nowIso()).run();
-  }
-
-  private async augmentPromptWithSlackContext(
-    teamId: string,
-    slackUserId: string,
-    event: Record<string, unknown>,
-    prompt: string,
-  ): Promise<string> {
-    const actionToken = typeof event.action_token === "string" ? event.action_token : null;
-    if (!/\b(this|that|current|here|above|viewing|channel|thread|conversation)\b/iu.test(prompt)) return prompt;
-    const connection = await this.connectionForTeam(teamId);
-    if (actionToken) {
-      try {
-        const result = await slackApi(await this.botToken(connection), "assistant.search.context", {
-          query: prompt,
-          action_token: actionToken,
-          channel_types: ["public_channel"],
-          content_types: ["messages", "files", "channels", "users"],
-        }, AbortSignal.timeout(8_000));
-        return `${prompt}\n\n<slack_context trust="untrusted" source="assistant.search.context">${safeJson(result)}</slack_context>`;
-      } catch {
-        // The latest App context remains a useful fallback when search context is unavailable.
-      }
-    }
-    const stored = await this.env.DB.prepare(
-      "SELECT context_json FROM slack_agent_contexts WHERE connection_id = ? AND slack_user_id = ?",
-    ).bind(connection.id, slackUserId).first<{ context_json: string }>();
-    return stored?.context_json
-      ? `${prompt}\n\n<slack_context trust="untrusted" source="app_context">${safeJson(JSON.parse(stored.context_json))}</slack_context>`
-      : prompt;
-  }
-
   private async unfurlAvalonLinks(teamId: string, event: Record<string, unknown>): Promise<void> {
     const channel = typeof event.channel === "string" ? event.channel : null;
     const ts = typeof event.message_ts === "string" ? event.message_ts : null;
@@ -1628,7 +1941,8 @@ export class SlackAgentService {
   private async linkedAccount(teamId: string, slackUserId: string): Promise<SlackLinkedAccount | null> {
     const row = await this.env.DB.prepare(
       `SELECT l.user_id, l.workspace_id, l.connection_id, wm.role, wm.status AS member_status,
-              cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv, cc.status
+              cc.provider_account_id, cc.encrypted_credentials, cc.credential_iv,
+              cc.granted_scopes_json, cc.status
        FROM slack_user_links l
        JOIN connector_connections cc ON cc.id = l.connection_id
        JOIN workspace_members wm ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
@@ -1636,13 +1950,22 @@ export class SlackAgentService {
          AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
     ).bind(teamId, slackUserId).first<Record<string, unknown>>();
     if (!row || row.member_status !== "active") return null;
-    const connection: SlackConnectionRow = { id: String(row.connection_id), workspace_id: String(row.workspace_id), provider_account_id: String(row.provider_account_id), encrypted_credentials: String(row.encrypted_credentials), credential_iv: String(row.credential_iv), status: String(row.status) };
+    const connection: SlackConnectionRow = {
+      id: String(row.connection_id),
+      workspace_id: String(row.workspace_id),
+      provider_account_id: String(row.provider_account_id),
+      encrypted_credentials: String(row.encrypted_credentials),
+      credential_iv: String(row.credential_iv),
+      granted_scopes_json: String(row.granted_scopes_json),
+      status: String(row.status),
+    };
     return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: String(row.user_id), workspaceId: String(row.workspace_id), region: this.env.AVALON_REGION, role: String(row.role) as AuthContext["role"] }, connection, slackUserId, teamId };
   }
 
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+              granted_scopes_json, status
        FROM connector_connections
        WHERE connector_type = 'slack' AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
     ).bind(teamId).first<SlackConnectionRow>();
@@ -1652,7 +1975,8 @@ export class SlackAgentService {
 
   private async connectionById(id: string): Promise<SlackConnectionRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, status
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+              granted_scopes_json, status
        FROM connector_connections WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
     ).bind(id).first<SlackConnectionRow>();
     if (!row) throw new ApiError(404, "slack_installation_not_found", "Slack workspace is not connected to Avalon");
@@ -1920,27 +2244,91 @@ function slackChannelType(value: unknown): SlackPromptSource["channelType"] {
   return "unknown";
 }
 
+function isDirectSlackMessageEvent(event: Record<string, unknown>): boolean {
+  return slackChannelType(event.channel_type) === "im"
+    || (typeof event.channel === "string" && event.channel.startsWith("D"));
+}
+
+function isSlackRetryPrompt(value: string): boolean {
+  return /^(?:please\s+)?(?:retry|try\s+again)[.!]?$/iu.test(value.trim());
+}
+
+function recoverSlackDeniedPrompt(
+  messages: readonly Record<string, unknown>[],
+  slackUserId: string,
+  botUserId: string,
+): string | null {
+  let denialIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    const text = typeof message.text === "string" ? message.text : "";
+    if (message.user === botUserId
+      && SLACK_RETRYABLE_DENIAL_PREFIXES.some((prefix) => text.startsWith(prefix))) {
+      denialIndex = index;
+      break;
+    }
+  }
+  if (denialIndex < 0) return null;
+  for (let index = denialIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.user !== slackUserId || typeof message.text !== "string") continue;
+    if (!message.text.includes(`<@${botUserId}>`)) continue;
+    const prompt = message.text.replaceAll(`<@${botUserId}>`, "").trim();
+    if (prompt) return prompt;
+  }
+  return null;
+}
+
 async function resolveSlackChannelType(
   token: string,
   channelId: string,
   hint: unknown,
-): Promise<SlackPromptSource["channelType"]> {
+): Promise<{
+  channelType: SlackPromptSource["channelType"];
+  channelName: string | null;
+  failure: SlackPromptSource["channelResolutionFailure"];
+}> {
   const hinted = slackChannelType(hint);
-  if (hinted === "im" || channelId.startsWith("D")) return "im";
+  if (hinted === "im" || channelId.startsWith("D")) {
+    return { channelType: "im", channelName: null, failure: null };
+  }
   try {
     const result = await slackApi(token, "conversations.info", {
       channel: channelId,
     }, AbortSignal.timeout(5_000));
-    if (result.channel.is_im === true) return "im";
-    if (result.channel.is_mpim === true || result.channel.is_private) return "private";
-    return "public";
+    const channelName = result.channel.name?.trim().slice(0, 255) || null;
+    if (result.channel.is_im === true) return { channelType: "im", channelName, failure: null };
+    if (result.channel.is_mpim === true || result.channel.is_private) {
+      return { channelType: "private", channelName, failure: null };
+    }
+    return { channelType: "public", channelName, failure: null };
   } catch (error) {
+    const reason = slackErrorReason(error);
     console.warn("Slack conversation privacy lookup failed closed", {
       channel_id: channelId,
-      reason: slackErrorReason(error),
+      reason,
     });
-    return "unknown";
+    return {
+      channelType: "unknown",
+      channelName: null,
+      failure: reason === "missing_scope" ? "missing_scope" : "lookup_failed",
+    };
   }
+}
+
+function slackChannelResolutionDenial(
+  failure: Exclude<SlackPromptSource["channelResolutionFailure"], null>,
+): { text: string; reconnectRequired: boolean } {
+  if (failure === "missing_scope") {
+    return {
+      text: "Avalon needs updated Slack permissions before it can start workspace tasks here. Ask an Avalon workspace admin to reconnect the Slack workspace in Avalon Settings, then reply `try again` in this thread. You can also connect your Avalon account in App Home.",
+      reconnectRequired: true,
+    };
+  }
+  return {
+    text: "Avalon couldn’t verify whether this Slack channel is public or private, so it did not start a workspace task. Reply `try again` in this thread; if this continues, ask an Avalon workspace admin to test the Slack connection in Avalon Settings. You can also connect your Avalon account in App Home.",
+    reconnectRequired: false,
+  };
 }
 
 function modalPromptSource(value: unknown): SlackPromptSource | null {
@@ -2031,8 +2419,12 @@ function startTaskModal(
   source: z.infer<typeof SlackModalContextSchema> = {
     kind: "shortcut",
     channelType: "unknown",
+    channelResolutionFailure: null,
     channelId: null,
+    channelName: null,
     threadTs: null,
+    messageTs: null,
+    attachments: [],
   },
 ): Record<string, unknown> {
   return { type: "modal", callback_id: "avalon_start_task_submit", private_metadata: JSON.stringify(SlackModalContextSchema.parse(source)), title: { type: "plain_text", text: "Start an Avalon task" }, submit: { type: "plain_text", text: "Start" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", block_id: "prompt", label: { type: "plain_text", text: "What should Avalon do?" }, element: { type: "plain_text_input", action_id: "value", multiline: true, initial_value: initial.slice(0, 3_000), placeholder: { type: "plain_text", text: "Summarize this, investigate an issue, or coordinate work…" } } }] };
@@ -2169,14 +2561,81 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function authorizedUserId(envelope: SlackIngressEnvelope): string | null {
-  const matches = (envelope.authorizations ?? []).filter((authorization) =>
-    authorization.team_id === envelope.team_id
-      && typeof authorization.user_id === "string"
-      && authorization.user_id,
-  );
-  const authorization = matches.find((candidate) => candidate.is_bot !== true) ?? matches[0];
-  return authorization ? String(authorization.user_id) : null;
+function slackOriginNearbyMessage(value: unknown): SlackOriginNearbyMessage {
+  const message = asRecord(value);
+  const userId = typeof message.user === "string" && message.user
+    ? message.user
+    : typeof message.bot_id === "string" && message.bot_id
+      ? message.bot_id
+      : null;
+  return {
+    timestamp: String(message.ts ?? "unknown").slice(0, 80),
+    userId,
+    text: String(message.text ?? "").slice(0, 2_000),
+    attachments: slackOriginAttachments(message),
+  };
+}
+
+function slackOriginAttachments(value: unknown): SlackOriginAttachment[] {
+  const message = asRecord(value);
+  const attachments: SlackOriginAttachment[] = [];
+  if (Array.isArray(message.files)) {
+    for (const rawFile of message.files.slice(0, 10)) {
+      const file = asRecord(rawFile);
+      const name = slackBoundedString(file.name, 500)
+        ?? slackBoundedString(file.title, 500)
+        ?? "Slack file";
+      attachments.push({
+        id: slackBoundedString(file.id, 255),
+        name,
+        title: slackBoundedString(file.title, 500),
+        mimeType: slackBoundedString(file.mimetype, 255),
+        fileType: slackBoundedString(file.filetype, 120),
+        permalink: slackHttpUrl(file.permalink),
+      });
+    }
+  }
+  if (Array.isArray(message.attachments)) {
+    for (const rawAttachment of message.attachments.slice(0, Math.max(0, 10 - attachments.length))) {
+      const attachment = asRecord(rawAttachment);
+      const name = slackBoundedString(attachment.title, 500)
+        ?? slackBoundedString(attachment.fallback, 500)
+        ?? "Slack attachment";
+      attachments.push({
+        id: slackBoundedString(attachment.id, 255),
+        name,
+        title: slackBoundedString(attachment.title, 500),
+        mimeType: null,
+        fileType: null,
+        permalink: slackHttpUrl(attachment.title_link ?? attachment.from_url),
+      });
+    }
+  }
+  return attachments;
+}
+
+function slackEventSearchAuthorization(event: Record<string, unknown>): SlackSearchAuthorization | undefined {
+  const actionToken = typeof event.action_token === "string" ? event.action_token : null;
+  if (!actionToken) return undefined;
+  const parsed = SlackSearchAuthorizationSchema.safeParse({ actionToken });
+  return parsed.success ? parsed.data : undefined;
+}
+
+function slackBoundedString(value: unknown, maximum: number): string | null {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maximum)
+    : null;
+}
+
+function slackHttpUrl(value: unknown): string | null {
+  const raw = slackBoundedString(value, 2_000);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? raw : null;
+  } catch {
+    return null;
+  }
 }
 
 function authorizedBotUserId(envelope: SlackIngressEnvelope): string | null {
@@ -2187,8 +2646,43 @@ function authorizedBotUserId(envelope: SlackIngressEnvelope): string | null {
   return null;
 }
 
-function safeJson(value: unknown): string {
-  return JSON.stringify(value).replaceAll("<", "\\u003c");
+function slackReconnectRequired(error: unknown): boolean {
+  const reason = slackErrorReason(error);
+  return (error instanceof ConnectorError
+      && ((error.code === "unauthorized" && reason !== "token_expired") || reason === "missing_scope"))
+    || (error instanceof ApiError && error.status === 401);
+}
+
+function parseGrantedScopes(value: string): string[] {
+  try {
+    return z.array(z.string()).parse(JSON.parse(value));
+  } catch {
+    return [];
+  }
+}
+
+function slackIngressRetryable(error: unknown): boolean {
+  if (error instanceof z.ZodError) return false;
+  if (error instanceof ApiError) return error.status === 429 || error.status >= 500;
+  if (!(error instanceof ConnectorError)) return true;
+  const reason = slackErrorReason(error);
+  // An access token can expire between proactive refresh and the provider
+  // request. Preserve the connection and let the durable retry refresh it.
+  if (reason === "token_expired") return true;
+  if (error.code !== "provider_error") return false;
+  const details = error.details && typeof error.details === "object"
+    ? error.details as { status?: unknown }
+    : {};
+  const status = typeof details.status === "number" ? details.status : 0;
+  return status === 429
+    || status >= 500
+    || new Set(["fatal_error", "internal_error", "ratelimited", "rate_limited", "request_timeout", "service_unavailable"]).has(reason);
+}
+
+function slackIngressErrorCode(error: unknown): string {
+  if (error instanceof ApiError) return error.code;
+  const reason = slackErrorReason(error);
+  return reason && reason !== "Error" ? reason.slice(0, 120) : "slack_ingress_failed";
 }
 
 function escapeMrkdwn(value: string): string {
@@ -2197,7 +2691,16 @@ function escapeMrkdwn(value: string): string {
 
 export const __slackAgentTesting = {
   claimWorkspaceSession,
+  isDirectSlackMessageEvent,
+  isSlackRetryPrompt,
   modalPromptSource,
+  recoverSlackDeniedPrompt,
   resolveSlackChannelType,
+  slackOriginAttachments,
+  slackOriginNearbyMessage,
+  slackEventSearchAuthorization,
+  slackChannelResolutionDenial,
   slackChannelType,
+  slackIngressRetryable,
+  slackReconnectRequired,
 };

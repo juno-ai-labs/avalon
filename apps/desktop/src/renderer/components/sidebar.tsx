@@ -7,37 +7,45 @@ import {
   ChevronsLeft,
   Check,
   CirclePause,
+  Cloud,
   EyeOff,
   FileStack,
-  GitBranch,
   LogOut,
+  Lock,
   Menu,
   MessageSquarePlus,
+  Mic2,
+  NotebookText,
   Pencil,
   Pin,
   Play,
   Plus,
   Settings,
-  Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { formatRelative, groupWorkstreams } from '../lib/format';
+import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 
 interface SidebarProps {
   workspace: Workspace;
   automations: AutomationSummary[];
+  notes?: NoteSummary[];
   workstreams: WorkstreamSummary[];
   loading?: boolean;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
+  onOpenMeetingNotes: (noteId?: string) => Promise<void>;
   onSignOut: () => void;
 }
+
+type RecentSidebarItem =
+  | { type: 'note'; note: NoteSummary; id: string; lastActivityAt: string }
+  | { type: 'workstream'; workstream: WorkstreamSummary; id: string; lastActivityAt: string };
 
 const onboardingItems = [
   {
@@ -164,7 +172,6 @@ function WorkstreamRow({
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
 }): React.JSX.Element {
-  const showAutomationMarker = workstream.origin === 'automation' && workstream.harnessStatus === 'completed';
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -174,19 +181,12 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              {showAutomationMarker ? (
-                <span aria-label="Automation-generated, latest run completed" className="sidebar-automation-marker" role="img">
-                  <GitBranch aria-hidden="true" size={15} strokeWidth={1.8} />
-                </span>
-              ) : (
-                <StatusDot compact status={workstream.harnessStatus} />
-              )}
+              <StatusDot compact status={workstream.harnessStatus} />
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{workstream.title}</span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">
-                  {workstream.origin === 'automation' && <Zap aria-label="Automation-generated" size={10} />}
                   {workstream.preview ?? workstream.automationName}
                 </span>
               )}
@@ -215,14 +215,40 @@ function WorkstreamRow({
   );
 }
 
+function NoteRow({ note }: { note: NoteSummary }): React.JSX.Element {
+  return (
+    <NavLink
+      className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
+      to={`/notes/${note.id}`}
+    >
+      <span className="sidebar-row-icon">
+        <span aria-label="Note" className="sidebar-note-marker" role="img">
+          <NotebookText aria-hidden="true" size={15} strokeWidth={1.8} />
+        </span>
+      </span>
+      <span className="sidebar-row-main">
+        <span className="sidebar-row-title">{note.title}</span>
+      </span>
+      {note.scope === 'personal' && (
+        <span aria-label="Private note" className="sidebar-note-privacy" role="img">
+          <Cloud aria-hidden="true" className="sidebar-note-privacy-cloud" size={17} strokeWidth={1.7} />
+          <Lock aria-hidden="true" className="sidebar-note-privacy-lock" size={8} strokeWidth={2.2} />
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
 export function Sidebar({
   workspace,
   automations,
+  notes = [],
   workstreams,
   loading,
   onMarkWorkstreamUnread,
   onRenameWorkstream,
   onRunAutomation,
+  onOpenMeetingNotes,
   onSignOut,
 }: SidebarProps): React.JSX.Element {
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
@@ -234,7 +260,20 @@ export function Sidebar({
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
-  const groups = groupWorkstreams(workstreams);
+  const groups = groupActivityItems<RecentSidebarItem>([
+    ...workstreams.map((workstream) => ({
+      type: 'workstream' as const,
+      id: `workstream:${workstream.id}`,
+      lastActivityAt: workstream.lastActivityAt,
+      workstream,
+    })),
+    ...notes.map((note) => ({
+      type: 'note' as const,
+      id: `note:${note.id}`,
+      lastActivityAt: note.lastActivityAt,
+      note,
+    })),
+  ]);
 
   const openRename = (workstream: WorkstreamSummary): void => {
     setRenameTarget(workstream);
@@ -299,6 +338,10 @@ export function Sidebar({
               <Plus aria-hidden="true" size={15} />
               <span>New automation</span>
             </NavLink>
+            <button className="sidebar-action" onClick={() => void onOpenMeetingNotes()} type="button">
+              <Mic2 aria-hidden="true" size={15} />
+              <span>New meeting/notes</span>
+            </button>
           </div>
 
           <section className="sidebar-section" aria-labelledby="automations-heading">
@@ -323,21 +366,26 @@ export function Sidebar({
           </section>
 
           <section aria-label="Work streams" className="sidebar-section workstreams-section">
-            {loading && workstreams.length === 0 ? (
+            {loading && workstreams.length === 0 && notes.length === 0 ? (
               <div className="sidebar-skeleton tall" aria-label="Loading work streams" />
             ) : groups.length === 0 ? (
-              <p className="sidebar-empty">No work streams yet</p>
+              <p className="sidebar-empty">No work streams or notes yet</p>
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>
                   <h3>{group.label}</h3>
                   <div className="sidebar-list">
-                    {group.streams.map((workstream) => (
+                    {group.streams.map((item) => item.type === 'note' ? (
+                      <NoteRow
+                        key={item.id}
+                        note={item.note}
+                      />
+                    ) : (
                       <WorkstreamRow
-                        key={workstream.id}
+                        key={item.id}
                         onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
-                        workstream={workstream}
+                        workstream={item.workstream}
                       />
                     ))}
                   </div>

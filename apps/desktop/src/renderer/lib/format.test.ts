@@ -23,52 +23,76 @@ function stream(
 }
 
 describe('work-stream presentation rules', () => {
-  const now = new Date('2026-07-31T20:00:00.000Z');
+  const localDate = (year: number, month: number, day: number, hour = 0, minute = 0): string => (
+    new Date(year, month, day, hour, minute).toISOString()
+  );
+  const now = new Date(2026, 7, 7, 10, 30);
 
   it('groups and orders work streams only by their latest activity', () => {
     const groups = groupWorkstreams(
       [
-        stream('month-old-running', 'running', '2026-07-10T12:00:00.000Z'),
-        stream('day-newer-failed', 'failed', '2026-07-31T08:00:00.000Z'),
-        stream('rest', 'needs_input', '2026-06-12T12:00:00.000Z'),
-        stream('hour-older', 'completed', '2026-07-31T19:20:00.000Z'),
-        stream('week', 'scheduled', '2026-07-28T12:00:00.000Z'),
-        stream('hour-newer', 'completed', '2026-07-31T19:55:00.000Z'),
+        stream('month-old-running', 'running', localDate(2026, 7, 1, 12)),
+        stream('today-failed', 'failed', localDate(2026, 7, 7, 8)),
+        stream('before-month', 'needs_input', localDate(2026, 6, 31, 23, 59)),
+        stream('hour-older', 'completed', localDate(2026, 7, 7, 10)),
+        stream('yesterday', 'scheduled', localDate(2026, 7, 6, 12)),
+        stream('week', 'scheduled', localDate(2026, 7, 2, 12)),
+        stream('hour-newer', 'completed', localDate(2026, 7, 7, 10, 25)),
       ],
       now,
     );
 
     expect(groups.map((group) => group.label)).toEqual([
       'Last hour',
-      'Last day',
-      'Last week',
+      'Today',
+      'Yesterday',
+      'This week',
       'This month',
-      'The rest',
+      'Before this month',
     ]);
     expect(groups[0]?.streams.map((item) => item.id)).toEqual(['hour-newer', 'hour-older']);
     expect(groups.flatMap((group) => group.streams.map((item) => item.id))).toEqual([
       'hour-newer',
       'hour-older',
-      'day-newer-failed',
+      'today-failed',
+      'yesterday',
       'week',
       'month-old-running',
-      'rest',
+      'before-month',
     ]);
   });
 
-  it('uses rolling recency boundaries and omits empty sections', () => {
+  it('uses exact local-time calendar boundaries and omits empty sections', () => {
     const groups = groupWorkstreams(
       [
-        stream('one-hour', 'completed', '2026-07-31T19:00:00.000Z'),
-        stream('one-day', 'completed', '2026-07-30T20:00:00.000Z'),
-        stream('one-week', 'completed', '2026-07-24T20:00:00.000Z'),
+        stream('one-hour', 'completed', localDate(2026, 7, 7, 9, 30)),
+        stream('today', 'completed', localDate(2026, 7, 7)),
+        stream('yesterday', 'completed', localDate(2026, 7, 6)),
+        stream('week-start', 'completed', localDate(2026, 7, 2)),
+        stream('month-start', 'completed', localDate(2026, 7, 1)),
+        stream('before-month', 'completed', localDate(2026, 6, 31, 23, 59)),
         stream('invalid', 'completed', 'not-a-date'),
       ],
       now,
     );
 
-    expect(groups.map((group) => group.label)).toEqual(['Last hour', 'Last day', 'Last week', 'The rest']);
-    expect(groups.map((group) => group.streams[0]?.id)).toEqual(['one-hour', 'one-day', 'one-week', 'invalid']);
+    expect(groups.map((group) => group.label)).toEqual([
+      'Last hour',
+      'Today',
+      'Yesterday',
+      'This week',
+      'This month',
+      'Before this month',
+    ]);
+    expect(groups.flatMap((group) => group.streams.map((item) => item.id))).toEqual([
+      'one-hour',
+      'today',
+      'yesterday',
+      'week-start',
+      'month-start',
+      'before-month',
+      'invalid',
+    ]);
   });
 
   it('does not describe a gray harness state as a finished project', () => {

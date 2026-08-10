@@ -8,6 +8,7 @@ import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/a
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
+import { noteRoutes } from "./routes/notes";
 import { realtimeRoutes } from "./routes/realtime";
 import { resourceRoutes } from "./routes/resources";
 import { resendInboundRoutes } from "./routes/resend";
@@ -102,6 +103,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
+  protectedApi.route("/notes", noteRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/automation-templates", templateRoutes);
   protectedApi.route("/automation-subscriptions", subscriptionRoutes);

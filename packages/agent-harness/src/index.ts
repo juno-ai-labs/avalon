@@ -1729,6 +1729,48 @@ export interface HarnessToolPolicyIdentity {
   idempotency: ToolDefinition["idempotency"];
 }
 
+export interface BeforeToolCallInput {
+  pluginId: string;
+  toolName: string;
+  inputHash: string;
+  policy: HarnessToolPolicyIdentity;
+  signal: AbortSignal;
+}
+
+export type BeforeToolCallDecision =
+  | { allowed: true }
+  | { allowed: false; code: string; message: string };
+
+export type BeforeToolCallHook = (
+  input: BeforeToolCallInput,
+) => BeforeToolCallDecision | void | Promise<BeforeToolCallDecision | void>;
+
+/** Compose host policy hooks in order, stopping at the first explicit rejection. */
+export function composeBeforeToolCallHooks(
+  ...hooks: Array<BeforeToolCallHook | null | undefined>
+): BeforeToolCallHook {
+  return async (input) => {
+    for (const hook of hooks) {
+      if (!hook) continue;
+      const decision = await hook(input);
+      if (decision?.allowed === false) return decision;
+    }
+    return { allowed: true };
+  };
+}
+
+/** Keep tools model-visible while rejecting selected operation modes before execution. */
+export function rejectToolModesBeforeCall(
+  modes: ReadonlySet<ToolDefinition["mode"]> | readonly ToolDefinition["mode"][],
+  message: string,
+  code = "tool_mode_not_allowed",
+): BeforeToolCallHook {
+  const blockedModes = modes instanceof Set ? modes : new Set(modes);
+  return ({ policy }) => blockedModes.has(policy.mode)
+    ? { allowed: false, code, message }
+    : { allowed: true };
+}
+
 /** Bind-owned catalog policies mirrored and verified by the durable host. */
 export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
 export const AVALON_CORE_PLUGIN_ID = "avalon:core";
@@ -1949,6 +1991,8 @@ export interface RunHarnessInput {
   /** Stable always-active plugin bundles registered for this runtime. */
   corePlugins?: HarnessPlugin[];
   plugins?: HarnessPlugin[];
+  /** Disable even the built-in discovery tools for deliberately model-only runs. */
+  pluginDiscovery?: boolean;
   /** Connector activations already durably persisted by the host. */
   activationHints?: string[];
   includeWebSearch?: boolean;
@@ -1967,12 +2011,7 @@ export interface RunHarnessInput {
   reauthorizePlugin?: (canonicalId: string) => boolean | Promise<boolean>;
   persistActivation?: (canonicalId: string) => void | Promise<void>;
   onActivationDropped?: (drop: unknown) => void | Promise<void>;
-  beforeToolCall?: (input: {
-    pluginId: string;
-    toolName: string;
-    inputHash: string;
-    signal: AbortSignal;
-  }) => void | Promise<void>;
+  beforeToolCall?: BeforeToolCallHook;
   persistToolExecutionPlan?: (plan: {
     toolCallId: string;
     pluginId: string;

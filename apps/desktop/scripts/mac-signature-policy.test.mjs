@@ -36,6 +36,14 @@ test('the checked-in inherited entitlement plist matches the signing allowlist',
   assert.doesNotThrow(() => assertEntitlementPlistMatchesPolicy(contents, 'Inherited plist'));
 });
 
+test('the packaged app explains microphone and native system audio without requesting screen access', () => {
+  const contents = readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8');
+  assert.match(contents, /^\s+NSMicrophoneUsageDescription:\s+\S.+$/mu);
+  assert.match(contents, /^\s+NSAudioCaptureUsageDescription:\s+\S.+$/mu);
+  assert.doesNotMatch(contents, /NSScreenCaptureUsageDescription/u);
+  assert.match(contents, /from:\s+\.native-build\/system-audio-tap\.node/u);
+});
+
 test('nested components require the Avalon Developer ID team', () => {
   const details = [
     'Authority=Developer ID Application: Juno AI Labs Inc. (7ZLT6A8W25)',

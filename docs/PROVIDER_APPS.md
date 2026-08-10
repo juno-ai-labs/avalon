@@ -84,7 +84,7 @@ The researched protocol, surface model, event matrix, and native-agent launch ga
 
 Register `linear.json` as one public Linear OAuth app. Public distribution permits installation by other workspaces; listing it in Linear's integration directory is a separate review. The manifest registers both regional callback URLs and the single webhook URL `https://linear.with-avalon.com/ingest/linear`. It is the production-safe resource configuration and intentionally does not subscribe to `AgentSessionEvent` or `AppUserNotification`.
 
-Avalon uses Authorization Code with PKCE S256. The same public app requests `actor=user` for a personal, owner-only connection and `actor=app` for a workspace connection whose capabilities roll down to every Avalon workspace member. The selected, workspace-only `linear.agent` capability requests `app:assignable` and `app:mentionable`, making Avalon a delegatable and mentionable app user. Resource tools request only their corresponding `read`, `issues:create`, `comments:create`, or `write` scopes. Never add `admin`; Linear app actors do not support it. The callback verifies the returned actor, identity, organization, and every selected scope before marking the connection healthy.
+Avalon uses Authorization Code with PKCE S256. The same public app requests `actor=user` for a personal, owner-only connection and `actor=app` for a workspace connection whose capabilities roll down to every Avalon workspace member. The selected, workspace-only `linear.agent` capability requests `app:assignable` and `app:mentionable`, making Avalon a delegatable and mentionable app user, plus `write` so the host can immediately acknowledge activation with a reaction. Resource tools request only their corresponding `read`, `issues:create`, `comments:create`, or `write` scopes. Never add `admin`; Linear app actors do not support it. The callback verifies the returned actor, identity, organization, and every selected scope before marking the connection healthy.
 
 The shared Global ingress verifies the exact signed body and timestamp before reading its organization ID. It retains only an opaque organization-to-region route and sends the untouched bytes over a Worker service binding to each owning region, where the signature is verified again before regional persistence. An installation-race delivery with no route returns a retryable error and is not retained in Global, which prevents an EU payload from being stored outside the EU boundary.
 
@@ -135,7 +135,9 @@ Global and EU use the same public Slack Marketplace app identity and request-sig
 - OAuth callbacks are regional. Events, interactivity, commands, and unfurls use `https://slack.with-avalon.com` and the opaque team router.
 - Do not create separate regional Slack apps: that would split Marketplace/MCP identity and break team-route uniqueness.
 
-See `docs/SLACK_INTEGRATION.md` for scope rationale, user linking, App Home, zero-copy behavior, automation delivery, review evidence, and acceptance tests.
+See `docs/SLACK_PERMISSIONS.md` for the exact scope-to-tool mapping and
+`docs/SLACK_INTEGRATION.md` for scope rationale, user linking, App Home,
+zero-copy behavior, automation delivery, review evidence, and acceptance tests.
 
 Global and EU each need region-specific values for:
 

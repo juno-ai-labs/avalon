@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AutomationSummary, Workspace, WorkstreamSummary } from '../lib/types';
+import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { Sidebar } from './sidebar';
 
@@ -17,6 +17,7 @@ const workspace: Workspace = {
 
 const defaultActions = {
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
+  onOpenMeetingNotes: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
   onRunAutomation: async (): Promise<void> => undefined,
 };
@@ -48,6 +49,26 @@ function workstream(
     hasUnread: false,
     firstUnreadSequenceNumber: null,
     lastActivityAt,
+  };
+}
+
+function note(id: string, title: string, lastActivityAt: string): NoteSummary {
+  return {
+    id,
+    workspaceId: '00000000-0000-4000-8000-000000000010',
+    resourceId: '00000000-0000-4000-8000-000000000011',
+    ownerUserId: '00000000-0000-4000-8000-000000000012',
+    scope: 'personal',
+    title,
+    recordingStatus: 'complete',
+    recordedMs: 60_000,
+    startedAt: '2026-07-31T19:00:00.000Z',
+    endedAt: '2026-07-31T19:01:00.000Z',
+    generatedAt: null,
+    lastActivityAt,
+    createdAt: lastActivityAt,
+    updatedAt: lastActivityAt,
+    archivedAt: null,
   };
 }
 
@@ -105,7 +126,7 @@ describe('Sidebar work-stream markers', () => {
     expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
   });
 
-  it('uses the compact status-dot pattern and an origin glyph for completed automation work', () => {
+  it('uses the compact status-dot pattern for every work stream', () => {
     render(
       <MemoryRouter initialEntries={['/workstreams/input']}>
         <Tooltip.Provider>
@@ -130,8 +151,9 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('link', { name: /Pricing restructure/u }).querySelector('.status-running .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Missing sidebar row/u }).querySelector('.status-completed .status-dot')).not.toBeNull();
     expect(screen.getByRole('link', { name: /Monday review/u }).querySelector('.status-scheduled .status-dot')).not.toBeNull();
-    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.sidebar-automation-marker')).not.toBeNull();
-    expect(screen.getByRole('img', { name: 'Automation-generated, latest run completed' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /PostHog follow-up/u }).querySelector('.status-completed .status-dot')).not.toBeNull();
+    expect(document.querySelector('.sidebar-automation-marker')).toBeNull();
+    expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });
@@ -151,6 +173,9 @@ describe('Sidebar work-stream markers', () => {
               workspace={workspace}
               workstreams={[
                 workstream('old-input', 'Old input request', 'needs_input', 'ad_hoc', '2026-06-12T12:00:00.000Z'),
+                workstream('month-scheduled', 'Scheduled this month', 'scheduled', 'ad_hoc', '2026-07-10T12:00:00.000Z'),
+                workstream('week-scheduled', 'Scheduled this week', 'scheduled', 'ad_hoc', '2026-07-27T12:00:00.000Z'),
+                workstream('yesterday-failed', 'Failed yesterday', 'failed', 'ad_hoc', '2026-07-30T12:00:00.000Z'),
                 workstream('day-running', 'Recently running', 'running', 'ad_hoc', '2026-07-31T08:00:00.000Z'),
                 workstream('hour-complete', 'Just completed', 'completed', 'ad_hoc', '2026-07-31T19:50:00.000Z'),
               ]}
@@ -161,13 +186,19 @@ describe('Sidebar work-stream markers', () => {
 
       expect(screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
         'Last hour',
-        'Last day',
-        'The rest',
+        'Today',
+        'Yesterday',
+        'This week',
+        'This month',
+        'Before this month',
       ]);
       expect(screen.queryByRole('heading', { name: 'Work streams' })).not.toBeInTheDocument();
       expect([...document.querySelectorAll('.workstream-row .sidebar-row-title')].map((row) => row.textContent)).toEqual([
         'Just completed',
         'Recently running',
+        'Failed yesterday',
+        'Scheduled this week',
+        'Scheduled this month',
         'Old input request',
       ]);
     } finally {
@@ -201,6 +232,66 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
     await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
+  });
+
+  it('opens meeting notes from the primary actions', async () => {
+    const onOpenMeetingNotes = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onOpenMeetingNotes={onOpenMeetingNotes}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New meeting/notes' }));
+    await waitFor(() => expect(onOpenMeetingNotes).toHaveBeenCalledTimes(1));
+  });
+
+  it('sorts notes inline with work streams and opens them with a gray note marker', async () => {
+    const onOpenMeetingNotes = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[
+              note('00000000-0000-4000-8000-000000000021', 'Customer interview', '2026-07-31T19:55:00.000Z'),
+              {
+                ...note('00000000-0000-4000-8000-000000000022', 'Shared research', '2026-07-31T19:45:00.000Z'),
+                scope: 'workspace',
+              },
+            ]}
+            onOpenMeetingNotes={onOpenMeetingNotes}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('older', 'Older work stream', 'completed', 'ad_hoc', '2026-07-31T19:40:00.000Z')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect([...document.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
+      'Customer interview',
+      'Shared research',
+      'Older work stream',
+    ]);
+    const noteLink = screen.getByRole('link', { name: /Customer interview/u });
+    expect(noteLink).toHaveAttribute('href', '/notes/00000000-0000-4000-8000-000000000021');
+    expect(within(noteLink).getByRole('img', { name: 'Note' })).toHaveClass('sidebar-note-marker');
+    expect(within(noteLink).getByRole('img', { name: 'Private note' })).toHaveClass('sidebar-note-privacy');
+    expect(within(screen.getByRole('link', { name: /Shared research/u })).queryByRole('img', { name: 'Private note' }))
+      .not.toBeInTheDocument();
+    fireEvent.click(noteLink);
+    expect(onOpenMeetingNotes).not.toHaveBeenCalled();
   });
 
   it('marks work streams unread on the server and renames from the menu', async () => {
