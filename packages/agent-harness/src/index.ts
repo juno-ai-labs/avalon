@@ -990,12 +990,16 @@ const AUTOMATION_RESEARCH_TOOL_PRESENTATION: Record<string, {
   },
 };
 
+/**
+ * `pluginIds` is required: a row names the plugins it is actually about, and an
+ * optional filter here is how the whole catalog used to leak onto every row.
+ */
 function automationPluginActivities(
   catalog: AutomationCreatorPluginCatalogEntry[],
-  pluginIds?: ReadonlySet<string>,
+  pluginIds: ReadonlySet<string>,
 ): AutomationPluginActivity[] {
   return catalog
-    .filter((plugin) => !pluginIds || pluginIds.has(plugin.pluginId))
+    .filter((plugin) => pluginIds.has(plugin.pluginId))
     .map((plugin) => ({
       pluginId: plugin.pluginId,
       displayName: plugin.displayName,
@@ -1003,19 +1007,36 @@ function automationPluginActivities(
     }));
 }
 
-function automationDiscoveryPluginsFromInput(
+/**
+ * The plugin whose icon belongs on a research row: the one that owns the tool
+ * being called, and nothing else. Tools owned by an Avalon core plugin — web
+ * research and plugin discovery — have no connector behind them, so their rows
+ * carry no plugin icon rather than standing in for the whole catalog.
+ */
+function automationOwningPlugins(
+  pluginId: string,
+  catalog: AutomationCreatorPluginCatalogEntry[],
+): AutomationPluginActivity[] {
+  if (!pluginId.startsWith("automation:")) return [];
+  return automationPluginActivities(catalog, new Set([pluginId.slice("automation:".length)]));
+}
+
+/**
+ * Plugins a discovery row is *about*, used only to phrase its label. Naming the
+ * plugin a row loaded or inspected does not claim that plugin ran the tool, so
+ * these never become icons.
+ */
+function automationSubjectPlugins(
   toolName: string,
   input: unknown,
   catalog: AutomationCreatorPluginCatalogEntry[],
 ): AutomationPluginActivity[] {
-  if (toolName !== "automation_plugin_inspect" && toolName !== "load_plugin") {
-    return automationPluginActivities(catalog);
-  }
+  if (toolName !== "automation_plugin_inspect" && toolName !== "load_plugin") return [];
   const pluginId = String(asRecord(input).pluginId ?? "");
   return automationPluginActivities(catalog, new Set([pluginId]));
 }
 
-function automationDiscoveryPluginsFromResult(
+function automationSubjectPluginsFromResult(
   toolName: string,
   output: unknown,
   catalog: AutomationCreatorPluginCatalogEntry[],
@@ -1151,7 +1172,7 @@ export async function compileAutomation(input: {
   let elicitationReminderSent = false;
   let modelTimeMs = 0;
   const toolStartedAt = new Map<string, number>();
-  const toolPlugins = new Map<string, AutomationPluginActivity[]>();
+  const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
     {
       definition: {
@@ -1379,24 +1400,22 @@ export async function compileAutomation(input: {
       if (event.type === "stream_started") {
         await input.onStreamEvent?.({ type: "started" });
       } else if (event.type === "tool_started") {
-        const runtimePlugin = event.pluginId.startsWith("automation:")
-          ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
-          : [];
+        const plugins = automationOwningPlugins(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (runtimePlugin.length ? {
+          ?? (plugins.length ? {
               started: "Using an authorized connector…",
               completed: "Connector operation completed",
             } : undefined);
         if (!presentation) return;
-        const plugins = runtimePlugin.length
-          ? runtimePlugin
-          : automationDiscoveryPluginsFromInput(event.toolName, event.input, catalog);
+        const labelPlugins = plugins.length
+          ? plugins
+          : automationSubjectPlugins(event.toolName, event.input, catalog);
         toolStartedAt.set(event.toolCallId, Date.now());
-        toolPlugins.set(event.toolCallId, plugins);
+        toolLabelPlugins.set(event.toolCallId, labelPlugins);
         await input.onStreamEvent?.({
           type: "tool",
           toolCallId: event.toolCallId,
-          name: automationDiscoveryActivityName(event.toolName, "started", plugins),
+          name: automationDiscoveryActivityName(event.toolName, "started", labelPlugins),
           summary: presentation.started,
           status: "started",
           plugins,
@@ -1406,53 +1425,49 @@ export async function compileAutomation(input: {
           const loaded = String(asRecord(event.result.output).loaded ?? "");
           if (loaded) loadedAutomationPluginIds.add(loaded);
         }
-        const runtimePlugin = event.pluginId.startsWith("automation:")
-          ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
-          : [];
+        const plugins = automationOwningPlugins(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (runtimePlugin.length ? {
+          ?? (plugins.length ? {
               started: "Using an authorized connector…",
               completed: event.result.summary,
             } : undefined);
         if (!presentation) return;
         const startedAt = toolStartedAt.get(event.toolCallId);
-        const plugins = runtimePlugin.length
-          ? runtimePlugin
-          : automationDiscoveryPluginsFromResult(
+        const labelPlugins = plugins.length
+          ? plugins
+          : automationSubjectPluginsFromResult(
               event.toolName,
               event.result.output,
               catalog,
-              toolPlugins.get(event.toolCallId) ?? [],
+              toolLabelPlugins.get(event.toolCallId) ?? [],
             );
         toolStartedAt.delete(event.toolCallId);
-        toolPlugins.delete(event.toolCallId);
+        toolLabelPlugins.delete(event.toolCallId);
         await input.onStreamEvent?.({
           type: "tool",
           toolCallId: event.toolCallId,
-          name: automationDiscoveryActivityName(event.toolName, "completed", plugins),
+          name: automationDiscoveryActivityName(event.toolName, "completed", labelPlugins),
           summary: presentation.completed,
           status: "completed",
           plugins,
           ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
         });
       } else if (event.type === "tool_failed") {
-        const runtimePlugin = event.pluginId.startsWith("automation:")
-          ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
-          : [];
+        const plugins = automationOwningPlugins(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (runtimePlugin.length ? {
+          ?? (plugins.length ? {
               started: "Using an authorized connector…",
               completed: "Connector operation failed",
             } : undefined);
         if (!presentation) return;
         const startedAt = toolStartedAt.get(event.toolCallId);
-        const plugins = runtimePlugin.length ? runtimePlugin : toolPlugins.get(event.toolCallId) ?? [];
+        const labelPlugins = plugins.length ? plugins : toolLabelPlugins.get(event.toolCallId) ?? [];
         toolStartedAt.delete(event.toolCallId);
-        toolPlugins.delete(event.toolCallId);
+        toolLabelPlugins.delete(event.toolCallId);
         await input.onStreamEvent?.({
           type: "tool",
           toolCallId: event.toolCallId,
-          name: automationDiscoveryActivityName(event.toolName, "failed", plugins),
+          name: automationDiscoveryActivityName(event.toolName, "failed", labelPlugins),
           summary: "This research step failed; Avalon will adjust the plan.",
           status: "failed",
           plugins,
