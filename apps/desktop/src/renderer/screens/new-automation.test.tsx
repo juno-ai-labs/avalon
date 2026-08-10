@@ -50,6 +50,9 @@ function renderScreen(): void {
 describe('New automation composer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Restored here rather than at the end of the one test that changes it, so
+    // a failure there cannot leak the role into every later test.
+    session.workspace.role = 'owner';
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
     api.compileAutomation.mockResolvedValue({
@@ -603,6 +606,70 @@ describe('New automation composer', () => {
       scope: 'workspace',
       delivery: {},
     }));
+
+  });
+
+  it('restores the personal plugin preloads when Runs as returns to You', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-linear',
+        modelPluginId: 'plugin_linear',
+        connectorType: 'linear',
+        displayName: 'Linear',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-gmail',
+        modelPluginId: 'plugin_gmail',
+        connectorType: 'google',
+        displayName: 'Gmail',
+        scope: 'personal',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-scope-restored',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Weekly changelog',
+        description: 'Summarizes merged work.',
+        overview: 'Runs every Friday.',
+        recommendedPlugins: [
+          { pluginId: 'plugin_linear', recommendedTools: [], reason: 'Reads the merged issues.' },
+          { pluginId: 'plugin_gmail', recommendedTools: [], reason: 'Reads the release thread.' },
+        ],
+        scope: 'you',
+        triggerSummary: 'Every Friday',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Prepare a weekly changelog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const runsAs = await screen.findByRole('combobox', { name: 'Runs as' });
+    fireEvent.change(runsAs, { target: { value: 'workspace' } });
+    expect(screen.queryByRole('checkbox', { name: /^Email/ })).not.toBeInTheDocument();
+
+    // Going back restores the personal pick the workspace scope dropped. The
+    // creator has no plugin control left to recover it by hand.
+    fireEvent.change(runsAs, { target: { value: 'you' } });
+    expect(await screen.findByRole('checkbox', { name: /^Email/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
+      'draft-scope-restored',
+      ['plugin_linear', 'plugin_gmail'],
+      {},
+      { scope: 'you', delivery: {} },
+    ));
   });
 
   it('keeps Runs as read-only for a member who cannot create workspace automations', async () => {
@@ -630,7 +697,6 @@ describe('New automation composer', () => {
 
     expect(await screen.findByText('Runs as')).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Runs as' })).not.toBeInTheDocument();
-    session.workspace.role = 'owner';
   });
 
   it('reuses one elicitation identity and preserves answer-response order', async () => {
