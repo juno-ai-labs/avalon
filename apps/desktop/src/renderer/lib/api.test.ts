@@ -405,6 +405,7 @@ describe('Avalon API wire adapter', () => {
           harnessRunId: messageId,
           toolCallId: 'turn-1-tool-1',
           toolName: 'google_2_drive_search',
+          activityName: 'Reviewed Google Drive · Work',
           connectionId,
           plugin: { pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' },
           status: 'completed',
@@ -423,6 +424,7 @@ describe('Avalon API wire adapter', () => {
       displayName: 'Google Drive · Work',
       icon: 'brand-google-drive',
     });
+    expect(mapped.toolEvent?.name).toBe('Reviewed Google Drive · Work');
   });
 
   it('leaves a work-stream tool row from an Avalon-owned tool unattributed', () => {
@@ -438,6 +440,7 @@ describe('Avalon API wire adapter', () => {
           harnessRunId: messageId,
           toolCallId: 'turn-1-tool-2',
           toolName: 'web_search',
+          activityName: 'Searched the public web',
           connectionId: null,
           plugin: null,
           status: 'completed',
@@ -452,6 +455,7 @@ describe('Avalon API wire adapter', () => {
     });
 
     expect(mapped.toolEvent?.plugin).toBeUndefined();
+    expect(mapped.toolEvent?.name).toBe('Searched the public web');
   });
 
   it('gives the durable elicitation answer the same identity as its realtime question', () => {
