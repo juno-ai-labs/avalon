@@ -36,9 +36,40 @@ id has to be somewhere a reader can see it.
 
 A work-stream id is not a secret and is not a capability: opening the canonical
 link grants nothing on its own. The desktop app applies the viewer's own
-workspace permissions after the handoff, and the Slack unfurl deliberately
-reveals no work-stream content — see the privacy-safe unfurl rule in
-[`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md).
+workspace permissions after the handoff.
+
+## What the Slack unfurl shows
+
+The card carries the work stream's **title, `harness_status`, last activity, and
+automation origin** — enough to know whether the link is worth opening and
+whether the agent is blocked. It carries no work-stream *contents*: no objective,
+no messages, no resources, no artifacts. Those still need the reader to open
+Avalon and pass its own authorization.
+
+A Slack unfurl is one card per link per message, identical for everyone who can
+read the channel — `user_auth_required` gates the *sharer*, not the audience, so
+there is no per-viewer rendering to hide behind. The audience rule is therefore
+deliberately permissive, because the alternative blocks nearly every real link:
+
+| Condition | Card |
+| --- | --- |
+| Work stream is not in the workspace bound to this Slack team | Anonymous |
+| Slack Connect: externally shared channel or external DM | Anonymous |
+| Audience lookup (`conversations.info`) failed | Anonymous |
+| Anything else — public, private, DM, group DM | Summary |
+
+The workspace check is the one that is not a matter of taste: naming another
+Avalon workspace's work stream inside this Slack team is a cross-tenant leak.
+The Slack Connect check is about people from other companies. Everything else
+inside the workspace sees the summary, on the same reasoning that lets any
+internal tool unfurl a title into an internal channel. **A failed check degrades
+the card; it never drops the unfurl.**
+
+Two consequences worth knowing. An unfurl posted when a channel was internal
+stays visible if that channel is later shared externally — re-unfurling is the
+redaction path if that matters. And the card is written once and never
+re-rendered, which is why last activity is a Slack `<!date^…>` token rather than
+a baked "24m ago" that would still claim 24m a week later.
 
 ## Where it is implemented
 

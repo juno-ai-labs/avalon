@@ -530,3 +530,96 @@ function environment(database: IngressDatabase, send: (body: unknown) => Promise
 function result<T = unknown>(changes: number): D1Result<T> {
   return { success: true, results: [], meta: { changes } as D1Meta & Record<string, unknown> };
 }
+
+describe("work-stream link unfurl card", () => {
+  const url = "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+
+  function cardText(blocks: Record<string, unknown>[]): string {
+    const section = blocks[0] as { text?: { text?: string } };
+    return String(section.text?.text ?? "");
+  }
+
+  it("shows title, status, last activity, and automation origin", () => {
+    const blocks = __slackAgentTesting.workstreamUnfurlBlocks({
+      title: "Daily product brief",
+      harnessStatus: "needs_input",
+      lastActivityAt: "2026-08-10T12:00:00.000Z",
+      automationName: "Daily monitor",
+    }, url);
+
+    const text = cardText(blocks);
+    expect(text).toContain(`*<${url}|Daily product brief>*`);
+    expect(text).toContain(":warning: Needs input");
+    expect(text).toContain("via Daily monitor");
+    // Rendered in each reader's own timezone, and it cannot rot into a lie the
+    // way a baked "24m ago" would on a card that is never re-rendered.
+    expect(text).toContain(`<!date^${Math.floor(Date.parse("2026-08-10T12:00:00.000Z") / 1000)}^`);
+    expect(text).not.toContain("ago");
+  });
+
+  it("omits the origin for an ad-hoc work stream", () => {
+    const text = cardText(__slackAgentTesting.workstreamUnfurlBlocks({
+      title: "Pricing restructure",
+      harnessStatus: "running",
+      lastActivityAt: "2026-08-10T12:00:00.000Z",
+      automationName: null,
+    }, url));
+
+    expect(text).toContain(":large_green_circle: Running");
+    expect(text).not.toContain("via ");
+  });
+
+  it("escapes a title that would otherwise inject mrkdwn", () => {
+    const text = cardText(__slackAgentTesting.workstreamUnfurlBlocks({
+      title: "<https://evil.example|Click me> & co",
+      harnessStatus: "completed",
+      lastActivityAt: null,
+      automationName: null,
+    }, url));
+
+    expect(text).toContain("&lt;https://evil.example|Click me&gt; &amp; co");
+    expect(text).not.toContain("<https://evil.example");
+  });
+
+  it("survives a work stream with no title, unknown status, and no activity stamp", () => {
+    const text = cardText(__slackAgentTesting.workstreamUnfurlBlocks({
+      title: "   ",
+      harnessStatus: "some_future_status",
+      lastActivityAt: "not-a-date",
+      automationName: null,
+    }, url));
+
+    expect(text).toBe(`*<${url}|Untitled work stream>*`);
+  });
+
+  it("falls back to an anonymous card when no summary is available", () => {
+    const blocks = __slackAgentTesting.workstreamUnfurlBlocks(null, url);
+    const text = cardText(blocks);
+
+    expect(text).toContain("*Avalon*");
+    expect(text).not.toContain("Needs input");
+    expect(JSON.stringify(blocks)).toContain(url);
+  });
+
+  it("always offers the same open action, summary or not", () => {
+    for (const blocks of [
+      __slackAgentTesting.workstreamUnfurlBlocks(null, url),
+      __slackAgentTesting.workstreamUnfurlBlocks({
+        title: "Daily product brief",
+        harnessStatus: "failed",
+        lastActivityAt: null,
+        automationName: null,
+      }, url),
+    ]) {
+      expect(blocks.at(-1)).toEqual({
+        type: "actions",
+        elements: [{
+          type: "button",
+          text: { type: "plain_text", text: "Open in Avalon" },
+          url,
+          action_id: "avalon_open_unfurl",
+        }],
+      });
+    }
+  });
+});
