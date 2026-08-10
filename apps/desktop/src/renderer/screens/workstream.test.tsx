@@ -12,10 +12,15 @@ import {
   manualElicitationResponse,
   mergeBackgroundTasks,
   RunFailureNotice,
+  WorkstreamErrorState,
   WorkstreamHeader,
   workstreamRunTiming,
   workspaceMemberFromSession,
 } from './workstream';
+
+const copyText = vi.hoisted(() => vi.fn());
+
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
 
 const headerWorkstream: WorkstreamDetail = {
   id: 'workstream-header',
@@ -194,6 +199,36 @@ describe('manualElicitationResponse', () => {
     expect(manualElicitationResponse({ ...openElicitation, responseType: 'text' }, 'Explain the risk')).toEqual({
       answer: 'Explain the risk',
     });
+  });
+});
+
+describe('WorkstreamErrorState', () => {
+  beforeEach(() => {
+    copyText.mockReset();
+    copyText.mockResolvedValue(undefined);
+  });
+
+  it('offers the work-stream ID from a More menu so an unopenable work stream can still be reported', async () => {
+    const onRetry = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <WorkstreamErrorState description="An unexpected error occurred" onRetry={onRetry} workstreamId="workstream-unopenable" />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('Work stream could not be opened')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onRetry).toHaveBeenCalledOnce();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((item) => item.textContent?.trim())).toEqual(['Copy work-stream ID']);
+
+    fireEvent.click(items[0]!);
+    expect(copyText).toHaveBeenCalledWith('workstream-unopenable');
   });
 });
 
