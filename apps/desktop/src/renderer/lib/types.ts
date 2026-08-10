@@ -321,6 +321,13 @@ export interface AutomationTemplateUpdate {
   capabilities: string[];
   expectedOutputs: string[];
   recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
+  activitySources: AutomationActivitySource[];
+}
+
+export interface AutomationActivitySource {
+  bindingKey: string;
+  connectorType: string;
+  suggestedPluginId?: string;
 }
 
 export interface HarnessRunMetadata {
@@ -396,13 +403,15 @@ export interface AutomationDetail extends AutomationSummary {
   expectedOutputs: string[];
   recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
   defaultPluginIds: string[];
+  activitySourcePluginIds: Record<string, string>;
+  activitySources: AutomationActivitySource[];
   deliveryTargets?: Array<{
     type: 'slack_agent_dm';
     connectionId: string;
     displayName: string;
     status: 'active' | 'needs_input' | 'disabled';
   }>;
-  executionScope: string;
+  executionScope: 'You' | 'Workspace';
   owner?: WorkspaceMember;
   runs: AutomationRunSummary[];
   nextRun?: AutomationRunSummary;
@@ -425,6 +434,7 @@ export interface AutomationDraftSummary {
   description: string;
   overview: string;
   recommendedPlugins: Array<{ pluginId: string; recommendedTools: string[]; reason: string }>;
+  activitySources: AutomationActivitySource[];
   scope: Scope;
   triggerSummary: string;
   capabilities: string[];
@@ -446,6 +456,7 @@ export interface WorkspaceTemplate {
   usageCount: number;
   capabilities: string[];
   latestVersion: number;
+  activitySources: AutomationActivitySource[];
 }
 
 export interface SocketTicket {

@@ -9,6 +9,7 @@ import { AutomationOverviewScreen } from './automation-overview';
 const api = vi.hoisted(() => ({
   adoptAutomationUpdate: vi.fn(),
   getAutomation: vi.fn(),
+  getConnections: vi.fn(),
   runAutomation: vi.fn(),
   setAutomationStatus: vi.fn(),
   shareAutomation: vi.fn(),
@@ -46,6 +47,8 @@ const detail: AutomationDetail = {
   expectedOutputs: ['A short weekly brief'],
   recommendedPlugins: [],
   defaultPluginIds: [],
+  activitySourcePluginIds: {},
+  activitySources: [],
   executionScope: 'You',
   runs: [],
   templateUpdate: {
@@ -57,6 +60,7 @@ const detail: AutomationDetail = {
     capabilities: ['gmail.read'],
     expectedOutputs: ['A concise weekly brief'],
     recommendedPlugins: [],
+    activitySources: [],
   },
 };
 
@@ -88,6 +92,7 @@ describe('Automation template updates', () => {
       disconnect(): void {}
     });
     api.getAutomation.mockResolvedValue(detail);
+    api.getConnections.mockResolvedValue([]);
     api.adoptAutomationUpdate.mockResolvedValue({
       ...detail,
       statusMessage: undefined,
@@ -127,9 +132,60 @@ describe('Automation template updates', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Adopt version 2' }));
 
-    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(automationId, nextVersionId));
+    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(automationId, nextVersionId, {}));
     await waitFor(() => expect(screen.queryByText('Version 2 is available')).not.toBeInTheDocument());
     expect(screen.getByText('Summarize changes and decisions.')).toBeVisible();
+  });
+
+  it('preselects only workspace connections when adopting a workspace template update', async () => {
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      scope: 'workspace',
+      executionScope: 'Workspace',
+      activitySourcePluginIds: { github_source: 'plugin_github_personal' },
+      templateUpdate: {
+        ...detail.templateUpdate!,
+        activitySources: [{
+          bindingKey: 'github_source',
+          connectorType: 'github',
+          suggestedPluginId: 'plugin_github_personal',
+        }],
+      },
+    });
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-github-personal',
+        modelPluginId: 'plugin_github_personal',
+        connectorType: 'github',
+        displayName: 'GitHub · Personal',
+        scope: 'personal',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-github-workspace',
+        modelPluginId: 'plugin_github_workspace',
+        connectorType: 'github',
+        displayName: 'GitHub · Workspace',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    renderScreen();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Review update' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Review template update' });
+    const select = within(dialog).getByRole('combobox', { name: 'Connector for github_source' });
+    await waitFor(() => expect(select).toHaveValue('plugin_github_workspace'));
+    expect(within(select).queryByRole('option', { name: 'GitHub · Personal' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Adopt version 2' }));
+    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(
+      automationId,
+      nextVersionId,
+      { github_source: 'plugin_github_workspace' },
+    ));
   });
 
   it('shows the permanent email trigger and copies it from an icon button', async () => {

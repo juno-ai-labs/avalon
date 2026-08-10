@@ -256,6 +256,97 @@ describe("boundary contracts", () => {
     expect(result.success).toBe(false);
   });
 
+  it("requires exact source slots on ready activity-triggered drafts", () => {
+    const base = {
+      name: "Merged PR follow-up",
+      description: "Respond when a pull request merges.",
+      overview: "Starts work from merged pull requests.",
+      instructions: "Review the merged pull request and prepare the follow-up.",
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "github",
+        eventTypes: ["github.pull_request.merged"],
+        deterministicFilters: {},
+      }],
+    }).success).toBe(false);
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "github",
+        sourceBindingKey: "github_source",
+        suggestedSourcePluginId: "plugin_github",
+        eventTypes: ["github.pull_request.merged"],
+        deterministicFilters: {},
+      }],
+    }).success).toBe(true);
+  });
+
+  it("allows incomplete source fields while an activity draft is not ready", () => {
+    const result = AutomationDraftSchema.safeParse({
+      name: "Draft activity automation",
+      description: "Still choosing an activity source.",
+      overview: "Waits for the requested connector activity.",
+      instructions: "Ask which connector should provide the activity.",
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "github",
+        sourceBindingKey: "github_source",
+        eventTypes: ["github.issue.opened"],
+        deterministicFilters: {},
+      }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: "Which GitHub connection should Avalon use?",
+      elicitation: null,
+      ready: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("requires an exact event type for ready semantic activity triggers", () => {
+    const result = AutomationDraftSchema.safeParse({
+      name: "Important GitHub activity",
+      description: "Respond to important GitHub activity.",
+      overview: "Evaluates matching GitHub activity semantically.",
+      instructions: "Decide whether the activity requires a follow-up.",
+      triggers: [{
+        type: "semantic_activity",
+        connectorType: "github",
+        sourceBindingKey: "github_source",
+        suggestedSourcePluginId: "plugin_github",
+        deterministicPrefilter: {},
+        condition: "The issue needs urgent attention.",
+      }],
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("does not cap automation plugin recommendations, defaults, or activity", () => {
     const recommendations = Array.from({ length: 25 }, (_, index) => ({
       pluginId: `plugin_service${index}`,
@@ -562,7 +653,7 @@ describe("boundary contracts", () => {
       displayName: "Legacy connector",
       supportedScopes: ["workspace"],
       oauthRequired: false,
-      activityTypes: [],
+      activityTriggers: [],
       resourceTypes: ["legacy_resource"],
       tools: [],
       supportsWatches: false,
@@ -580,7 +671,7 @@ describe("boundary contracts", () => {
       displayName: "Agent provider",
       supportedScopes: ["workspace"] as const,
       oauthRequired: true,
-      activityTypes: [],
+      activityTriggers: [],
       resourceTypes: [],
       tools: [],
       supportsWatches: false,
@@ -658,7 +749,7 @@ describe("boundary contracts", () => {
       displayName: "Tool provider",
       supportedScopes: ["workspace"],
       oauthRequired: true,
-      activityTypes: [],
+      activityTriggers: [],
       resourceTypes: [],
       tools: [{
         name: "provider.search",

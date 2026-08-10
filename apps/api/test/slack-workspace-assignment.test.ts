@@ -557,6 +557,7 @@ describe("Slack public channel membership", () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
+    seedSlackActivitySubscription(database, "slack.channel.created");
     database.prepare(
       `INSERT INTO slack_ingress_jobs
        (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
@@ -582,16 +583,74 @@ describe("Slack public channel membership", () => {
     });
     vi.stubGlobal("fetch", fetcher);
 
+    const activityQueueSend = vi.fn(async () => undefined);
     await new SlackAgentService(slackMembershipEnvironment(
       database,
       credentialsKey,
-      vi.fn(async () => undefined),
+      activityQueueSend,
     )).processQueuedIngress("event:EvChannelCreated");
 
     expect(fetcher).toHaveBeenCalledOnce();
     expect(database.prepare(
+      `SELECT event_type, resource_type, provider_resource_id, title, metadata_json,
+              visibility_json, raw_content_hash
+       FROM activities WHERE provider_event_id = 'EvChannelCreated'`,
+    ).get()).toMatchObject({
+      event_type: "slack.channel.created",
+      resource_type: "slack_channel",
+      provider_resource_id: "CNEW",
+      title: "Slack channel created in #new-channel",
+      raw_content_hash: "hash",
+    });
+    expect(JSON.parse(String(database.prepare(
+      "SELECT metadata_json FROM activities WHERE provider_event_id = 'EvChannelCreated'",
+    ).get()!.metadata_json))).toMatchObject({
+      teamId: "T123",
+      channelId: "CNEW",
+      channelName: "new-channel",
+      channelType: "public",
+    });
+    expect(JSON.parse(String(database.prepare(
+      "SELECT visibility_json FROM activities WHERE provider_event_id = 'EvChannelCreated'",
+    ).get()!.visibility_json))).toMatchObject({
+      workspaceAutomationAllowed: true,
+      channelType: "public",
+    });
+    expect(activityQueueSend).toHaveBeenCalledOnce();
+    expect(database.prepare(
       "SELECT status, payload_json, completed_at FROM slack_ingress_jobs WHERE id = 'event:EvChannelCreated'",
     ).get()).toMatchObject({ status: "completed", payload_json: null });
+  });
+
+  it("does not turn Avalon's own reaction events into automation activity", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    await seedSlackInstallation(database, credentialsKey);
+    insertSlackEventJob(database, "event:own-reaction", {
+      type: "event_callback",
+      team_id: "T123",
+      api_app_id: "A1",
+      event_id: "EvOwnReaction",
+      authorizations: [{ team_id: "T123", user_id: "UBOT", is_bot: true }],
+      event: {
+        type: "reaction_added",
+        user: "UBOT",
+        reaction: "eyes",
+        item_user: "U456",
+        item: { type: "message", channel: "C123", ts: "1.0", channel_type: "channel" },
+        event_ts: "1.1",
+      },
+    });
+    const activityQueueSend = vi.fn(async () => undefined);
+
+    await new SlackAgentService(slackMembershipEnvironment(
+      database,
+      credentialsKey,
+      activityQueueSend,
+    )).processQueuedIngress("event:own-reaction");
+
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activities").get()).toEqual({ count: 0 });
+    expect(activityQueueSend).not.toHaveBeenCalled();
   });
 
   it("adds eyes to the triggering message before starting Slack task processing", async () => {
@@ -1196,6 +1255,44 @@ function insertSlackEventJob(database: DatabaseSync, id: string, payload: unknow
              '11111111-1111-4111-8111-111111111111', 'T123', 'hash', 'event', ?,
              'queued', 0, '2026-01-01', '2026-01-01')`,
   ).run(id, JSON.stringify(payload));
+}
+
+function seedSlackActivitySubscription(database: DatabaseSync, eventType: string): void {
+  database.prepare(
+    `INSERT INTO automation_templates
+       (id, workspace_id, owner_user_id, name, description, sharing_state,
+        latest_version_number, created_at, updated_at)
+     VALUES ('template-slack-activity', '22222222-2222-4222-8222-222222222222',
+             'user-owner', 'Slack activity', 'Test Slack activity', 'workspace',
+             1, '2026-01-01', '2026-01-01')`,
+  ).run();
+  database.prepare(
+    `INSERT INTO automation_template_versions
+       (id, template_id, version_number, instructions, trigger_definitions_json,
+        required_capabilities_json, expected_outputs_json, default_behavior_json,
+        created_by_user_id, created_at)
+     VALUES ('version-slack-activity', 'template-slack-activity', 1, 'Handle Slack activity', ?,
+             '[]', '[]', '{}', 'user-owner', '2026-01-01')`,
+  ).run(JSON.stringify([{
+    type: "connector_activity",
+    connectorType: "slack",
+    sourceBindingKey: "slack_source",
+    suggestedSourcePluginId: "plugin_slack_workspace",
+    eventTypes: [eventType],
+    deterministicFilters: {},
+  }]));
+  database.prepare(
+    `INSERT INTO automation_subscriptions
+       (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+        execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
+        overrides_json, status, created_at, updated_at)
+     VALUES ('subscription-slack-activity', '22222222-2222-4222-8222-222222222222',
+             'template-slack-activity', 'version-slack-activity', 'workspace', NULL,
+             '{}', ?, ?, '{}', 'active', '2026-01-01', '2026-01-01')`,
+  ).run(
+    JSON.stringify({ plugin_slack_workspace: "11111111-1111-4111-8111-111111111111" }),
+    JSON.stringify({ slack_source: "plugin_slack_workspace" }),
+  );
 }
 
 function appMention(eventId: string): Record<string, unknown> {

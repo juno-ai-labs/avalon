@@ -55,6 +55,7 @@ interface SubscriptionRow {
   owner_user_id: string | null;
   execution_principal_json: string;
   connector_bindings_json: string;
+  activity_trigger_bindings_json: string;
   trigger_definitions_json: string;
   template_name: string;
   template_description: string;
@@ -131,16 +132,23 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
 }
 
-function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boolean {
+function restrictedActivityUserIds(activity: ActivityRow): string[] | null {
   if (activity.connection_scope === "personal") {
-    return activity.connection_owner_user_id === ownerUserId;
+    return activity.connection_owner_user_id ? [activity.connection_owner_user_id] : [];
   }
   const explicitTargets = parseStrings(activity.target_user_ids_json);
   const visibility = parseRecord(activity.visibility_json);
-  const restricted = z.array(z.string()).safeParse(explicitTargets.length > 0
-    ? explicitTargets
-    : visibility.targetUserIds ?? visibility.allowedUserIds);
-  return !restricted.success || restricted.data.length === 0 || restricted.data.includes(ownerUserId);
+  if (explicitTargets.length > 0) return explicitTargets;
+  for (const candidate of [visibility.targetUserIds, visibility.allowedUserIds]) {
+    const restricted = z.array(z.string()).safeParse(candidate);
+    if (restricted.success && restricted.data.length > 0) return [...new Set(restricted.data)];
+  }
+  return visibility.workspaceAutomationAllowed === false ? [] : null;
+}
+
+function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boolean {
+  const restrictedUserIds = restrictedActivityUserIds(activity);
+  return restrictedUserIds == null || restrictedUserIds.includes(ownerUserId);
 }
 
 /** Cloudflare Queue entrypoint: only opaque activity identifiers arrive here. */
@@ -336,13 +344,17 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
     .all<{ workstream_id: string }>();
 
   const routed = new Set<string>();
+  const restrictedUserIds = restrictedActivityUserIds(activity);
   for (const row of direct.results) {
-    if (
-      activity.connection_scope === "personal" &&
-      activity.connection_owner_user_id &&
-      !(await isWorkstreamVisibleToUser(env, row.workstream_id, activity.connection_owner_user_id))
-    ) {
-      continue;
+    if (restrictedUserIds != null) {
+      let visible = false;
+      for (const userId of restrictedUserIds) {
+        if (await isWorkstreamVisibleToUser(env, row.workstream_id, userId)) {
+          visible = true;
+          break;
+        }
+      }
+      if (!visible) continue;
     }
     if (await injectActivityMessage(env, activity, row.workstream_id)) {
       routed.add(row.workstream_id);
@@ -441,7 +453,7 @@ async function injectActivityMessage(
 async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<Set<string>> {
   const subscriptions = await env.DB.prepare(
     `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
-            s.connector_bindings_json,
+            s.connector_bindings_json, s.activity_trigger_bindings_json,
             tv.trigger_definitions_json, t.name AS template_name,
             t.description AS template_description
        FROM automation_subscriptions s
@@ -462,6 +474,12 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
       continue;
     }
     if (activity.connection_scope === "personal" && subscription.scope === "workspace") continue;
+    if (
+      subscription.scope === "workspace"
+      && parseRecord(activity.visibility_json).workspaceAutomationAllowed === false
+    ) {
+      continue;
+    }
 
     let triggerDefinitions: unknown;
     try {
@@ -472,10 +490,11 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
     const parsedTriggers = z.array(TriggerDefinitionSchema).safeParse(triggerDefinitions);
     if (!parsedTriggers.success) continue;
     const connectorBindings = parseRecord(subscription.connector_bindings_json);
+    const activityTriggerBindings = parseRecord(subscription.activity_trigger_bindings_json);
 
     let matched = false;
     for (const trigger of parsedTriggers.data) {
-      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings)) {
+      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings, activityTriggerBindings)) {
         matched = true;
         break;
       }
@@ -512,13 +531,18 @@ async function triggerMatches(
   activity: ActivityRow,
   trigger: TriggerDefinition,
   resourceIds: Set<string>,
-  connectorBindings: Record<string, unknown>
+  connectorBindings: Record<string, unknown>,
+  activityTriggerBindings: Record<string, unknown>,
 ): Promise<boolean> {
-  if (
-    (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") &&
-    !Object.values(connectorBindings).includes(activity.connection_id)
-  ) {
-    return false;
+  if (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") {
+    if (trigger.sourceBindingKey) {
+      const sourcePluginId = activityTriggerBindings[trigger.sourceBindingKey];
+      if (typeof sourcePluginId !== "string" || connectorBindings[sourcePluginId] !== activity.connection_id) {
+        return false;
+      }
+    } else if (!Object.values(connectorBindings).includes(activity.connection_id)) {
+      return false;
+    }
   }
   if (trigger.type === "connector_activity") {
     return (
@@ -688,21 +712,27 @@ async function routeContextually(
   excludedWorkstreamIds: Set<string>
 ): Promise<boolean> {
   if (!env.OPENROUTER_API_KEY) return false;
-  const personalOwner = activity.connection_scope === "personal" ? activity.connection_owner_user_id : null;
+  const restrictedUserIds = restrictedActivityUserIds(activity);
+  const restrictedUserIdsJson = restrictedUserIds == null ? null : JSON.stringify(restrictedUserIds);
   const candidates = await env.DB.prepare(
     `SELECT w.id, w.title, w.objective, w.last_activity_at
        FROM workstreams w
       WHERE w.workspace_id = ?1
         AND w.archived_at IS NULL
         AND w.harness_status IN ('idle', 'running', 'needs_input', 'scheduled')
-        AND (?2 IS NULL OR w.created_by_user_id = ?2 OR EXISTS (
-          SELECT 1 FROM workstream_participants wp
-           WHERE wp.workstream_id = w.id AND wp.user_id = ?2 AND wp.removed_at IS NULL
+        AND (?2 IS NULL OR EXISTS (
+          SELECT 1 FROM json_each(?2) visible_user
+           WHERE w.created_by_user_id = visible_user.value OR EXISTS (
+             SELECT 1 FROM workstream_participants wp
+              WHERE wp.workstream_id = w.id
+                AND wp.user_id = visible_user.value
+                AND wp.removed_at IS NULL
+           )
         ))
       ORDER BY w.last_activity_at DESC
       LIMIT 12`
   )
-    .bind(activity.workspace_id, personalOwner)
+    .bind(activity.workspace_id, restrictedUserIdsJson)
     .all<WorkstreamCandidate>();
   const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
   if (eligible.length === 0) return false;
@@ -776,3 +806,9 @@ async function isWorkstreamVisibleToUser(
     .first();
   return Boolean(visible);
 }
+
+export const __testing = {
+  matchesFilters,
+  restrictedActivityUserIds,
+  triggerMatches,
+};

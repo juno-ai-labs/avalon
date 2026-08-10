@@ -102,6 +102,7 @@ bundle.
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
 | `mpim:read` | Discover accessible multi-person DMs and membership. Avalon does not subscribe to ordinary `message.mpim` traffic. |
 | `mpim:write` | Open a group DM with workspace `slack_create_conversation`. |
+| `reactions:read` | Receive bounded reaction-added and reaction-removed activity for explicitly configured automations. |
 | `reactions:write` | Add an emoji reaction with workspace `slack_add_reaction`, and add the host-owned `eyes` reaction to the exact triggering DM or mention after durable admission and authorization but before context gathering or workstream processing. Slack's `already_reacted` response makes retries idempotent; a provider-side acknowledgement failure is logged and does not discard the admitted request. |
 | `search:read.files` | Include matching accessible file results in event-scoped workspace search. Direct file content still requires `files:read`. |
 | `search:read.public` | Search public-channel context for a user-initiated Slack request. |
@@ -180,12 +181,17 @@ to:
 | `app_uninstalled` | Mark the workspace installation disconnected and stop routing work to it. |
 | `channel_created` | Join a newly created public channel. |
 | `link_shared` | Produce authorized previews for supported Avalon links. |
-| `message.channels` | Continue an existing Avalon-owned public-channel thread without requiring another mention. Other public-channel messages are ignored before durable queueing. |
-| `message.groups` | Continue an existing Avalon-owned private-channel thread after the bot has been invited. Other private-channel messages are ignored before durable queueing. |
-| `message.im` | Receive prompts and follow-ups in Avalon's Agent DM. |
+| `file_shared` | Offer bounded file-share activity to explicitly configured automations. |
+| `member_joined_channel` | Trigger explicitly configured channel-membership automations. |
+| `member_left_channel` | Trigger explicitly configured channel-membership automations. |
+| `message.channels` | Continue an Avalon-owned public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
+| `message.groups` | Continue an Avalon-owned invited-private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
+| `message.im` | Receive Agent prompts and follow-ups, or offer bounded DM activity to an authorized personal automation. |
+| `reaction_added` | Offer bounded emoji-reaction activity to explicitly configured automations. |
+| `reaction_removed` | Offer bounded emoji-reaction removal activity to explicitly configured automations. |
 | `tokens_revoked` | Mark affected credentials unhealthy and require reconnection. |
 
-Avalon intentionally does not subscribe to `message.mpim` or broad file events.
+Avalon intentionally does not subscribe to `message.mpim` or broad file lifecycle events. `file_shared` carries only bounded trigger evidence; it does not import file content.
 
 ## Event data and model context
 

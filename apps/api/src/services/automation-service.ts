@@ -13,6 +13,7 @@ import type { AutomationCompilerStreamEvent } from "@avalon/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { scheduledWorkstreamModel } from "./agent-model-flags";
 import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
@@ -36,6 +37,7 @@ interface CompiledSchedule {
 interface ValidatedConnectorBindings {
   bindings: Record<string, string>;
   connectorTypes: Set<string>;
+  connectorTypesByPluginId: Record<string, string>;
 }
 
 interface IdempotentAutomationRun {
@@ -115,7 +117,7 @@ export class AutomationService {
     }>();
     if (!defaults) throw new ApiError(403, "workspace_access_denied", "Workspace access is unavailable");
     try {
-      return await compileAutomationDraft(this.env, {
+      const draft = await compileAutomationDraft(this.env, {
         ...input,
         requestId,
         workspaceId: this.auth.workspaceId,
@@ -127,6 +129,26 @@ export class AutomationService {
           workspace: defaults.workspace_timezone,
         },
       });
+      if (draft.ready) {
+        try {
+          const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
+          const connectorSelection = await this.validateConnectorSelections(
+            draft.suggestedScope,
+            [],
+            activitySourcePluginIds,
+          );
+          this.assertActivityTriggerBindings(draft.triggers, activitySourcePluginIds, connectorSelection);
+        } catch (error) {
+          if (!(error instanceof ApiError)) throw error;
+          return {
+            ...draft,
+            ready: false,
+            followUpQuestion: `I couldn't use that activity source: ${error.message}. Please choose an available connector or revise the trigger.`,
+            elicitation: null,
+          };
+        }
+      }
+      return draft;
     } catch (error) {
       if (error instanceof z.ZodError || (error instanceof OpenRouterError && /structured JSON/iu.test(error.message))) {
         const validationIssues = error instanceof z.ZodError
@@ -159,8 +181,16 @@ export class AutomationService {
   async create(input: CreateAutomationInput) {
     if (!input.draft.ready) throw new ApiError(422, "automation_not_ready", "Finish the automation conversation before creating it");
     this.assertScopeAllowed(input.scope);
-    const connectorSelection = await this.validateDefaultPluginIds(input.scope, input.defaultPluginIds);
-    this.assertActivityTriggerBindings(input.draft.triggers, connectorSelection.connectorTypes);
+    const connectorSelection = await this.validateConnectorSelections(
+      input.scope,
+      input.defaultPluginIds,
+      input.activitySourcePluginIds,
+    );
+    this.assertActivityTriggerBindings(
+      input.draft.triggers,
+      input.activitySourcePluginIds,
+      connectorSelection,
+    );
     const resourceIds = await this.validateAutomationResources(input.scope, input.resourceIds);
     const deliveryTargets = await this.resolveSlackDeliveryTargets(input.scope, input.deliveryTargets);
     const templateId = newId();
@@ -199,11 +229,12 @@ export class AutomationService {
       this.env.DB.prepare(
         `INSERT INTO automation_subscriptions
          (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-          execution_principal_json, connector_bindings_json, default_plugins_json, overrides_json, status,
+          execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
+          default_plugins_json, overrides_json, status,
           email_address, email_route_status,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
       ...memoryTables.statements,
       ...deliveryTargets.map((target) => this.env.DB.prepare(
         `INSERT INTO automation_delivery_targets
@@ -280,6 +311,7 @@ export class AutomationService {
       recommendedPlugins: parseJson(row.recommended_plugins_json, []),
       memoryTables: parseJson(row.memory_tables_json, []),
       defaultPluginIds: parseJson(row.default_plugins_json, []),
+      activitySourcePluginIds: parseJson(row.activity_trigger_bindings_json, {}),
       deliveryTargets: (deliveryTargets.results ?? []).map((target) => ({
         type: "slack_agent_dm" as const,
         connectionId: target.connection_id,
@@ -306,6 +338,7 @@ export class AutomationService {
     description?: string | undefined;
     instructions?: string | undefined;
     defaultPluginIds?: string[] | undefined;
+    activitySourcePluginIds?: Record<string, string> | undefined;
     overrides?: Record<string, unknown> | undefined;
   }) {
     const row = await this.loadSubscription(id);
@@ -313,13 +346,25 @@ export class AutomationService {
     if ((input.name != null || input.description != null) && row.template_owner_user_id !== this.auth.userId) {
       throw new ApiError(403, "template_owner_required", "Only the template owner can change its name or description");
     }
-    const connectorSelection = input.defaultPluginIds
-      ? await this.validateDefaultPluginIds(String(row.scope) as Scope, input.defaultPluginIds)
+    const triggers = parseJson<TriggerDefinition[]>(row.trigger_definitions_json, []);
+    const hasActivitySourceSlots = triggers.some((trigger) =>
+      (trigger.type === "connector_activity" || trigger.type === "semantic_activity" || trigger.type === "webhook")
+      && Boolean(trigger.sourceBindingKey));
+    const shouldValidateConnectorSelection = input.defaultPluginIds !== undefined
+      || (input.activitySourcePluginIds !== undefined
+        && (hasActivitySourceSlots || Object.keys(input.activitySourcePluginIds).length > 0));
+    const connectorSelection = shouldValidateConnectorSelection
+      ? await this.validateConnectorSelections(
+          String(row.scope) as Scope,
+          input.defaultPluginIds ?? parseJson(row.default_plugins_json, []),
+          input.activitySourcePluginIds ?? parseJson(row.activity_trigger_bindings_json, {}),
+        )
       : null;
     if (connectorSelection) {
       this.assertActivityTriggerBindings(
-        parseJson(row.trigger_definitions_json, []),
-        connectorSelection.connectorTypes,
+        triggers,
+        input.activitySourcePluginIds ?? parseJson(row.activity_trigger_bindings_json, {}),
+        connectorSelection,
       );
     }
     const at = nowIso();
@@ -331,8 +376,17 @@ export class AutomationService {
       this.env.DB.prepare(
         `UPDATE automation_subscriptions SET default_plugins_json = COALESCE(?, default_plugins_json),
          connector_bindings_json = COALESCE(?, connector_bindings_json),
+         activity_trigger_bindings_json = COALESCE(?, activity_trigger_bindings_json),
          overrides_json = COALESCE(?, overrides_json), updated_at = ? WHERE id = ? AND workspace_id = ?`,
-      ).bind(input.defaultPluginIds ? JSON.stringify(input.defaultPluginIds) : null, connectorSelection ? JSON.stringify(connectorSelection.bindings) : null, input.overrides ? JSON.stringify(input.overrides) : null, at, id, this.auth.workspaceId),
+      ).bind(
+        input.defaultPluginIds ? JSON.stringify(input.defaultPluginIds) : null,
+        connectorSelection ? JSON.stringify(connectorSelection.bindings) : null,
+        input.activitySourcePluginIds ? JSON.stringify(input.activitySourcePluginIds) : null,
+        input.overrides ? JSON.stringify(input.overrides) : null,
+        at,
+        id,
+        this.auth.workspaceId,
+      ),
     ];
     if (input.instructions != null && input.instructions !== row.instructions) {
       if (row.template_owner_user_id !== this.auth.userId) {
@@ -446,17 +500,33 @@ export class AutomationService {
     const result = await this.env.DB.prepare(
       `SELECT t.*, u.name AS author_name,
        (SELECT COUNT(*) FROM automation_subscriptions s WHERE s.template_id = t.id) AS use_count,
-       v.required_capabilities_json
+       v.required_capabilities_json, v.trigger_definitions_json
        FROM automation_templates t JOIN users u ON u.id = t.owner_user_id
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
        WHERE t.workspace_id = ? AND t.sharing_state = 'workspace' AND t.archived_at IS NULL
        ORDER BY t.name COLLATE NOCASE`,
     ).bind(this.auth.workspaceId).all<Record<string, unknown>>();
-    return { items: (result.results ?? []).map((row) => ({ id: row.id, name: row.name, author: row.author_name, description: row.description, usedBy: Number(row.use_count), requiredCapabilities: parseJson(row.required_capabilities_json, []), latestVersion: Number(row.latest_version_number) })) };
+    return { items: (result.results ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      author: row.author_name,
+      description: row.description,
+      usedBy: Number(row.use_count),
+      requiredCapabilities: parseJson(row.required_capabilities_json, []),
+      latestVersion: Number(row.latest_version_number),
+      activitySources: activitySourceDefinitions(parseJson(row.trigger_definitions_json, [])),
+    })) };
   }
 
   async publishTemplate(input: { name: string; description: string; draft: AutomationDraft }) {
     if (!input.draft.ready) throw new ApiError(422, "template_not_ready", "Finish the automation recipe before publishing it");
+    const activitySourcePluginIds = suggestedActivitySourcePluginIds(input.draft.triggers);
+    const connectorSelection = await this.validateConnectorSelections(
+      input.draft.suggestedScope,
+      [],
+      activitySourcePluginIds,
+    );
+    this.assertActivityTriggerBindings(input.draft.triggers, activitySourcePluginIds, connectorSelection);
     const templateId = newId();
     const versionId = newId();
     const at = nowIso();
@@ -495,6 +565,13 @@ export class AutomationService {
       `SELECT * FROM automation_templates WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
     ).bind(templateId, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
     if (!template) throw new ApiError(404, "template_not_found", "Automation template not found");
+    const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
+    const connectorSelection = await this.validateConnectorSelections(
+      draft.suggestedScope,
+      [],
+      activitySourcePluginIds,
+    );
+    this.assertActivityTriggerBindings(draft.triggers, activitySourcePluginIds, connectorSelection);
     const number = Number(template.latest_version_number) + 1;
     const id = newId();
     const at = nowIso();
@@ -511,7 +588,10 @@ export class AutomationService {
     return { id, versionNumber: number };
   }
 
-  async subscribe(templateId: string, input: { defaultPluginIds: string[] }) {
+  async subscribe(templateId: string, input: {
+    defaultPluginIds: string[];
+    activitySourcePluginIds: Record<string, string>;
+  }) {
     const template = await this.env.DB.prepare(
       `SELECT t.*, v.id AS version_id, v.* FROM automation_templates t
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
@@ -527,8 +607,12 @@ export class AutomationService {
       memoryTables: parseJson(template.memory_tables_json, []),
       suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
     };
-    const connectorSelection = await this.validateDefaultPluginIds("personal", input.defaultPluginIds);
-    this.assertActivityTriggerBindings(draft.triggers, connectorSelection.connectorTypes);
+    const connectorSelection = await this.validateConnectorSelections(
+      "personal",
+      input.defaultPluginIds,
+      input.activitySourcePluginIds,
+    );
+    this.assertActivityTriggerBindings(draft.triggers, input.activitySourcePluginIds, connectorSelection);
     const subscriptionId = newId();
     const at = nowIso();
     const schedules = draft.triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
@@ -547,11 +631,12 @@ export class AutomationService {
       this.env.DB.prepare(
         `INSERT INTO automation_subscriptions
          (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-          execution_principal_json, connector_bindings_json, default_plugins_json, overrides_json, status,
+          execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
+          default_plugins_json, overrides_json, status,
           email_address, email_route_status,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'personal', ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, 'personal', ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
       ...memoryTables.statements,
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
@@ -571,17 +656,29 @@ export class AutomationService {
     return this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
   }
 
-  async adoptVersion(subscriptionId: string, versionId: string) {
+  async adoptVersion(
+    subscriptionId: string,
+    versionId: string,
+    activitySourcePluginIds?: Record<string, string>,
+  ) {
     const subscription = await this.loadSubscription(subscriptionId);
     this.assertCanManageSubscription(subscription);
     const version = await this.env.DB.prepare(
       `SELECT * FROM automation_template_versions WHERE id = ? AND template_id = ?`,
     ).bind(versionId, subscription.template_id).first<Record<string, unknown>>();
     if (!version) throw new ApiError(404, "template_version_not_found", "Template version not found");
-    const connectorSelection = await this.validateDefaultPluginIds(String(subscription.scope) as Scope, parseJson(subscription.default_plugins_json, []));
-    const at = nowIso();
     const triggers = parseJson<TriggerDefinition[]>(version.trigger_definitions_json, []);
-    this.assertActivityTriggerBindings(triggers, connectorSelection.connectorTypes);
+    const effectiveSourcePluginIds = pickActivitySourcePluginIds(
+      triggers,
+      activitySourcePluginIds ?? parseJson<Record<string, string>>(subscription.activity_trigger_bindings_json, {}),
+    );
+    const connectorSelection = await this.validateConnectorSelections(
+      String(subscription.scope) as Scope,
+      parseJson(subscription.default_plugins_json, []),
+      effectiveSourcePluginIds,
+    );
+    const at = nowIso();
+    this.assertActivityTriggerBindings(triggers, effectiveSourcePluginIds, connectorSelection);
     const schedules = triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
     const nextRunAt = schedules.map((schedule) => schedule.nextRunAt).sort()[0] ?? null;
     const enabled = subscription.status === "paused" ? 0 : 1;
@@ -594,9 +691,10 @@ export class AutomationService {
     await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE automation_subscriptions
-         SET template_version_id = ?, connector_bindings_json = ?, next_run_at = ?, updated_at = ?
+         SET template_version_id = ?, connector_bindings_json = ?, activity_trigger_bindings_json = ?,
+             next_run_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ?`,
-      ).bind(versionId, JSON.stringify(connectorSelection.bindings), nextRunAt, at, subscriptionId, this.auth.workspaceId),
+      ).bind(versionId, JSON.stringify(connectorSelection.bindings), JSON.stringify(effectiveSourcePluginIds), nextRunAt, at, subscriptionId, this.auth.workspaceId),
       this.env.DB.prepare(
         "DELETE FROM schedules WHERE automation_subscription_id = ? AND workspace_id = ?",
       ).bind(subscriptionId, this.auth.workspaceId),
@@ -874,51 +972,164 @@ export class AutomationService {
     return [];
   }
 
-  private async validateDefaultPluginIds(scope: Scope, pluginIds: string[]): Promise<ValidatedConnectorBindings> {
-    if (new Set(pluginIds).size !== pluginIds.length) {
+  private async validateConnectorSelections(
+    scope: Scope,
+    defaultPluginIds: string[],
+    activitySourcePluginIds: Record<string, string>,
+  ): Promise<ValidatedConnectorBindings> {
+    if (new Set(defaultPluginIds).size !== defaultPluginIds.length) {
       throw new ApiError(422, "duplicate_default_plugin", "Default automation plugins must be unique");
     }
+    const pluginIds = [...new Set([...defaultPluginIds, ...Object.values(activitySourcePluginIds)])];
     const bindings: Record<string, string> = {};
     const connectorTypes = new Set<string>();
+    const connectorTypesByPluginId: Record<string, string> = {};
     for (const pluginId of pluginIds) {
       const row = await this.env.DB.prepare(
         `SELECT id, connector_type, scope, owner_user_id, status FROM connector_connections
          WHERE workspace_id = ? AND model_plugin_id = ?`,
       ).bind(this.auth.workspaceId, pluginId).first<Record<string, unknown>>();
       if (!row || row.status !== "healthy") {
-        throw new ApiError(422, "plugin_unavailable", `The default plugin ${pluginId} is unavailable`);
+        throw new ApiError(422, "plugin_unavailable", `Connector plugin ${pluginId} is unavailable or unhealthy`);
       }
       if (scope === "personal" && row.scope === "personal" && row.owner_user_id !== this.auth.userId) {
-        throw new ApiError(403, "personal_connection_access_denied", "A personal automation cannot preload another member's connection");
+        throw new ApiError(403, "personal_connection_access_denied", "A personal automation cannot use another member's personal connection");
       }
       if (scope === "workspace" && row.scope !== "workspace") {
-        throw new ApiError(422, "workspace_connection_required", "Workspace automations may only preload workspace connections");
+        throw new ApiError(422, "workspace_connection_required", "Workspace automations may only use workspace connections");
       }
       bindings[pluginId] = String(row.id);
-      connectorTypes.add(String(row.connector_type));
+      const connectorType = String(row.connector_type);
+      connectorTypes.add(connectorType);
+      connectorTypesByPluginId[pluginId] = connectorType;
     }
-    return { bindings, connectorTypes };
+    return { bindings, connectorTypes, connectorTypesByPluginId };
   }
 
-  private assertActivityTriggerBindings(triggers: TriggerDefinition[], connectorTypes: Set<string>): void {
+  private assertActivityTriggerBindings(
+    triggers: TriggerDefinition[],
+    activitySourcePluginIds: Record<string, string>,
+    connectorSelection: ValidatedConnectorBindings,
+  ): void {
+    const usedSourceKeys = new Set<string>();
     for (const trigger of triggers) {
       if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") {
         continue;
       }
       const requiredConnectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
+      if (trigger.sourceBindingKey) {
+        usedSourceKeys.add(trigger.sourceBindingKey);
+        const pluginId = activitySourcePluginIds[trigger.sourceBindingKey];
+        if (!pluginId) {
+          throw new ApiError(
+            422,
+            "activity_trigger_source_required",
+            `Select a connector for activity source ${trigger.sourceBindingKey}`,
+            { sourceBindingKey: trigger.sourceBindingKey, connectorType: requiredConnectorType },
+          );
+        }
+        const selectedConnectorType = connectorSelection.connectorTypesByPluginId[pluginId];
+        if (!requiredConnectorType || selectedConnectorType !== requiredConnectorType) {
+          throw new ApiError(
+            422,
+            "activity_trigger_source_type_mismatch",
+            `Activity source ${trigger.sourceBindingKey} requires a ${requiredConnectorType ?? "specific"} connector`,
+            { sourceBindingKey: trigger.sourceBindingKey, pluginId, connectorType: requiredConnectorType },
+          );
+        }
+        this.assertDeclaredActivityTrigger(trigger, requiredConnectorType);
+        continue;
+      }
       if (requiredConnectorType == null) {
-        if (connectorTypes.size > 0) continue;
+        if (connectorSelection.connectorTypes.size > 0) continue;
         throw new ApiError(
           422,
           "activity_trigger_connection_required",
           "Select at least one connector for this activity-triggered automation",
         );
       }
-      if (!connectorTypes.has(requiredConnectorType)) {
+      if (!connectorSelection.connectorTypes.has(requiredConnectorType)) {
         throw new ApiError(
           422,
           "activity_trigger_connection_required",
           `Select a ${requiredConnectorType} connector for this activity-triggered automation`,
+        );
+      }
+    }
+    for (const sourceBindingKey of Object.keys(activitySourcePluginIds)) {
+      if (!usedSourceKeys.has(sourceBindingKey)) {
+        throw new ApiError(
+          422,
+          "unexpected_activity_source",
+          `Activity source ${sourceBindingKey} is not used by this automation version`,
+          { sourceBindingKey },
+        );
+      }
+    }
+  }
+
+  private assertDeclaredActivityTrigger(trigger: TriggerDefinition, connectorType: string): void {
+    if (trigger.type === "webhook") return;
+    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity") return;
+    const descriptors = connectorRegistryForEnv(this.env).get(connectorType).manifest.activityTriggers;
+    const descriptorByType = new Map(descriptors.map((descriptor) => [descriptor.eventType, descriptor]));
+    const eventTypes = trigger.type === "connector_activity"
+      ? trigger.eventTypes
+      : typeof trigger.deterministicPrefilter.eventType === "string"
+        ? [trigger.deterministicPrefilter.eventType]
+        : [];
+    if (trigger.type === "semantic_activity" && eventTypes.length === 0) {
+      throw new ApiError(
+        422,
+        "activity_trigger_event_required",
+        `Semantic ${connectorType} activity triggers require one declared event type`,
+        { connectorType },
+      );
+    }
+    for (const eventType of eventTypes) {
+      if (!descriptorByType.has(eventType)) {
+        throw new ApiError(
+          422,
+          "unknown_activity_event",
+          `${eventType} is not a declared ${connectorType} activity event`,
+          { connectorType, eventType },
+        );
+      }
+    }
+    const relevantDescriptors = eventTypes.length
+      ? eventTypes.flatMap((eventType) => {
+          const descriptor = descriptorByType.get(eventType);
+          return descriptor ? [descriptor] : [];
+        })
+      : descriptors;
+    const filters = trigger.type === "connector_activity"
+      ? trigger.deterministicFilters
+      : trigger.deterministicPrefilter;
+    const commonTypes: Record<string, string> = {
+      provider: "string",
+      connectorType: "string",
+      eventType: "string",
+      resourceType: "string",
+      providerResourceId: "string",
+    };
+    const declaredTypes = new Map<string, Set<string>>(
+      Object.entries(commonTypes).map(([key, valueType]) => [key, new Set([valueType])]),
+    );
+    for (const descriptor of relevantDescriptors) {
+      for (const field of descriptor.filterFields) {
+        const valueTypes = declaredTypes.get(field.key) ?? new Set<string>();
+        valueTypes.add(field.valueType);
+        declaredTypes.set(field.key, valueTypes);
+      }
+    }
+    for (const [key, value] of Object.entries(filters)) {
+      const valueTypes = declaredTypes.get(key);
+      if (!valueTypes || ![...valueTypes].some((valueType) => activityFilterValueMatches(valueType, value))) {
+        throw new ApiError(
+          422,
+          "invalid_activity_filter",
+          `${key} is not a declared ${connectorType} activity filter with a compatible value`,
+          { connectorType, key },
         );
       }
     }
@@ -1056,6 +1267,49 @@ export async function runAutomationFromInboundEmail(
 function parseJson<T>(value: unknown, fallback: T): T {
   if (typeof value !== "string") return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+function activityFilterValueMatches(valueType: string, value: unknown): boolean {
+  if (valueType === "string") return typeof value === "string";
+  if (valueType === "number") return typeof value === "number" && Number.isFinite(value);
+  if (valueType === "boolean") return typeof value === "boolean";
+  if (valueType === "string_array") {
+    return Array.isArray(value) && value.every((item) => typeof item === "string");
+  }
+  return false;
+}
+function activitySourceDefinitions(triggers: TriggerDefinition[]): Array<{
+  bindingKey: string;
+  connectorType: string;
+  suggestedPluginId?: string;
+}> {
+  const sources = new Map<string, {
+    bindingKey: string;
+    connectorType: string;
+    suggestedPluginId?: string;
+  }>();
+  for (const trigger of triggers) {
+    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") continue;
+    if (!trigger.sourceBindingKey) continue;
+    const connectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
+    if (!connectorType) continue;
+    sources.set(trigger.sourceBindingKey, {
+      bindingKey: trigger.sourceBindingKey,
+      connectorType,
+      ...(trigger.suggestedSourcePluginId ? { suggestedPluginId: trigger.suggestedSourcePluginId } : {}),
+    });
+  }
+  return [...sources.values()];
+}
+function suggestedActivitySourcePluginIds(triggers: TriggerDefinition[]): Record<string, string> {
+  return Object.fromEntries(activitySourceDefinitions(triggers).flatMap((source) =>
+    source.suggestedPluginId ? [[source.bindingKey, source.suggestedPluginId] as const] : []));
+}
+function pickActivitySourcePluginIds(
+  triggers: TriggerDefinition[],
+  candidates: Record<string, string>,
+): Record<string, string> {
+  const bindingKeys = new Set(activitySourceDefinitions(triggers).map((source) => source.bindingKey));
+  return Object.fromEntries(Object.entries(candidates).filter(([bindingKey]) => bindingKeys.has(bindingKey)));
 }
 function isRecoverableEmailRouteTransition(error: unknown): boolean {
   // Service-binding transport failures are not guaranteed to arrive as an
