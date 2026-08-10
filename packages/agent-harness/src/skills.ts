@@ -12,6 +12,7 @@ import {
   type SkillRegistry,
   type SkillSummary,
 } from "@juno-ai/bind/skills";
+import { utf8ByteLength } from "@juno-ai/bind/skills";
 import type { ToolDefinition } from "@avalon/contracts";
 import type { HarnessSkill, HarnessTool, HarnessToolResult } from "./index";
 
@@ -39,6 +40,12 @@ import type { HarnessSkill, HarnessTool, HarnessToolResult } from "./index";
  */
 
 export const AVALON_SKILLS_PLUGIN_ID = "avalon.skills";
+
+/**
+ * Default cap on one `read_skill_resource` response. Generous for a reference
+ * document, small enough that a handful of reads cannot fill a context window.
+ */
+export const DEFAULT_MAX_RESOURCE_BYTES = 64 * 1024;
 
 export const AVALON_SKILL_TOOL_DEFINITIONS = [
   {
@@ -85,8 +92,6 @@ export interface SkillRuntime {
   summaries: readonly SkillSummary[];
   /** Refs loaded so far. Mutated in place by activation; read by the prompt render. */
   activeRefs: Set<string>;
-  /** Ref → content hash of the body actually injected, for the run record. */
-  loadedShas: Record<string, string>;
   /** Wrapped bodies for the active set, in the same total order as the catalog. */
   instructions: readonly string[];
   activation: SkillActivation;
@@ -125,6 +130,15 @@ function stringArgument(raw: unknown, key: string): string {
 export async function createSkillRuntime(input: {
   skills: readonly HarnessSkill[];
   /**
+   * Canonical ids of every plugin in this run's frozen scope. A skill that
+   * declares an `ownerPlugin` outside it is not offered — the containment the
+   * `HarnessSkill.ownerPlugin` docs promise. Omit only in a test that does not
+   * care; omitting it offers every skill regardless of owner.
+   */
+  eligiblePlugins?: Iterable<string>;
+  /** Cap on the bytes one `read_skill_resource` returns. Defaults to 64 KiB. */
+  maxResourceBytes?: number;
+  /**
    * Refs the host durably recorded as loaded on an earlier attempt. Like a
    * plugin activation hint this is a *hint*, not a fact: a ref that no longer
    * resolves against this run's catalog is dropped rather than restored, since
@@ -145,7 +159,9 @@ export async function createSkillRuntime(input: {
     else registry.registerPlatform(toDefinition(skill));
   }
 
-  const summaries = registry.summaries();
+  const summaries = registry.summaries(
+    input.eligiblePlugins === undefined ? undefined : { availablePlugins: input.eligiblePlugins },
+  );
   const byName = new Map(summaries.map((summary) => [summary.name, summary]));
   const activeRefs = new Set<string>();
   const loadedShas: Record<string, string> = {};
@@ -162,7 +178,6 @@ export async function createSkillRuntime(input: {
   const runtime: SkillRuntime = {
     summaries,
     activeRefs,
-    loadedShas,
     get instructions() {
       return instructions;
     },
@@ -183,11 +198,11 @@ export async function createSkillRuntime(input: {
   const registered = (summary: SkillSummary): RegisteredSkill | undefined =>
     isCodeSkillRef(summary.ref) ? registry.get(codeSkillNameFromRef(summary.ref)) : undefined;
 
+  // No `available` list: the catalog is already in the system prompt, so
+  // echoing every name on each miss grows tool output with the library for no
+  // information the model does not have. Matches `plugin_not_available`.
   const notFound = (name: string): HarnessToolResult => ({
-    output: {
-      error: "skill_not_available",
-      available: summaries.map((summary) => summary.name).sort(),
-    },
+    output: { error: "skill_not_available" },
     summary: `Skill ${name || "(unnamed)"} is not available to this run`,
   });
 
@@ -247,8 +262,10 @@ export async function createSkillRuntime(input: {
             ? `Skill ${summary.name} was already loaded`
             : `Loaded skill ${summary.name}`,
           // Bind's control signal: the loop calls activateSkills with this ref
-          // before any later tool in the same batch runs.
-          loadedSkillRef: summary.ref,
+          // before any later tool in the same batch runs. Omitted when the skill
+          // is already loaded — the controller would absorb it, but the host
+          // would still re-render and re-persist to reach a state it is in.
+          ...(alreadyActive ? {} : { loadedSkillRef: summary.ref }),
         } satisfies HarnessToolResult;
       }
 
@@ -273,9 +290,28 @@ export async function createSkillRuntime(input: {
           summary: `Skill ${summary.name} has no resource ${path || "(unnamed)"}`,
         };
       }
+      // Tier 3 is bounded too. `load_skill` is judged against a count cap and a
+      // body-token budget precisely so a looping model cannot load its way into
+      // a context-limit error; an unbounded resource read routes around both,
+      // since a skill whose body fits comfortably can bundle a reference that
+      // does not, and repeated reads compound it. Truncating with a marker keeps
+      // the limit legible to the model instead of arriving as a provider error.
+      const maxBytes = input.maxResourceBytes ?? DEFAULT_MAX_RESOURCE_BYTES;
+      const content = resource.render();
+      const bytes = utf8ByteLength(content);
+      const truncated = bytes > maxBytes;
       return {
-        output: { name: summary.name, path: resource.path, contentType: resource.contentType, content: resource.render() },
-        summary: `Read ${resource.path} from skill ${summary.name}`,
+        output: {
+          name: summary.name,
+          path: resource.path,
+          contentType: resource.contentType,
+          bytes,
+          truncated,
+          content: truncated ? `${content.slice(0, maxBytes)}\n\n[truncated: ${bytes} bytes exceeds the ${maxBytes}-byte read limit]` : content,
+        },
+        summary: truncated
+          ? `Read the first ${maxBytes} bytes of ${resource.path} from skill ${summary.name}`
+          : `Read ${resource.path} from skill ${summary.name}`,
       };
     },
   }));

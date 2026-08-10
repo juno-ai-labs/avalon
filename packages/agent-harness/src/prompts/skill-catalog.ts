@@ -46,8 +46,13 @@ export function renderPromptSkillCatalog(input: RenderPromptSkillCatalogInput): 
   if (loadable.length) {
     const lines = loadable.map((entry) => skillLine(entry.summary, entry.detail === "name_only"));
     if (truncated > 0) {
+      // `partitionSkillCatalog` returns demoted entries inside `loadable` with
+      // `detail: "name_only"`, and every one is already rendered above as a bare
+      // name — `truncated` counts those, not additional hidden skills. Saying "N
+      // more" would tell the model half the catalog is withheld, inverting the
+      // demote-never-drop property this fallback exists to provide.
       lines.push(
-        `- … ${truncated} more shown by name only; call load_skill with the exact name to read one.`,
+        `- (${truncated} of the entries above are shown by name only; call load_skill with the exact name to read the full description.)`,
       );
     }
     sections.push(`Available to load:\n${lines.join("\n")}`);
