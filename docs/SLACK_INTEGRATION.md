@@ -112,8 +112,9 @@ Slack adds one provider-specific mapping of its own: an explicit claim credits t
 member when they are the same Slack author who started the task. A claim by a different Slack
 member makes that member a participant rather than the creator. When a mapping only arrives
 later — the member links their account, or joins Avalon after the task ran — the earlier
-ownerless work streams of their Slack sessions are credited to them then, and an existing
-creator is never rewritten.
+ownerless work streams of their Slack sessions are credited to them then. Account linking may
+additionally correct a creator that the same session's earlier `users.lookupByEmail` match
+produced, which is the only case where an existing creator is rewritten.
 
 As everywhere else, attribution is not authorization: an unlinked author's task still runs
 with the workspace principal, and the opening message keeps its external Slack actor.
