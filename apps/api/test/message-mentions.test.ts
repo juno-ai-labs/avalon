@@ -65,6 +65,22 @@ describe("canonical person mention Markdown", () => {
     expect(prepared).toEqual({ text, mentions: [] });
   });
 
+  it("keeps the longest name when one member's name prefixes another's", () => {
+    // A workspace holding both "Ada" and "Ada Lovelace" emits a range for each
+    // against "@Ada Lovelace"; the writer meant the person they spelled out.
+    const text = "Ask @Ada Lovelace.";
+    const prepared = prepareMentionMarkdown(text, [
+      { type: "person", userId: graceId, connectorType: null, startOffset: 4, endOffset: 8 },
+      { type: "person", userId: adaId, connectorType: null, startOffset: 4, endOffset: 17 },
+    ], new Map([
+      [graceId, { id: graceId, name: "Ada", avatarUrl: null }],
+      [adaId, { id: adaId, name: "Ada Lovelace", avatarUrl: null }],
+    ]));
+
+    expect(prepared.text).toBe(`Ask [@Ada Lovelace](person:${adaId}).`);
+    expect(prepared.mentions.map((mention) => mention.userId)).toEqual([adaId]);
+  });
+
   it("escapes labels in the Markdown link slot", () => {
     expect(renderPersonMentionMarkdown({
       id: adaId,

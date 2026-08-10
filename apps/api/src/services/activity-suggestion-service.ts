@@ -2,6 +2,7 @@ import { newId, nowIso } from "@avalon/db";
 import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { truncateUtf16Safe } from "../lib/text";
 
 interface CreateActivitySuggestionInput {
   region: "global" | "eu";
@@ -41,6 +42,9 @@ export async function createActivitySuggestion(
 ): Promise<boolean> {
   const id = newId();
   const createdAt = nowIso();
+  const title = truncateUtf16Safe(input.activityTitle, 300);
+  const summary = truncateUtf16Safe(input.activitySummary, 2_000);
+  const reason = truncateUtf16Safe(input.reason, 1_200);
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO activity_suggestions (
        id, workspace_id, activity_id, workstream_id, confidence, reason,
@@ -52,7 +56,7 @@ export async function createActivitySuggestion(
     input.activityId,
     input.workstreamId,
     Math.max(0, Math.min(1, input.confidence)),
-    input.reason.slice(0, 4_000),
+    reason,
     JSON.stringify(input.matchedEntities.slice(0, 100)),
     createdAt,
   ).run();
@@ -64,10 +68,10 @@ export async function createActivitySuggestion(
       id,
       activityId: input.activityId,
       workstreamId: input.workstreamId,
-      title: input.activityTitle,
-      summary: input.activitySummary,
+      title,
+      summary,
       confidence: Math.max(0, Math.min(1, input.confidence)),
-      reason: input.reason.slice(0, 4_000),
+      reason,
       status: "pending",
       createdAt,
       resolvedAt: null,

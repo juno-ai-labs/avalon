@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 
 import type { Env } from "../env";
+import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
 
@@ -743,7 +744,7 @@ export class WorkstreamRoom {
         resourceType: resource.resource_type,
         provider: resource.provider,
         providerResourceId: resource.provider_resource_id,
-        title: resource.title,
+        title: truncateUtf16Safe(String(resource.title), 300),
         mimeType: resource.mime_type,
         canonicalUrl: resource.canonical_url,
         watchEnabled: Number(resource.attached_watch_enabled) === 1,
@@ -778,10 +779,10 @@ export class WorkstreamRoom {
         id: suggestion.id,
         activityId: suggestion.activity_id,
         workstreamId: suggestion.workstream_id,
-        title: suggestion.title,
-        summary: suggestion.summary,
+        title: truncateUtf16Safe(String(suggestion.title), 300),
+        summary: truncateUtf16Safe(String(suggestion.summary), 2_000),
         confidence: suggestion.confidence,
-        reason: suggestion.reason,
+        reason: truncateUtf16Safe(String(suggestion.reason), 1_200),
         status: suggestion.status,
         createdAt: suggestion.created_at,
         resolvedAt: suggestion.resolved_at

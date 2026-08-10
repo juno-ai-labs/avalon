@@ -16,7 +16,7 @@ import {
   WandSparkles,
   Zap,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -409,6 +409,10 @@ export function NewAutomationScreen(): React.JSX.Element {
     : (connections.data ?? [])
       .filter((connection) => connection.displayName.toLowerCase().includes(mentionQuery.toLowerCase()))
       .slice(0, 8);
+  const mentionLabels = useMemo(
+    () => (connections.data ?? []).map((connection) => connection.displayName),
+    [connections.data],
+  );
   const loadAttachmentContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
     [api],
@@ -754,6 +758,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                   className="automation-composer"
                   fileInputRef={fileInputRef}
                   mentionLabel="Mention a connection"
+                  mentionLabels={mentionLabels}
                   onAttach={attachmentDraft.addFiles}
                   onMention={beginConnectionMention}
                   onKeyDown={(event) => {

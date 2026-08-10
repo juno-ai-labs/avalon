@@ -94,6 +94,7 @@ export function WorkstreamComposer({
     })),
   ], [members, participantIds, workstream.connections]);
 
+  const mentionLabels = useMemo(() => candidates.map((candidate) => candidate.label), [candidates]);
   const visibleCandidates = mentionQuery === null
     ? []
     : candidates.filter((candidate) => candidate.label.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8);
@@ -283,6 +284,7 @@ export function WorkstreamComposer({
             void runCommand(visibleCommands[0]);
           }
         }}
+        mentionLabels={mentionLabels}
         onMention={beginMention}
         onOpenAttachment={onOpenAttachment}
         onRemoveAttachment={onRemoveAttachment}
