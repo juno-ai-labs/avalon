@@ -18,13 +18,13 @@
 // still unreleased rather than only the newest push's contents.
 //
 // It also closes the loop the pipeline's own commits would otherwise create.
-// The release writes two commits back to main. The recorded release config
-// touches apps/site/release.config.json only, which the `paths:` filter
-// excludes. The version bump does match that filter — it edits package.json —
-// but it becomes the new watermark, so this planner sees nothing since it and
-// skips. Neither could trigger a run anyway: GITHUB_TOKEN pushes do not start
-// workflow runs. That is deliberately two independent guards, because a release
-// loop is unrecoverable by hand.
+// The release writes two commits back to main. The version bump becomes the new
+// watermark, so it is the diff base rather than part of the diff. The recorded
+// release config lands *after* that watermark, so it is always in the diff and
+// has to be excluded by name — see RELEASE_RECORD_PATH. Neither could trigger a
+// run anyway: the `paths:` filter excludes the record, and GITHUB_TOKEN pushes
+// do not start workflow runs. Two independent guards on purpose, because a
+// release publishes immutable payloads and a loop cannot be undone by hand.
 //
 // Tags are an artifact of a release, never an input: nothing here reads them,
 // and nothing triggers on them. Keeping the decision on durable committed state
@@ -43,6 +43,17 @@ import { nextReleaseVersion, parseReleaseTag } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
+
+// The release's own bookkeeping, and the one path a diff from the watermark can
+// contain without meaning there is work to ship.
+//
+// The watermark is the commit the release *built* — the version bump — but the
+// record naming it lands as a later commit on main, so it is always in the diff
+// that follows. Real history shows it exactly: `c3a547b "Record Avalon 1.33.0
+// release config"` has the recorded watermark `f4e66c6` as its direct parent.
+// Without this, the diff is never empty, the skip below is dead code, and a
+// re-planned release cuts an empty minor.
+export const RELEASE_RECORD_PATH = 'apps/site/release.config.json';
 
 export function planRelease({
   eventName,
@@ -89,10 +100,11 @@ export function planRelease({
   }
 
   const short = releasedCommit.slice(0, 7);
-  if (changedPaths.length === 0) {
-    return skip(`nothing has landed since the released commit ${short}`);
+  const outstanding = changedPaths.filter((path) => path !== RELEASE_RECORD_PATH);
+  if (outstanding.length === 0) {
+    return skip(`nothing but the release record has landed since the released commit ${short}`);
   }
-  return release(`${changedPaths.length} path(s) changed since ${short}: ${changedPaths.slice(0, 5).join(', ')}`);
+  return release(`${outstanding.length} path(s) changed since ${short}: ${outstanding.slice(0, 5).join(', ')}`);
 }
 
 // Returns null when the watermark is not reachable in this checkout — a
