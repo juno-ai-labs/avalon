@@ -728,10 +728,10 @@ async function createSuggestion(
       id,
       activityId: activity.id,
       workstreamId,
-      title: activity.title,
-      summary: activity.summary,
+      title: activity.title.slice(0, 300),
+      summary: activity.summary.slice(0, 2_000),
       confidence: result.confidence,
-      reason: result.reason,
+      reason: result.reason.slice(0, 1_200),
       status: "pending",
       createdAt,
       resolvedAt: null
