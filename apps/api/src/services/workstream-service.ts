@@ -1293,7 +1293,7 @@ export class WorkstreamService {
       `SELECT c.*, u.name AS owner_name FROM connector_connections c LEFT JOIN users u ON u.id = c.owner_user_id
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?) ORDER BY c.display_name`,
     ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
-    return (result.results ?? []).map(connectionFromRow);
+    return (result.results ?? []).map((row) => connectionFromRow(row));
   }
 
   private async loadArtifacts(id: string) {

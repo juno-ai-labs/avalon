@@ -755,7 +755,7 @@ export class WorkstreamRoom {
         createdAt: resource.created_at,
         updatedAt: resource.updated_at
       })),
-      connections: connectionRows.results.map(connectionFromRow),
+      connections: connectionRows.results.map((row) => connectionFromRow(row)),
       openElicitations: elicitationRows.results.map((elicitation) => ({
         id: elicitation.id,
         workstreamId: elicitation.workstream_id,

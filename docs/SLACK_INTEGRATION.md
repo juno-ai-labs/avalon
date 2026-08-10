@@ -138,6 +138,10 @@ On a prompt Avalon:
 
 The persisted Avalon run is canonical. A Slack delivery failure never rewrites a completed run as failed.
 
+An automation's Agent-DM destination is one of the frozen delivery targets described in
+[work-stream and automation email addresses](WORKSTREAM_EMAIL_ADDRESSES.md#outbound-automation-results);
+Slack and email are delivered independently, so a failure in one is retried without holding back the other.
+
 ## App Home
 
 App Home is a personalized control surface published per user. Avalon publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.

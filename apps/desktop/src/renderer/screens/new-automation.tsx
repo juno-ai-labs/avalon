@@ -10,8 +10,8 @@ import {
   Ellipsis,
   Info,
   LoaderCircle,
-  NotebookText,
-  Sparkles,
+  Mail,
+  MessageSquare,
   Users,
   WandSparkles,
   Zap,
@@ -40,9 +40,9 @@ import type {
   AutomationActivitySource,
   AutomationDraftQuestion,
   AutomationDraftResponse,
+  AutomationScope,
   Message,
   MessageAttachment,
-  NoteSummary,
   WorkspaceTemplate,
   WorkstreamConnection,
 } from '../lib/types';
@@ -321,39 +321,77 @@ function automationQuestionMessage(
   });
 }
 
+function DeliveryChoice({
+  checked,
+  description,
+  icon,
+  label,
+  locked = false,
+  onToggle,
+}: {
+  checked: boolean;
+  description: string;
+  icon: React.JSX.Element;
+  label: string;
+  locked?: boolean;
+  onToggle?: () => void;
+}): React.JSX.Element {
+  return (
+    <li>
+      <label>
+        <input
+          checked={checked}
+          disabled={locked}
+          onChange={() => onToggle?.()}
+          type="checkbox"
+        />
+        <span className="automation-plugin-check">{checked && <Check size={12} />}</span>
+        <span className="automation-plugin-copy">
+          <strong>{icon} {label}{locked && <Badge>Always on</Badge>}</strong>
+          <small>{description}</small>
+        </span>
+      </label>
+    </li>
+  );
+}
+
 function DraftSummary({
   draft,
   creating,
   connections,
-  defaultPluginIds,
   activitySourcePluginIds,
-  notes,
-  selectedResourceIds,
-  slackDeliveryConnectionId,
-  onDefaultPluginsChange,
+  emailDelivery,
+  ownerEmail,
+  scope,
+  scopeChangeAllowed,
+  deliveryConnectionId,
   onActivitySourcesChange,
-  onResourcesChange,
-  onSlackDeliveryChange,
+  onEmailDeliveryChange,
+  onScopeChange,
+  onDeliveryConnectionChange,
   onCreate,
 }: {
   draft: AutomationDraftResponse;
   creating: boolean;
   connections: WorkstreamConnection[];
-  defaultPluginIds: string[];
   activitySourcePluginIds: Record<string, string>;
-  notes: NoteSummary[];
-  selectedResourceIds: string[];
-  slackDeliveryConnectionId: string;
-  onDefaultPluginsChange: (pluginIds: string[]) => void;
+  emailDelivery: boolean;
+  ownerEmail: string;
+  scope: AutomationScope;
+  scopeChangeAllowed: boolean;
+  deliveryConnectionId: string;
   onActivitySourcesChange: (bindings: Record<string, string>) => void;
-  onResourcesChange: (resourceIds: string[]) => void;
-  onSlackDeliveryChange: (connectionId: string) => void;
+  onEmailDeliveryChange: (enabled: boolean) => void;
+  onScopeChange: (scope: AutomationScope) => void;
+  onDeliveryConnectionChange: (connectionId: string) => void;
   onCreate: () => void;
 }): React.JSX.Element | null {
   if (!draft.summary) return null;
   const summary = draft.summary;
-  const recommendations = summary.recommendedPlugins ?? [];
   const activitySources = summary.activitySources ?? [];
+  // Connectors declare for themselves whether they can hand a result to this
+  // user; the API only sets userDelivery once that is actually true for them.
+  const deliveryConnections = scope === 'you' ? connections.filter((connection) => connection.userDelivery) : [];
   return (
     <section className="automation-summary-card" aria-labelledby="automation-summary-title">
       <header>
@@ -362,71 +400,65 @@ function DraftSummary({
       </header>
       <div className="automation-overview"><MarkdownBody>{summary.overview || summary.description}</MarkdownBody></div>
       <dl className="automation-summary-meta">
-        <div><dt><Users size={13} /> Runs as</dt><dd>{summary.scope === 'you' ? 'You' : 'Workspace'}</dd></div>
+        <div>
+          <dt><Users size={13} /> <label htmlFor="automation-scope">Runs as</label></dt>
+          <dd>
+            {scopeChangeAllowed ? (
+              <select
+                id="automation-scope"
+                onChange={(event) => onScopeChange(event.target.value === 'workspace' ? 'workspace' : 'you')}
+                value={scope}
+              >
+                <option value="you">You</option>
+                <option value="workspace">Workspace</option>
+              </select>
+            ) : scope === 'you' ? 'You' : 'Workspace'}
+          </dd>
+        </div>
         <div><dt><CalendarClock size={13} /> Trigger</dt><dd>{summary.triggerSummary}</dd></div>
-        <div><dt><Sparkles size={13} /> Runtime</dt><dd>Dynamic plugin discovery</dd></div>
       </dl>
-      <PluginDefaults
-        connections={connections}
-        onChange={onDefaultPluginsChange}
-        recommendations={recommendations}
-        scope={summary.scope}
-        selected={defaultPluginIds}
-      />
       <ActivitySourceBindings
         connections={connections}
         onChange={onActivitySourcesChange}
-        scope={summary.scope}
+        scope={scope}
         selected={activitySourcePluginIds}
         sources={activitySources}
       />
-      <section className="automation-plugin-defaults automation-note-resources" aria-label="Note resources">
+      <section className="automation-plugin-defaults automation-delivery-target" aria-label="Deliver results">
         <header>
-          <div><strong>Note resources</strong><small>Attach meeting transcripts and notes as context for every run.</small></div>
-          <span>{selectedResourceIds.length} selected</span>
+          <div><strong>Deliver results</strong><small>{summary.requiresSlackDelivery ? 'This draft mentions Slack delivery. ' : ''}Every destination is frozen when this automation is saved.</small></div>
         </header>
-        {notes.length === 0 ? (
-          <p className="automation-plugin-empty">No compatible notes are available for this automation.</p>
-        ) : (
-          <ul>
-            {notes.map((note) => {
-              const checked = selectedResourceIds.includes(note.resourceId);
-              return (
-                <li key={note.id}>
-                  <label>
-                    <input
-                      checked={checked}
-                      onChange={() => onResourcesChange(checked
-                        ? selectedResourceIds.filter((resourceId) => resourceId !== note.resourceId)
-                        : [...selectedResourceIds, note.resourceId])}
-                      type="checkbox"
-                    />
-                    <span className="automation-plugin-check">{checked && <Check size={12} />}</span>
-                    <span className="automation-plugin-copy">
-                      <strong><NotebookText size={14} /> {note.title}</strong>
-                      <small>{note.scope === 'workspace' ? 'Public note' : 'Private note'}</small>
-                    </span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <ul>
+          <DeliveryChoice
+            checked
+            description="Every run is saved to its own Avalon work stream."
+            icon={<AvalonMark />}
+            label="Avalon"
+            locked
+          />
+          {scope === 'you' && ownerEmail && (
+            <DeliveryChoice
+              checked={emailDelivery}
+              description={`Email each result to ${ownerEmail}.`}
+              icon={<Mail size={13} />}
+              label="Email"
+              onToggle={() => onEmailDeliveryChange(!emailDelivery)}
+            />
+          )}
+          {deliveryConnections.map((connection) => (
+            <DeliveryChoice
+              checked={deliveryConnectionId === connection.id}
+              description={connection.userDelivery!.description}
+              icon={<MessageSquare size={13} />}
+              key={connection.id}
+              label={`${connection.userDelivery!.label} · ${connection.displayName}`}
+              onToggle={() => onDeliveryConnectionChange(deliveryConnectionId === connection.id ? '' : connection.id)}
+            />
+          ))}
+        </ul>
       </section>
-      {summary.scope === 'you' && (
-        <div className="automation-delivery-target">
-          <label htmlFor="automation-slack-delivery"><strong>Deliver results</strong><small>{summary.requiresSlackDelivery ? 'This draft mentions Slack delivery. ' : ''}Choose a destination explicitly; it is frozen when this automation is saved.</small></label>
-          <select id="automation-slack-delivery" onChange={(event) => onSlackDeliveryChange(event.target.value)} value={slackDeliveryConnectionId}>
-            <option value="">Keep results in Avalon</option>
-            {connections.filter((connection) => connection.connectorType === 'slack' && connection.scope === 'workspace' && connection.status === 'healthy').map((connection) => (
-              <option key={connection.id} value={connection.id}>Avalon Agent DM · {connection.displayName}</option>
-            ))}
-          </select>
-          <span>Slack delivery requires linking your Avalon account from the app’s Home tab.</span>
-        </div>
-      )}
       <footer>
-        <span>Plugin defaults improve startup speed but never widen runtime authority.</span>
+        <span>Avalon preloads the plugins this draft needs, and never widens their runtime authority.</span>
         <Button
           className="button-primary"
           disabled={creating || activitySources.some((source) => !activitySourcePluginIds[source.bindingKey])}
@@ -440,7 +472,7 @@ function DraftSummary({
 }
 
 export function NewAutomationScreen(): React.JSX.Element {
-  const { api } = useAppSession();
+  const { api, session } = useAppSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -457,8 +489,9 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
-  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
-  const [slackDeliveryConnectionId, setSlackDeliveryConnectionId] = useState('');
+  const [scopeOverride, setScopeOverride] = useState<AutomationScope | null>(null);
+  const [emailDelivery, setEmailDelivery] = useState(false);
+  const [deliveryConnectionId, setDeliveryConnectionId] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
@@ -467,12 +500,6 @@ export function NewAutomationScreen(): React.JSX.Element {
   const connections = useQuery({
     queryKey: ['connections'],
     queryFn: ({ signal }) => api!.getConnections(signal),
-    enabled: Boolean(api),
-    staleTime: 10_000,
-  });
-  const notes = useQuery({
-    queryKey: ['notes'],
-    queryFn: ({ signal }) => api!.getNotes(signal),
     enabled: Boolean(api),
     staleTime: 10_000,
   });
@@ -512,6 +539,11 @@ export function NewAutomationScreen(): React.JSX.Element {
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  // Avalon's suggestion is the default; the creator can still redirect the
+  // automation, and only an administrator may make it a workspace automation.
+  const scopeChangeAllowed = session?.workspace?.role === 'owner' || session?.workspace?.role === 'admin';
+  const scope: AutomationScope = scopeOverride ?? draft?.summary?.scope ?? 'you';
+
   useEffect(() => {
     const summary = draft?.summary;
     if (!summary || !connections.data) return;
@@ -524,11 +556,13 @@ export function NewAutomationScreen(): React.JSX.Element {
   }, [connections.data, draft, initializedRecommendations]);
 
   const visibleActivitySources = selectedTemplate?.activitySources ?? draft?.summary?.activitySources ?? [];
-  const activitySourceScope = selectedTemplate ? 'you' : draft?.summary?.scope ?? 'you';
+  // Switching Runs as changes which connections are eligible, so the bindings
+  // are re-derived under the scope in force rather than the suggested one.
+  const activitySourceScope = selectedTemplate ? 'you' : scope;
   const activitySourceInitializationKey = selectedTemplate
     ? `template:${selectedTemplate.id}:${selectedTemplate.latestVersion}`
     : draft
-      ? `draft:${draft.draftId}:${visibleActivitySources.map((source) => source.bindingKey).join(',')}`
+      ? `draft:${draft.draftId}:${activitySourceScope}:${visibleActivitySources.map((source) => source.bindingKey).join(',')}`
       : '';
   useEffect(() => {
     if (!activitySourceInitializationKey || initializedActivitySources === activitySourceInitializationKey || !connections.data) return;
@@ -544,27 +578,36 @@ export function NewAutomationScreen(): React.JSX.Element {
     setInitializedActivitySources(activitySourceInitializationKey);
   }, [activitySourceInitializationKey, activitySourceScope, connections.data, initializedActivitySources, visibleActivitySources]);
 
+  useEffect(() => {
+    setScopeOverride(null);
+  }, [draft?.draftId, draft?.summary?.scope]);
+
+  // A workspace automation cannot preload a coworker's personal plugin.
+  useEffect(() => {
+    if (!connections.data) return;
+    const eligible = new Set(eligiblePlugins(connections.data, scope).map((connection) => connection.modelPluginId));
+    setDefaultPluginIds((current) => {
+      const kept = current.filter((pluginId) => eligible.has(pluginId));
+      return kept.length === current.length ? current : kept;
+    });
+  }, [connections.data, scope]);
+
   const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
   useEffect(() => {
-    setSlackDeliveryConnectionId('');
+    setDeliveryConnectionId('');
+    setEmailDelivery(false);
   }, [deliveryDraftKey]);
 
   useEffect(() => {
-    if (!slackDeliveryConnectionId) return;
-    const stillAvailable = (connections.data ?? []).some((connection) =>
-      connection.id === slackDeliveryConnectionId
-      && connection.connectorType === 'slack'
-      && connection.scope === 'workspace'
-      && connection.status === 'healthy');
-    if (!stillAvailable || draft?.summary?.scope !== 'you') setSlackDeliveryConnectionId('');
-  }, [connections.data, draft?.summary?.scope, slackDeliveryConnectionId]);
+    if (scope !== 'you') setEmailDelivery(false);
+  }, [scope]);
 
-  const compatibleNotes = (notes.data ?? []).filter((note) =>
-    draft?.summary?.scope !== 'workspace' || note.scope === 'workspace');
   useEffect(() => {
-    const available = new Set(compatibleNotes.map((note) => note.resourceId));
-    setSelectedResourceIds((current) => current.filter((resourceId) => available.has(resourceId)));
-  }, [notes.data, draft?.summary?.scope]);
+    if (!deliveryConnectionId) return;
+    const stillAvailable = (connections.data ?? []).some((connection) =>
+      connection.id === deliveryConnectionId && connection.userDelivery);
+    if (!stillAvailable || scope !== 'you') setDeliveryConnectionId('');
+  }, [connections.data, scope, deliveryConnectionId]);
 
   const compile = useMutation({
     mutationFn: (payload: AutomationCompilePayload) =>
@@ -668,10 +711,19 @@ export function NewAutomationScreen(): React.JSX.Element {
     },
   });
 
+  const deliveryConnection = (connections.data ?? []).find((connection) =>
+    connection.id === deliveryConnectionId && connection.userDelivery);
+
   const create = useMutation({
-    mutationFn: () => slackDeliveryConnectionId
-      ? api!.createAutomation(draft!.draftId, defaultPluginIds, activitySourcePluginIds, selectedResourceIds, slackDeliveryConnectionId)
-      : api!.createAutomation(draft!.draftId, defaultPluginIds, activitySourcePluginIds, selectedResourceIds),
+    mutationFn: () => api!.createAutomation(draft!.draftId, defaultPluginIds, activitySourcePluginIds, {
+      scope,
+      delivery: {
+        ...(deliveryConnection
+          ? { connection: { id: deliveryConnection.id, targetType: deliveryConnection.userDelivery!.targetType } }
+          : {}),
+        ...(emailDelivery ? { email: true } : {}),
+      },
+    }),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -830,17 +882,18 @@ export function NewAutomationScreen(): React.JSX.Element {
                   <DraftSummary
                     connections={connections.data ?? []}
                     creating={create.isPending}
-                    defaultPluginIds={defaultPluginIds}
                     activitySourcePluginIds={activitySourcePluginIds}
-                    notes={compatibleNotes}
-                    selectedResourceIds={selectedResourceIds}
-                    slackDeliveryConnectionId={slackDeliveryConnectionId}
+                    emailDelivery={emailDelivery}
+                    ownerEmail={session?.user.email ?? ''}
+                    scope={scope}
+                    scopeChangeAllowed={scopeChangeAllowed}
+                    deliveryConnectionId={deliveryConnectionId}
                     draft={draft}
-                    onCreate={() => create.mutate()}
-                    onDefaultPluginsChange={setDefaultPluginIds}
                     onActivitySourcesChange={setActivitySourcePluginIds}
-                    onResourcesChange={setSelectedResourceIds}
-                    onSlackDeliveryChange={setSlackDeliveryConnectionId}
+                    onCreate={() => create.mutate()}
+                    onEmailDeliveryChange={setEmailDelivery}
+                    onScopeChange={setScopeOverride}
+                    onDeliveryConnectionChange={setDeliveryConnectionId}
                   />
                 )}
               </div>
