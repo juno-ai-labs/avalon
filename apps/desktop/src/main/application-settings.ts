@@ -6,6 +6,7 @@ const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 
 export interface StoredApplicationSettings {
   lockdownMode: boolean;
+  debugEnabled: boolean;
 }
 
 interface StoredApplicationSettingsFile extends StoredApplicationSettings {
@@ -14,17 +15,20 @@ interface StoredApplicationSettingsFile extends StoredApplicationSettings {
 
 export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   lockdownMode: false,
+  debugEnabled: false,
 };
 
 export function parseStoredApplicationSettings(value: unknown): StoredApplicationSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return defaultStoredApplicationSettings;
   }
-  const candidate = value as { version?: unknown; lockdownMode?: unknown };
+  const candidate = value as { version?: unknown; lockdownMode?: unknown; debugEnabled?: unknown };
   if (candidate.version !== 1 || typeof candidate.lockdownMode !== 'boolean') {
     return defaultStoredApplicationSettings;
   }
-  return { lockdownMode: candidate.lockdownMode };
+  // Preferences written before the Developer section carry no debug field. An
+  // unreadable value falls back to off rather than discarding Lockdown mode.
+  return { lockdownMode: candidate.lockdownMode, debugEnabled: candidate.debugEnabled === true };
 }
 
 export function applicationSettingsFilePath(userDataDirectory: string): string {
@@ -64,4 +68,37 @@ export async function writeStoredApplicationSettings(
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
+}
+
+// One shared queue for every patch, because the read-merge-write below is only
+// atomic against callers it is serialized with. The file's two owners —
+// Lockdown mode, under the session-mutation lock, and the Developer section,
+// under its own — serialize against themselves but not each other, so a Debug
+// toggle committed during a Lockdown transition could read the pre-transition
+// snapshot and then rename a document that drops `lockdownMode`. The next
+// launch reads that off preference against a Lockdown envelope as an external
+// downgrade and deletes the stored credentials. Serializing here rather than at
+// the call sites keeps a future preference owner from reintroducing it.
+let applicationSettingsWrites: Promise<unknown> = Promise.resolve();
+
+/** Rewrites one preference without disturbing the others. Lockdown mode and
+ * the Developer preference share a file but not an owner, so neither may write
+ * the whole document from its own state. */
+export async function updateStoredApplicationSettings(
+  userDataDirectory: string,
+  patch: Partial<StoredApplicationSettings>,
+): Promise<void> {
+  const merge = (): Promise<void> => mergeStoredApplicationSettings(userDataDirectory, patch);
+  // A failed patch must not poison the queue for the next one.
+  const applied = applicationSettingsWrites.then(merge, merge);
+  applicationSettingsWrites = applied.catch(() => undefined);
+  await applied;
+}
+
+async function mergeStoredApplicationSettings(
+  userDataDirectory: string,
+  patch: Partial<StoredApplicationSettings>,
+): Promise<void> {
+  const current = await readStoredApplicationSettings(userDataDirectory);
+  await writeStoredApplicationSettings(userDataDirectory, { ...current, ...patch });
 }
