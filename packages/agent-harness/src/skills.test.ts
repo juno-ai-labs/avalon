@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { runHarness, type HarnessPlugin, type HarnessSkill } from "./index";
+import {
+  BUILT_IN_SKILLS,
+  DEEP_RESEARCH_SKILL,
+  runHarness,
+  type HarnessPlugin,
+  type HarnessSkill,
+} from "./index";
 import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
 
 const triage: HarnessSkill = {
@@ -418,3 +424,38 @@ function runInput(fetcher: typeof fetch) {
     onEvent: () => {},
   };
 }
+
+describe("built-in skills", () => {
+  it("are well-formed enough for the catalog to route on", () => {
+    for (const skill of BUILT_IN_SKILLS) {
+      expect(skill.name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+      expect(skill.name.length).toBeLessThanOrEqual(64);
+      // Both Tier-1 lines carry routing weight and are the only thing the model
+      // sees before deciding to load, so neither may be a stub.
+      expect(skill.description.length).toBeGreaterThan(40);
+      expect(skill.description.length).toBeLessThanOrEqual(280);
+      expect(skill.whenToUse.length).toBeGreaterThan(20);
+      expect(skill.body.trim().length).toBeGreaterThan(200);
+    }
+    expect(new Set(BUILT_IN_SKILLS.map((skill) => skill.name)).size).toBe(BUILT_IN_SKILLS.length);
+  });
+
+  it("loads through the ordinary path with no special casing", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: DEEP_RESEARCH_SKILL.name }),
+      textResponse("Researched."),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(
+      runHarness({ ...runInput(fetcher), skills: [...BUILT_IN_SKILLS] }),
+    ).resolves.toMatchObject({ status: "completed" });
+
+    expect(systemPrompt(bodies[0]!)).toContain(DEEP_RESEARCH_SKILL.name);
+    expect(systemPrompt(bodies[1]!)).toContain("Corroborate, and date everything");
+  });
+});

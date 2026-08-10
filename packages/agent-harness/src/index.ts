@@ -21,6 +21,7 @@ import {
 } from "./prompts";
 
 export * from "./prompts";
+export { BUILT_IN_SKILLS, DEEP_RESEARCH_SKILL } from "./built-in-skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
