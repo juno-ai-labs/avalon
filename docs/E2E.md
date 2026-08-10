@@ -27,6 +27,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 6. Open **New automation**, verify that required capabilities must each be bound to a healthy connection, and browse workspace templates without exposing the regular work-stream composer.
 7. Send a human-only acknowledgment and confirm no agent run starts; then submit an actionable request and confirm streaming/tool events appear once despite reconnects.
 8. Mention a workspace member who is not participating and confirm that no participant is added until the person accepts the confirmation prompt.
+9. Force the work-stream detail request to fail — a route such as `#/workstreams/does-not-exist` is enough — and confirm **Work stream could not be opened** offers **Copy work-stream ID** from the top-right menu alongside **Try again**. The copied value is the identifier from the route, which is the only one available once the detail payload has failed.
 
 ## Desktop signup, invitations, and settings
 
