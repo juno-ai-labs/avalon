@@ -21,6 +21,15 @@ import {
 } from "./prompts";
 
 export * from "./prompts";
+export { BUILT_IN_SKILLS, DEEP_RESEARCH_SKILL } from "./built-in-skills";
+export {
+  AVALON_SKILLS_PLUGIN_ID,
+  AVALON_SKILLS_SYSTEM_MESSAGE,
+  AVALON_SKILL_TOOL_DEFINITIONS,
+  createSkillRuntime,
+  type SkillRuntime,
+} from "./skills";
+export { parseSkillMarkdown, type SkillSummary } from "@juno-ai/bind/skills";
 export {
   admitChildRun,
   descendChain,
@@ -1714,6 +1723,38 @@ export interface HarnessToolResult {
   halt?: "needs_input" | "completed";
   /** Bind control signal used only by Avalon's discovery plugin loader. */
   loadedPluginName?: string;
+  /** Bind control signal used only by `load_skill`. */
+  loadedSkillRef?: string;
+}
+
+/**
+ * One loadable instruction module, as the host hands it to the harness.
+ *
+ * Authored as markdown. `description` and `whenToUse` are the only parts the
+ * model sees before it loads the skill, so they carry the whole routing
+ * decision: what this is, and when it applies. `body` is paid for only on load.
+ *
+ * `SKILL.md` files parse straight into this shape with `parseSkillMarkdown`
+ * from `@juno-ai/bind/skills`.
+ */
+export interface HarnessSkill {
+  /** Lower-kebab identifier, unique within a run. What `load_skill` takes. */
+  name: string;
+  /** Tier-1 catalog line: what the skill does. */
+  description: string;
+  /** Tier-1 activation hint: when to reach for it. */
+  whenToUse: string;
+  /** The instructions injected once loaded. */
+  body: string;
+  /**
+   * The plugin whose tools this skill describes, if any. Two effects, both
+   * conservative: the skill is offered only to a run whose scope already
+   * includes that plugin, and loading it *names* the plugin rather than
+   * activating it — a document must not be able to grant a capability.
+   */
+  ownerPlugin?: string;
+  /** Bundled reference files, readable with `read_skill_resource` after loading. */
+  resources?: Array<{ path: string; body: string; contentType?: string }>;
 }
 
 /**
@@ -1970,7 +2011,18 @@ export interface RunHarnessInput {
     toolTimeoutMs: number;
     maxWebResults: number;
     maxCostCents?: number;
+    /**
+     * Budget for one catalog, applied **per catalog** rather than across them:
+     * the plugin directory and the skill directory each get this much, so a run
+     * with a large surface of both can carry up to twice it in catalog text.
+     */
     maxCatalogTokens?: number;
+    /** Cap on how many skills one run may hold loaded. Defaults to Bind's. */
+    maxActiveSkills?: number;
+    /** Cap on the bytes one `read_skill_resource` returns. Defaults to 64 KiB. */
+    maxSkillResourceBytes?: number;
+    /** Cap on the total tokens of loaded skill bodies. Defaults to Bind's. */
+    maxActiveSkillBodyTokens?: number;
     maxStreamResets?: number;
     completionDefectRetries?: number;
     /** Model reasoning effort passed consistently through Bind's routed turns. */
@@ -1995,6 +2047,27 @@ export interface RunHarnessInput {
   pluginDiscovery?: boolean;
   /** Connector activations already durably persisted by the host. */
   activationHints?: string[];
+  /**
+   * Loadable instructions for this run — procedures and reference knowledge the
+   * model may pull into its own prompt, the knowledge counterpart of `plugins`.
+   *
+   * Resolved by the host against the execution principal *before* admission and
+   * frozen with the run scope, exactly like the plugin surface: `load_skill`
+   * can only surface a body that is already in this array, so nothing here
+   * reaches a store mid-run and no skill can widen what the run may read.
+   */
+  skills?: HarnessSkill[];
+  /** Skill refs already durably recorded as loaded, for a resumed attempt. */
+  skillActivationHints?: string[];
+  /** Called when the model loads a skill, so a resumed attempt can restore it. */
+  persistSkillActivation?: (ref: string) => void | Promise<void>;
+  /**
+   * Observe a skill warning from Bind: a name collision that lost a skill
+   * (the registry is keyed by name, last write wins), a restored hint refused
+   * by a narrowed scope, a pinned body that drifted. Unwired, all three are
+   * computed and discarded.
+   */
+  onSkillWarning?: (message: string, fields: Record<string, unknown>) => void;
   includeWebSearch?: boolean;
   onEvent(event: HarnessEvent): void | Promise<void>;
   onBestEffortEventDropped?: (event: {
