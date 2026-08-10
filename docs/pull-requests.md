@@ -1,9 +1,10 @@
 # Creating a GitHub pull request
 
 This document defines the **required shape of every pull request description**
-in this repository. Read it before opening a PR. The diff shows *how* something
-changed; the description is the durable record of *what* changed and *why*, and
-it is the reviewer's map through the change.
+in this repository, and the rules for opening and landing the pull request
+itself. Read it before opening a PR. The diff shows *how* something changed; the
+description is the durable record of *what* changed and *why*, and it is the
+reviewer's map through the change.
 
 [`.github/pull_request_template.md`](../.github/pull_request_template.md)
 pre-fills a new PR with this shape. The template is the layout; this document is
@@ -94,6 +95,23 @@ they do not.
   window per
   [the development environment guide](dev-environment.md#driving-and-screenshotting-it).
   Call out pre-existing failures as pre-existing.
+
+## Never open a draft pull request
+
+Every pull request is opened **ready for review** — never as a draft. Do not
+pass `--draft` to `gh pr create`, do not set `draft: true` through the API, and
+do not use GitHub's "Create draft pull request" button. If a change is not ready
+for a reviewer to read, leave it on the branch and open the PR when it is.
+
+A draft suppresses review requests and reads as "not my turn" to everyone
+looking at the queue, so a PR that is in fact finished sits untouched until
+someone notices it was never marked ready. Opening ready keeps the queue honest:
+if a PR is open, it wants a review. Use the description — **Reviewer notes** for
+deferred work, **Validation** for a known-failing check — to say what is still
+in flight, rather than the draft state.
+
+If you inherit a draft PR, mark it ready (`gh pr ready <n>`) rather than leaving
+it in that state.
 
 ## Branch style and merge style
 
