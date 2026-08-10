@@ -39,7 +39,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { nextReleaseVersion } from './release-lib.mjs';
+import { nextReleaseVersion, parseReleaseTag } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryDirectory = resolve(desktopDirectory, '../..');
@@ -53,10 +53,17 @@ export function planRelease({
   changedPaths,
 }) {
   if (eventName === 'workflow_dispatch') {
-    if (!inputTag) throw new Error('A manual release dispatch must name an existing tag');
+    if (!inputTag) throw new Error('A manual release dispatch must name the tag to replay');
+    // Shape only. Whether the tag exists is settled by the checkout and by
+    // validate-release-tag.mjs against the working tree, deliberately not here:
+    // a dispatch is the break-glass path, and a planner that could wrongly
+    // decide a tag is missing would block a release during an incident. A
+    // malformed tag, by contrast, can never be valid, so rejecting it now keeps
+    // a typo from claiming a 90-minute macOS runner to fail its own guard.
+    const version = parseReleaseTag(inputTag);
     return {
       shouldRelease: true,
-      version: inputTag.replace(/^v/u, ''),
+      version,
       tag: inputTag,
       ref: inputTag,
       createTag: false,
