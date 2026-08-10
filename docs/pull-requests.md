@@ -9,6 +9,11 @@ it is the reviewer's map through the change.
 pre-fills a new PR with this shape. The template is the layout; this document is
 the specification behind it, and the two are updated together.
 
+[`.claude/skills/ship-pr/SKILL.md`](../.claude/skills/ship-pr/SKILL.md) walks an
+agent through this process end to end — writing the description against this
+spec, running a review swarm, waiting for CI, merging, and confirming the
+resulting deploy. Invoke it as `/ship-pr`.
+
 ## Required sections
 
 Every PR description **must** include these sections, in this order, as Markdown
