@@ -25,9 +25,10 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import { decryptString, randomToken, sha256 } from "../lib/crypto";
+import { randomToken, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
 import { WorkstreamService } from "./workstream-service";
 
@@ -37,6 +38,7 @@ interface SlackConnectionRow extends Record<string, unknown> {
   provider_account_id: string;
   encrypted_credentials: string;
   credential_iv: string;
+  credential_key_version?: number;
   granted_scopes_json: string;
   status: string;
 }
@@ -234,7 +236,7 @@ export class SlackAgentService {
     let afterId = "";
     while (true) {
       const page = await this.env.DB.prepare(
-        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+        `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
                 granted_scopes_json, status
          FROM connector_connections
          WHERE connector_type = 'slack' AND scope = 'workspace' AND status = 'healthy' AND id > ?
@@ -672,7 +674,7 @@ export class SlackAgentService {
     ).bind(workspaceId, userId).first<{ active: number }>();
     if (!membership) return 0;
     const rawConnections = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
        FROM connector_connections
        WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
@@ -1016,9 +1018,15 @@ export class SlackAgentService {
     }
     if (type === "app_home_opened") {
       const userId = String(event.user ?? "");
+      if (userId && event.context) await this.storeSlackAppContext(teamId, userId, event.context);
       if (event.tab !== "home") return;
       const viewHash = typeof asRecord(event.view).hash === "string" ? String(asRecord(event.view).hash) : undefined;
       if (userId) await this.publishHome(teamId, userId, viewHash);
+      return;
+    }
+    if (type === "app_context_changed") {
+      const userId = String(event.user ?? "");
+      if (userId) await this.storeSlackAppContext(teamId, userId, event.context);
       return;
     }
     if (type === "app_uninstalled") {
@@ -1055,9 +1063,14 @@ export class SlackAgentService {
       return;
     }
     if (type !== "message" && type !== "app_mention") return;
-    if (event.bot_id || event.subtype || !event.user || !event.channel || !event.ts) return;
+    if (event.bot_id
+      || (event.subtype && event.subtype !== "thread_broadcast")
+      || !event.user
+      || !event.channel
+      || !event.ts) return;
     const invocation = parseSlackAgentInvocation({ kind: "event", envelope });
     const slackUserId = String(event.user);
+    if (event.app_context) await this.storeSlackAppContext(teamId, slackUserId, event.app_context);
     const channelId = String(event.channel);
     const rootTs = typeof event.thread_ts === "string" ? event.thread_ts : String(event.ts);
     const connection = await this.connectionForTeam(teamId);
@@ -1237,8 +1250,9 @@ export class SlackAgentService {
       }
     }
     const slackOrigin = await this.slackOriginContext(
-      token,
+      connection.id,
       teamId,
+      slackUserId,
       source,
       matchedWorkspaceUserId,
     );
@@ -1765,12 +1779,19 @@ export class SlackAgentService {
   }
 
   private async slackOriginContext(
-    token: string,
+    connectionId: string,
     teamId: string,
+    slackUserId: string,
     source: SlackPromptSource,
     matchedAvalonUserId: string | null,
   ): Promise<SlackOriginContext> {
-    const nearby = await this.nearbySlackMessages(token, source);
+    // Slack Agent policy prohibits durable storage of provider content
+    // obtained for surrounding context. Persist only origin metadata; Slack
+    // content can be fetched by authorized tools for the active run.
+    const storedContext = await this.env.DB.prepare(
+      `SELECT context_json FROM slack_agent_contexts
+       WHERE connection_id = ? AND slack_user_id = ?`,
+    ).bind(connectionId, slackUserId).first<{ context_json: string }>();
     return SlackOriginContextSchema.parse({
       teamId,
       channelId: source.channelId,
@@ -1779,10 +1800,22 @@ export class SlackAgentService {
       invocationType: source.kind,
       channelType: source.channelType,
       matchedAvalonUserId,
-      nearbyMessagesStatus: nearby.status,
-      nearbyMessages: nearby.messages,
+      nearbyMessagesStatus: "not_applicable",
+      nearbyMessages: [],
       attachments: source.attachments,
+      appContext: storedContext ? parseStoredSlackAppContext(storedContext.context_json) : null,
     });
+  }
+
+  private async storeSlackAppContext(teamId: string, slackUserId: string, value: unknown): Promise<void> {
+    const context = slackAppContext(value);
+    const connection = await this.connectionForTeam(teamId);
+    await this.env.DB.prepare(
+      `INSERT INTO slack_agent_contexts (connection_id, slack_user_id, context_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(connection_id, slack_user_id)
+       DO UPDATE SET context_json = excluded.context_json, updated_at = excluded.updated_at`,
+    ).bind(connection.id, slackUserId, JSON.stringify(context), nowIso()).run();
   }
 
   private async nearbySlackMessages(
@@ -1964,7 +1997,7 @@ export class SlackAgentService {
 
   private async connectionForTeam(teamId: string): Promise<SlackConnectionRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
        FROM connector_connections
        WHERE connector_type = 'slack' AND scope = 'workspace' AND provider_account_id = ? AND status <> 'disabled'`,
@@ -1975,7 +2008,7 @@ export class SlackAgentService {
 
   private async connectionById(id: string): Promise<SlackConnectionRow> {
     const row = await this.env.DB.prepare(
-      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv,
+      `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
               granted_scopes_json, status
        FROM connector_connections WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace'`,
     ).bind(id).first<SlackConnectionRow>();
@@ -1999,7 +2032,7 @@ export class SlackAgentService {
 
   private async botUserId(connection: SlackConnectionRow): Promise<string | null> {
     const credentials = z.record(z.string(), z.unknown()).parse(JSON.parse(
-      await decryptString(connection.encrypted_credentials, connection.credential_iv, this.env.CONNECTOR_CREDENTIALS_KEY, connection.id),
+      await decryptVersionedConnectorCredentials(this.env, connection),
     ));
     return typeof credentials.botUserId === "string" ? credentials.botUserId : null;
   }
@@ -2030,7 +2063,12 @@ export class SlackAgentService {
     if (typeof row.encrypted_credentials !== "string" || typeof row.credential_iv !== "string") throw new ApiError(401, "slack_token_missing", "Slack authorization needs reconnect");
     const additionalData = typeof row.connection_id === "string" ? row.connection_id : String(row.id);
     return z.record(z.string(), z.unknown()).parse(JSON.parse(
-      await decryptString(row.encrypted_credentials, row.credential_iv, this.env.CONNECTOR_CREDENTIALS_KEY, additionalData),
+      await decryptVersionedConnectorCredentials(this.env, {
+        id: additionalData,
+        encrypted_credentials: row.encrypted_credentials,
+        credential_iv: row.credential_iv,
+        credential_key_version: Number(row.credential_key_version || 1),
+      }),
     ));
   }
 
@@ -2352,13 +2390,17 @@ function validSlackHuman(
     deleted?: boolean | undefined;
     is_bot?: boolean | undefined;
     is_app_user?: boolean | undefined;
+    is_restricted?: boolean | undefined;
+    is_ultra_restricted?: boolean | undefined;
   },
   expectedTeamId: string,
 ): boolean {
   return user.team_id === expectedTeamId
     && user.deleted !== true
     && user.is_bot !== true
-    && user.is_app_user !== true;
+    && user.is_app_user !== true
+    && user.is_restricted !== true
+    && user.is_ultra_restricted !== true;
 }
 
 function slackElicitationRequest(
@@ -2496,7 +2538,7 @@ function responseActionBlocks(workstreamId: string, webBase: string, linked: boo
   return [{ type: "actions", elements: [
     { type: "button", text: { type: "plain_text", text: "Open task" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_task" },
     ...(linked ? [{ type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "avalon_feedback", value: workstreamId }] : []),
-  ] }];
+  ] }, aiResponseDisclaimerBlock()];
 }
 
 function workspaceClaimBlocks(sessionId: string, includeConnectHint: boolean): Record<string, unknown>[] {
@@ -2518,7 +2560,17 @@ function workspaceClaimBlocks(sessionId: string, includeConnectHint: boolean): R
 }
 
 function automationActionBlocks(title: string, workstreamId: string, webBase: string): Record<string, unknown>[] {
-  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_automation_result" }] }];
+  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_automation_result" }] }, aiResponseDisclaimerBlock()];
+}
+
+function aiResponseDisclaimerBlock(): Record<string, unknown> {
+  return {
+    type: "context",
+    elements: [{
+      type: "mrkdwn",
+      text: "Generated by AI. Review important facts, decisions, and external actions.",
+    }],
+  };
 }
 
 function desktopHandoffUrl(webBase: string, target: string): string {
@@ -2559,6 +2611,34 @@ function nestedString(value: Record<string, unknown>, key: string, nested: strin
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function slackAppContext(value: unknown): { entities: Array<{ type: string; value: string; teamId: string | null }> } {
+  const context = asRecord(value);
+  const entities = Array.isArray(context.entities) ? context.entities : [];
+  return {
+    entities: entities.flatMap((candidate) => {
+      const entity = asRecord(candidate);
+      const type = typeof entity.type === "string" ? entity.type.trim().slice(0, 255) : "";
+      const entityValue = typeof entity.value === "string" ? entity.value.trim().slice(0, 1_000) : "";
+      if (!type || !entityValue) return [];
+      return [{
+        type,
+        value: entityValue,
+        teamId: typeof (entity.team_id ?? entity.teamId) === "string" && String(entity.team_id ?? entity.teamId).trim()
+          ? String(entity.team_id ?? entity.teamId).trim().slice(0, 255)
+          : null,
+      }];
+    }).slice(0, 32),
+  };
+}
+
+function parseStoredSlackAppContext(value: string) {
+  try {
+    return slackAppContext(JSON.parse(value) as unknown);
+  } catch {
+    return { entities: [] };
+  }
 }
 
 function slackOriginNearbyMessage(value: unknown): SlackOriginNearbyMessage {
@@ -2696,6 +2776,7 @@ export const __slackAgentTesting = {
   modalPromptSource,
   recoverSlackDeniedPrompt,
   resolveSlackChannelType,
+  slackAppContext,
   slackOriginAttachments,
   slackOriginNearbyMessage,
   slackEventSearchAuthorization,

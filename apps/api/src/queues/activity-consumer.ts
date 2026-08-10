@@ -42,6 +42,7 @@ interface ActivityRow {
   summary: string;
   text_snippet: string;
   visibility_json: string;
+  target_user_ids_json: string;
   entity_keys_json: string;
   metadata_json: string;
   processing_status: "pending" | "processing" | "processed" | "failed";
@@ -52,6 +53,7 @@ interface SubscriptionRow {
   scope: "personal" | "workspace";
   owner_user_id: string | null;
   execution_principal_json: string;
+  connector_bindings_json: string;
   trigger_definitions_json: string;
   template_name: string;
   template_description: string;
@@ -139,10 +141,11 @@ function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boo
   if (activity.connection_scope === "personal") {
     return activity.connection_owner_user_id === ownerUserId;
   }
+  const explicitTargets = parseStrings(activity.target_user_ids_json);
   const visibility = parseRecord(activity.visibility_json);
-  const restricted = z.array(z.string()).safeParse(
-    visibility.targetUserIds ?? visibility.allowedUserIds
-  );
+  const restricted = z.array(z.string()).safeParse(explicitTargets.length > 0
+    ? explicitTargets
+    : visibility.targetUserIds ?? visibility.allowedUserIds);
   return !restricted.success || restricted.data.length === 0 || restricted.data.includes(ownerUserId);
 }
 
@@ -152,6 +155,34 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
 }
 
 export const activityQueueConsumer = consumeActivityQueue;
+
+/** Repairs the commit-before-queue-send window for every connector ingress. */
+export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
+  const staleBefore = new Date(Date.now() - 60_000).toISOString();
+  const pending = await env.DB.prepare(
+    `SELECT a.id, a.workspace_id, w.region
+     FROM activities a
+     JOIN workspaces w ON w.id = a.workspace_id
+     WHERE a.processing_status = 'pending' AND a.received_at <= ?
+       AND w.region = ?
+     ORDER BY a.received_at ASC, a.id ASC
+     LIMIT ?`,
+  ).bind(staleBefore, env.AVALON_REGION, Math.max(1, Math.min(limit, 100))).all<{
+    id: string;
+    workspace_id: string;
+    region: "global" | "eu";
+  }>();
+  if (pending.results.length === 0) return 0;
+  await env.ACTIVITY_QUEUE.sendBatch(pending.results.map((activity) => ({
+    body: ActivityQueueMessageSchema.parse({
+      region: activity.region,
+      workspaceId: activity.workspace_id,
+      activityId: activity.id,
+      attempt: 0,
+    }),
+  })));
+  return pending.results.length;
+}
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
@@ -416,6 +447,7 @@ async function injectActivityMessage(
 async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<Set<string>> {
   const subscriptions = await env.DB.prepare(
     `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
+            s.connector_bindings_json,
             tv.trigger_definitions_json, t.name AS template_name,
             t.description AS template_description
        FROM automation_subscriptions s
@@ -445,10 +477,11 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
     }
     const parsedTriggers = z.array(TriggerDefinitionSchema).safeParse(triggerDefinitions);
     if (!parsedTriggers.success) continue;
+    const connectorBindings = parseRecord(subscription.connector_bindings_json);
 
     let matched = false;
     for (const trigger of parsedTriggers.data) {
-      if (await triggerMatches(env, activity, trigger, resourceIds)) {
+      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings)) {
         matched = true;
         break;
       }
@@ -484,8 +517,15 @@ async function triggerMatches(
   env: Env,
   activity: ActivityRow,
   trigger: TriggerDefinition,
-  resourceIds: Set<string>
+  resourceIds: Set<string>,
+  connectorBindings: Record<string, unknown>
 ): Promise<boolean> {
+  if (
+    (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") &&
+    !Object.values(connectorBindings).includes(activity.connection_id)
+  ) {
+    return false;
+  }
   if (trigger.type === "connector_activity") {
     return (
       (trigger.connectorType === activity.connector_type || trigger.connectorType === activity.provider) &&

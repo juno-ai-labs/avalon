@@ -52,6 +52,8 @@ import {
 import { createDatabase, newId, nowIso } from "@avalon/db";
 import {
   ConnectorError,
+  pollCheckpointedActivityStreams,
+  type ConnectorActivityStreamError,
   type ConnectorConnectionContext,
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
@@ -59,7 +61,7 @@ import {
 import { z } from "zod";
 import type { Env } from "../env";
 import { HYPERSIGHT_MODEL, numericEnv } from "../env";
-import { decryptString, encryptString, sha256 } from "../lib/crypto";
+import { encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
@@ -71,6 +73,7 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
@@ -1027,8 +1030,6 @@ async function executeAutomationCreatorConnectorTool(
   await ensureFreshConnectorCredentials(env, connection, adapter, signal);
   return withConnectorCredentialLifecycle(env, connection, async () => {
     await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
-    const health = await raceWithSignal(adapter.healthCheck(connection), signal);
-    if (!health.ok) throw new ConnectorError("unauthorized", "Connector authorization is not healthy");
     const effectivePrincipal = connection.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : { type: "user" as const, userId: input.userId };
@@ -1050,12 +1051,12 @@ async function loadAutomationCreatorConnectionContext(
   const row = await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
-    credentials = JSON.parse(await decryptString(
-      row.encrypted_credentials,
-      row.credential_iv,
-      env.CONNECTOR_CREDENTIALS_KEY,
-      frozen.connectionId,
-    )) as Record<string, unknown>;
+    credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
+      id: frozen.connectionId,
+      encrypted_credentials: row.encrypted_credentials,
+      credential_iv: row.credential_iv,
+      credential_key_version: Number(row.credential_key_version || 1),
+    })) as Record<string, unknown>;
   }
   if (signal.aborted) throw signal.reason;
   return {
@@ -3617,9 +3618,7 @@ async function executeAuthorizedConnectorTool(
     // Membership, ownership, grants, and stored health are checked again after
     // credentials are available and immediately before external execution.
     await assertFrozenConnectionAuthorized(env, input, frozen, capability);
-    const health = await raceWithSignal(adapter.healthCheck(connection), signal);
     await ownershipGuard?.();
-    if (!health.ok) throw new ConnectorError("unauthorized", "Connector authorization is not healthy");
     const effectivePrincipal = connection.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : input.executionPrincipal;
@@ -3657,12 +3656,12 @@ async function loadAuthorizedConnectionContext(
   const row = await assertFrozenConnectionAuthorized(env, input, frozen, capability);
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
-    credentials = JSON.parse(await decryptString(
-      row.encrypted_credentials,
-      row.credential_iv,
-      env.CONNECTOR_CREDENTIALS_KEY,
-      frozen.connectionId,
-    )) as Record<string, unknown>;
+    credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
+      id: frozen.connectionId,
+      encrypted_credentials: row.encrypted_credentials,
+      credential_iv: row.credential_iv,
+      credential_key_version: Number(row.credential_key_version || 1),
+    })) as Record<string, unknown>;
   }
   await ownershipGuard?.();
   if (signal.aborted) throw signal.reason;
@@ -4714,6 +4713,7 @@ export async function pollConnectorConnection(
   cursor: unknown;
   baseCursorJson: string;
   nextPollAt?: string | null;
+  streamErrors?: ConnectorActivityStreamError[];
 }> {
   const row = await env.DB.prepare(
     `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
@@ -4721,14 +4721,12 @@ export async function pollConnectorConnection(
   if (!row) throw new Error("Connector connection is unavailable");
   let credentials: Record<string, unknown> = {};
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
-    credentials = JSON.parse(
-      await decryptString(
-        row.encrypted_credentials,
-        row.credential_iv,
-        env.CONNECTOR_CREDENTIALS_KEY,
-        String(row.id),
-      ),
-    ) as Record<string, unknown>;
+    credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
+      id: String(row.id),
+      encrypted_credentials: row.encrypted_credentials,
+      credential_iv: row.credential_iv,
+      credential_key_version: Number(row.credential_key_version || 1),
+    })) as Record<string, unknown>;
   }
   const context: ConnectorConnectionContext = {
     id: String(row.id),
@@ -4743,14 +4741,16 @@ export async function pollConnectorConnection(
   const registry = connectorRegistryForEnv(env);
   const adapter = registry.get(String(row.connector_type));
   const baseCursorJson = typeof row.cursor_json === "string" ? row.cursor_json : "{}";
-  if (!adapter.poll) {
+  if (!adapter.poll && !adapter.pollingActivity) {
     return { activityIds: [], cursor: context.cursor, baseCursorJson, nextPollAt: null };
   }
   const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
   const signal = AbortSignal.timeout(pollTimeoutMs);
   await ensureFreshConnectorCredentials(env, context, adapter, signal);
   const result = await withConnectorCredentialLifecycle(env, context, async () => {
-    return adapter.poll!(context, signal);
+    return adapter.pollingActivity
+      ? pollCheckpointedActivityStreams(adapter.pollingActivity, context, signal)
+      : adapter.poll!(context, signal);
   });
   const activityIds = new Set<string>();
   for (const activity of result.activities) {
@@ -4763,7 +4763,57 @@ export async function pollConnectorConnection(
     cursor: result.cursor,
     baseCursorJson,
     nextPollAt: result.nextPollAt ?? null,
+    ...(result.streamErrors?.length ? { streamErrors: result.streamErrors } : {}),
   };
+}
+
+export async function hydrateConnectorActivitySource(
+  env: Env,
+  input: {
+    workspaceId: string;
+    connectionId: string;
+    providerResourceId: string;
+    resourceType: string;
+  },
+): Promise<unknown | null> {
+  const row = await env.DB.prepare(
+    `SELECT * FROM connector_connections
+     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+  ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>();
+  if (!row) return null;
+  let credentials: Record<string, unknown> = {};
+  if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
+    credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
+      id: String(row.id),
+      encrypted_credentials: row.encrypted_credentials,
+      credential_iv: row.credential_iv,
+      credential_key_version: Number(row.credential_key_version || 1),
+    })) as Record<string, unknown>;
+  }
+  const connection: ConnectorConnectionContext = {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    scope: row.scope === "workspace" ? "workspace" : "personal",
+    ownerUserId: row.owner_user_id == null ? null : String(row.owner_user_id),
+    grantedScopes: parseJson(row.granted_scopes_json, []),
+    credentials,
+    cursor: parseJson(row.cursor_json, {}),
+    config: { ...parseJson<Record<string, unknown>>(row.config_json, {}), region: env.AVALON_REGION },
+  };
+  const adapter = connectorRegistryForEnv(env).get(String(row.connector_type));
+  if (!adapter.hydrateResource) return null;
+  const signal = AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000));
+  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
+  return withConnectorCredentialLifecycle(env, connection, () => adapter.hydrateResource!(
+    connection,
+    {
+      providerResourceId: input.providerResourceId,
+      provider_resource_id: input.providerResourceId,
+      resourceType: input.resourceType,
+      resource_type: input.resourceType,
+    },
+    signal,
+  ));
 }
 
 async function withConnectorCredentialLifecycle<T>(
@@ -4874,9 +4924,10 @@ async function persistPolledActivity(
      (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
       provider, provider_event_id, event_type, resource_type, provider_resource_id,
       actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-      payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash, external_people_json,
+      payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+      target_user_ids_json, external_people_json,
       processing_status, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
      ON CONFLICT DO NOTHING RETURNING id, processing_status`,
   ).bind(
     id,
@@ -4901,6 +4952,7 @@ async function persistPolledActivity(
     JSON.stringify(activity.entityKeys),
     activity.dedupeKey,
     activity.rawContentHash,
+    JSON.stringify(activity.targetUserIds),
     JSON.stringify(activity.externalPeople ?? []),
     JSON.stringify(activity.metadata),
   ).first<{ id: string; processing_status: string }>();
@@ -4935,21 +4987,24 @@ export type ConnectorCursorCommit = "committed" | "already_committed" | "superse
 export async function commitConnectorCursor(
   database: D1Database,
   input: Pick<ConnectorPollWorkflowInput, "workspaceId" | "connectionId">,
-  result: { cursorJson: string; baseCursorJson: string },
+  result: { cursorJson: string; baseCursorJson: string; streamErrors?: ConnectorActivityStreamError[] },
   now: string,
 ): Promise<ConnectorCursorCommit> {
+  const errorJson = result.streamErrors?.length
+    ? JSON.stringify({ code: "connector_activity_streams_degraded", streams: result.streamErrors })
+    : null;
   const updated = await database.prepare(
     `UPDATE connector_connections
         SET cursor_json = ?1,
             last_sync_at = ?2,
-            error_json = NULL,
+            error_json = ?6,
             updated_at = ?2
       WHERE id = ?3
         AND workspace_id = ?4
         AND status = 'healthy'
         AND cursor_json = ?5`,
   )
-    .bind(result.cursorJson, now, input.connectionId, input.workspaceId, result.baseCursorJson)
+    .bind(result.cursorJson, now, input.connectionId, input.workspaceId, result.baseCursorJson, errorJson)
     .run();
   if ((updated.meta.changes ?? 0) === 1) return "committed";
 

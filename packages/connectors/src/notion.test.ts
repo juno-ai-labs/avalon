@@ -144,7 +144,7 @@ describe("Notion connector", () => {
         rich_text: [{ type: "text", plain_text: "x".repeat(90_000) }],
       });
     };
-    const hydrated = await notionAdapter(fetcher).hydrateResource!(notionConnection([]), {
+    const hydrated = await notionAdapter(fetcher).hydrateResource!(notionConnection([NotionCapabilities.commentRead]), {
       resource_type: "notion_comment",
       provider_resource_id: "comment-1",
     }, AbortSignal.timeout(1_000));

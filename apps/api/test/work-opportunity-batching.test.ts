@@ -458,6 +458,48 @@ describe("suggested-work aggregation", () => {
     )).rejects.toMatchObject({ code: "stale_work_opportunity", status: 409 });
   });
 
+  it("debounces impression-driven ranking invalidation for one hour", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-10T12:00:00.000Z"));
+    const database = migratedDatabase();
+    seed(database);
+    const opportunityId = "00000000-0000-7000-8000-000000000204";
+    insertOpportunity(database, opportunityId);
+    database.prepare(`
+      INSERT INTO suggested_work_sets
+       (workspace_id, user_id, workspace_version, candidate_fingerprint,
+        opportunity_ids_json, ranking_reasoning, status, created_at, updated_at)
+      VALUES (?, ?, 1, 'fingerprint', ?, 'Initial ranking', 'ready', ?, ?)
+    `).run(
+      workspaceId,
+      userOne,
+      JSON.stringify([opportunityId]),
+      "2026-08-10T12:00:00.000Z",
+      "2026-08-10T12:00:00.000Z",
+    );
+    const service = new WorkOpportunityService(environment(database), {
+      sessionId: "session",
+      userId: userOne,
+      workspaceId,
+      region: "global",
+      role: "owner",
+    });
+
+    await service.recordImpressions([opportunityId]);
+    expect(database.prepare(
+      "SELECT status FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
+    ).get(workspaceId, userOne)).toEqual({ status: "ready" });
+
+    vi.setSystemTime(new Date("2026-08-10T13:00:01.000Z"));
+    await service.recordImpressions([opportunityId]);
+    expect(database.prepare(
+      "SELECT status FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
+    ).get(workspaceId, userOne)).toEqual({ status: "stale" });
+    expect(database.prepare(
+      "SELECT impression_count FROM work_opportunity_user_states WHERE opportunity_id = ? AND user_id = ?",
+    ).get(opportunityId, userOne)).toEqual({ impression_count: 2 });
+  });
+
   it("rolls a partially created work stream forward instead of making the opportunity claimable again", async () => {
     const database = migratedDatabase();
     seed(database);

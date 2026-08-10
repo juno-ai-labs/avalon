@@ -6,6 +6,7 @@ import {
 } from "@avalon/contracts";
 import {
   canGitHubPersonalConnectionAccessRepository,
+  canPersonalLinearConnectionAccessWebhook,
   ConnectorError,
   discoverGitHubWebhookResources,
   LinearNativeAgentProtocolDescriptor,
@@ -17,6 +18,8 @@ import {
   verifyLinearWebhook,
   verifyNotionWebhook,
   type ConnectorConnectionContext,
+  type ConnectorVerifiedActivityWebhook,
+  type ConnectorWebhookActivitySource,
   type GitHubConnectorConfig,
   type GitHubWebhookDelivery,
   type GitHubWebhookResourceHint,
@@ -26,7 +29,9 @@ import {
 import { newId, nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
-import { decryptString, encryptString, timingSafeEqualText } from "../lib/crypto";
+import { encryptString, timingSafeEqualText } from "../lib/crypto";
+import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector-registry";
+import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
 
 export type ProviderWebhookRawBody = string | Uint8Array | ArrayBuffer;
 export type ProviderWebhookHeaders = Headers | HeadersInit;
@@ -53,6 +58,7 @@ interface StoredProviderConnection extends Record<string, unknown> {
   provider_account_id: string | null;
   encrypted_credentials: string | null;
   credential_iv: string | null;
+  credential_key_version: number;
   granted_scopes_json: string;
   status: "healthy" | "needs_reconnect" | "error" | "disabled";
   cursor_json: string;
@@ -121,21 +127,37 @@ export class ProviderWebhookService {
     headers: ProviderWebhookHeaders,
   ): Promise<ProviderWebhookIngestionResult> {
     return this.stableProviderError("GitHub", async () => {
-      const raw = this.exactRawBody(rawBody);
+      const githubMaxBytes = 25 * 1024 * 1024;
+      const raw = this.exactRawBody(rawBody, githubMaxBytes);
       const normalizedHeaders = new Headers(headers);
-      const secret = requiredConfiguration(
-        this.env.GITHUB_WEBHOOK_SECRET,
-        "GitHub webhook signing secret",
-      );
-      const delivery = await verifyGitHubWebhook({
-        secret,
-        rawBody: raw.text,
-        signatureHeader: normalizedHeaders.get("x-hub-signature-256"),
-        eventHeader: normalizedHeaders.get("x-github-event"),
-        deliveryHeader: normalizedHeaders.get("x-github-delivery"),
-        receivedAt: new Date(this.now()).toISOString(),
-        maxBytes: this.maxBytes(),
-      });
+      const source = this.webhookActivity("github");
+      const envelope = source
+        ? await source.verify({
+            rawBody: raw.text,
+            headers: normalizedHeaders,
+            receivedAt: new Date(this.now()).toISOString(),
+            maxBytes: githubMaxBytes,
+            now: this.now(),
+          })
+        : null;
+      const delivery = envelope
+        ? envelope.event as GitHubWebhookDelivery
+        : await verifyGitHubWebhook({
+            secret: requiredConfiguration(this.env.GITHUB_WEBHOOK_SECRET, "GitHub webhook signing secret"),
+            rawBody: raw.text,
+            signatureHeader: normalizedHeaders.get("x-hub-signature-256"),
+            eventHeader: normalizedHeaders.get("x-github-event"),
+            deliveryHeader: normalizedHeaders.get("x-github-delivery"),
+            receivedAt: new Date(this.now()).toISOString(),
+            maxBytes: githubMaxBytes,
+          });
+      const verifiedEnvelope: ConnectorVerifiedActivityWebhook = envelope ?? {
+        deliveryId: delivery.deliveryId,
+        eventType: delivery.event,
+        providerAccountId: delivery.installationId,
+        bodyHash: delivery.rawContentHash,
+        event: delivery,
+      };
       const lifecycle = githubLifecycle(delivery);
       const resourceDiscovery = discoverGitHubWebhookResources(delivery);
       const routingUserId = delivery.event === "github_app_authorization"
@@ -150,8 +172,9 @@ export class ProviderWebhookService {
         bodyHash: delivery.rawContentHash,
         raw,
         includeRecoverableConnections: lifecycle !== null,
-        normalize: (connection, payloadRef) =>
-          normalizeGitHubWebhook(connection, delivery, payloadRef),
+        normalize: (connection, payloadRef) => source
+          ? source.normalize(connection, verifiedEnvelope, payloadRef)
+          : normalizeGitHubWebhook(connection, delivery, payloadRef),
         resources: () => resourceDiscovery.resources,
         filterConnections: (connections) =>
           this.filterGitHubPersonalConnections(connections, delivery),
@@ -174,28 +197,38 @@ export class ProviderWebhookService {
     return this.stableProviderError("Linear", async () => {
       const raw = this.exactRawBody(rawBody);
       const normalizedHeaders = new Headers(headers);
-      const verified = await verifyLinearWebhook({
-        secret: requiredConfiguration(
-          this.env.LINEAR_WEBHOOK_SECRET,
-          "Linear webhook signing secret",
-        ),
-        rawBody: raw.text,
-        signatureHeader: normalizedHeaders.get("linear-signature"),
-        deliveryHeader: firstHeader(normalizedHeaders, [
-          "linear-delivery",
-          "linear-delivery-id",
-          "x-linear-delivery",
-        ]),
-        eventHeader: firstHeader(normalizedHeaders, ["linear-event", "x-linear-event"]),
-        timestampHeader: firstHeader(normalizedHeaders, [
-          "linear-timestamp",
-          "x-linear-timestamp",
-        ]),
-        now: this.now(),
-        replayWindowMs:
-          numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 300) * 1_000,
-        maxBytes: this.maxBytes(),
-      });
+      const source = this.webhookActivity("linear");
+      const envelope = source
+        ? await source.verify({
+            rawBody: raw.text,
+            headers: normalizedHeaders,
+            receivedAt: new Date(this.now()).toISOString(),
+            maxBytes: this.maxBytes(),
+            now: this.now(),
+            verificationSecret: requiredConfiguration(this.env.LINEAR_WEBHOOK_SECRET, "Linear webhook signing secret"),
+            replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 60) * 1_000,
+          })
+        : null;
+      const verified = envelope
+        ? envelope.event as VerifiedLinearWebhook
+        : await verifyLinearWebhook({
+            secret: requiredConfiguration(this.env.LINEAR_WEBHOOK_SECRET, "Linear webhook signing secret"),
+            rawBody: raw.text,
+            signatureHeader: normalizedHeaders.get("linear-signature"),
+            deliveryHeader: firstHeader(normalizedHeaders, ["linear-delivery", "linear-delivery-id", "x-linear-delivery"]),
+            eventHeader: firstHeader(normalizedHeaders, ["linear-event", "x-linear-event"]),
+            timestampHeader: firstHeader(normalizedHeaders, ["linear-timestamp", "x-linear-timestamp"]),
+            now: this.now(),
+            replayWindowMs: numericEnv(this.env, "WEBHOOK_REPLAY_WINDOW_SECONDS", 60) * 1_000,
+            maxBytes: this.maxBytes(),
+          });
+      const verifiedEnvelope: ConnectorVerifiedActivityWebhook = envelope ?? {
+        deliveryId: verified.deliveryId,
+        eventType: verified.eventName,
+        providerAccountId: verified.organizationId,
+        bodyHash: verified.bodyHash,
+        event: verified,
+      };
       if (
         verified.eventName === "AgentSessionEvent"
         && (
@@ -210,6 +243,9 @@ export class ProviderWebhookService {
         return { accepted: true, duplicate: false, activityCount: 0 };
       }
       const lifecycle = linearLifecycle(verified);
+      const linearAuthorizationUserId = verified.eventName === "OAuthAuthorization"
+        ? linearOAuthAuthorizationUserId(verified)
+        : null;
       const linearAgentAppUserId = verified.eventName === "AgentSessionEvent"
         ? stringValue(verified.event, "appUserId")
         : null;
@@ -218,18 +254,20 @@ export class ProviderWebhookService {
         deliveryId: verified.deliveryId,
         eventType: verified.eventName,
         accountId: verified.organizationId,
+        ...(linearAuthorizationUserId ? { routingUserId: linearAuthorizationUserId } : {}),
         includeRecoverableConnections: lifecycle !== null,
         bodyHash: verified.bodyHash,
         raw,
-        normalize: (connection, payloadRef) =>
-          normalizeLinearWebhook(connection, verified, payloadRef),
-        ...(linearAgentAppUserId
-          ? {
-              filterConnections: async (connections: ConnectorConnectionContext[]) =>
-                connections.filter((connection) =>
-                  linearAgentConnectionMatches(connection, linearAgentAppUserId)),
-            }
-          : {}),
+        normalize: (connection, payloadRef) => source
+          ? source.normalize(connection, verifiedEnvelope, payloadRef)
+          : normalizeLinearWebhook(connection, verified, payloadRef),
+        filterConnections: async (connections: ConnectorConnectionContext[]) => {
+          const agentMatched = linearAgentAppUserId
+            ? connections.filter((connection) =>
+                linearAgentConnectionMatches(connection, linearAgentAppUserId))
+            : connections;
+          return this.filterLinearPersonalConnections(agentMatched, verified);
+        },
         ...(lifecycle
           ? {
               lifecycle: (connection: ConnectorConnectionContext) => ({
@@ -259,12 +297,13 @@ export class ProviderWebhookService {
       }
 
       const challenge = await this.env.DB.prepare(
-        `SELECT encrypted_token, token_iv
+        `SELECT encrypted_token, token_iv, credential_key_version
          FROM provider_webhook_challenges
          WHERE provider = 'notion' AND region = ?`,
       ).bind(this.env.AVALON_REGION).first<{
         encrypted_token: string;
         token_iv: string;
+        credential_key_version: number;
       }>();
       if (!challenge) {
         throw new ConnectorError(
@@ -272,22 +311,32 @@ export class ProviderWebhookService {
           "Notion webhook verification has not been completed for this region",
         );
       }
-      const secret = await decryptString(
-        challenge.encrypted_token,
-        challenge.token_iv,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        this.notionChallengeAad(),
+      const secret = await this.decryptNotionChallenge(challenge);
+      const expectedIntegrationId = requiredConfiguration(
+        this.env.NOTION_INTEGRATION_ID ?? this.env.NOTION_OAUTH_CLIENT_ID,
+        "Notion integration/client ID",
       );
-      const verified = await verifyNotionWebhook({
-        secret,
-        rawBody: raw.text,
-        signatureHeader: normalizedHeaders.get("x-notion-signature"),
-        expectedIntegrationId: requiredConfiguration(
-          this.env.NOTION_INTEGRATION_ID ?? this.env.NOTION_OAUTH_CLIENT_ID,
-          "Notion integration/client ID",
-        ),
-        maxBytes: this.maxBytes(),
-      });
+      const source = this.webhookActivity("notion");
+      const envelope = source
+        ? await source.verify({
+            rawBody: raw.text,
+            headers: normalizedHeaders,
+            receivedAt: new Date(this.now()).toISOString(),
+            maxBytes: this.maxBytes(),
+            now: this.now(),
+            verificationSecret: secret,
+            expectedProviderAccountId: expectedIntegrationId,
+          })
+        : null;
+      const verified = envelope
+        ? envelope.event as VerifiedNotionWebhook
+        : await verifyNotionWebhook({
+            secret,
+            rawBody: raw.text,
+            signatureHeader: normalizedHeaders.get("x-notion-signature"),
+            expectedIntegrationId,
+            maxBytes: this.maxBytes(),
+          });
       const result = await this.ingestVerified({
         provider: "notion",
         deliveryId: verified.eventId,
@@ -296,8 +345,18 @@ export class ProviderWebhookService {
         routingAccountIds: verified.accessibleBotIds,
         bodyHash: verified.bodyHash,
         raw,
-        normalize: (connection, payloadRef) =>
-          normalizeNotionWebhook(connection, verified, payloadRef),
+        normalize: (connection, payloadRef) => {
+          return source
+            ? source.normalize(connection, envelope ?? {
+                deliveryId: verified.eventId,
+                eventType: verified.eventType,
+                providerAccountId: verified.workspaceId,
+                routingAccountIds: verified.accessibleBotIds,
+                bodyHash: verified.bodyHash,
+                event: verified,
+              }, payloadRef)
+            : normalizeNotionWebhook(connection, verified, payloadRef);
+        },
         filterConnections: async (connections) =>
           connections.filter((connection) => notionConnectionMatches(connection, verified)),
       });
@@ -329,27 +388,40 @@ export class ProviderWebhookService {
     }
 
     const existing = await this.env.DB.prepare(
-      `SELECT encrypted_token, token_iv
+      `SELECT encrypted_token, token_iv, credential_key_version
        FROM provider_webhook_challenges
        WHERE provider = 'notion' AND region = ?`,
     ).bind(this.env.AVALON_REGION).first<{
       encrypted_token: string;
       token_iv: string;
+      credential_key_version: number;
     }>();
     if (existing) {
-      const existingToken = await decryptString(
-        existing.encrypted_token,
-        existing.token_iv,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        this.notionChallengeAad(),
-      );
+      const existingToken = await this.decryptNotionChallenge(existing);
       if (timingSafeEqualText(existingToken, verificationToken)) {
         return { accepted: true, duplicate: true, activityCount: 0 };
       }
-      throw new ConnectorError(
-        "unauthorized",
-        "Notion webhook verification is already configured and cannot be replaced through the setup endpoint",
+      // Notion explicitly requires replacing the stored token when a webhook
+      // subscription is rotated or recreated. The operator-only setup token
+      // above is the authority for this regional secret replacement.
+      const replacement = await encryptString(
+        verificationToken,
+        this.env.CONNECTOR_CREDENTIALS_KEY,
+        this.notionChallengeAad(),
       );
+      await this.env.DB.prepare(
+        `UPDATE provider_webhook_challenges
+         SET encrypted_token = ?, token_iv = ?, credential_key_version = ?,
+             created_at = ?, consumed_at = NULL
+         WHERE provider = 'notion' AND region = ?`,
+      ).bind(
+        replacement.ciphertext,
+        replacement.iv,
+        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+        nowIso(),
+        this.env.AVALON_REGION,
+      ).run();
+      return { accepted: true, duplicate: false, activityCount: 0 };
     }
 
     const encrypted = await encryptString(
@@ -372,12 +444,13 @@ export class ProviderWebhookService {
     ).run();
     if (resultChanges(inserted) === 0) {
       const winner = await this.env.DB.prepare(
-        `SELECT encrypted_token, token_iv
+        `SELECT encrypted_token, token_iv, credential_key_version
          FROM provider_webhook_challenges
          WHERE provider = 'notion' AND region = ?`,
       ).bind(this.env.AVALON_REGION).first<{
         encrypted_token: string;
         token_iv: string;
+        credential_key_version: number;
       }>();
       if (!winner) {
         throw new ConnectorError(
@@ -385,12 +458,7 @@ export class ProviderWebhookService {
           "The Notion webhook verification token could not be stored",
         );
       }
-      const winnerToken = await decryptString(
-        winner.encrypted_token,
-        winner.token_iv,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        this.notionChallengeAad(),
-      );
+      const winnerToken = await this.decryptNotionChallenge(winner);
       if (!timingSafeEqualText(winnerToken, verificationToken)) {
         throw new ConnectorError(
           "unauthorized",
@@ -668,10 +736,11 @@ export class ProviderWebhookService {
         connection_owner_user_id, provider, provider_event_id, event_type,
         resource_type, provider_resource_id, actor_json, subject_json,
         occurred_at, received_at, title, summary, text_snippet, payload_ref,
-        visibility_json, entity_keys_json, dedupe_key, raw_content_hash, external_people_json,
+        visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+        target_user_ids_json, external_people_json,
         processing_status, metadata_json)
        SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-              ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?27, 'pending', ?23
+              ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?28, ?27, 'pending', ?23
        WHERE EXISTS (
          SELECT 1 FROM provider_webhook_receipts
          WHERE provider = ?24 AND delivery_id = ?25 AND payload_ref = ?26
@@ -706,6 +775,7 @@ export class ProviderWebhookService {
       deliveryId,
       payloadRef,
       JSON.stringify(activity.externalPeople ?? []),
+      JSON.stringify(activity.targetUserIds),
     );
   }
 
@@ -842,15 +912,22 @@ export class ProviderWebhookService {
            WHERE connector_type = 'github' AND scope = 'personal'
              AND CAST(json_extract(config_json, '$.githubUserId') AS TEXT) = ?
              AND ${statusClause}`
+      : provider === "linear" && routingUserId
+        ? `SELECT * FROM connector_connections
+           WHERE connector_type = 'linear' AND scope = 'personal'
+             AND provider_account_id = ?
+             AND CAST(json_extract(config_json, '$.providerUserId') AS TEXT) = ?
+             AND ${statusClause}`
       : `SELECT * FROM connector_connections
          WHERE connector_type = ? AND provider_account_id = ?
-           ${provider === "linear" ? "AND scope = 'workspace'" : ""}
            AND ${statusClause}`;
     const statement = this.env.DB.prepare(query);
     const rows = provider === "notion"
       ? await statement.bind(...routingAccountIds!).all<StoredProviderConnection>()
       : provider === "github" && accountId === null
         ? await statement.bind(routingUserId!).all<StoredProviderConnection>()
+      : provider === "linear" && routingUserId
+        ? await statement.bind(accountId, routingUserId).all<StoredProviderConnection>()
       : await statement.bind(provider, accountId).all<StoredProviderConnection>();
     return Promise.all((rows.results ?? []).map((row) => this.connectionContext(row)));
   }
@@ -860,12 +937,12 @@ export class ProviderWebhookService {
   ): Promise<ConnectorConnectionContext> {
     let credentials: Record<string, unknown> = {};
     if (row.encrypted_credentials && row.credential_iv) {
-      credentials = parseRecord(await decryptString(
-        row.encrypted_credentials,
-        row.credential_iv,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        row.id,
-      ));
+      credentials = parseRecord(await decryptVersionedConnectorCredentials(this.env, {
+        id: row.id,
+        encrypted_credentials: row.encrypted_credentials,
+        credential_iv: row.credential_iv,
+        credential_key_version: row.credential_key_version,
+      }));
     }
     return {
       id: row.id,
@@ -931,6 +1008,61 @@ export class ProviderWebhookService {
     return accepted;
   }
 
+  private async filterLinearPersonalConnections(
+    connections: ConnectorConnectionContext[],
+    verified: VerifiedLinearWebhook,
+  ): Promise<ConnectorConnectionContext[]> {
+    if (["AgentSessionEvent", "OAuthApp", "Organization"].includes(verified.eventName)) {
+      return connections.filter((connection) => connection.scope === "workspace");
+    }
+    if (verified.eventName === "OAuthAuthorization") {
+      const userId = linearOAuthAuthorizationUserId(verified);
+      if (!userId) return [];
+      return connections.filter((connection) => connection.scope === "personal"
+        && stringValue(connection.credentials, "authorizedUserId") === userId);
+    }
+    const config = linearConnectorConfig(this.env);
+    const accepted: ConnectorConnectionContext[] = [];
+    const personal = connections.filter((connection) => connection.scope === "personal");
+    accepted.push(...connections.filter((connection) => connection.scope === "workspace"));
+    if (!config) return accepted;
+    const concurrency = 4;
+    for (let index = 0; index < personal.length; index += concurrency) {
+      const authorized = await Promise.all(personal.slice(index, index + concurrency).map(async (connection) => {
+        const credentialsBefore = JSON.stringify(connection.credentials);
+        try {
+          const hasAccess = await canPersonalLinearConnectionAccessWebhook({
+            config: { ...config, fetch: this.fetcher, now: this.now },
+            connection,
+            verified,
+            signal: AbortSignal.timeout(15_000),
+          });
+          if (JSON.stringify(connection.credentials) !== credentialsBefore) {
+            await this.persistConnectionCredentials(connection);
+          }
+          return hasAccess ? connection : null;
+        } catch (error) {
+          if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
+          await this.env.DB.prepare(
+            `UPDATE connector_connections
+             SET status = 'needs_reconnect', error_json = ?, updated_at = ?
+             WHERE id = ? AND connector_type = 'linear' AND status = 'healthy'`,
+          ).bind(
+            JSON.stringify({
+              code: "linear_user_authorization_expired",
+              message: "Reconnect this personal Linear connection",
+            }),
+            nowIso(),
+            connection.id,
+          ).run();
+          return null;
+        }
+      }));
+      accepted.push(...authorized.filter((connection): connection is ConnectorConnectionContext => connection !== null));
+    }
+    return accepted;
+  }
+
   private async persistConnectionCredentials(
     connection: ConnectorConnectionContext,
   ): Promise<void> {
@@ -976,8 +1108,17 @@ export class ProviderWebhookService {
     };
   }
 
-  private exactRawBody(rawBody: ProviderWebhookRawBody): ExactRawBody {
-    const maxBytes = this.maxBytes();
+  private webhookActivity(provider: Provider): ConnectorWebhookActivitySource | null {
+    try {
+      return connectorRegistryForEnv(this.env).get(provider).webhookActivity ?? null;
+    } catch {
+      // A provider-wide route can still use its host-managed verification
+      // configuration when connector OAuth is unavailable in this region.
+      return null;
+    }
+  }
+
+  private exactRawBody(rawBody: ProviderWebhookRawBody, maxBytes = this.maxBytes()): ExactRawBody {
     let text: string;
     let byteLength: number;
     let storageValue: string | ArrayBuffer;
@@ -1023,6 +1164,43 @@ export class ProviderWebhookService {
 
   private notionChallengeAad(): string {
     return `${NOTION_CHALLENGE_AAD_PREFIX}:${this.env.AVALON_REGION}`;
+  }
+
+  private async decryptNotionChallenge(challenge: {
+    encrypted_token: string;
+    token_iv: string;
+    credential_key_version?: number | null;
+  }): Promise<string> {
+    const activeVersion = Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1);
+    const storedVersion = Number(challenge.credential_key_version || activeVersion);
+    const plaintext = await decryptVersionedCredentialValue(this.env, {
+      encrypted_credentials: challenge.encrypted_token,
+      credential_iv: challenge.token_iv,
+      credential_key_version: storedVersion,
+    }, this.notionChallengeAad());
+    if (storedVersion !== activeVersion) {
+      const replacement = await encryptString(
+        plaintext,
+        this.env.CONNECTOR_CREDENTIALS_KEY,
+        this.notionChallengeAad(),
+      );
+      await this.env.DB.prepare(
+        `UPDATE provider_webhook_challenges
+         SET encrypted_token = ?, token_iv = ?, credential_key_version = ?, created_at = ?
+         WHERE provider = 'notion' AND region = ?
+           AND encrypted_token = ? AND token_iv = ? AND credential_key_version = ?`,
+      ).bind(
+        replacement.ciphertext,
+        replacement.iv,
+        activeVersion,
+        nowIso(),
+        this.env.AVALON_REGION,
+        challenge.encrypted_token,
+        challenge.token_iv,
+        storedVersion,
+      ).run();
+    }
+    return plaintext;
   }
 
   private async stableProviderError<T>(
@@ -1133,6 +1311,16 @@ function linearLifecycle(
       },
     };
   }
+  if (verified.eventName === "OAuthAuthorization" && action === "revoked") {
+    return {
+      status: "needs_reconnect",
+      error: {
+        code: "linear_oauth_authorization_revoked",
+        message: "Reconnect this personal Linear account",
+        reconnectRequired: true,
+      },
+    };
+  }
   if (verified.eventName === "PermissionChange" && action === "teamaccesschanged") {
     return {
       // Linear team-access changes do not revoke the OAuth grant. Keep the
@@ -1143,6 +1331,24 @@ function linearLifecycle(
     };
   }
   return null;
+}
+
+function linearOAuthAuthorizationUserId(verified: VerifiedLinearWebhook): string | null {
+  const data = recordValue(verified.event, "data") ?? {};
+  const authorization = recordValue(verified.event, "oauthAuthorization")
+    ?? recordValue(data, "oauthAuthorization")
+    ?? {};
+  for (const [record, key] of [
+    [verified.event, "userId"],
+    [data, "userId"],
+    [authorization, "userId"],
+  ] as const) {
+    const value = stringValue(record, key);
+    if (value) return value;
+  }
+  return stringValue(recordValue(verified.event, "user") ?? {}, "id")
+    ?? stringValue(recordValue(data, "user") ?? {}, "id")
+    ?? stringValue(recordValue(authorization, "user") ?? {}, "id");
 }
 
 function notionConnectionMatches(
@@ -1203,6 +1409,11 @@ function nestedString(
 ): string | null {
   const value = record[parent];
   return isRecord(value) ? stringValue(value, key) : null;
+}
+
+function recordValue(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = record[key];
+  return isRecord(value) ? value : null;
 }
 
 function stringValue(record: Record<string, unknown>, key: string): string | null {

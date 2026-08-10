@@ -21,7 +21,12 @@ const PollResultSchema = z.object({
   activityIds: z.array(IdSchema).max(5_000),
   cursor: z.record(z.string(), z.unknown()),
   baseCursorJson: z.string().min(2).max(1_000_000),
-  nextPollAt: z.string().datetime({ offset: true }).nullable().optional()
+  nextPollAt: z.string().datetime({ offset: true }).nullable().optional(),
+  streamErrors: z.array(z.object({
+    streamId: z.string().min(1).max(200),
+    code: z.string().min(1).max(100),
+    message: z.string().min(1).max(500),
+  })).max(100).optional(),
 });
 
 interface StoredPollResult {
@@ -29,6 +34,7 @@ interface StoredPollResult {
   cursorJson: string;
   baseCursorJson: string;
   nextPollAt: string | null;
+  streamErrors?: Array<{ streamId: string; code: string; message: string }>;
 }
 
 /** Static, retryable poll workflow shared by all connector connections. */
@@ -100,7 +106,8 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
             activityIds: parsed.activityIds,
             cursorJson: JSON.stringify(parsed.cursor),
             baseCursorJson: parsed.baseCursorJson,
-            nextPollAt: parsed.nextPollAt ? new Date(parsed.nextPollAt).toISOString() : null
+            nextPollAt: parsed.nextPollAt ? new Date(parsed.nextPollAt).toISOString() : null,
+            ...(parsed.streamErrors?.length ? { streamErrors: parsed.streamErrors } : {}),
           };
         },
       );

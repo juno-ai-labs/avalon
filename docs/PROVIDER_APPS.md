@@ -88,7 +88,7 @@ Avalon uses Authorization Code with PKCE S256. The same public app requests `act
 
 The shared Global ingress verifies the exact signed body and timestamp before reading its organization ID. It retains only an opaque organization-to-region route and sends the untouched bytes over a Worker service binding to each owning region, where the signature is verified again before regional persistence. An installation-race delivery with no route returns a retryable error and is not retained in Global, which prevents an EU payload from being stored outside the EU boundary.
 
-Only workspace app connections register for this real-time routing today. Personal Linear connections support private interactive tools and scheduled queries. Do not route organization-wide webhooks to personal connections until the regional durable inbox can prove the owner's access to each signed resource before owner-only activity routing.
+Workspace app connections receive matching real-time resource deliveries directly. Personal Linear connections also participate in organization routing, but the regional Worker must prove the owner's access to the signed resource or a signed parent with that personal token before creating an owner-only activity. An organization match alone is never authorization. Lifecycle and native-agent deliveries remain workspace-only, and an authorization failure moves the personal connection to `needs_reconnect`.
 
 `linear-native-agent.preview.json` is a later configuration snapshot for that **same app**, not a second Linear registration. Apply it only after the native-session acceptance gate passes. Linear exposes Agent Session UI as soon as `AgentSessionEvent` is subscribed, even for debugging, so enabling the subscription before Avalon can acknowledge the session and publish activity within Linear's deadlines creates a broken public experience.
 
@@ -133,6 +133,7 @@ Global and EU use the same public Slack Marketplace app identity and request-sig
 - `SLACK_APP_ID`, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`
 - The source manifest is `config/provider-apps/slack.json`; `slack manifest validate` reads it through the checked-in `.slack` hook.
 - OAuth callbacks are regional. Events, interactivity, commands, and unfurls use `https://slack.with-avalon.com` and the opaque team router.
+- Enable Slack's Delayed Events retry option. Avalon verifies requests immediately, admits work through an idempotent regional ingress job, and enforces a 2.6-second end-to-end response budget; a missed durable-admission budget returns `503` so Slack retries the same event identity.
 - Do not create separate regional Slack apps: that would split Marketplace/MCP identity and break team-route uniqueness.
 
 See `docs/SLACK_PERMISSIONS.md` for the exact scope-to-tool mapping and

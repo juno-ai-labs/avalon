@@ -127,6 +127,7 @@ const repoIdentitySchema = z.object({
 
 const paginationSchema = z.object({
   perPage: z.number().int().min(1).max(100).default(30),
+  page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
 const repositoriesListSchema = z.object({
@@ -148,6 +149,7 @@ const commitsListSchema = repoIdentitySchema.extend({
   since: z.string().datetime({ offset: true }).optional(),
   until: z.string().datetime({ offset: true }).optional(),
   perPage: z.number().int().min(1).max(100).default(30),
+  page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
 const issuesListSchema = repoIdentitySchema.extend({
@@ -157,6 +159,7 @@ const issuesListSchema = repoIdentitySchema.extend({
   sort: z.enum(["created", "updated", "comments"]).default("updated"),
   direction: z.enum(["asc", "desc"]).default("desc"),
   perPage: z.number().int().min(1).max(100).default(30),
+  page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
 const issueIdentitySchema = repoIdentitySchema.extend({
@@ -192,6 +195,7 @@ const pullRequestsListSchema = repoIdentitySchema.extend({
   sort: z.enum(["created", "updated", "popularity", "long-running"]).default("updated"),
   direction: z.enum(["asc", "desc"]).default("desc"),
   perPage: z.number().int().min(1).max(100).default(30),
+  page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
 const pullRequestIdentitySchema = repoIdentitySchema.extend({
@@ -225,6 +229,7 @@ const workflowRunsListSchema = repoIdentitySchema.extend({
     "success", "timed_out", "in_progress", "queued", "requested", "waiting", "pending",
   ]).optional(),
   perPage: z.number().int().min(1).max(100).default(30),
+  page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
 const workflowRunGetSchema = repoIdentitySchema.extend({
@@ -237,6 +242,7 @@ const checksListSchema = repoIdentitySchema.extend({
   status: z.enum(["queued", "in_progress", "completed"]).optional(),
   filter: z.enum(["latest", "all"]).default("latest"),
   perPage: z.number().int().min(1).max(100).default(30),
+  page: z.number().int().min(1).max(1_000).default(1),
 }).strict();
 
 export const githubTools: ToolDefinition[] = [
@@ -248,7 +254,7 @@ export const githubTools: ToolDefinition[] = [
   tool("issues.get", "Read one GitHub issue and its bounded body.", GitHubCapabilities.issuesRead, "read", issueIdentitySchema),
   tool("issues.create", "Create an issue in an accessible GitHub repository.", GitHubCapabilities.issuesWrite, "write", issueCreateSchema),
   tool("issues.update", "Update an issue's title, body, state, labels, or assignees.", GitHubCapabilities.issuesWrite, "write", issueUpdateSchema),
-  tool("issue_comments.create", "Create a comment on a GitHub issue or pull request.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
+  tool("issue_comments.create", "Create a comment on a GitHub issue.", GitHubCapabilities.issuesWrite, "write", issueCommentCreateSchema),
   tool("pull_requests.list", "List pull requests in an accessible GitHub repository.", GitHubCapabilities.pullRequestsRead, "read", pullRequestsListSchema),
   tool("pull_requests.get", "Read one GitHub pull request and its bounded body.", GitHubCapabilities.pullRequestsRead, "read", pullRequestIdentitySchema),
   tool("pull_requests.list_files", "List bounded changed-file metadata and patches for a GitHub pull request.", GitHubCapabilities.pullRequestsRead, "read", pullRequestPageSchema),
@@ -445,6 +451,77 @@ export async function mintGitHubInstallationToken(
   };
 }
 
+export function assertGitHubCapabilitiesGranted(
+  capabilities: readonly string[],
+  credentials: Record<string, unknown>,
+): void {
+  const permissions = recordValue(credentials, "permissions") ?? {};
+  const required = new Map<string, "read" | "write">([
+    [GitHubCapabilities.contentsRead, "read"],
+    [GitHubCapabilities.issuesRead, "read"],
+    [GitHubCapabilities.issuesWrite, "write"],
+    [GitHubCapabilities.pullRequestsRead, "read"],
+    [GitHubCapabilities.pullRequestsWrite, "write"],
+    [GitHubCapabilities.actionsRead, "read"],
+    [GitHubCapabilities.checksRead, "read"],
+  ]);
+  const providerPermission = new Map<string, string>([
+    [GitHubCapabilities.contentsRead, "contents"],
+    [GitHubCapabilities.issuesRead, "issues"],
+    [GitHubCapabilities.issuesWrite, "issues"],
+    [GitHubCapabilities.pullRequestsRead, "pull_requests"],
+    [GitHubCapabilities.pullRequestsWrite, "pull_requests"],
+    [GitHubCapabilities.actionsRead, "actions"],
+    [GitHubCapabilities.checksRead, "checks"],
+  ]);
+  const level = (value: unknown): number => value === "admin" || value === "write" ? 2 : value === "read" ? 1 : 0;
+  for (const capability of capabilities) {
+    if (capability === GitHubCapabilities.metadataRead) continue;
+    const requiredLevel = required.get(capability);
+    const permission = providerPermission.get(capability);
+    if (!requiredLevel || !permission || level(permissions[permission]) < level(requiredLevel)) {
+      throw new ConnectorError(
+        "unsupported_capability",
+        `The GitHub App installation has not granted ${capability}`,
+      );
+    }
+  }
+}
+
+async function assertWorkspaceInstallationAuthority(
+  fetcher: FetchLike,
+  apiBaseUrl: string,
+  apiVersion: string,
+  userToken: string,
+  user: Record<string, unknown>,
+  account: Record<string, unknown>,
+): Promise<void> {
+  const accountType = requiredString(account, "type", "GitHub did not return the installation account type");
+  const userId = numberOrString(user, "id", "GitHub did not return the authorized user ID");
+  if (accountType === "User") {
+    const accountId = numberOrString(account, "id", "GitHub did not return the installation owner ID");
+    if (accountId !== userId) {
+      throw new ConnectorError("unauthorized", "Only the installation owner may connect a user installation to a workspace");
+    }
+    return;
+  }
+  if (accountType !== "Organization") {
+    throw new ConnectorError("unauthorized", `Unsupported GitHub installation account type: ${accountType}`);
+  }
+  const login = requiredString(account, "login", "GitHub did not return the installation organization login");
+  const membership = requiredRecordValue(await githubJson(
+    fetcher,
+    apiBaseUrl,
+    apiVersion,
+    userToken,
+    "GET",
+    `/user/memberships/orgs/${encodeURIComponent(login)}`,
+  ), "GitHub did not return the authorizing user's organization membership");
+  if (stringValue(membership, "state") !== "active" || stringValue(membership, "role") !== "admin") {
+    throw new ConnectorError("unauthorized", "A GitHub organization owner must authorize a workspace connection");
+  }
+}
+
 export async function refreshGitHubUserCredentials(
   config: GitHubConnectorConfig,
   connection: ConnectorConnectionContext,
@@ -505,6 +582,7 @@ export async function canGitHubPersonalConnectionAccessRepository(
     return isRecord(await request(token));
   } catch (error) {
     const status = connectorErrorStatus(error);
+    if (status === 403 && isGitHubRateLimitError(error)) throw error;
     if (status === 403 || status === 404) return false;
     if (status !== 401) throw error;
     connection.credentials = await refreshGitHubUserCredentials(config, connection, signal);
@@ -512,6 +590,7 @@ export async function canGitHubPersonalConnectionAccessRepository(
       return isRecord(await request(credentialString(connection, "accessToken")));
     } catch (retryError) {
       const retryStatus = connectorErrorStatus(retryError);
+      if (retryStatus === 403 && isGitHubRateLimitError(retryError)) throw retryError;
       if (retryStatus === 403 || retryStatus === 404) return false;
       throw retryError;
     }
@@ -647,6 +726,38 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
 
   return {
     agentPlugin: GitHubAgentPluginDescriptor,
+    webhookActivity: {
+      async verify(input) {
+        const delivery = await verifyGitHubWebhook({
+          secret: config.webhookSecret,
+          rawBody: input.rawBody,
+          signatureHeader: input.headers.get("x-hub-signature-256"),
+          eventHeader: input.headers.get("x-github-event"),
+          deliveryHeader: input.headers.get("x-github-delivery"),
+          receivedAt: input.receivedAt,
+          maxBytes: input.maxBytes,
+        });
+        const sender = recordValue(delivery.payload, "sender");
+        const routingUserId = delivery.event === "github_app_authorization"
+          ? stringValue(sender ?? {}, "id") ?? numberValue(sender ?? {}, "id")?.toString()
+          : null;
+        return {
+          deliveryId: delivery.deliveryId,
+          eventType: delivery.event,
+          providerAccountId: delivery.installationId,
+          ...(routingUserId ? { routingUserId } : {}),
+          bodyHash: delivery.rawContentHash,
+          event: delivery,
+        };
+      },
+      normalize(connection, event, payloadRef) {
+        return normalizeGitHubWebhook(
+          connection,
+          event.event as GitHubWebhookDelivery,
+          payloadRef,
+        );
+      },
+    },
     manifest: {
       type: "github",
       displayName: "GitHub",
@@ -738,8 +849,13 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       const installation = await getGitHubInstallation({ ...config, fetch: fetcher }, installationId);
       const account = recordValue(installation, "account") ?? recordValue(userInstallation, "account") ?? {};
       const accountName = stringValue(account, "login") ?? stringValue(account, "name") ?? `GitHub installation ${installationId}`;
+      const user = requiredRecordValue(
+        await githubJson(fetcher, apiBaseUrl, apiVersion, userToken, "GET", "/user"),
+        "GitHub did not return the authorized user",
+      );
 
       if (parsed.connectionScope === "workspace") {
+        await assertWorkspaceInstallationAuthority(fetcher, apiBaseUrl, apiVersion, userToken, user, account);
         const installationToken = await mintGitHubInstallationToken({ ...config, fetch: fetcher }, installationId);
         return {
           ...installationToken,
@@ -751,7 +867,6 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
         };
       }
 
-      const user = requiredRecordValue(await githubJson(fetcher, apiBaseUrl, apiVersion, userToken, "GET", "/user"), "GitHub did not return the authorized user");
       const userId = numberOrString(user, "id", "GitHub did not return a user ID");
       const login = requiredString(user, "login", "GitHub did not return a user login");
       return {
@@ -786,6 +901,7 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
 
     async hydrateResource(connection, resource, signal) {
       const type = z.string().min(1).parse(resource.resource_type);
+      assertGitHubHydrationCapability(connection, type);
       const providerId = z.string().min(1).max(2_000).parse(resource.provider_resource_id);
       const metadata = resourceMetadata(resource);
       const identity = resourceIdentity(type, providerId, metadata, connection.config);
@@ -848,6 +964,26 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
   };
 }
 
+function assertGitHubHydrationCapability(connection: ConnectorConnectionContext, resourceType: string): void {
+  const capability = resourceType === "github_repository" || resourceType === "github_release"
+    ? GitHubCapabilities.metadataRead
+    : resourceType === "github_file" || resourceType === "github_commit"
+      ? GitHubCapabilities.contentsRead
+      : resourceType === "github_issue" || resourceType === "github_issue_comment"
+        ? GitHubCapabilities.issuesRead
+        : resourceType === "github_pull_request" || resourceType === "github_pull_request_comment"
+            || resourceType === "github_pull_request_review" || resourceType === "github_pull_request_review_comment"
+          ? GitHubCapabilities.pullRequestsRead
+          : resourceType === "github_workflow_run"
+            ? GitHubCapabilities.actionsRead
+            : resourceType === "github_check_run"
+              ? GitHubCapabilities.checksRead
+              : null;
+  if (capability && !connection.grantedScopes.includes(capability)) {
+    throw new ConnectorError("unsupported_capability", `The GitHub connection has not granted ${capability}`);
+  }
+}
+
 type GitHubConnectionRequest = (
   connection: ConnectorConnectionContext,
   signal: AbortSignal,
@@ -893,7 +1029,8 @@ async function executeGitHubTool(
     const args = commitsListSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/commits`, {
       query: {
-        sha: args.sha, path: args.path, author: args.author, since: args.since, until: args.until, per_page: args.perPage,
+        sha: args.sha, path: args.path, author: args.author, since: args.since, until: args.until,
+        per_page: args.perPage, page: args.page,
       },
     });
     return { output: boundedArray(value, args.perPage), summary: `Listed commits in ${args.owner}/${args.repo}` };
@@ -909,14 +1046,19 @@ async function executeGitHubTool(
         sort: args.sort,
         direction: args.direction,
         per_page: args.perPage,
+        page: args.page,
       },
     });
-    return { output: boundedArray(value, args.perPage), summary: `Listed issues in ${args.owner}/${args.repo}` };
+    const issues = Array.isArray(value)
+      ? value.filter((candidate) => isRecord(candidate) && !recordValue(candidate, "pull_request"))
+      : value;
+    return { output: boundedArray(issues, args.perPage), summary: `Listed issues in ${args.owner}/${args.repo}` };
   }
 
   if (name === "issues.get") {
     const args = issueIdentitySchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/issues/${args.issueNumber}`);
+    assertGitHubIssueResponse(value);
     return { output: boundGitHubValue(value), summary: `Read ${args.owner}/${args.repo}#${args.issueNumber}` };
   }
 
@@ -935,6 +1077,7 @@ async function executeGitHubTool(
 
   if (name === "issues.update") {
     const args = issueUpdateSchema.parse(rawArgs);
+    assertGitHubIssueResponse(await request(connection, signal, "GET", `${repoPath(args)}/issues/${args.issueNumber}`));
     const value = requiredRecordValue(await request(connection, signal, "PATCH", `${repoPath(args)}/issues/${args.issueNumber}`, {
       body: definedValues({
         title: args.title,
@@ -954,6 +1097,7 @@ async function executeGitHubTool(
 
   if (name === "issue_comments.create") {
     const args = issueCommentCreateSchema.parse(rawArgs);
+    assertGitHubIssueResponse(await request(connection, signal, "GET", `${repoPath(args)}/issues/${args.issueNumber}`));
     const value = requiredRecordValue(await request(connection, signal, "POST", `${repoPath(args)}/issues/${args.issueNumber}/comments`, {
       body: { body: args.body },
     }), "GitHub did not return the created comment");
@@ -968,7 +1112,8 @@ async function executeGitHubTool(
     const args = pullRequestsListSchema.parse(rawArgs);
     const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls`, {
       query: {
-        state: args.state, head: args.head, base: args.base, sort: args.sort, direction: args.direction, per_page: args.perPage,
+        state: args.state, head: args.head, base: args.base, sort: args.sort, direction: args.direction,
+        per_page: args.perPage, page: args.page,
       },
     });
     return { output: boundedArray(value, args.perPage), summary: `Listed pull requests in ${args.owner}/${args.repo}` };
@@ -982,13 +1127,13 @@ async function executeGitHubTool(
 
   if (name === "pull_requests.list_files") {
     const args = pullRequestPageSchema.parse(rawArgs);
-    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: args.perPage } });
+    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/files`, { query: { per_page: args.perPage, page: args.page } });
     return { output: boundedArray(value, args.perPage), summary: `Listed files on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
   if (name === "pull_requests.list_reviews") {
     const args = pullRequestPageSchema.parse(rawArgs);
-    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: args.perPage } });
+    const value = await request(connection, signal, "GET", `${repoPath(args)}/pulls/${args.pullNumber}/reviews`, { query: { per_page: args.perPage, page: args.page } });
     return { output: boundedArray(value, args.perPage), summary: `Listed reviews on ${args.owner}/${args.repo} pull request #${args.pullNumber}` };
   }
 
@@ -1026,7 +1171,7 @@ async function executeGitHubTool(
   if (name === "actions.list_workflow_runs") {
     const args = workflowRunsListSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "GET", `${repoPath(args)}/actions/runs`, {
-      query: { branch: args.branch, event: args.event, status: args.status, per_page: args.perPage },
+      query: { branch: args.branch, event: args.event, status: args.status, per_page: args.perPage, page: args.page },
     }), "GitHub did not return workflow runs");
     return {
       output: {
@@ -1046,7 +1191,7 @@ async function executeGitHubTool(
   if (name === "checks.list_for_ref") {
     const args = checksListSchema.parse(rawArgs);
     const value = requiredRecordValue(await request(connection, signal, "GET", `${repoPath(args)}/commits/${encodeURIComponent(args.ref)}/check-runs`, {
-      query: { check_name: args.checkName, status: args.status, filter: args.filter, per_page: args.perPage },
+      query: { check_name: args.checkName, status: args.status, filter: args.filter, per_page: args.perPage, page: args.page },
       accept: "application/vnd.github+json",
     }), "GitHub did not return check runs");
     return {
@@ -1122,9 +1267,17 @@ async function githubJsonWithHeaders(
   }
   if (!response.ok) {
     const message = githubErrorMessage(payload) ?? `GitHub returned HTTP ${response.status}`;
+    const retryAfterMs = githubRetryAfterMs(response.headers, nowMilliseconds());
+    const rateLimited = response.status === 429
+      || (response.status === 403 && (
+        response.headers.get("x-ratelimit-remaining") === "0"
+        || /rate limit/i.test(message)
+      ));
     throw new ConnectorError(response.status === 401 ? "unauthorized" : "provider_error", message, {
       status: response.status,
       reconnectRequired: response.status === 401,
+      ...(rateLimited ? { rateLimited: true } : {}),
+      ...(rateLimited && retryAfterMs != null ? { retryAfterMs } : {}),
     });
   }
   if (!isRecord(payload) && !Array.isArray(payload)) {
@@ -1343,6 +1496,16 @@ function providerOperationId(value: Record<string, unknown>): string {
   return id;
 }
 
+function assertGitHubIssueResponse(value: unknown): asserts value is Record<string, unknown> {
+  const issue = requiredRecordValue(value, "GitHub did not return the requested issue");
+  if (recordValue(issue, "pull_request")) {
+    throw new ConnectorError(
+      "unsupported_capability",
+      "This number identifies a pull request; use a pull-request tool with pull-request capability",
+    );
+  }
+}
+
 function definedValues(record: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
 }
@@ -1407,6 +1570,30 @@ function connectorErrorStatus(error: unknown): number | null {
   return error instanceof ConnectorError && isRecord(error.details) && typeof error.details.status === "number"
     ? error.details.status
     : null;
+}
+
+function isGitHubRateLimitError(error: unknown): boolean {
+  return error instanceof ConnectorError
+    && isRecord(error.details)
+    && error.details.rateLimited === true;
+}
+
+function githubRetryAfterMs(headers: Headers, now: number): number | null {
+  const retryAfter = headers.get("retry-after")?.trim();
+  if (retryAfter && /^\d+(?:\.\d+)?$/u.test(retryAfter)) {
+    return Math.max(0, Math.ceil(Number(retryAfter) * 1_000));
+  }
+  if (retryAfter) {
+    const parsed = Date.parse(retryAfter);
+    if (Number.isFinite(parsed)) return Math.max(0, parsed - now);
+  }
+  const reset = headers.get("x-ratelimit-reset")?.trim();
+  if (reset && /^\d+$/u.test(reset)) return Math.max(0, Number(reset) * 1_000 - now);
+  return null;
+}
+
+function nowMilliseconds(): number {
+  return Date.now();
 }
 
 function validIso(value: string | null): string | null {
@@ -1771,6 +1958,7 @@ export function normalizeGitHubWebhook(
     entityKeys: [...new Set(entityKeys)].slice(0, WEBHOOK_ACTIVITY_ENTITY_KEY_LIMIT),
     dedupeKey: `github:${delivery.deliveryId}`,
     rawContentHash: delivery.rawContentHash,
+    externalPeople: githubWebhookPeople(payload, sender, delivery.installationId),
     metadata: {
       deliveryId: delivery.deliveryId,
       event: delivery.event,
@@ -1782,6 +1970,53 @@ export function normalizeGitHubWebhook(
       resourceDiscoveryTruncated: discovery.truncated,
     },
   };
+}
+
+function githubWebhookPeople(
+  payload: Record<string, unknown>,
+  sender: Record<string, unknown>,
+  providerTenantId: string | null,
+): NonNullable<NormalizedActivity["externalPeople"]> {
+  const candidates: Array<{ value: unknown; role: string }> = [
+    { value: sender, role: "actor" },
+    { value: payload.assignee, role: "assignee" },
+    { value: payload.assignees, role: "assignee" },
+    { value: payload.requested_reviewer, role: "reviewer" },
+    { value: payload.requested_reviewers, role: "reviewer" },
+    { value: recordValue(payload, "review")?.user, role: "reviewer" },
+    { value: recordValue(payload, "issue")?.user, role: "author" },
+    { value: recordValue(payload, "pull_request")?.user, role: "author" },
+    { value: recordValue(payload, "comment")?.user, role: "author" },
+  ];
+  const people: NonNullable<NormalizedActivity["externalPeople"]> = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const values = Array.isArray(candidate.value) ? candidate.value : [candidate.value];
+    for (const value of values) {
+      if (!isRecord(value)) continue;
+      const accountType = stringValue(value, "type");
+      if (accountType && accountType !== "User") continue;
+      const providerUserId = stringValue(value, "id") ?? numberValue(value, "id")?.toString() ?? null;
+      const handle = stringValue(value, "login") ?? null;
+      const email = stringValue(value, "email") ?? null;
+      const displayName = stringValue(value, "name") ?? null;
+      if (!providerUserId && !handle && !email && !displayName) continue;
+      const key = `${candidate.role}:${providerUserId ?? ""}:${handle ?? ""}:${email ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      people.push({
+        provider: "github",
+        providerTenantId,
+        providerUserId,
+        handle,
+        email,
+        displayName,
+        role: candidate.role,
+        sourceText: JSON.stringify(value).slice(0, 1_000),
+      });
+    }
+  }
+  return people.slice(0, 100);
 }
 
 interface WebhookRepositoryIdentity {

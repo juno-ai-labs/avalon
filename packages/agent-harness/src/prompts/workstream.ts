@@ -87,6 +87,7 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
         nearbyMessagesStatus: input.slackOrigin.nearbyMessagesStatus,
         nearbyMessageCount: input.slackOrigin.nearbyMessages.length,
         attachmentCount: input.slackOrigin.attachments.length,
+        appContextEntityCount: input.slackOrigin.appContext?.entities.length ?? 0,
       },
     } : {}),
     ...(input.automation ? { automation: input.automation } : {}),
@@ -110,6 +111,7 @@ export function renderUntrustedSlackOriginMessage(input: SlackOriginContext): Pr
         nearbyMessagesStatus: input.nearbyMessagesStatus,
         nearbyMessages: input.nearbyMessages,
         attachments: input.attachments,
+        appContext: input.appContext,
       }),
     ].join("\n"),
   };

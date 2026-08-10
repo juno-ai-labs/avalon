@@ -41,6 +41,8 @@ This is retry safety, not a broad approval gate.
 
 Provider refresh tokens remain in the regional backend, encrypted with AES-GCM and additional authenticated data tied to the connection ID. Key version is stored beside ciphertext so rotation can decrypt with an old key and re-encrypt with the active key. Global and EU deployments use independent keys.
 
+During rotation, `CONNECTOR_CREDENTIALS_KEY` contains the new active key, `CONNECTOR_CREDENTIALS_KEY_VERSION` is incremented, and the regional secret `CONNECTOR_CREDENTIALS_KEYS_JSON` temporarily maps every still-referenced old numeric version to its old key. Reads decrypt with the row version and opportunistically rewrite the row with the active key. Operators remove an old mapping only after confirming no regional `connector_connections.credential_key_version` rows still reference it.
+
 Granola Workspace API keys and the signing secrets returned while registering Granola webhook endpoints use the same versioned credential envelope and connection-bound additional authenticated data. The admin setup form treats the key as a password and submits it once to the selected regional backend. Plaintext keys and signing secrets are excluded from connection configuration, API responses, provider identifiers, audit metadata, and logs. Personal Granola OAuth and refresh credentials remain user-scoped; workspace keys remain workspace-scoped.
 
 Google scopes are requested incrementally. Sign-in does not grant Gmail, Calendar, or Drive access. Revoked/expired grants become an explicit reconnect state.

@@ -5,6 +5,7 @@ import {
   jsonHeaders,
   providerJson,
   readResponseBytes,
+  recordArray,
   sha256Hex,
   stringValue,
   type FetchLike,
@@ -499,6 +500,72 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
 
   return {
     agentPlugin: GranolaAgentPluginDescriptor,
+    webhookActivity: {
+      async verify(input) {
+        if (!input.verificationSecret) {
+          throw new ConnectorError("invalid_configuration", "Granola webhook verification is not configured");
+        }
+        if (new TextEncoder().encode(input.rawBody).byteLength > input.maxBytes) {
+          throw new ConnectorError("payload_too_large", "Granola webhook payload exceeds the configured limit");
+        }
+        const verified = await verifyGranolaWebhook({
+          signingSecret: input.verificationSecret,
+          rawBody: input.rawBody,
+          webhookId: input.headers.get("webhook-id"),
+          webhookTimestamp: input.headers.get("webhook-timestamp"),
+          webhookSignature: input.headers.get("webhook-signature"),
+          replayWindowSeconds: Math.floor((input.replayWindowMs ?? 300_000) / 1_000),
+          now: input.now,
+        });
+        return {
+          deliveryId: verified.event_id,
+          eventType: verified.event_type,
+          providerAccountId: null,
+          bodyHash: await sha256Hex(input.rawBody),
+          receiptKey: verified.signatureHash,
+          event: verified,
+        };
+      },
+      normalize(connection, event, payloadRef) {
+        if (connection.scope !== "workspace") {
+          throw new ConnectorError("unauthorized", "Granola activity webhooks require a workspace connection");
+        }
+        const verified = event.event as VerifiedGranolaWebhook;
+        const receivedAt = new Date().toISOString();
+        const title = {
+          "note.access_granted": "Granola note access granted",
+          "note.edited": "Granola note edited",
+          "note.generated": "Granola note generated",
+          "note.regenerated": "Granola note regenerated",
+        }[verified.event_type];
+        return {
+          workspaceId: connection.workspaceId,
+          region: connection.config.region === "eu" ? "eu" : "global",
+          connectionId: connection.id,
+          connectionScope: connection.scope,
+          connectionOwnerUserId: connection.ownerUserId,
+          provider: "granola",
+          providerEventId: verified.event_id,
+          eventType: verified.event_type,
+          resourceType: "granola_note",
+          providerResourceId: verified.note_id,
+          actor: {},
+          subject: { id: verified.note_id, type: "granola_note" },
+          occurredAt: verified.occurred_at,
+          receivedAt,
+          title,
+          summary: "",
+          textSnippet: "",
+          payloadRef,
+          visibility: { scope: "workspace" },
+          targetUserIds: [],
+          entityKeys: [`granola:note:${verified.note_id}`],
+          dedupeKey: verified.event_id,
+          rawContentHash: event.bodyHash,
+          metadata: { changedFields: verified.data?.changed_fields ?? [] },
+        };
+      },
+    },
     manifest: {
       type: "granola",
       displayName: "Granola",
@@ -631,6 +698,9 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       return {
         providerAccountId,
         providerAccountName: account.email,
+        userEmail: account.email,
+        verifiedEmail: account.email,
+        workspaceId: account.workspaceIdentity,
         workspaceName: account.workspaceName,
         accessToken: token.access_token,
         refreshToken: token.refresh_token ?? null,
@@ -683,7 +753,8 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       if (connection.scope !== "workspace") {
         throw new ConnectorError("unsupported_capability", "Granola MCP resources are read through personal tools");
       }
-      const noteId = stringValue(resource, "providerResourceId");
+      const noteId = stringValue(resource, "providerResourceId")
+        ?? stringValue(resource, "provider_resource_id");
       if (!noteId || !/^not_[A-Za-z0-9]{14}$/u.test(noteId)) {
         throw new ConnectorError("invalid_configuration", "Granola note identity is missing");
       }
@@ -744,9 +815,55 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       if (!connection) return { ok: true, message: "Granola connector configuration is available" };
       try {
         if (connection.scope === "workspace") {
-          await granolaApi(fetcher, apiBaseUrl, requireWorkspaceApiKey(connection), "/v1/notes", { page_size: 1 }, AbortSignal.timeout(10_000));
+          const apiKey = requireWorkspaceApiKey(connection);
+          await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, AbortSignal.timeout(10_000));
+          const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
+          if (!webhookEndpointId) {
+            throw new ConnectorError("invalid_configuration", "Granola webhook endpoint identity is missing");
+          }
+          const endpoints = await granolaApi(
+            fetcher,
+            apiBaseUrl,
+            apiKey,
+            "/v1/webhook-endpoints",
+            {},
+            AbortSignal.timeout(10_000),
+          );
+          const endpoint = recordArray(endpoints, "webhook_endpoints")
+            .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
+          if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists");
+          if (endpoint.enabled !== true) {
+            await providerJson(
+              fetcher,
+              new URL(`/v1/webhook-endpoints/${encodeURIComponent(webhookEndpointId)}`, apiBaseUrl),
+              {
+                method: "PATCH",
+                headers: jsonHeaders(apiKey),
+                body: JSON.stringify({ enabled: true }),
+                signal: AbortSignal.timeout(10_000),
+              },
+              GRANOLA_RESPONSE_BYTES,
+            );
+          }
         } else {
-          await callGranolaMcp(requirePersonalAccessToken(connection), "get_account_info", {}, AbortSignal.timeout(15_000), fetcher, mcpUrl);
+          const accountResult = await callGranolaMcp(
+            requirePersonalAccessToken(connection),
+            "get_account_info",
+            {},
+            AbortSignal.timeout(15_000),
+            fetcher,
+            mcpUrl,
+          );
+          const account = extractAccountInfo(accountResult);
+          const digest = await sha256Hex(`${account.email.toLowerCase()}\n${account.workspaceIdentity}`);
+          Object.assign(connection.credentials, {
+            providerAccountId: `granola:${digest.slice(0, 32)}`,
+            providerAccountName: account.email,
+            userEmail: account.email,
+            verifiedEmail: account.email,
+            workspaceId: account.workspaceIdentity,
+            workspaceName: account.workspaceName,
+          });
         }
         return { ok: true, message: "Granola authorization is healthy" };
       } catch (error) {
