@@ -7,20 +7,27 @@ on:
   push:
     branches:
       - main
-    # Deliberately unfiltered by path, even though the planner then applies a
-    # path filter of its own (DESKTOP_RELEASE_PATHS). A `paths:` filter here
-    # would match this push's diff, and a push's diff is not the same question
-    # as "is there unreleased desktop work". They diverge whenever a run is
-    # discarded, cancelled, or fails: the concurrency group keeps only the
-    # newest pending run, so a desktop merge can lose its run, and the next
-    # docs-only push would then not start one at all. The planner instead
-    # measures against the commit the last release was built from, which is
-    # durable committed state, so any later push can still ship stranded work.
+    # What the installed application is built from. A docs, Worker, or landing
+    # site merge changes nothing a user could install, so it must not spend a
+    # 90-minute signed and notarized build.
     #
-    # Filtering here would also cost the diagnosis. A push filtered out by
-    # `paths:` produces no run and no log — exactly the "why didn't it
-    # release?" dead end this pipeline was rebuilt to remove. The planner
-    # always runs, on a cheap runner, and always states its reason.
+    # This list is the release trigger, so it is the thing to check first when a
+    # merge does not release: a push that matches nothing here produces no run
+    # at all, not a run that explains itself. `docs/RUNBOOK.md` documents that
+    # diagnosis, and release-workflow.test.mjs pins the list.
+    #
+    # Keep in sync with the Documentation note in docs/RUNBOOK.md. A path filter
+    # is evaluated against the push's own diff, which GitHub does not guarantee
+    # to compute for very large pushes; when it cannot, the workflow runs, and
+    # the planner's check for work since the last release decides instead.
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/release-desktop-macos.yml'
   workflow_dispatch:
     inputs:
       tag:
