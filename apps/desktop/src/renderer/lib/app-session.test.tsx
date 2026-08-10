@@ -528,6 +528,9 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
+    // The optional call is a silent no-op until the provider has registered its
+    // listener, and rendering the session does not guarantee that has happened.
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
 
     act(() => deepLinkListener?.(
       `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
