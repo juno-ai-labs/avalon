@@ -210,11 +210,11 @@ function ContextContent({
           {workstream.emailAddress && (
             <div>
               <dt>Email</dt>
-              {/* Without the debugging rows below, the address is the only long
-                  value here, so it stays on one line and the copy control — not
-                  a wrapped reading — is how it leaves the rail. */}
-              <dd className={clsx('copy-detail', debugEnabled && 'email-detail')}>
-                <span title={debugEnabled ? undefined : workstream.emailAddress}>{workstream.emailAddress}</span>
+              {/* The address is a value people copy rather than read, so it
+                  stays on one line and leaves the rail through the control
+                  beside it; the title carries the rest. */}
+              <dd className="copy-detail">
+                <span title={workstream.emailAddress}>{workstream.emailAddress}</span>
                 <IconButton
                   label={emailCopyState === 'copied'
                     ? 'Work-stream email address copied'
