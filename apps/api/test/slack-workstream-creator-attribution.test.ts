@@ -1,9 +1,8 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
@@ -23,7 +22,6 @@ vi.mock("../src/services/workstream-service", () => ({
   launchWorkstreamHarness: vi.fn(async () => "harness-run"),
 }));
 
-const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
 const databases: DatabaseSync[] = [];
 
 afterEach(() => {
@@ -107,12 +105,8 @@ describe("Slack work stream creator attribution", () => {
 });
 
 function seededDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
+  const database = migratedSqliteDatabase();
   databases.push(database);
-  database.exec("PRAGMA foreign_keys = ON");
-  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
-    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
-  }
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES
@@ -128,39 +122,4 @@ function seededDatabase(): DatabaseSync {
       ('workspace-slack', 'user-taylor', 'member', 'active', '2026-01-01');
   `);
   return database;
-}
-
-function sqliteD1(database: DatabaseSync): D1Database {
-  const prepare = (sql: string) => {
-    let values: unknown[] = [];
-    const statement = {
-      bind(...next: unknown[]) {
-        values = next;
-        return statement;
-      },
-      async first<T>() {
-        return (database.prepare(sql).get(...values as SQLInputValue[]) as T | undefined) ?? null;
-      },
-      async all<T>() {
-        return {
-          success: true,
-          results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],
-          meta: { changes: 0 },
-        } as unknown as D1Result<T>;
-      },
-      async run<T>() {
-        const result = database.prepare(sql).run(...values as SQLInputValue[]);
-        return { success: true, results: [], meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
-      },
-    };
-    return statement as unknown as D1PreparedStatement;
-  };
-  return {
-    prepare,
-    async batch<T>(statements: D1PreparedStatement[]) {
-      const results: D1Result<unknown>[] = [];
-      for (const statement of statements) results.push(await statement.run());
-      return results as D1Result<T>[];
-    },
-  } as unknown as D1Database;
 }

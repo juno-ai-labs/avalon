@@ -30,6 +30,7 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
   recordConnectorActorIdentity,
   resolveConnectorActorIdentity,
+  type ConnectorActorVerification,
 } from "./connector-actor-identity";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
@@ -762,17 +763,31 @@ export class SlackAgentService {
       ).bind(userId, userId, at, connectionId, teamId, slackUserId, ...guardBindings),
       // A work stream this Slack member started before the mapping existed was
       // recorded as ownerless. Now that the identity resolves, credit them as
-      // its creator. An existing creator is never rewritten.
+      // its creator.
+      //
+      // A creator recorded by another path is never rewritten. The single
+      // exception is an explicit account link correcting a creator that this
+      // same session's own verified-email guess produced: the link is the
+      // stronger statement about who the Slack member is, and the address it
+      // disagrees with can belong to somebody else. The session row still
+      // carries its previous `assignment_method` here, because the statement
+      // that overwrites it runs later in this batch.
       this.env.DB.prepare(
         `UPDATE workstreams
          SET created_by_user_id = ?, updated_at = ?
-         WHERE created_by_user_id IS NULL
-           AND id IN (
-             SELECT s.workstream_id FROM slack_agent_sessions s
-             WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
-               AND s.execution_scope = 'workspace'
-               ${assignmentGuard}
-           )`,
+         WHERE id IN (
+           SELECT s.workstream_id FROM slack_agent_sessions s
+           WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
+             AND s.execution_scope = 'workspace'
+             AND (
+               workstreams.created_by_user_id IS NULL
+               ${method === "explicit_link"
+                 ? `OR (s.assignment_method = 'verified_email'
+                        AND workstreams.created_by_user_id = s.assigned_user_id)`
+                 : ""}
+             )
+             ${assignmentGuard}
+         )`,
       ).bind(userId, at, connectionId, teamId, slackUserId, ...guardBindings),
       this.env.DB.prepare(
         `UPDATE slack_agent_sessions
@@ -781,6 +796,35 @@ export class SlackAgentService {
            AND execution_scope = 'workspace'
            ${assignmentGuard.replaceAll("s.", "")}`,
       ).bind(userId, at, at, connectionId, teamId, slackUserId, ...guardBindings),
+      // The participation row above records how they were added; once they are
+      // the creator it should say so, or the People rail subtitles a creator
+      // with "explicit".
+      this.env.DB.prepare(
+        `UPDATE workstream_participants
+         SET participation_reason = 'creator'
+         WHERE user_id = ? AND participation_reason <> 'creator'
+           AND workstream_id IN (
+             SELECT s.workstream_id FROM slack_agent_sessions s
+             JOIN workstreams w ON w.id = s.workstream_id AND w.created_by_user_id = ?
+             WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
+               AND s.execution_scope = 'workspace'
+               ${assignmentGuard}
+           )`,
+      ).bind(userId, userId, connectionId, teamId, slackUserId, ...guardBindings),
+      // Symmetrically, a member a correction displaced is still a participant
+      // but no longer the creator.
+      this.env.DB.prepare(
+        `UPDATE workstream_participants
+         SET participation_reason = 'explicit'
+         WHERE participation_reason = 'creator' AND user_id <> ?
+           AND workstream_id IN (
+             SELECT s.workstream_id FROM slack_agent_sessions s
+             JOIN workstreams w ON w.id = s.workstream_id AND w.created_by_user_id = ?
+             WHERE s.connection_id = ? AND s.slack_team_id = ? AND s.slack_user_id = ?
+               AND s.execution_scope = 'workspace'
+               ${assignmentGuard}
+           )`,
+      ).bind(userId, userId, connectionId, teamId, slackUserId, ...guardBindings),
     ]);
     return Number(results[2]?.meta.changes ?? 0);
   }
@@ -1214,6 +1258,7 @@ export class SlackAgentService {
     const identity = await this.linkedIdentity(teamId, slackUserId);
     let actor: ExternalActor | null = null;
     let matchedWorkspaceUserId: string | null = identity?.auth.userId ?? null;
+    let matchedVerification: ConnectorActorVerification | null = identity ? "account_link" : null;
     if (!identity) {
       if (source.channelResolutionFailure) {
         const targetChannel = channelId ?? await this.openDm(token, slackUserId);
@@ -1244,6 +1289,7 @@ export class SlackAgentService {
       );
       actor = externalIdentity.actor;
       matchedWorkspaceUserId = externalIdentity.matchedWorkspaceUserId;
+      matchedVerification = externalIdentity.matchedVerification;
     }
     if (activationInvocation) {
       const adapter = connectorRegistryForEnv(this.env).get("slack").messagingAgent;
@@ -1314,6 +1360,7 @@ export class SlackAgentService {
               identity,
               actor,
               matchedWorkspaceUserId,
+              matchedVerification,
               teamId,
               slackUserId,
               channel,
@@ -1457,6 +1504,7 @@ export class SlackAgentService {
     identity: SlackIdentity | null;
     actor: ExternalActor | null;
     matchedWorkspaceUserId: string | null;
+    matchedVerification: ConnectorActorVerification | null;
     teamId: string;
     slackUserId: string;
     channel: string;
@@ -1529,12 +1577,14 @@ export class SlackAgentService {
       at,
     ).run();
     if (!input.identity && input.matchedWorkspaceUserId) {
+      // The recorded method has to name the mapping that actually resolved the
+      // member: it is what a later assignment consults before overwriting.
       await this.assignWorkspaceSessions(
         input.connection.id,
         input.teamId,
         input.slackUserId,
         input.matchedWorkspaceUserId,
-        "verified_email",
+        input.matchedVerification === "verified_email" ? "verified_email" : "explicit_link",
       );
     }
     const session = await this.env.DB.prepare(
@@ -1787,7 +1837,11 @@ export class SlackAgentService {
     workspaceId: string,
     teamId: string,
     slackUserId: string,
-  ): Promise<{ actor: ExternalActor; matchedWorkspaceUserId: string | null }> {
+  ): Promise<{
+    actor: ExternalActor;
+    matchedWorkspaceUserId: string | null;
+    matchedVerification: ConnectorActorVerification | null;
+  }> {
     const result = await slackApi(token, "users.info", { user: slackUserId }, AbortSignal.timeout(10_000));
     if (!validSlackHuman(result.user, teamId) || result.user.id !== slackUserId) {
       throw new ApiError(403, "slack_actor_invalid", "Slack did not return an active human workspace member");
@@ -1806,7 +1860,11 @@ export class SlackAgentService {
     if (identity) {
       await recordConnectorActorIdentity(this.env, workspaceId, actor, identity, profile?.email ?? null);
     }
-    return { actor, matchedWorkspaceUserId: identity?.userId ?? null };
+    return {
+      actor,
+      matchedWorkspaceUserId: identity?.userId ?? null,
+      matchedVerification: identity?.verification ?? null,
+    };
   }
 
   private async slackOriginContext(
@@ -2221,6 +2279,16 @@ async function claimWorkspaceSession(
            WHERE id = ? AND linked_user_id = ? AND claimed_at = ? AND slack_user_id = ?
          )`,
     ).bind(identity.auth.userId, at, session.id, identity.auth.userId, at, identity.slackUserId),
+    env.DB.prepare(
+      `UPDATE workstream_participants
+       SET participation_reason = 'creator'
+       WHERE user_id = ? AND participation_reason <> 'creator'
+         AND workstream_id IN (
+           SELECT s.workstream_id FROM slack_agent_sessions s
+           JOIN workstreams w ON w.id = s.workstream_id AND w.created_by_user_id = ?
+           WHERE s.id = ?
+         )`,
+    ).bind(identity.auth.userId, identity.auth.userId, session.id),
     env.DB.prepare(
       `INSERT INTO audit_events
        (id, workspace_id, actor_type, actor_user_id, workstream_id, action,

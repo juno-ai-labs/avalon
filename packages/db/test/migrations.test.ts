@@ -1531,6 +1531,10 @@ describe("database migrations", () => {
         ('workstream-suspended', 'workspace-slack', 'Suspended', 'Slack task', 'ad_hoc', NULL,
          'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
         ('workstream-owned', 'workspace-slack', 'Owned', 'Slack task', 'ad_hoc', 'user-jordan',
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-claimed-by-other', 'workspace-slack', 'Claimed', 'Slack task', 'ad_hoc', NULL,
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-claimed-by-author', 'workspace-slack', 'Claimed', 'Slack task', 'ad_hoc', NULL,
          'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01');
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
@@ -1549,10 +1553,36 @@ describe("database migrations", () => {
          'T123', 'U999', 'C123', '3.0', 'event:suspended', 'workstream-suspended',
          'app_mention', 'public', 'user-former', '2026-02-02', 'verified_email', '{}',
          '2026-02-01', '2026-02-02'),
+        ('session-claimed-by-other', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '5.0', 'event:claimed-other', 'workstream-claimed-by-other',
+         'app_mention', 'public', 'user-taylor', '2026-02-03', 'verified_email', '{}',
+         '2026-02-01', '2026-02-03'),
+        ('session-claimed-by-author', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '6.0', 'event:claimed-author', 'workstream-claimed-by-author',
+         'app_mention', 'public', 'user-taylor', '2026-02-03', 'verified_email', '{}',
+         '2026-02-01', '2026-02-03'),
         ('session-owned', 'workspace-slack', 'connection-slack', NULL, 'workspace',
          'T123', 'U456', 'C123', '4.0', 'event:owned', 'workstream-owned',
          'app_mention', 'public', 'user-taylor', '2026-02-02', 'verified_email', '{}',
          '2026-02-01', '2026-02-02');
+      -- An earlier assignment already added the member with the reason that
+      -- assignment used; crediting them as creator has to update it.
+      INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+      VALUES ('workstream-claimed-by-author', 'user-taylor', 'user-taylor', 'explicit',
+              '2026-02-03');
+      -- A claim writes assigned_user_id too, so it must be told apart from a
+      -- verified-email or account-link assignment by who did the claiming.
+      UPDATE slack_agent_sessions SET
+        claimed_by_slack_user_id = 'UOTHER', claimed_at = '2026-02-03',
+        assignment_method = 'explicit_link', execution_scope = 'user',
+        linked_user_id = 'user-taylor'
+      WHERE id = 'session-claimed-by-other';
+      UPDATE slack_agent_sessions SET
+        claimed_by_slack_user_id = 'U456', claimed_at = '2026-02-03',
+        assignment_method = 'explicit_link', execution_scope = 'user',
+        linked_user_id = 'user-taylor'
+      WHERE id = 'session-claimed-by-author';
     `);
 
     database.exec(readFileSync(
@@ -1564,6 +1594,8 @@ describe("database migrations", () => {
       "SELECT id, created_by_user_id FROM workstreams ORDER BY id",
     ).all()).toEqual([
       { id: "workstream-assigned", created_by_user_id: "user-taylor" },
+      { id: "workstream-claimed-by-author", created_by_user_id: "user-taylor" },
+      { id: "workstream-claimed-by-other", created_by_user_id: null },
       { id: "workstream-owned", created_by_user_id: "user-jordan" },
       { id: "workstream-suspended", created_by_user_id: null },
       { id: "workstream-unassigned", created_by_user_id: null },
@@ -1574,6 +1606,11 @@ describe("database migrations", () => {
     ).all()).toEqual([
       {
         workstream_id: "workstream-assigned",
+        user_id: "user-taylor",
+        participation_reason: "creator",
+      },
+      {
+        workstream_id: "workstream-claimed-by-author",
         user_id: "user-taylor",
         participation_reason: "creator",
       },

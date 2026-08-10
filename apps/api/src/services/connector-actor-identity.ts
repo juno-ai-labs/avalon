@@ -37,25 +37,35 @@ export async function resolveConnectorActorIdentity(
 ): Promise<ConnectorActorIdentity | null> {
   const actor = ExternalActorSchema.parse(actorInput);
   const linked = await env.DB.prepare(
-    `SELECT i.user_id FROM external_user_identities i
+    `SELECT i.user_id, i.verification_source FROM external_user_identities i
      JOIN workspace_members wm ON wm.workspace_id = i.workspace_id AND wm.user_id = i.user_id
      WHERE i.workspace_id = ? AND i.provider = ? AND i.provider_tenant_id = ?
        AND i.provider_user_id = ? AND wm.status = 'active'
      LIMIT 1`,
   ).bind(workspaceId, actor.provider, actor.providerAccountId, actor.providerUserId)
-    .first<{ user_id: string }>();
-  if (linked) return { userId: String(linked.user_id), verification: "account_link" };
+    .first<{ user_id: string; verification_source: string }>();
+  if (linked) {
+    return {
+      userId: String(linked.user_id),
+      verification: storedVerification(String(linked.verification_source)),
+    };
+  }
 
   // A healthy personal connection is that member's own provider account, so an
   // actor matching it is that member by the same authorization they granted.
+  // Connections are matched on the normalized identity every OAuth callback
+  // writes to `config_json` — `provider_account_id` is provider-shaped
+  // (`<team>:<user>` for Slack, an organization for Linear) and is not the
+  // actor's identity on its own.
   const personal = await env.DB.prepare(
     `SELECT c.owner_user_id FROM connector_connections c
      JOIN workspace_members wm ON wm.workspace_id = c.workspace_id AND wm.user_id = c.owner_user_id
      WHERE c.workspace_id = ? AND c.connector_type = ? AND c.scope = 'personal'
-       AND c.status = 'healthy' AND c.owner_user_id IS NOT NULL
-       AND c.provider_account_id = ? AND wm.status = 'active'
+       AND c.status = 'healthy' AND c.owner_user_id IS NOT NULL AND wm.status = 'active'
+       AND COALESCE(json_extract(c.config_json, '$.providerUserId'), c.provider_account_id) = ?
+       AND COALESCE(json_extract(c.config_json, '$.providerTenantId'), c.provider_account_id) = ?
      LIMIT 2`,
-  ).bind(workspaceId, actor.provider, actor.providerUserId)
+  ).bind(workspaceId, actor.provider, actor.providerUserId, actor.providerAccountId)
     .all<{ owner_user_id: string }>();
   const personalMatches = personal.results ?? [];
   if (personalMatches.length === 1 && personalMatches[0]) {
@@ -78,8 +88,33 @@ export async function resolveConnectorActorIdentity(
 }
 
 /**
- * Persists a resolved mapping so later work by the same provider identity —
- * in any connector surface — reuses it without repeating the provider lookup.
+ * `external_user_identities` predates this resolver and has other writers:
+ * `syncVerifiedIdentityDirectory` records `personal_connector_oauth` and
+ * `slack_user_link`. Map every vocabulary onto the strengths above so a stored
+ * row is read back at the confidence it was recorded with, whoever wrote it.
+ */
+function storedVerification(source: string): ConnectorActorVerification {
+  if (source === "verified_email") return "verified_email";
+  if (source === "personal_connection" || source === "personal_connector_oauth") {
+    return "personal_connection";
+  }
+  return "account_link";
+}
+
+/**
+ * Persists a provider lookup that has no other durable home, so later work by
+ * the same provider identity — in any connector surface — reuses it.
+ *
+ * Only a `verified_email` resolution is worth storing. The stronger tiers are
+ * already derivable: an account link is a stored row or a `slack_user_links`
+ * entry the directory sync republishes, and a personal connection is the
+ * connection row itself. Re-recording them would add a write to every inbound
+ * provider message, churn the `updated_at` ordering the opportunity directory
+ * reads, and overwrite another writer's label with a synonym of it.
+ *
+ * The upsert is monotonic for the same reason the caller is narrow: an address
+ * can legitimately belong to a member other than the one that provider identity
+ * is linked to, so a weaker observation must never retarget a stored mapping.
  */
 export async function recordConnectorActorIdentity(
   env: Env,
@@ -88,6 +123,7 @@ export async function recordConnectorActorIdentity(
   identity: ConnectorActorIdentity,
   verifiedEmail?: string | null,
 ): Promise<void> {
+  if (identity.verification !== "verified_email") return;
   const actor = ExternalActorSchema.parse(actorInput);
   const at = nowIso();
   await env.DB.prepare(
@@ -100,7 +136,9 @@ export async function recordConnectorActorIdentity(
        email = COALESCE(excluded.email, external_user_identities.email),
        display_name = COALESCE(excluded.display_name, external_user_identities.display_name),
        verification_source = excluded.verification_source,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at
+     WHERE excluded.verification_source != 'verified_email'
+        OR external_user_identities.verification_source = 'verified_email'`,
   ).bind(
     newId(),
     workspaceId,
