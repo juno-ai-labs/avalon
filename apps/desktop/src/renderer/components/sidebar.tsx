@@ -38,6 +38,7 @@ interface SidebarProps {
   notes?: NoteSummary[];
   workstreams: WorkstreamSummary[];
   loading?: boolean;
+  onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
@@ -136,23 +137,28 @@ function CopyResourceIdItem({ id, label }: { id: string; label: string }): React
 function AutomationRow({
   automation,
   debugEnabled,
+  onArchiveDraft,
   onRunNow,
 }: {
   automation: AutomationSummary;
   debugEnabled: boolean;
+  onArchiveDraft: (automation: AutomationSummary) => void;
   onRunNow: (automation: AutomationSummary) => void;
 }): React.JSX.Element {
+  const isDraft = automation.status === 'draft';
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
-          <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active')} to={`/automations/${automation.id}`}>
+          <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active', isDraft && 'is-draft')} to={`/automations/${automation.id}`}>
             <span className="sidebar-row-icon" aria-hidden="true">
               {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{automation.name}</span>
-              {automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+              {isDraft
+                ? <span className="sidebar-row-hint">Draft</span>
+                : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
             </span>
             <Badge className="scope-badge">{automation.scope === 'you' ? 'You' : 'Workspace'}</Badge>
           </NavLink>
@@ -162,7 +168,7 @@ function AutomationRow({
         <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
           <ContextMenu.Item
             className="menu-item"
-            disabled={automation.status === 'draft'}
+            disabled={isDraft}
             onSelect={() => onRunNow(automation)}
           >
             <Play aria-hidden="true" size={16} /> Run now
@@ -172,9 +178,15 @@ function AutomationRow({
           </ContextMenu.Item>
           {debugEnabled && <CopyResourceIdItem id={automation.id} label="Copy automation id" />}
           <ContextMenu.Separator className="menu-separator" />
-          <ContextMenu.Item className="menu-item menu-item-danger">
-            <Archive aria-hidden="true" size={16} /> Archive
-          </ContextMenu.Item>
+          {isDraft ? (
+            <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchiveDraft(automation)}>
+              <Archive aria-hidden="true" size={16} /> Archive draft
+            </ContextMenu.Item>
+          ) : (
+            <ContextMenu.Item className="menu-item menu-item-danger">
+              <Archive aria-hidden="true" size={16} /> Archive
+            </ContextMenu.Item>
+          )}
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
@@ -266,6 +278,7 @@ export function Sidebar({
   notes = [],
   workstreams,
   loading,
+  onArchiveDraftAutomation,
   onMarkWorkstreamUnread,
   onRenameWorkstream,
   onRunAutomation,
@@ -282,6 +295,12 @@ export function Sidebar({
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  // Drafts are unfinished automations, so they sit under the ones that run
+  // rather than interleaving with them by name.
+  const orderedAutomations = [
+    ...automations.filter((automation) => automation.status !== 'draft'),
+    ...automations.filter((automation) => automation.status === 'draft'),
+  ];
   const groups = groupActivityItems<RecentSidebarItem>([
     ...workstreams.map((workstream) => ({
       type: 'workstream' as const,
@@ -376,11 +395,12 @@ export function Sidebar({
               <p className="sidebar-empty">No active automations</p>
             ) : (
               <div className="sidebar-list">
-                {automations.map((automation) => (
+                {orderedAutomations.map((automation) => (
                   <AutomationRow
                     automation={automation}
                     debugEnabled={debugEnabled}
                     key={automation.id}
+                    onArchiveDraft={(target) => void onArchiveDraftAutomation(target).catch(() => undefined)}
                     onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
                   />
                 ))}

@@ -74,7 +74,7 @@ export class AutomationService {
        FROM automation_subscriptions s
        JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND t.archived_at IS NULL
+       WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.archived_at IS NULL
          AND (s.scope = 'workspace' OR s.owner_user_id = ?)
        ORDER BY t.name COLLATE NOCASE`,
     ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
@@ -488,6 +488,22 @@ export class AutomationService {
       // replaying this idempotent pause/resume mutation.
     }
     await this.refreshScheduler();
+  }
+
+  /** Hides an abandoned draft from the automation list. A draft holds no enabled
+   * schedule and no active email route, so archiving one stops nothing that was
+   * running; an active or paused automation is paused instead. */
+  async archiveDraft(id: string): Promise<void> {
+    const subscription = await this.loadSubscription(id);
+    this.assertCanManageSubscription(subscription);
+    if (subscription.status !== "draft") {
+      throw new ApiError(409, "automation_not_draft", "Only a draft automation can be archived");
+    }
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `UPDATE automation_subscriptions SET archived_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
+    ).bind(at, at, id, this.auth.workspaceId).run();
   }
 
   async runs(id: string, limit = 50) {
@@ -1253,7 +1269,7 @@ export class AutomationService {
        , t.owner_user_id AS template_owner_user_id
        FROM automation_subscriptions s JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.id = ? AND s.workspace_id = ?
+       WHERE s.id = ? AND s.workspace_id = ? AND s.archived_at IS NULL
          AND (s.scope = 'workspace' OR s.owner_user_id = ?) AND t.archived_at IS NULL`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "automation_not_found", "Automation not found");
