@@ -42,7 +42,24 @@ Two surfaces are represented: the **desktop workspace** (the product) and the **
 - **`Icon`** — a thin wrapper over the Lucide glyph set (the product uses `lucide-react`). Needed because these files run without npm; it masks `lucide-static` SVGs so glyphs inherit `currentColor`.
 - **`components/site/*`** — the marketing site is plain HTML+CSS upstream, so its recurring patterns were factored into components. Class names and values are unchanged.
 
-Everything else maps one-to-one onto a class or component that exists in the repository.
+Everything else maps one-to-one onto a class or component that exists in the repository, with one exception: some color token *names* here diverge from the app's, even though every value is identical. Before using a token from this package in `apps/desktop` or `apps/site` production code, check it isn't one of these renames — `var(--brand-primary)` doesn't exist in `app.css` and silently resolves to nothing:
+
+| This package | `apps/desktop/src/renderer/styles/app.css` |
+| --- | --- |
+| `--brand-primary` | `--brand` |
+| `--brand-primary-hover` | `--brand-hover` |
+| `--brand-secondary` | `--blue` |
+| `--status-yellow` | `--yellow` |
+| `--status-red` | `--red` |
+| `--status-green` | `--green` |
+| `--accent` | `--orange` |
+
+`--status-idle` and `--status-completed` are new names for two grays the app
+already paints (`#706f69`, matching `--muted-2`; `#77766f`, currently only a
+hardcoded literal with no token) — not renames of an existing token. The
+spacing, radius, and motion tokens are net-new too: the app doesn't
+currently tokenize those values at all, hardcoding them per component
+instead, so there's nothing for these names to conflict with.
 
 ---
 
