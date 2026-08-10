@@ -1,0 +1,17 @@
+:root {
+  --duration-instant: 100ms; /* @kind other */
+  --duration-fast: 120ms; /* @kind other */
+  --duration-ui: 140ms; /* @kind other */
+  --duration-hover: 180ms; /* @kind other */
+  --duration-panel: 220ms; /* @kind other */
+  --duration-reveal: 650ms; /* @kind other */
+  --ease-standard: ease; /* @kind other */
+  --ease-out: ease-out; /* @kind other */
+  --ease-reveal: cubic-bezier(0.2, 0.7, 0.2, 1); /* @kind other */
+  --pulse-duration: 1.4s; /* @kind other */
+}
+
+@keyframes avalon-active-pulse { 0%, 100% { opacity: 0.36; } 50% { opacity: 1; } }
+@keyframes avalon-fade-in { from { opacity: 0; } }
+@keyframes avalon-spin { to { transform: rotate(360deg); } }
+@keyframes avalon-skeleton-pulse { 50% { opacity: 0.45; } }
