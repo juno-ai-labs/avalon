@@ -1021,7 +1021,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span className="settings-row-icon"><Wrench aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy">
                       <strong>Debug enabled</strong>
-                      <small>Show debugging actions and details such as copying a work stream or automation identifier from its right-click menu, and how a work stream is wired in its Details.</small>
+                      <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.</small>
                     </span>
                     <span className="settings-toggle">
                       <input
