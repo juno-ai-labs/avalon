@@ -77,7 +77,7 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 ## Documentation
 
-Every document is indexed, with its scope, in [the documentation index](docs/README.md).
+[The documentation index](docs/README.md) lists every document with its scope. The selection below is a reading path, not the full set.
 
 - [Product requirements](docs/PRD.md)
 - [Architecture](docs/ARCHITECTURE.md)

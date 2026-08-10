@@ -93,8 +93,15 @@ cd node_modules/.pnpm/electron@43.2.0/node_modules/electron
 curl -sSL -o /tmp/electron.zip \
   https://github.com/electron/electron/releases/download/v43.2.0/electron-v43.2.0-linux-x64.zip
 mkdir -p dist && unzip -q -o /tmp/electron.zip -d dist
-chmod +x dist/electron && echo electron > path.txt
-./dist/electron --no-sandbox --version   # expect v43.2.0
+chmod +x dist/electron && printf electron > path.txt
+node -e "console.log(require('electron'))"   # expect the path to dist/electron
 ```
+
+`printf`, not `echo`: `index.js` reads `path.txt` without trimming and joins the
+result onto `dist/`, so a trailing newline makes `existsSync` fail on
+`dist/electron\n` and calls `downloadElectron()` — re-running the download this
+whole procedure exists to avoid. Verify with `require('electron')` rather than
+`./dist/electron --version`, which bypasses that resolution entirely and passes
+even when `path.txt` is malformed.
 
 Match the version to the `electron` dependency in `apps/desktop/package.json`.
