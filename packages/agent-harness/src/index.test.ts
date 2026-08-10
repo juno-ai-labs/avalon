@@ -203,6 +203,42 @@ describe("agent harness", () => {
     expect(elicitationTool!.function.parameters.properties).toHaveProperty("options");
   });
 
+  it("defaults an unstated scope to workspace and coerces it for a member who cannot create one", async () => {
+    const baseDraft = {
+      name: "Release watch",
+      description: "Watch for new releases.",
+      overview: "Reports newly published releases to the team.",
+      instructions: "Report new releases.",
+      triggers: [{ type: "manual" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["Release report"],
+      defaultBehavior: "{}",
+      memoryTables: [],
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const responses = [
+      { ...baseDraft },
+      { ...baseDraft, suggestedScope: "personal" },
+      { ...baseDraft, suggestedScope: "workspace" },
+    ];
+    const fetcher = vi.fn(async () => automationSubmitResponse(responses.shift()!)) as typeof fetch;
+
+    await expect(compileAutomation({ apiKey: "key", model: "test/model", messages: [], fetch: fetcher }))
+      .resolves.toMatchObject({ suggestedScope: "workspace" });
+    await expect(compileAutomation({ apiKey: "key", model: "test/model", messages: [], fetch: fetcher }))
+      .resolves.toMatchObject({ suggestedScope: "personal" });
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [],
+      workspaceScopeAllowed: false,
+      fetch: fetcher,
+    })).resolves.toMatchObject({ suggestedScope: "personal" });
+  });
+
   it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
     const baseDraft = {
       name: "Daily summary",

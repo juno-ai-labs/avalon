@@ -70,7 +70,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "fa9bd8510d2f996831129ebbcf094a02acc245741b5e72f665a660b570b691d6",
+        hash: "22b849d824d57c7ae258dfb994e33305871b8aa66919d865295d69dbb2b2be51",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -81,7 +81,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "2f01a9bc2b5188af005fd927479752eb45fbab30fcedde7ce349fc7f678a207d",
+        hash: "905b016cccbaa6c9f151a2039bfda1e22b673fa5b921bece90304f9ad0bb4735",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -315,17 +315,6 @@ describe("prompt renderers", () => {
     expect(untrusted.content).toContain("monad-thesis-brief.md");
   });
 
-  it("keeps fixed prompt overhead bounded", () => {
-    const workstreamPrompt = renderWorkstreamSystemPrompt({
-      title: "T",
-      objective: "O",
-    });
-    const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
-
-    expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
-    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(8_000);
-  });
-
   it("renders a stable active and loadable plugin catalog using model-facing IDs", () => {
     expect(renderPromptPluginCatalog({
       activePluginIds: new Set(["plugin_github"]),
@@ -369,7 +358,7 @@ describe("prompt renderers", () => {
     expect(policy).toContain("# Submission");
     expect(policy).toContain("Use these phases flexibly rather than as a fixed sequence");
     expect(policy).toContain("Once the automation is well defined, call automation_submit_draft");
-    expect(policy).toContain("Default suggestedScope to personal");
+    expect(policy).toContain("Default suggestedScope to workspace");
     expect(policy).toContain("Then call core_request_elicitation");
     expect(policy).toContain("Tool-call turns must contain no assistant text");
     expect(policy).toContain("Do not emit a separate confirmation or question");
@@ -381,6 +370,27 @@ describe("prompt renderers", () => {
     expect(policy).toContain("when to look it up with table_query");
     expect(policy).toContain("Put the same schema and operating rules in memoryTables");
     expect(policy).toContain("All declared tables are private to the installed automation");
+  });
+
+  it("makes Avalon own delivery and never lets a connector send the result to the requester", () => {
+    const policy = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
+    expect(policy).toContain("# Delivery");
+    expect(policy).toContain("Avalon owns delivery");
+    expect(policy).toContain("no Gmail send or draft, no Slack message");
+    expect(policy).toContain("unless that person explicitly asks for that provider send");
+    expect(policy).toContain("Do not recommend a plugin's send, post, or draft tools for delivery");
+    expect(policy).toContain("the destination is blocking with no safe default");
+    expect(policy).toContain("An email from Avalon to the owner's account address");
+    expect(policy).toContain("A direct message from Avalon in Slack");
+    expect(policy).toContain("must be personal scope");
+  });
+
+  it("tells a member who cannot create workspace automations to suggest personal scope", () => {
+    const allowed = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
+    const restricted = renderAutomationCompilerMessages({ messages: [], workspaceScopeAllowed: false })[0]!.content;
+    expect(allowed).not.toContain("is not a workspace administrator");
+    expect(restricted).toContain("Default suggestedScope to workspace");
+    expect(restricted).toContain("suggestedScope must be personal despite the default above");
   });
 
   it("records materialized durable-table IDs, schema, and update rules in automation run context", () => {

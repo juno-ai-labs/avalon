@@ -134,6 +134,7 @@ export class AutomationService {
           personal: defaults.user_timezone,
           workspace: defaults.workspace_timezone,
         },
+        workspaceScopeAllowed: this.auth.role === "owner" || this.auth.role === "admin",
       });
       if (draft.ready) {
         try {
