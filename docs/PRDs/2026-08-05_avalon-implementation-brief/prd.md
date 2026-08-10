@@ -1,5 +1,16 @@
 # Avalon implementation brief
 
+> Created 2026-08-05.
+>
+> The product contract for Avalon as a whole — what a work stream is, what the
+> agent may do, and what the prototype must deliver. Unlike a per-change PRD,
+> this one stays current: it is the document every other document defers to on
+> what Avalon *is*, and it is edited when the contract itself changes. The
+> phased build against it is
+> [`../../IMPLEMENTATION_PLAN.md`](../../IMPLEMENTATION_PLAN.md).
+>
+> Conventions for this folder: [`../../prds.md`](../../prds.md).
+
 Avalon is an AI-native workplace communication and execution environment organized around concrete work streams rather than channels, direct messages, search, or a global inbox.
 
 ## Product contract
