@@ -20,14 +20,17 @@ export function defineConnectorActivityTriggers(
   connectorName: string,
   eventTypes: readonly string[],
   overrides: Readonly<Record<string, Partial<Omit<ConnectorActivityTriggerDescriptor, "eventType">>>> = {},
+  commonFilterFields: readonly ConnectorActivityFilterField[] = [],
 ): ConnectorActivityTriggerDescriptor[] {
   return eventTypes.map((eventType) => {
     const override = overrides[eventType] ?? {};
+    const filterFields = new Map(commonFilterFields.map((field) => [field.key, field]));
+    for (const field of override.filterFields ?? []) filterFields.set(field.key, field);
     return {
       eventType,
       label: override.label ?? humanizeActivityEventType(eventType),
       description: override.description ?? `${connectorName} activity normalized as ${eventType}.`,
-      filterFields: [...(override.filterFields ?? [])] as ConnectorActivityFilterField[],
+      filterFields: [...filterFields.values()] as ConnectorActivityFilterField[],
     };
   });
 }
