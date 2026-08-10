@@ -40,6 +40,15 @@ healthRoutes.get("/", async (c) => {
     ok: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" && typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function",
     message: typeof c.env.WORKSTREAM_LOOP_WORKFLOW?.create === "function" ? "bindings available" : "binding unavailable",
   };
+  // Flagship bindings are always remote, so this is unavailable under
+  // `wrangler dev --local` by design and is only required in production, where
+  // an unbound app would silently drop every agent onto the model variables.
+  checks.featureFlags = {
+    ok: typeof c.env.FLAGS?.getObjectValue === "function",
+    message: typeof c.env.FLAGS?.getObjectValue === "function"
+      ? "binding available"
+      : "binding unavailable; agents use the OPENROUTER_* variables",
+  };
   checks.openRouter = {
     ok: Boolean(c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL),
     message: c.env.OPENROUTER_API_KEY && c.env.OPENROUTER_PRIMARY_MODEL ? "configured" : "not configured",
@@ -114,7 +123,7 @@ healthRoutes.get("/", async (c) => {
     checks.workflows,
     checks.workstreamEmailRegistry,
   ];
-  if (c.env.APP_ENV === "production") required.push(checks.inboundEmail);
+  if (c.env.APP_ENV === "production") required.push(checks.inboundEmail, checks.featureFlags);
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
   return c.json({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }, ok ? 200 : 503);

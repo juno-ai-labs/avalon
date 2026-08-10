@@ -37,6 +37,7 @@ update it in the same change.
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) | The bounded Bind 11 adapter over OpenRouter: run admission, tool execution, loadable skills, streaming, receipts, and what the Workflow host owns versus what Bind owns. |
+| [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) | The Cloudflare Flagship binding and the per-agent model-routing flags it serves. Read before adding a flag or changing which OpenRouter model an agent runs on. |
 | [`CONNECTORS.md`](CONNECTORS.md) | The connector registry and manifest model — OAuth needs, personal versus workspace scopes, activity and resource types, tools, polling, webhooks, watches. Read before adding or changing an adapter. |
 | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) | Provider app registrations and their regional routing, plus the source manifests in `config/provider-apps`. Read before changing a registration or callback. |
 | [`LINEAR_INTEGRATION.md`](LINEAR_INTEGRATION.md) | The Linear OAuth, webhook, and native-agent design against Linear's published contracts. |

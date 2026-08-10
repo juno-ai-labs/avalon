@@ -21,6 +21,7 @@ import type { Env } from "../env";
 import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { resolveAgentModelRouting, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 
 interface ActivityRow {
@@ -106,13 +107,6 @@ function parseStrings(value: string): string[] {
   } catch {
     return [];
   }
-}
-
-function splitFallbacks(value: string): string[] {
-  return value
-    .split(",")
-    .map((model) => model.trim())
-    .filter(Boolean);
 }
 
 function workflowAlreadyExists(error: unknown): boolean {
@@ -544,7 +538,7 @@ async function triggerMatches(
   if (!matchesFilters(activity, trigger.deterministicPrefilter)) return false;
   if (!env.OPENROUTER_API_KEY) return false;
 
-  const client = structuredClient(env);
+  const client = await structuredClient(env, activity.workspace_id);
   const result = await client.structured({
     messages: renderSemanticTriggerMessages({
       condition: trigger.condition,
@@ -591,6 +585,10 @@ async function startActivityAutomation(
       workspaceId: activity.workspace_id,
       workstreamId,
     });
+    const model = await scheduledWorkstreamModel(env, {
+      workspaceId: activity.workspace_id,
+      workstreamId,
+    });
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO workstreams (
@@ -627,7 +625,7 @@ async function startActivityAutomation(
         workstreamId,
         JSON.stringify(principal),
         now,
-        env.OPENROUTER_PRIMARY_MODEL
+        model
       ),
       env.DB.prepare(
         `UPDATE workstreams SET automation_run_id = ?1 WHERE id = ?2 AND workspace_id = ?3`
@@ -709,7 +707,8 @@ async function routeContextually(
   const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
   if (eligible.length === 0) return false;
 
-  const result = await structuredClient(env).structured({
+  const client = await structuredClient(env, activity.workspace_id);
+  const result = await client.structured({
     messages: renderActivityRoutingMessages({
       activity: {
         provider: activity.provider,
@@ -747,11 +746,12 @@ async function routeContextually(
   return true;
 }
 
-function structuredClient(env: Env): OpenRouterClient {
+async function structuredClient(env: Env, workspaceId: string): Promise<OpenRouterClient> {
+  const routing = await resolveAgentModelRouting(env, "activity_structured", { workspaceId });
   return new OpenRouterClient({
     apiKey: env.OPENROUTER_API_KEY,
-    primaryModel: env.OPENROUTER_STRUCTURED_MODEL,
-    fallbackModels: splitFallbacks(env.OPENROUTER_FALLBACK_MODELS),
+    primaryModel: routing.model,
+    fallbackModels: routing.fallbackModels,
     appUrl: env.PUBLIC_API_BASE_URL,
     appName: "Avalon"
   });
