@@ -1202,7 +1202,7 @@ export class WorkstreamService {
     return (result.results ?? []).map((row) => ({
       id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
       resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
-      title: String(row.title), mimeType: row.mime_type == null ? null : String(row.mime_type), canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+      title: String(row.title).slice(0, 300), mimeType: row.mime_type == null ? null : String(row.mime_type), canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
       watchEnabled: Number(row.watch_enabled) === 1, watchStatus: String(row.watch_status), lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),
       createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     }));
@@ -1355,7 +1355,7 @@ export class WorkstreamService {
           content_ref, metadata_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT DO NOTHING`,
-      ).bind(id, this.auth.workspaceId, activity.connection_id, activity.resource_type ?? "activity", activity.provider, activity.provider_resource_id, activity.title, activity.payload_ref, activity.metadata_json ?? "{}", at, at).run();
+      ).bind(id, this.auth.workspaceId, activity.connection_id, activity.resource_type ?? "activity", activity.provider, activity.provider_resource_id, String(activity.title).slice(0, 300), activity.payload_ref, activity.metadata_json ?? "{}", at, at).run();
       resource = await this.env.DB.prepare(ACTIVITY_RESOURCE_LOOKUP_SQL).bind(
         this.auth.workspaceId,
         activity.connection_id,
