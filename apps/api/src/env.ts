@@ -20,8 +20,10 @@ export interface Env {
   IMAGES: ImagesBinding;
   AI: Ai;
   MEMORY_INDEX: VectorizeIndex;
-  // Flagship bindings are always remote, so `wrangler dev --local` leaves this
-  // undefined. Every reader falls back to the model variables below.
+  // Optional because a Worker may run without the binding. Note that
+  // `wrangler dev --local` still provides the object — it is every *call* that
+  // throws `Binding FLAGS needs to be run remotely`, so readers must handle
+  // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
   WORKSTREAM_ROOMS: DurableObjectNamespace;
   WORKSPACE_SCHEDULERS: DurableObjectNamespace;

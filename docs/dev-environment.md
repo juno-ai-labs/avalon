@@ -90,9 +90,11 @@ What that costs: `env.AI` is unavailable, so the memory-embedding paths in
 `apps/api/src/services/memory-service.ts` cannot run. `env.MEMORY_INDEX`
 (Vectorize) is reported as `not supported` by `wrangler dev` in every local run,
 remote bindings or not, so nothing is lost there. `env.FLAGS` (Flagship) is also
-`not supported` locally, because Flagship bindings are always remote; every agent
-then uses the model ids in its `OPENROUTER_*` Worker variables, which is the
-designed fallback rather than a degradation — see
+reported `not supported`, because Flagship bindings are always remote — but
+unlike the others the binding object is still present, and it is each *call*
+that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
+uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
+fallback rather than a degradation — see
 [the feature-flag document](FEATURE_FLAGS.md#local-development).
 
 Verify both regions:

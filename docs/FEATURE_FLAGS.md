@@ -43,6 +43,10 @@ directly rather than through the harness.
 
 HyperSight deliberately has no fallbacks. Its blocks pin one model and never
 route onward, so a refresh cannot change voice partway through a configuration.
+That invariant is enforced in the resolver rather than left to the flag: a
+`fallbackModels` served to `agent-model-hypersight` is dropped and logged as
+`agent_model_flag_fallbacks_ignored`, so the flag can retarget the model but
+cannot turn routing on.
 
 ## Flag value
 
@@ -80,17 +84,35 @@ The evaluation context carries the attributes targeting rules may match on:
 | `workstreamId` | Present on work-stream, subagent, HyperSight, and classifier evaluations |
 | `userId` | Present on automation-compiler and meeting-notes evaluations |
 
-Three failures resolve to the same place — the Worker variables:
+Four failures resolve to the same place — the Worker variables:
 
-- **No binding.** `env.FLAGS` is undefined, which is the normal state in local
-  development (see below).
-- **Failed evaluation.** The call throws or the flag does not exist. Logged as
-  `agent_model_flag_unavailable`.
+- **No binding.** `env.FLAGS` is undefined because the Worker does not declare it.
+- **A call that throws.** Logged as `agent_model_flag_unavailable`, at `debug`
+  rather than `warn` in development and test, because an unreachable binding is
+  the normal local state (see below) and would otherwise warn once per agent run.
+- **A flag that does not resolve** — missing, mistyped, disabled, or
+  type-mismatched. Flagship reports these by returning the default with an
+  `errorCode` rather than throwing, so they are caught by reading
+  `getObjectDetails().errorCode` and logged as `agent_model_flag_unresolved`.
+  Without that check a typo in `AGENT_MODEL_FLAG_KEYS` would be indistinguishable
+  from a correctly provisioned flag.
 - **Malformed value.** The served variation fails the zod schema. Rejected
   whole — never merged field by field — and logged as `agent_model_flag_invalid`.
 
+A successful resolution logs `agent_model_flag_resolved` at `debug` with the
+served `variant` and `reason`, which is how a staged rollout is confirmed from
+the Worker side; the inference ledger records only the model that resulted.
+
 `resolveAgentModelRouting` never throws, so a Flagship outage can never fail an
 agent run.
+
+Deployment does not depend on Flagship either: `wrangler deploy` writes the
+binding into the Worker's script metadata without calling the Flagship API, so
+the deployment token needs no Flagship permission — only the provisioning
+commands above do. `GET /health` reports the binding as `featureFlags`, and
+counts it as required in production, so a Worker deployed without a working
+`FLAGS` binding fails the release health gate rather than quietly running every
+agent on the Worker variables.
 
 Evaluation is per run, not per model turn. A flag change reaches an in-flight
 run only at its next admission; runs already streaming keep the plan they
@@ -126,8 +148,16 @@ pnpm exec wrangler flagship apps create "avalon-api" --json
 Add the returned id as `app_id` to both regional Wrangler files by hand.
 `--binding FLAGS --update-config` writes it for you but reformats the whole
 configuration file — retabbing it and expanding every inline object — so it is
-not worth the diff. Wrangler also provisions an app automatically on the first
-deploy of a binding that has no `app_id`.
+not worth the diff.
+
+**`app_id` is not optional in practice.** `wrangler deploy` refuses a flagship
+binding without one (`FLAGS bindings must have an "app_id" field`), and neither
+CI gate catches its absence: a dry-run build substitutes an inherit placeholder
+for the missing id and passes. Wrangler can provision an app during deploy, but
+that path prompts interactively, which a CI runner cannot answer. The failure
+would therefore land mid-release, in the deploy job that runs *after* the remote
+D1 migrations have applied. `agent-model-flags.test.ts` asserts both regional
+files carry an `app_id` so the gap fails on the pull request instead.
 
 Both paths need a Cloudflare API token carrying **Flagship write** access. A
 read-only Flagship grant is enough to list apps and flags but returns
@@ -186,9 +216,16 @@ outage silently moves every agent to an older model.
 ## Local development
 
 Flagship bindings are always remote. `wrangler dev --local` — which is what
-`pnpm dev:api:local` runs, and what a sandbox must use — reports `env.FLAGS` as
-`not supported` and leaves it undefined, so every agent uses its Worker
-variables. That is the intended local behavior and needs no configuration.
+`pnpm dev:api:local` runs, and what a sandbox must use — prints the binding as
+`not supported`, but it does **not** omit it: `env.FLAGS` is present and its
+methods exist, and every call rejects with `Error: Binding FLAGS needs to be run
+remotely`. Local runs therefore reach the Worker variables through the
+throw-catching path rather than the missing-binding one, which is why both are
+handled and why the throw is logged at `debug` in development.
+
+The practical consequence is that `typeof env.FLAGS` proves nothing about
+whether flags actually work — including in `GET /health`, whose `featureFlags`
+check reports the binding as available locally.
 
 To exercise a real flag locally you need Cloudflare credentials and
 `pnpm dev:api`, which opens a remote proxy session for the remote bindings.
@@ -201,4 +238,5 @@ To exercise a real flag locally you need Cloudflare credentials and
 2. Give it a default that reproduces today's behavior, and hand that same
    default to Flagship so an absent flag and an unreachable Flagship agree.
 3. Parse the served value with zod and reject it whole on failure.
-4. Add the flag to the table above and create it in both regional apps.
+4. Add the flag to the table above and create it in the `avalon-api` app. There
+   is one app for both regions, so it is created once.

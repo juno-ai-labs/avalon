@@ -12,15 +12,6 @@ import { logStructuredEvent } from "../observability/logger";
  * same agent. The last two are the standalone structured-output classifiers,
  * which call OpenRouter directly rather than through the harness.
  */
-export type AgentModelRole =
-  | "workstream"
-  | "inline_child"
-  | "automation_compiler"
-  | "hypersight"
-  | "meeting_notes"
-  | "addressing_classifier"
-  | "activity_structured";
-
 export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
@@ -29,7 +20,9 @@ export const AGENT_MODEL_ROLES = [
   "meeting_notes",
   "addressing_classifier",
   "activity_structured",
-] as const satisfies readonly AgentModelRole[];
+] as const;
+
+export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
 
 /** Flagship flag key per agent. Provisioned per app; see `docs/FEATURE_FLAGS.md`. */
 export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
@@ -52,6 +45,15 @@ const AgentModelRoutingSchema = z.object({
   model: z.string().trim().min(1),
   fallbackModels: z.array(z.string().trim().min(1)).default([]),
 });
+
+/**
+ * Roles whose route plan a flag may retarget but not widen. A HyperSight block
+ * pins one model and never routes onward so a refresh cannot change voice
+ * partway through a configuration; that invariant belongs to the product, not
+ * to whoever last edited the flag, so a served `fallbackModels` is dropped
+ * rather than honoured.
+ */
+const NO_FALLBACK_ROLES: ReadonlySet<AgentModelRole> = new Set<AgentModelRole>(["hypersight"]);
 
 export interface AgentModelFlagContext {
   workspaceId?: string | undefined;
@@ -93,6 +95,10 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
   }
 }
 
+function unreachableFlagLevel(env: Env): "debug" | "warn" {
+  return env.APP_ENV === "development" || env.APP_ENV === "test" ? "debug" : "warn";
+}
+
 function evaluationContext(
   env: Env,
   role: AgentModelRole,
@@ -123,11 +129,14 @@ export async function resolveAgentModelRouting(
   const flags = env.FLAGS;
   if (!flags) return fallback;
   const flagKey = AGENT_MODEL_FLAG_KEYS[role];
-  let value: unknown;
+  let details: FlagshipEvaluationDetails<AgentModelRouting>;
   try {
-    value = await flags.getObjectValue(flagKey, fallback, evaluationContext(env, role, context));
+    details = await flags.getObjectDetails(flagKey, fallback, evaluationContext(env, role, context));
   } catch (error) {
-    logStructuredEvent(env, "warn", "agent_model_flag_unavailable", {
+    // `wrangler dev --local` binds an always-remote binding as an object whose
+    // every call throws `Binding FLAGS needs to be run remotely`, so this path
+    // is the normal local one and must not warn once per agent run.
+    logStructuredEvent(env, unreachableFlagLevel(env), "agent_model_flag_unavailable", {
       agent: role,
       flag_key: flagKey,
       workspace_id: context.workspaceId,
@@ -136,16 +145,56 @@ export async function resolveAgentModelRouting(
     });
     return fallback;
   }
-  const parsed = AgentModelRoutingSchema.safeParse(value);
+  // `getObjectDetails` resolves the default rather than throwing when a flag is
+  // missing, disabled, or type-mismatched, so a mistyped key would otherwise be
+  // indistinguishable from a correctly provisioned one. `errorCode` is the only
+  // thing that separates them.
+  if (details.errorCode) {
+    logStructuredEvent(env, "warn", "agent_model_flag_unresolved", {
+      agent: role,
+      flag_key: flagKey,
+      workspace_id: context.workspaceId,
+      error_code: details.errorCode,
+      error_message: details.errorMessage,
+      reason: details.reason,
+      model: fallback.model,
+    });
+    return fallback;
+  }
+  const parsed = AgentModelRoutingSchema.safeParse(details.value);
   if (!parsed.success) {
     logStructuredEvent(env, "warn", "agent_model_flag_invalid", {
       agent: role,
       flag_key: flagKey,
       workspace_id: context.workspaceId,
-      validation_issues: parsed.error.issues.map((issue) => issue.path.join(".") || "(root)"),
+      variant: details.variant,
+      validation_issues: parsed.error.issues.map((issue) => ({
+        path: issue.path.join(".") || "(root)",
+        code: issue.code,
+      })),
       model: fallback.model,
     });
     return fallback;
+  }
+  // The variant and reason are what confirm a staged rollout actually reached
+  // this run; the inference ledger records only the model that resulted.
+  logStructuredEvent(env, "debug", "agent_model_flag_resolved", {
+    agent: role,
+    flag_key: flagKey,
+    workspace_id: context.workspaceId,
+    variant: details.variant,
+    reason: details.reason,
+    model: parsed.data.model,
+  });
+  if (NO_FALLBACK_ROLES.has(role) && parsed.data.fallbackModels.length > 0) {
+    logStructuredEvent(env, "warn", "agent_model_flag_fallbacks_ignored", {
+      agent: role,
+      flag_key: flagKey,
+      workspace_id: context.workspaceId,
+      model: parsed.data.model,
+      ignored_fallback_count: parsed.data.fallbackModels.length,
+    });
+    return { model: parsed.data.model, fallbackModels: [] };
   }
   return { model: parsed.data.model, fallbackModels: parsed.data.fallbackModels };
 }
