@@ -36,6 +36,7 @@ import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
+import { onboardingAnchor } from '../components/onboarding-spotlight';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -710,6 +711,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         event.preventDefault();
                         if (email.trim()) createInvitation.mutate();
                       }}
+                      {...onboardingAnchor('settings-invite-teammate')}
                     >
                       <label>
                         <span>Email address</span>
@@ -813,7 +815,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                     <span>{healthyConnections.length} connected</span>
                   </div>
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member and workspace automation.</p>
-                  <div className="provider-grid">
+                  <div className="provider-grid" {...onboardingAnchor('settings-connections')}>
                     {visibleProviders.map((provider) => {
                       const Icon = provider.icon;
                       const connected = providerHasConnection(provider, connections.data ?? []);

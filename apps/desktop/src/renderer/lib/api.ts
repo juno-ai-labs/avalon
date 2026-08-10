@@ -14,6 +14,7 @@ import {
   NoteDetailSchema as WireNoteDetailSchema,
   NoteSummarySchema as WireNoteSummarySchema,
   NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
+  OnboardingChecklistSchema as WireOnboardingChecklistSchema,
   MessageSchema as WireMessageSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
@@ -65,6 +66,8 @@ import type {
   NoteDetail,
   NoteSummary,
   NoteTranscriptSegment,
+  OnboardingChecklist,
+  OnboardingStepState,
   Participant,
   Region,
   SocketTicket,
@@ -800,6 +803,28 @@ export class AvalonApi {
 
   async acceptWorkspaceInvitation(token: string): Promise<void> {
     await this.requestVoid('/workspace/invitations/accept', { method: 'POST', body: { token } });
+  }
+
+  async getOnboardingChecklist(signal?: AbortSignal): Promise<OnboardingChecklist> {
+    return this.request('/workspace/onboarding', { schema: WireOnboardingChecklistSchema, signal });
+  }
+
+  async setOnboardingStepState(stepId: string, state: OnboardingStepState): Promise<OnboardingChecklist> {
+    return this.request(`/workspace/onboarding/steps/${encodeURIComponent(stepId)}`, {
+      method: 'PUT',
+      body: { state },
+      schema: WireOnboardingChecklistSchema,
+    });
+  }
+
+  async updateOnboardingChecklist(
+    input: { activeStepId?: string | null; dismissed?: boolean },
+  ): Promise<OnboardingChecklist> {
+    return this.request('/workspace/onboarding', {
+      method: 'PATCH',
+      body: input,
+      schema: WireOnboardingChecklistSchema,
+    });
   }
 
   async getWorkspaceOnboarding(signal?: AbortSignal): Promise<{ invitations: PendingWorkspaceInvitation[] }> {

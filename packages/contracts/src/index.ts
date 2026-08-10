@@ -112,6 +112,66 @@ export const AcceptWorkspaceInvitationRequestSchema = z.object({
   token: z.string().min(20).max(500)
 });
 
+// The onboarding checklist is server-declared: the API ships copy, ordering,
+// what a step does when it is picked up, and where the client should point its
+// spotlight. Clients render whatever they are given, so growing or reworking
+// onboarding is a catalog edit rather than a client release.
+export const OnboardingStepIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,62}$/u);
+export const OnboardingStepStateSchema = z.enum(["pending", "completed", "skipped"]);
+export const OnboardingStepSourceSchema = z.enum(["signal", "manual"]);
+export const OnboardingSettingsSectionSchema = z.enum([
+  "account",
+  "workspace",
+  "connections",
+  "application"
+]);
+export const OnboardingActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("navigate"), path: z.string().min(1).max(200) }),
+  z.object({ kind: z.literal("open_settings"), section: OnboardingSettingsSectionSchema }),
+  z.object({ kind: z.literal("open_url"), url: z.string().url() }),
+  z.object({ kind: z.literal("none") })
+]);
+export const OnboardingSpotlightSchema = z.object({
+  // Matches a [data-onboarding-anchor] element in whichever window renders it.
+  anchor: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  body: z.string().min(1).max(400),
+  placement: z.enum(["top", "right", "bottom", "left"]).default("right")
+});
+export const OnboardingChecklistStepSchema = z.object({
+  id: OnboardingStepIdSchema,
+  title: z.string().min(1).max(120),
+  description: z.string().min(1).max(240),
+  state: OnboardingStepStateSchema,
+  source: OnboardingStepSourceSchema.nullable().default(null),
+  resolvedAt: TimestampSchema.nullable().default(null),
+  action: OnboardingActionSchema,
+  spotlight: OnboardingSpotlightSchema.nullable().default(null)
+});
+export const OnboardingChecklistSchema = z.object({
+  version: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  completionTitle: z.string().min(1).max(120),
+  completionBody: z.string().min(1).max(240),
+  steps: z.array(OnboardingChecklistStepSchema),
+  completedCount: z.number().int().nonnegative(),
+  remainingCount: z.number().int().nonnegative(),
+  totalCount: z.number().int().nonnegative(),
+  activeStepId: OnboardingStepIdSchema.nullable().default(null),
+  complete: z.boolean(),
+  dismissed: z.boolean()
+});
+export const UpdateOnboardingStepRequestSchema = z.object({
+  state: OnboardingStepStateSchema
+});
+export const UpdateOnboardingChecklistRequestSchema = z.object({
+  activeStepId: OnboardingStepIdSchema.nullable().optional(),
+  dismissed: z.boolean().optional()
+}).refine(
+  (value) => value.activeStepId !== undefined || value.dismissed !== undefined,
+  { message: "Provide activeStepId or dismissed" }
+);
+
 export const ParticipantSchema = z.object({
   user: UserSchema,
   participationReason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
@@ -1322,6 +1382,15 @@ export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSc
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
+export type OnboardingStepState = z.infer<typeof OnboardingStepStateSchema>;
+export type OnboardingStepSource = z.infer<typeof OnboardingStepSourceSchema>;
+export type OnboardingSettingsSection = z.infer<typeof OnboardingSettingsSectionSchema>;
+export type OnboardingAction = z.infer<typeof OnboardingActionSchema>;
+export type OnboardingSpotlight = z.infer<typeof OnboardingSpotlightSchema>;
+export type OnboardingChecklistStep = z.infer<typeof OnboardingChecklistStepSchema>;
+export type OnboardingChecklist = z.infer<typeof OnboardingChecklistSchema>;
+export type UpdateOnboardingStepRequest = z.infer<typeof UpdateOnboardingStepRequestSchema>;
+export type UpdateOnboardingChecklistRequest = z.infer<typeof UpdateOnboardingChecklistRequestSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;

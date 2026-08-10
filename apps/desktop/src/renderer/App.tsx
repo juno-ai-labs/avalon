@@ -4,9 +4,11 @@ import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/app-shell';
+import { OnboardingSpotlight } from './components/onboarding-spotlight';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
+import { OnboardingProvider } from './lib/onboarding';
 import { AutomationOverviewScreen } from './screens/automation-overview';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
@@ -148,10 +150,15 @@ function WorkspaceApp(): React.JSX.Element {
   if (settingsSurface) {
     return (
       <HashRouter>
-        <Routes>
-          <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
-          <Route element={<Navigate replace to="/settings" />} path="*" />
-        </Routes>
+        {/* The settings window carries the same onboarding state so a step that
+            sends someone here keeps guiding them once they arrive. */}
+        <OnboardingProvider>
+          <Routes>
+            <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+            <Route element={<Navigate replace to="/settings" />} path="*" />
+          </Routes>
+          <OnboardingSpotlight />
+        </OnboardingProvider>
       </HashRouter>
     );
   }
@@ -170,18 +177,21 @@ function WorkspaceApp(): React.JSX.Element {
 
   return (
     <HashRouter>
-      <AppShell workspace={workspace.data}>
-        <Routes>
-          <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
-          <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
-          <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
-          <Route element={<NoteDetailScreen />} path="/notes/:id" />
-          <Route element={<NewAutomationScreen />} path="/automations/new" />
-          <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
-          <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
-          <Route element={<NotFoundScreen />} path="*" />
-        </Routes>
-      </AppShell>
+      <OnboardingProvider>
+        <AppShell workspace={workspace.data}>
+          <Routes>
+            <Route element={<Navigate replace to="/workstreams/new" />} path="/" />
+            <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
+            <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
+            <Route element={<NoteDetailScreen />} path="/notes/:id" />
+            <Route element={<NewAutomationScreen />} path="/automations/new" />
+            <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
+            <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
+            <Route element={<NotFoundScreen />} path="*" />
+          </Routes>
+        </AppShell>
+        <OnboardingSpotlight />
+      </OnboardingProvider>
     </HashRouter>
   );
 }

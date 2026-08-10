@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { OnboardingStateProvider, type OnboardingValue } from '../lib/onboarding';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { Sidebar } from './sidebar';
@@ -13,6 +14,36 @@ const workspace: Workspace = {
   timezone: 'America/Los_Angeles',
   logAgentInference: false,
   currentUser: { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
+};
+
+const onboardingState: OnboardingValue = {
+  checklist: {
+    version: '2026-08-10.1',
+    title: 'Get started with Avalon',
+    completionTitle: "You're set up",
+    completionBody: 'Avalon is connected and shared.',
+    steps: [{
+      id: 'connect-tools',
+      title: 'Connect your tools',
+      description: 'Bring Linear, GitHub, and Google Workspace into Avalon',
+      state: 'pending',
+      source: null,
+      resolvedAt: null,
+      action: { kind: 'open_settings', section: 'connections' },
+      spotlight: null,
+    }],
+    completedCount: 0,
+    remainingCount: 1,
+    totalCount: 1,
+    activeStepId: null,
+    complete: false,
+    dismissed: false,
+  },
+  activeStep: null,
+  startStep: vi.fn(),
+  setStepState: vi.fn(),
+  clearActiveStep: vi.fn(),
+  dismiss: vi.fn(),
 };
 
 const defaultActions = {
@@ -105,11 +136,13 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
-  it('anchors a local-only onboarding checklist above the account footer', () => {
+  it('anchors the server-driven onboarding checklist above the account footer', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          <OnboardingStateProvider value={onboardingState}>
+            <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+          </OnboardingStateProvider>
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -118,12 +151,24 @@ describe('Sidebar work-stream markers', () => {
     const onboarding = within(sidebar).getByRole('region', { name: 'Get started with Avalon' });
     const account = within(sidebar).getByRole('button', { name: /AdamAvalon Studio/u });
     expect(onboarding.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(onboarding).getByText('0 / 3')).toBeVisible();
+    expect(within(onboarding).getByText('0 / 1')).toBeVisible();
 
-    fireEvent.click(within(onboarding).getByRole('button', { name: /Connect your tools/u }));
+    fireEvent.click(within(onboarding).getByRole('button', { name: 'Mark Connect your tools as done' }));
 
-    expect(within(onboarding).getByText('1 / 3')).toBeVisible();
-    expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
+    expect(onboardingState.setStepState).toHaveBeenCalledWith('connect-tools', 'completed');
+  });
+
+  it('marks the automation entry point as a spotlight anchor', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: 'New automation' }))
+      .toHaveAttribute('data-onboarding-anchor', 'sidebar-new-automation');
   });
 
   it('uses the compact status-dot pattern for every work stream', () => {

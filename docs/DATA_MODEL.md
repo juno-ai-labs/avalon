@@ -10,7 +10,11 @@ The checked-in D1 migration is authoritative. Application contracts expose camel
 - `sessions`, `oauth_states`, and `desktop_login_tickets` support revocable sessions, PKCE, and single-use Electron deep-link completion.
 - `workspace_invitations` supports explicit membership growth without introducing a workspace switcher in V1.
 
+- `onboarding_step_progress` records the outcome of a checklist step for one member, keyed by an opaque step id. `onboarding_checklist_state` holds that member's active step and the catalog version they dismissed.
+
 Every tenant-owned table carries `workspace_id`, and every repository lookup includes it. Knowing an object ID is never sufficient authorization.
+
+Onboarding steps themselves are not stored. The catalog is code, so copy, ordering, audience, and completion signals change without a migration; storage only remembers per-member outcomes against step ids.
 
 ## Work streams
 

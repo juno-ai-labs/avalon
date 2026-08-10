@@ -1440,17 +1440,88 @@ pre {
 .onboarding-checklist > header span { color: var(--muted); font-size: 10px; }
 .onboarding-progress { background: #11120f; border-radius: 999px; height: 5px; margin: 9px 0 10px; overflow: hidden; }
 .onboarding-progress > span { background: var(--brand); border-radius: inherit; display: block; height: 100%; transition: width 180ms ease; }
+.onboarding-checklist.is-complete > header { align-items: center; color: var(--brand); }
+.onboarding-checklist.is-complete > header svg { color: var(--brand); }
+.onboarding-complete-copy { color: var(--muted); font-size: 10.5px; line-height: 1.4; margin: 7px 0 9px; }
+.onboarding-dismiss { align-items: center; color: var(--muted); display: inline-flex; font-size: 10.5px; gap: 4px; }
+.onboarding-dismiss:hover { color: var(--ink); }
 .onboarding-items { display: grid; gap: 1px; }
-.onboarding-items > button { align-items: flex-start; background: transparent; border-radius: 7px; color: var(--ink); display: flex; gap: 8px; padding: 7px 3px; text-align: left; width: 100%; }
-.onboarding-items > button:hover { background: #2b2c28; }
-.onboarding-items > button:focus-visible { box-shadow: inset 0 0 0 1px var(--blue); outline: 0; }
-.onboarding-check { align-items: center; border: 1px solid #50514b; border-radius: 999px; color: #15202a; display: flex; flex: 0 0 auto; height: 18px; justify-content: center; width: 18px; }
-.onboarding-item-copy { display: flex; flex-direction: column; min-width: 0; }
+.onboarding-item { align-items: flex-start; border-radius: 7px; display: flex; gap: 8px; padding: 7px 3px; position: relative; width: 100%; }
+.onboarding-item:hover { background: #2b2c28; }
+.onboarding-item.is-active { background: #2b2c28; box-shadow: inset 0 0 0 1px rgb(206 220 0 / 42%); }
+.onboarding-check { align-items: center; border: 1px solid #50514b; border-radius: 999px; color: #15202a; display: flex; flex: 0 0 auto; height: 18px; justify-content: center; transition: background 140ms ease, border-color 140ms ease, transform 140ms ease; width: 18px; }
+.onboarding-check:hover { border-color: var(--brand); }
+.onboarding-check:focus-visible { box-shadow: 0 0 0 2px rgb(71 199 252 / 55%); outline: 0; }
+.onboarding-item-copy { align-items: flex-start; background: transparent; color: var(--ink); display: flex; flex: 1; flex-direction: column; min-width: 0; text-align: left; }
+.onboarding-item-copy:focus-visible { border-radius: 5px; box-shadow: 0 0 0 1px var(--blue); outline: 0; }
 .onboarding-item-copy strong { font-size: 11.5px; font-weight: 500; line-height: 1.35; }
 .onboarding-item-copy small { color: var(--muted); font-size: 9.5px; line-height: 1.35; margin-top: 1px; }
-.onboarding-items > button.is-complete .onboarding-check { background: var(--brand); border-color: var(--brand); }
-.onboarding-items > button.is-complete strong { color: var(--muted); text-decoration: line-through; }
-.onboarding-items > button.is-complete small { opacity: 0.68; }
+.onboarding-item-aside { align-items: center; color: var(--muted-2); display: flex; flex: 0 0 auto; height: 18px; justify-content: center; opacity: 0; transition: opacity 120ms ease; width: 18px; }
+.onboarding-item:hover .onboarding-item-aside,
+.onboarding-item-aside:focus-visible { opacity: 1; }
+.onboarding-item-aside:hover { color: var(--ink); }
+.onboarding-item.is-completed .onboarding-check { background: var(--brand); border-color: var(--brand); }
+.onboarding-item.is-completed strong,
+.onboarding-item.is-skipped strong { color: var(--muted); text-decoration: line-through; }
+.onboarding-item.is-completed small,
+.onboarding-item.is-skipped small { opacity: 0.68; }
+.onboarding-item.is-skipped .onboarding-check { border-style: dashed; }
+
+/* Flashlight: the app dims, a soft beam rests on the step's target, and a coach
+   mark explains it. Nothing here takes pointer events except the card, so the
+   highlighted control stays clickable and the rest of Avalon stays usable. */
+.onboarding-spotlight { inset: 0; pointer-events: none; position: fixed; z-index: 80; }
+.onboarding-spotlight-scrim {
+  background: rgb(8 9 7 / 62%);
+  inset: 0;
+  mask-image: radial-gradient(ellipse var(--beam-rx) var(--beam-ry) at var(--beam-x) var(--beam-y), rgb(0 0 0 / 0%) 46%, rgb(0 0 0 / 62%) 76%, rgb(0 0 0) 100%);
+  position: absolute;
+  -webkit-mask-image: radial-gradient(ellipse var(--beam-rx) var(--beam-ry) at var(--beam-x) var(--beam-y), rgb(0 0 0 / 0%) 46%, rgb(0 0 0 / 62%) 76%, rgb(0 0 0) 100%);
+}
+.onboarding-spotlight-ring {
+  animation: onboarding-beam 2.6s ease-in-out infinite;
+  border: 1px solid rgb(206 220 0 / 65%);
+  border-radius: 9px;
+  box-shadow: 0 0 0 4px rgb(206 220 0 / 10%), 0 0 26px 6px rgb(206 220 0 / 16%);
+  position: absolute;
+}
+.onboarding-spotlight-card {
+  background: var(--surface-2);
+  border: 1px solid #3d3e37;
+  border-radius: 11px;
+  box-shadow: 0 20px 44px rgb(0 0 0 / 46%);
+  padding: 12px 12px 11px;
+  pointer-events: auto;
+  position: absolute;
+  animation: onboarding-card-in 160ms ease-out both;
+}
+.onboarding-spotlight-card:focus-visible { outline: 0; }
+.onboarding-spotlight-card > header { align-items: center; display: flex; justify-content: space-between; }
+.onboarding-spotlight-card > header .eyebrow { color: var(--muted-2); font-size: 9.5px; letter-spacing: 0.08em; margin: 0; text-transform: uppercase; }
+.onboarding-spotlight-card > header button { color: var(--muted-2); }
+.onboarding-spotlight-card > header button:hover { color: var(--ink); }
+.onboarding-spotlight-card h2 { color: var(--ink); font-size: 12.5px; font-weight: 560; margin: 6px 0 0; }
+.onboarding-spotlight-card p { color: var(--muted); font-size: 11px; line-height: 1.45; margin: 5px 0 0; }
+.onboarding-spotlight-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; margin-top: 11px; }
+.onboarding-spotlight-actions .text-button { color: var(--muted); font-size: 11px; }
+.onboarding-spotlight-actions .button-primary { align-items: center; display: inline-flex; font-size: 11px; gap: 5px; padding: 5px 9px; }
+
+@keyframes onboarding-beam {
+  0%, 100% { box-shadow: 0 0 0 4px rgb(206 220 0 / 10%), 0 0 22px 4px rgb(206 220 0 / 14%); }
+  50% { box-shadow: 0 0 0 6px rgb(206 220 0 / 14%), 0 0 34px 10px rgb(206 220 0 / 22%); }
+}
+@keyframes onboarding-card-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.onboarding-spotlight.is-still .onboarding-spotlight-ring,
+.onboarding-spotlight.is-still .onboarding-spotlight-card { animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-spotlight-ring,
+  .onboarding-spotlight-card { animation: none; }
+  .onboarding-check { transition: none; }
+}
 .new-workstream-launcher { margin: 0 auto; max-width: 860px; padding: 12px 34px 28px; width: 100%; }
 .new-workstream-modifiers { display: flex; gap: 6px; margin: 0 auto 8px; max-width: 690px; }
 .participant-modifier,

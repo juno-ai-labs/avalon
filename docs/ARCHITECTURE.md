@@ -87,6 +87,12 @@ Natural-language automation creation compiles into a validated draft. A versione
 
 One WorkspaceScheduler Durable Object per workspace maintains one alarm for the earliest due item. D1 uniqueness constraints are authoritative under repeated alarms. It starts generic workflow instances rather than deploying per-automation code. A planned run and its work stream are reused when the scheduled instant arrives.
 
+## Onboarding after organization creation
+
+A member who has an organization gets a checklist derived from a server-side catalog (`apps/api/src/services/onboarding-checklist-catalog.ts`). Each step declares its copy, the audience roles that see it, the action the client performs when the step is picked up, the anchor its spotlight points at, and a read-only SQL signal that proves the step is genuinely done. `GET /workspace/onboarding` evaluates the unresolved signals in one batch, records what now holds, and returns the merged state; the desktop client renders whatever it is given. Adding or reworking a step is a catalog edit — no migration, no new endpoint, no client release.
+
+Steps declare no predecessors, so they are completable in any order, by doing the work, by marking a row, or by skipping it. Completion recorded from a signal is durable: disconnecting a connector later does not reopen the step. The active step is stored per member rather than held in renderer state, which is how one spotlight follows someone from the main window into the settings window. Dismissal records the catalog version it applied to, so a later revision surfaces the checklist again.
+
 ## Connectors and ingestion
 
 Connector adapters expose typed authorization, polling, webhook normalization, hydration, tools, watches, health checks, and a static agent-plugin descriptor. Runtime plugins are instantiated per eligible connection; provider content and connection labels cannot contribute trusted plugin instructions. V1 ships complete paths for:

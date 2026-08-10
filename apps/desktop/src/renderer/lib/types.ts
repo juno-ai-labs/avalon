@@ -3,6 +3,11 @@ import type {
   NoteDetail as ContractNoteDetail,
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
+  OnboardingAction as ContractOnboardingAction,
+  OnboardingChecklist as ContractOnboardingChecklist,
+  OnboardingChecklistStep as ContractOnboardingChecklistStep,
+  OnboardingSpotlight as ContractOnboardingSpotlight,
+  OnboardingStepState as ContractOnboardingStepState,
 } from '@avalon/contracts';
 
 export type Region = 'global' | 'eu';
@@ -12,6 +17,11 @@ export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
 export type NoteSummary = ContractNoteSummary;
 export type NoteDetail = ContractNoteDetail;
 export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
+export type OnboardingAction = ContractOnboardingAction;
+export type OnboardingChecklist = ContractOnboardingChecklist;
+export type OnboardingChecklistStep = ContractOnboardingChecklistStep;
+export type OnboardingSpotlight = ContractOnboardingSpotlight;
+export type OnboardingStepState = ContractOnboardingStepState;
 
 export interface WorkspaceMember {
   id: string;

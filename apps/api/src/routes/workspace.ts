@@ -4,15 +4,20 @@ import {
   AcceptWorkspaceInvitationRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
+  OnboardingStepIdSchema,
+  UpdateOnboardingChecklistRequestSchema,
+  UpdateOnboardingStepRequestSchema,
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceRequestSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
+import { OnboardingChecklistService } from "../services/onboarding-checklist-service";
 import { WorkspaceService } from "../services/workspace-service";
 
 const invitationParam = z.object({ id: IdSchema });
+const onboardingStepParam = z.object({ stepId: OnboardingStepIdSchema });
 
 export const workspaceRoutes = new Hono<HonoAppEnv>();
 
@@ -41,3 +46,20 @@ workspaceRoutes.post("/invitations/accept", zValidator("json", AcceptWorkspaceIn
   await new WorkspaceService(c.env, getAuth(c)).acceptInvitation(c.req.valid("json").token);
   return c.body(null, 204);
 });
+
+// Post-organization onboarding. The checklist is derived from the server-side
+// catalog, so clients never enumerate steps themselves.
+workspaceRoutes.get("/onboarding", async (c) =>
+  c.json(await new OnboardingChecklistService(c.env, getAuth(c)).state()),
+);
+workspaceRoutes.patch("/onboarding", zValidator("json", UpdateOnboardingChecklistRequestSchema), async (c) =>
+  c.json(await new OnboardingChecklistService(c.env, getAuth(c)).updateChecklist(c.req.valid("json"))),
+);
+workspaceRoutes.put(
+  "/onboarding/steps/:stepId",
+  zValidator("param", onboardingStepParam),
+  zValidator("json", UpdateOnboardingStepRequestSchema),
+  async (c) =>
+    c.json(await new OnboardingChecklistService(c.env, getAuth(c))
+      .setStepState(c.req.valid("param").stepId, c.req.valid("json").state)),
+);
