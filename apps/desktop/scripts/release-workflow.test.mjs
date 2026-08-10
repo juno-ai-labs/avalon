@@ -100,11 +100,49 @@ test('the release records its site config back on the default branch', async () 
   const recordStep = workflow.slice(workflow.indexOf('- name: Record the published release config'));
 
   // publish-r2-release.mjs reads the committed config through
-  // assertNextReleaseVersion, so leaving main stale breaks the next release.
+  // assertNextReleaseVersion, so leaving main stale breaks the next release,
+  // and plan-release.mjs reads the commit it names as its watermark.
   assert.match(recordStep, /git push origin HEAD:main/u);
   assert.match(recordStep, /apps\/site\/release\.config\.json/u);
   // A dispatch replaying an older tag must not move the record backwards.
   assert.match(recordStep, /leaving it alone/u);
+});
+
+test('the pipeline bumps the version itself, before the commit it tags', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const stepIndex = (name) => workflow.indexOf(`- name: ${name}`);
+
+  const bumped = stepIndex('Bump the workspace version and record it on the default branch');
+  const resolved = stepIndex('Resolve the release commit');
+  const createdLocally = stepIndex('Create the release tag locally');
+  const guarded = stepIndex('Guard tag, commit, and package versions');
+
+  assert.notEqual(bumped, -1, 'The release must stamp the planned version onto the manifests');
+  // The bump has to be in the tree before the tag is cut and before
+  // validate-release-tag.mjs compares the manifests against it, or every
+  // release would fail its own guard.
+  assert.ok(bumped < createdLocally, 'The version must be bumped before the tag is created');
+  assert.ok(createdLocally < guarded, 'The tag must exist before the guard checks it');
+  // The recorded watermark must name the bumped commit, not the one that
+  // triggered the run.
+  assert.ok(bumped < resolved, 'The release commit must be resolved after the bump');
+  assert.match(workflow.slice(resolved), /AVALON_RELEASE_COMMIT=\$\(git rev-parse HEAD\)/u);
+});
+
+test('the bump is skipped on a dispatch, which replays an already-tagged version', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const bumpStep = workflow.slice(
+    workflow.indexOf('- name: Bump the workspace version'),
+    workflow.indexOf('- name: Resolve the release commit'),
+  );
+
+  // A replayed tag already carries its own version; re-bumping would move the
+  // manifests off the tag and fail the guard.
+  assert.match(bumpStep, /^ {8}if: needs\.plan\.outputs\.create_tag == 'true'$/mu);
+  // main can move between the plan and the bump; the newer tip carries strictly
+  // more work, so the release follows it rather than failing.
+  assert.match(bumpStep, /git reset --hard origin\/main/u);
+  assert.match(bumpStep, /retrying/u);
 });
 
 test('the release job can write the tag it publishes', async () => {

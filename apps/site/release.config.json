@@ -1,6 +1,7 @@
 {
   "published": true,
   "version": "1.33.0",
+  "commit": "f4e66c6b0a7e201f1d242bee0ead860feb4c0a95",
   "platform": "macOS",
   "architecture": "Apple silicon",
   "downloadBaseUrl": "https://downloads.with-avalon.com",
