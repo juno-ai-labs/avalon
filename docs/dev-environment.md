@@ -89,7 +89,13 @@ and both regions start in about two seconds.
 What that costs: `env.AI` is unavailable, so the memory-embedding paths in
 `apps/api/src/services/memory-service.ts` cannot run. `env.MEMORY_INDEX`
 (Vectorize) is reported as `not supported` by `wrangler dev` in every local run,
-remote bindings or not, so nothing is lost there.
+remote bindings or not, so nothing is lost there. `env.FLAGS` (Flagship) is also
+reported `not supported`, because Flagship bindings are always remote — but
+unlike the others the binding object is still present, and it is each *call*
+that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
+uses the model ids in its `OPENROUTER_*` Worker variables, which is the designed
+fallback rather than a degradation — see
+[the feature-flag document](FEATURE_FLAGS.md#local-development).
 
 Verify both regions:
 
@@ -155,7 +161,9 @@ workspace with its work streams, automations, and onboarding checklist.
 
 ## What cannot be verified in a sandbox
 
-- **Workers AI** (`env.AI`) and **Vectorize** (`env.MEMORY_INDEX`), per above.
+- **Workers AI** (`env.AI`), **Vectorize** (`env.MEMORY_INDEX`), and **Flagship**
+  (`env.FLAGS`), per above. Served flag values cannot be exercised locally; the
+  Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**

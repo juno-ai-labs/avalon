@@ -35,7 +35,11 @@ Create independent resource sets for `global` and `eu`:
 - An activity Queue and dead-letter Queue
 - The Worker, Durable Object namespaces, and Workflows declared in the regional Wrangler file
 
+One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data.
+
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
+
+`avalon-api` and its seven per-agent flags are provisioned, and both regional Wrangler files carry the `app_id`; [the feature-flag document](FEATURE_FLAGS.md#provisioning) has the commands for rebuilding them in a fresh account. Each flag is seeded with the model ids already in the `OPENROUTER_*` variables, so the flags change nothing until one is edited. Keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
 
 Set these shared Worker secrets separately in each regional deployment:
 
@@ -88,6 +92,11 @@ Use a custom token restricted to the Avalon Cloudflare account and the `with-ava
 - Account: D1 Write/Edit
 - Account: Workers R2 Storage Write/Edit
 - Account: Queues Write/Edit
+- Account: Flagship Write/Edit — the permission is still in open beta and is
+  absent from the published permissions reference; find it by searching
+  `Flagship` in the dashboard's API-token editor. Read access alone lists apps
+  but fails `wrangler flagship apps create` with `Authentication error [code:
+  10000]`, and automatic provisioning on deploy fails the same way.
 - Zone `with-avalon.com`: Zone Read
 - Zone `with-avalon.com`: Workers Routes Write/Edit
 

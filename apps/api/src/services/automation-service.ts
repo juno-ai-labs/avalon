@@ -14,6 +14,7 @@ import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { scheduledWorkstreamModel } from "./agent-model-flags";
 import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
 import {
   buildAutomationMemoryTableStatements,
@@ -703,12 +704,16 @@ export class AutomationService {
         principal.type === "user" ? principal.userId : null,
       ));
       if (start) {
+        const model = await scheduledWorkstreamModel(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+        });
         statements.push(this.env.DB.prepare(
           `INSERT INTO harness_runs
            (id, workspace_id, workstream_id, origin, execution_principal_json,
             status, started_at, model, created_at)
            VALUES (?, ?, ?, 'automation_run', ?, 'scheduled', NULL, ?, ?)`,
-        ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), this.env.OPENROUTER_PRIMARY_MODEL, at));
+        ).bind(harnessRunId, this.auth.workspaceId, workstreamId, JSON.stringify(principal), model, at));
       }
       await this.env.DB.batch(statements);
     } catch (error) {
