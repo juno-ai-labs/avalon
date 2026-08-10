@@ -10,14 +10,22 @@
  */
 import { z } from "zod";
 import { AddressingClassificationSchema, ActivityRoutingResultSchema } from "@avalon/contracts";
-import { OpenRouterClient, addressingJsonSchema, type StructuredModelDiagnostic } from "../index";
+import {
+  OpenRouterClient,
+  addressingJsonSchema,
+  runHarness,
+  type HarnessEvent,
+  type StructuredModelDiagnostic,
+} from "../index";
 import {
   activityRoutingJsonSchema,
   renderActivityRoutingMessages,
   renderAddressingMessages,
   renderSemanticTriggerMessages,
+  renderWorkstreamSystemPrompt,
   semanticTriggerJsonSchema,
 } from "../prompts";
+import { agenticCases, createStandInSurface, gradeAgenticCase, standInToolNames } from "./agentic";
 import {
   activityRoutingCases,
   addressingCases,
@@ -56,7 +64,17 @@ interface Attempt {
   verdict: CaseVerdict;
   latencyMs: number;
   repairs: number;
+  /** Wire names the agentic loop actually invoked, for tool coverage. */
+  toolsCalled: string[];
   error?: string;
+}
+
+/** What a task needs to reach the model: structured suites use the client, the agentic suite drives the loop. */
+interface RunContext {
+  client: OpenRouterClient;
+  model: string;
+  apiKey: string;
+  fetchImpl: typeof globalThis.fetch | null;
 }
 
 function parseOptions(argv: string[]): Options {
@@ -108,10 +126,19 @@ interface Task {
   caseId: string;
   intent: string;
   run: number;
-  execute: (client: OpenRouterClient, onDiagnostic: Diagnostic) => Promise<CaseVerdict>;
+  execute: (context: RunContext, onDiagnostic: Diagnostic) => Promise<TaskOutcome>;
+}
+
+interface TaskOutcome {
+  verdict: CaseVerdict;
+  toolsCalled: string[];
 }
 
 type Diagnostic = (event: StructuredModelDiagnostic) => void;
+
+function structuredOutcome(verdict: CaseVerdict): TaskOutcome {
+  return { verdict, toolsCalled: [] };
+}
 
 function buildTasks(options: Options): Task[] {
   const wanted = (suite: SuiteId): boolean => options.suites === null || options.suites.includes(suite);
@@ -126,15 +153,15 @@ function buildTasks(options: Options): Task[] {
             caseId: testCase.id,
             intent: testCase.intent,
             run,
-            execute: async (client, onDiagnostic) => {
-              const response = await client.structured({
+            execute: async (context, onDiagnostic) => {
+              const response = await context.client.structured({
                 messages: renderAddressingMessages(testCase.input),
                 schemaName: "message_addressing",
                 jsonSchema: addressingJsonSchema,
                 parse: (value) => AddressingClassificationSchema.parse(value),
                 onDiagnostic,
               });
-              return gradeAddressing(testCase.expected, response);
+              return structuredOutcome(gradeAddressing(testCase.expected, response));
             },
           });
         }
@@ -147,15 +174,15 @@ function buildTasks(options: Options): Task[] {
             caseId: testCase.id,
             intent: testCase.intent,
             run,
-            execute: async (client, onDiagnostic) => {
-              const response = await client.structured({
+            execute: async (context, onDiagnostic) => {
+              const response = await context.client.structured({
                 messages: renderSemanticTriggerMessages(testCase.input),
                 schemaName: "semantic_activity_trigger",
                 jsonSchema: semanticTriggerJsonSchema,
                 parse: (value) => SEMANTIC_TRIGGER_RESULT.parse(value),
                 onDiagnostic,
               });
-              return gradeSemanticTrigger(testCase.expected, response);
+              return structuredOutcome(gradeSemanticTrigger(testCase.expected, response));
             },
           });
         }
@@ -169,15 +196,60 @@ function buildTasks(options: Options): Task[] {
             caseId: testCase.id,
             intent: testCase.intent,
             run,
-            execute: async (client, onDiagnostic) => {
-              const response = await client.structured({
+            execute: async (context, onDiagnostic) => {
+              const response = await context.client.structured({
                 messages: renderActivityRoutingMessages(testCase.input),
                 schemaName: "activity_workstream_route",
                 jsonSchema: activityRoutingJsonSchema,
                 parse: (value) => ActivityRoutingResultSchema.parse(value),
                 onDiagnostic,
               });
-              return gradeActivityRouting(testCase.expected, response, candidateIds);
+              return structuredOutcome(gradeActivityRouting(testCase.expected, response, candidateIds));
+            },
+          });
+        }
+      }
+      if (wanted("agentic")) {
+        for (const testCase of agenticCases) {
+          tasks.push({
+            model,
+            suite: "agentic",
+            caseId: testCase.id,
+            intent: testCase.intent,
+            run,
+            execute: async (context) => {
+              const surface = createStandInSurface();
+              const events: HarnessEvent[] = [];
+              const outcome = await runHarness({
+                config: {
+                  apiKey: context.apiKey,
+                  primaryModel: context.model,
+                  // No fallbacks: a run must measure the named model.
+                  fallbackModels: [],
+                  ...(context.fetchImpl ? { fetch: context.fetchImpl } : {}),
+                  maxIterations: 8,
+                  maxToolCalls: 16,
+                  maxWallClockMs: 180_000,
+                  toolTimeoutMs: 15_000,
+                  maxWebResults: 4,
+                },
+                workspaceId: "workspace-eval",
+                workstreamId: "workstream-eval",
+                harnessRunId: `eval-${testCase.id}-${run}`,
+                executionPrincipal: { type: "user", userId: "user-eval" },
+                systemPrompt: renderWorkstreamSystemPrompt({
+                  title: testCase.id,
+                  objective: testCase.objective,
+                }),
+                messages: [{ role: "user", content: testCase.message }],
+                corePlugins: surface.corePlugins,
+                plugins: surface.deferredPlugins,
+                onEvent: (event) => { events.push(event); },
+              });
+              return {
+                verdict: gradeAgenticCase(testCase.expected, outcome, events),
+                toolsCalled: surface.invocations.map((invocation) => invocation.wireName),
+              };
             },
           });
         }
@@ -187,14 +259,14 @@ function buildTasks(options: Options): Task[] {
   return tasks;
 }
 
-async function runTask(task: Task, client: OpenRouterClient): Promise<Attempt> {
+async function runTask(task: Task, context: RunContext): Promise<Attempt> {
   let repairs = 0;
   const startedAt = Date.now();
   const onDiagnostic: Diagnostic = (event) => {
     if (event.stage === "repair") repairs += 1;
   };
   try {
-    const verdict = await task.execute(client, onDiagnostic);
+    const { verdict, toolsCalled } = await task.execute(context, onDiagnostic);
     return {
       model: task.model,
       suite: task.suite,
@@ -204,6 +276,7 @@ async function runTask(task: Task, client: OpenRouterClient): Promise<Attempt> {
       verdict,
       latencyMs: Date.now() - startedAt,
       repairs,
+      toolsCalled,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
@@ -215,15 +288,16 @@ async function runTask(task: Task, client: OpenRouterClient): Promise<Attempt> {
       run: task.run,
       // An unrecoverable request is a failure of the model under test, not a
       // skipped case: a model that cannot return the schema cannot hold the slot.
-      verdict: { passed: false, actual: "error", expected: "a valid schema response", note: message },
+      verdict: { passed: false, actual: "error", expected: "a completed run", note: message },
       latencyMs: Date.now() - startedAt,
       repairs,
+      toolsCalled: [],
       error: message,
     };
   }
 }
 
-async function runPool(tasks: Task[], clients: Map<string, OpenRouterClient>, concurrency: number): Promise<Attempt[]> {
+async function runPool(tasks: Task[], contexts: Map<string, RunContext>, concurrency: number): Promise<Attempt[]> {
   const attempts: Attempt[] = new Array<Attempt>(tasks.length);
   let cursor = 0;
   const workers = Array.from({ length: Math.min(concurrency, tasks.length) }, async () => {
@@ -232,9 +306,9 @@ async function runPool(tasks: Task[], clients: Map<string, OpenRouterClient>, co
       cursor += 1;
       const task = tasks[index];
       if (!task) return;
-      const client = clients.get(task.model);
-      if (!client) return;
-      attempts[index] = await runTask(task, client);
+      const context = contexts.get(task.model);
+      if (!context) return;
+      attempts[index] = await runTask(task, context);
       process.stderr.write(".");
     }
   });
@@ -258,7 +332,7 @@ function tally(attempts: Attempt[]): SuiteTally {
 }
 
 function report(options: Options, attempts: Attempt[]): void {
-  const suites: SuiteId[] = options.suites ?? ["addressing", "semantic_trigger", "activity_routing"];
+  const suites: SuiteId[] = options.suites ?? ["addressing", "semantic_trigger", "activity_routing", "agentic"];
   process.stdout.write("\n");
   for (const model of options.models) {
     const forModel = attempts.filter((attempt) => attempt.model === model);
@@ -271,6 +345,17 @@ function report(options: Options, attempts: Attempt[]): void {
     }
     process.stdout.write(`  median latency   ${Math.round(median(forModel.map((a) => a.latencyMs)))}ms\n`);
     process.stdout.write(`  schema repairs   ${forModel.reduce((sum, a) => sum + a.repairs, 0)}\n`);
+
+    // Which agent tools this model actually reached. A tool no case exercises
+    // is untested surface, so name it rather than let the pass rate imply cover.
+    const agentic = forModel.filter((attempt) => attempt.suite === "agentic");
+    if (agentic.length > 0) {
+      const exercised = new Set(agentic.flatMap((attempt) => attempt.toolsCalled));
+      const missed = standInToolNames.filter((name) => !exercised.has(name));
+      process.stdout.write(
+        `  tools exercised  ${exercised.size}/${standInToolNames.length}${missed.length ? ` (never called: ${missed.join(", ")})` : ""}\n`,
+      );
+    }
 
     // Cases that did not pass on every run: a case that is right twice out of
     // three times is a reliability problem, not a pass.
@@ -305,20 +390,27 @@ async function main(): Promise<void> {
     return;
   }
   const baseUrl = process.env.AVALON_EVAL_BASE_URL;
-  const clients = new Map<string, OpenRouterClient>(
+  // A stub base URL lets the runner be exercised end to end without a real key.
+  const fetchImpl: typeof globalThis.fetch | null = baseUrl
+    ? ((input, init) =>
+        fetch(typeof input === "string" ? input.replace("https://openrouter.ai", baseUrl) : input, init))
+    : null;
+  const contexts = new Map<string, RunContext>(
     options.models.map((model) => [
       model,
-      new OpenRouterClient({
+      {
+        model,
         apiKey,
-        primaryModel: model,
-        // No fallbacks: a run must measure the named model, never a stand-in.
-        fallbackModels: [],
-        appName: "Avalon model eval",
-        ...(baseUrl
-          ? { fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-              fetch(typeof input === "string" ? input.replace("https://openrouter.ai", baseUrl) : input, init) }
-          : {}),
-      }),
+        fetchImpl,
+        client: new OpenRouterClient({
+          apiKey,
+          primaryModel: model,
+          // No fallbacks: a run must measure the named model, never a stand-in.
+          fallbackModels: [],
+          appName: "Avalon model eval",
+          ...(fetchImpl ? { fetch: fetchImpl } : {}),
+        }),
+      },
     ]),
   );
 
@@ -326,7 +418,7 @@ async function main(): Promise<void> {
   process.stderr.write(
     `Running ${tasks.length} requests: ${options.models.length} models x ${tasks.length / options.models.length / options.repeat} cases x ${options.repeat} runs\n`,
   );
-  const attempts = await runPool(tasks, clients, options.concurrency);
+  const attempts = await runPool(tasks, contexts, options.concurrency);
 
   if (options.json) {
     process.stdout.write(`\n${JSON.stringify({ options, attempts }, null, 2)}\n`);

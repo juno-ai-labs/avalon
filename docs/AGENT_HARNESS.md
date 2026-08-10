@@ -101,7 +101,23 @@ OPENROUTER_API_KEY=... pnpm eval:models --models x-ai/grok-4.3,google/gemini-3.6
 OPENROUTER_API_KEY=... pnpm eval:models --suite activity_routing --json
 ```
 
-Runs default to three repeats per case because these decisions are stochastic; the report lists any case that failed on even one run, along with median latency and how often the model needed a schema repair. The exit status is non-zero when any run failed. This covers the classifier and structured slots; the primary model's tool-calling loop is not yet exercised here.
+Runs default to three repeats per case because these decisions are stochastic; the report lists any case that failed on even one run, along with median latency and how often the model needed a schema repair. The exit status is non-zero when any run failed.
+
+### The agentic suite
+
+`--suite agentic` covers what the primary slot actually does. Each case drives the real `runHarness` loop with the rendered work-stream system prompt and a stand-in plugin surface that mirrors how `createWorkstreamCorePlugins` and the connector plugins are assembled: the same wire names, modes, idempotency, and input schemas, backed by deterministic canned results. Runs are hermetic — no provider credentials and no external writes — while still exercising every branch the harness takes around a tool call.
+
+Grading reads the emitted `HarnessEvent` stream rather than the final prose, so a case asserts on the trajectory the model actually took:
+
+- a deferred connector tool is reached only after a catalog discovery or load call;
+- `core_current_time` is consulted instead of inferring the date from transcript timestamps;
+- durable memory is searched before it is written;
+- a missing required identifier produces `core_request_elicitation` and a `needs_input` run rather than an invented argument;
+- a broad read-only investigation is delegated to `workstream_run_subagent`;
+- a requested artifact is created rather than described;
+- and a provider write that fails is reported as a failure instead of narrated as a success.
+
+The report prints tool coverage for the run and names any tool no case reached, so untested surface is visible rather than hidden behind a pass rate. A unit test holds the inverse invariant: every tool in the stand-in surface must be required by at least one case.
 
 ## Streaming stability
 

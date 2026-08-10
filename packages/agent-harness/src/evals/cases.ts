@@ -12,7 +12,7 @@ import type { AddressingPromptInput } from "../prompts/addressing";
 import type { ActivityRoutingPromptInput } from "../prompts/activity-routing";
 import type { SemanticTriggerPromptInput } from "../prompts/semantic-trigger";
 
-export type SuiteId = "addressing" | "semantic_trigger" | "activity_routing";
+export type SuiteId = "addressing" | "semantic_trigger" | "activity_routing" | "agentic";
 
 export type AddressingOutcome = "agent_action" | "human_only" | "both" | "uncertain";
 
