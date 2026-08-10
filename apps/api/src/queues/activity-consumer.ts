@@ -21,6 +21,7 @@ import { z } from "zod";
 import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { truncateUtf16Safe } from "../lib/text";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
 
@@ -728,10 +729,10 @@ async function createSuggestion(
       id,
       activityId: activity.id,
       workstreamId,
-      title: activity.title.slice(0, 300),
-      summary: activity.summary.slice(0, 2_000),
+      title: truncateUtf16Safe(activity.title, 300),
+      summary: truncateUtf16Safe(activity.summary, 2_000),
       confidence: result.confidence,
-      reason: result.reason.slice(0, 1_200),
+      reason: truncateUtf16Safe(result.reason, 1_200),
       status: "pending",
       createdAt,
       resolvedAt: null
