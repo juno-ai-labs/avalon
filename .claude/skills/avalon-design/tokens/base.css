@@ -1,0 +1,12 @@
+/* Minimal element defaults matching the product. Components carry their own styles. */
+:root { font-family: var(--font-sans); font-synthesis: none; text-rendering: optimizeLegibility; }
+body { background: var(--canvas); color: var(--ink); font-size: var(--text-14); line-height: var(--leading-ui); -webkit-font-smoothing: antialiased; }
+a { color: var(--text-link); text-decoration: none; }
+a:hover { color: #8ec2fb; }
+.avalon-site a { color: inherit; }
+.avalon-site a:hover { color: var(--brand-primary); }
+strong, h1, h2, h3, h4 { font-weight: var(--weight-strong); }
+::selection { background: rgba(var(--brand-secondary-rgb), 0.28); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.mono, code, pre { font-family: var(--font-mono); }
+.avalon-mark { background: currentColor; color: var(--brand-primary); display: inline-block; flex: 0 0 auto; height: 24px; width: 24px; -webkit-mask: var(--avalon-mark-src, url("/assets/brand/avalon-mark.png")) center / contain no-repeat; mask: var(--avalon-mark-src, url("/assets/brand/avalon-mark.png")) center / contain no-repeat; }
