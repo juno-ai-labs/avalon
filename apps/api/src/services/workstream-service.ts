@@ -897,14 +897,41 @@ export class WorkstreamService {
        WHERE id = ? AND workstream_id = ? AND workspace_id = ? AND status = 'pending'
        RETURNING activity_id`,
     ).bind(action, nowIso(), this.auth.userId, suggestionId, id, this.auth.workspaceId).first<{ activity_id: string }>();
-    if (!suggestion) throw new ApiError(404, "suggestion_not_found", "Activity suggestion not found or already resolved");
+    // A suggestion card that outlives its resolution invites a second click, and
+    // a duplicate click is a replay of a decision this work stream has already
+    // recorded rather than an error to show someone. Repeating the same
+    // resolution reports the state it already reached; only a genuinely
+    // contradictory one is refused.
+    const resolved = suggestion ?? await this.resolvedSuggestionReplay(id, suggestionId, action);
     let resourceId: string | null = null;
     if (action === "accepted") {
-      resourceId = await this.attachActivityResource(id, suggestion.activity_id);
+      resourceId = await this.attachActivityResource(id, resolved.activity_id);
     }
     const updated = (await this.loadSuggestions(id, true)).find((item) => item.id === suggestionId);
     if (updated) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
     return { suggestion: updated, resourceId };
+  }
+
+  private async resolvedSuggestionReplay(
+    id: string,
+    suggestionId: string,
+    action: "accepted" | "dismissed",
+  ): Promise<{ activity_id: string }> {
+    const existing = await this.env.DB.prepare(
+      `SELECT activity_id, status FROM activity_suggestions
+       WHERE id = ? AND workstream_id = ? AND workspace_id = ?`,
+    ).bind(suggestionId, id, this.auth.workspaceId).first<{ activity_id: string; status: string }>();
+    if (!existing) throw new ApiError(404, "suggestion_not_found", "Activity suggestion not found");
+    if (existing.status !== action) {
+      throw new ApiError(
+        409,
+        "suggestion_already_resolved",
+        existing.status === "accepted"
+          ? "This suggestion was already added to the work stream"
+          : "This suggestion was already dismissed",
+      );
+    }
+    return { activity_id: existing.activity_id };
   }
 
   async stop(id: string): Promise<void> {
