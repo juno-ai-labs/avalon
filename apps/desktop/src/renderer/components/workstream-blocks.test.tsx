@@ -559,3 +559,41 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled();
   });
 });
+
+describe('MessageBlock tool rows', () => {
+  const toolMessage = (id: string, toolEvent: NonNullable<Message['toolEvent']>): Message => ({
+    ...baseMessage,
+    id,
+    authorType: 'agent',
+    author: undefined,
+    messageType: 'tool_event',
+    text: undefined,
+    toolEvent,
+  });
+
+  it('attributes a connector row to exactly one plugin', () => {
+    render(<MessageBlock {...actions} message={toolMessage('message-connector', {
+      id: 'tool-connector',
+      name: 'Reviewed Google Drive · Work',
+      summary: 'Found the authorized Drive folder',
+      status: 'completed',
+      plugins: [{ pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' }],
+    })} />);
+
+    expect(screen.getByRole('img', { name: 'Plugin: Google Drive · Work' })).toBeVisible();
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+  });
+
+  it('leaves a web research row unattributed', () => {
+    render(<MessageBlock {...actions} message={toolMessage('message-web', {
+      id: 'tool-web',
+      name: 'Searched the public web',
+      summary: 'Web search completed',
+      status: 'completed',
+      plugins: [],
+    })} />);
+
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByText('Searched the public web')).toBeVisible();
+  });
+});
