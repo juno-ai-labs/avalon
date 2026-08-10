@@ -17,11 +17,12 @@ update it in the same change.
   brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) for what Avalon is,
   then [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it is put together, then
   [`DATA_MODEL.md`](DATA_MODEL.md) and [`SECURITY.md`](SECURITY.md).
-- **Adding a document?** Create `docs/<NAME>.md`, register it in the correct
-  table below, and add it to the Documentation list in the root
-  [`README.md`](../README.md). **A PRD is the exception**: it goes in a dated
-  folder under `docs/PRDs/` per [`prds.md`](prds.md), and is registered in
-  neither this index nor the root README.
+- **Adding a document?** Create `docs/<NAME>.md` and register it in the correct
+  table below. This index is the only registry — the root
+  [`README.md`](../README.md) points here instead of listing documents, so there
+  is nothing to update there. **A PRD is the exception**: it goes in a dated
+  folder under `docs/PRDs/` per [`prds.md`](prds.md), and is registered here at
+  all only through the `prds.md` row.
 
 ## Product and architecture
 
@@ -40,6 +41,8 @@ update it in the same change.
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`AGENT_HARNESS.md`](AGENT_HARNESS.md) | The bounded Bind 11 adapter over OpenRouter: run admission, tool execution, loadable skills, streaming, receipts, and what the Workflow host owns versus what Bind owns. |
+| [`agent-tools.md`](agent-tools.md) | How to *design* an agent tool — names, parameters, discovery, errors, limits, idempotency, and the id-family rules — so a small model uses it correctly first try. Read before adding or reshaping a tool; the harness mechanics stay in `AGENT_HARNESS.md`. |
+| [`writing-skills.md`](writing-skills.md) | How to *author* a skill: the catalog line that decides when it loads, the body that has to execute, bundled resources, and why loading one grants no authority. Read before adding a skill; the skill system stays in `AGENT_HARNESS.md`. |
 | [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) | The Cloudflare Flagship binding and the per-agent model-routing flags it serves. Read before adding a flag or changing which OpenRouter model an agent runs on. |
 | [`CONNECTORS.md`](CONNECTORS.md) | The connector registry and manifest model — OAuth needs, personal versus workspace scopes, activity and resource types, tools, polling, webhooks, watches. Read before adding or changing an adapter. |
 | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) | Provider app registrations and their regional routing, plus the source manifests in `config/provider-apps`. Read before changing a registration or callback. |
