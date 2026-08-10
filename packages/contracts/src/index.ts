@@ -310,6 +310,8 @@ export const ConnectionSchema = z.object({
 });
 
 export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
+export const ActivitySourceBindingKeySchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/u);
+export const ActivitySourcePluginIdsSchema = z.record(ActivitySourceBindingKeySchema, ModelPluginIdSchema);
 export const AutomationPluginIconSchema = z.enum([
   "brand-github",
   "brand-google",
@@ -590,17 +592,26 @@ export const TriggerDefinitionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("connector_activity"),
     connectorType: z.string().min(1),
+    sourceBindingKey: ActivitySourceBindingKeySchema.optional(),
+    suggestedSourcePluginId: ModelPluginIdSchema.optional(),
     eventTypes: z.array(z.string().min(1)).min(1),
     deterministicFilters: z.record(z.string(), z.unknown())
   }),
   z.object({
     type: z.literal("semantic_activity"),
     connectorType: z.string().min(1).nullable(),
+    sourceBindingKey: ActivitySourceBindingKeySchema.optional(),
+    suggestedSourcePluginId: ModelPluginIdSchema.optional(),
     deterministicPrefilter: z.record(z.string(), z.unknown()),
     condition: z.string().min(1)
   }),
   z.object({ type: z.literal("resource_watch"), resourceId: IdSchema }),
-  z.object({ type: z.literal("webhook"), eventTypes: z.array(z.string()).min(1) })
+  z.object({
+    type: z.literal("webhook"),
+    sourceBindingKey: ActivitySourceBindingKeySchema.optional(),
+    suggestedSourcePluginId: ModelPluginIdSchema.optional(),
+    eventTypes: z.array(z.string()).min(1)
+  })
 ]);
 
 export const AutomationDraftSchema = z.object({
@@ -630,6 +641,54 @@ export const AutomationDraftSchema = z.object({
       });
     }
     names.add(normalized);
+  });
+  const sourceBindings = new Map<string, { connectorType: string; pluginId: string }>();
+  draft.triggers.forEach((trigger, index) => {
+    if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") return;
+    const connectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
+    if (!draft.ready) return;
+    if (!trigger.sourceBindingKey) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["triggers", index, "sourceBindingKey"],
+        message: "Ready activity triggers require a source binding key",
+      });
+    }
+    if (!trigger.suggestedSourcePluginId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["triggers", index, "suggestedSourcePluginId"],
+        message: "Ready activity triggers require an inspected source plugin",
+      });
+    }
+    if (trigger.type === "semantic_activity" && connectorType == null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["triggers", index, "connectorType"],
+        message: "Ready semantic activity triggers require a concrete connector type",
+      });
+    }
+    if (
+      trigger.type === "semantic_activity"
+      && (typeof trigger.deterministicPrefilter.eventType !== "string" || trigger.deterministicPrefilter.eventType.trim().length === 0)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["triggers", index, "deterministicPrefilter", "eventType"],
+        message: "Ready semantic activity triggers require one declared event type",
+      });
+    }
+    if (!trigger.sourceBindingKey || !trigger.suggestedSourcePluginId || !connectorType) return;
+    const previous = sourceBindings.get(trigger.sourceBindingKey);
+    if (previous && (previous.connectorType !== connectorType || previous.pluginId !== trigger.suggestedSourcePluginId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["triggers", index, "sourceBindingKey"],
+        message: "Reused activity source binding keys must identify the same connector and suggested plugin",
+      });
+      return;
+    }
+    sourceBindings.set(trigger.sourceBindingKey, { connectorType, pluginId: trigger.suggestedSourcePluginId });
   });
 });
 
@@ -722,6 +781,7 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
+  activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   deliveryTargets: z.array(z.object({
     type: z.literal("slack_agent_dm"),
     connectionId: IdSchema,
@@ -855,6 +915,7 @@ export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
+  activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   resourceIds: z.array(IdSchema).max(20).default([]),
   deliveryTargets: z.array(z.object({
     type: z.literal("slack_agent_dm"),
@@ -1205,6 +1266,27 @@ export const ConnectorCapabilitySchema = z.object({
   description: z.string().min(1).optional()
 });
 
+export const ConnectorActivityFilterValueTypeSchema = z.enum([
+  "string",
+  "number",
+  "boolean",
+  "string_array",
+]);
+
+export const ConnectorActivityFilterFieldSchema = z.object({
+  key: z.string().regex(/^[a-z][a-zA-Z0-9_]{0,63}$/),
+  label: z.string().min(1).max(120),
+  description: z.string().min(1).max(500),
+  valueType: ConnectorActivityFilterValueTypeSchema,
+});
+
+export const ConnectorActivityTriggerDescriptorSchema = z.object({
+  eventType: z.string().min(1).max(200),
+  label: z.string().min(1).max(160),
+  description: z.string().min(1).max(800),
+  filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
+});
+
 const ConnectorManifestBaseSchema = z.object({
   type: z.string().min(1),
   displayName: z.string().min(1),
@@ -1214,7 +1296,7 @@ const ConnectorManifestBaseSchema = z.object({
   capabilities: z.array(ConnectorCapabilitySchema).default([]),
   supportedScopes: z.array(ScopeSchema),
   oauthRequired: z.boolean(),
-  activityTypes: z.array(z.string()),
+  activityTriggers: z.array(ConnectorActivityTriggerDescriptorSchema),
   resourceTypes: z.array(z.string()),
   tools: z.array(ToolDefinitionSchema),
   supportsWatches: z.boolean(),
@@ -1223,6 +1305,28 @@ const ConnectorManifestBaseSchema = z.object({
 });
 
 export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((manifest, context) => {
+  const activityTypes = new Set<string>();
+  for (const [index, trigger] of manifest.activityTriggers.entries()) {
+    if (activityTypes.has(trigger.eventType)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate connector activity type: ${trigger.eventType}`,
+        path: ["activityTriggers", index, "eventType"]
+      });
+    }
+    activityTypes.add(trigger.eventType);
+    const filterKeys = new Set<string>();
+    for (const [filterIndex, field] of trigger.filterFields.entries()) {
+      if (filterKeys.has(field.key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate activity filter field: ${field.key}`,
+          path: ["activityTriggers", index, "filterFields", filterIndex, "key"]
+        });
+      }
+      filterKeys.add(field.key);
+    }
+  }
   const declaresNativeAgent = manifest.surfaces.includes("native_agent");
   if (declaresNativeAgent && !manifest.nativeAgent) {
     context.addIssue({
@@ -1343,7 +1447,10 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
     ...manifest,
     capabilities: [...manifest.capabilities, ...inferredToolCapabilities]
   };
-});
+}).transform((manifest) => ({
+  ...manifest,
+  activityTypes: manifest.activityTriggers.map((trigger) => trigger.eventType),
+}));
 
 export type Region = z.infer<typeof RegionSchema>;
 export type Scope = z.infer<typeof ScopeSchema>;
@@ -1394,6 +1501,7 @@ export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
+export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
 export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;
@@ -1427,6 +1535,9 @@ export type NativeAgentSurface = z.infer<typeof NativeAgentSurfaceSchema>;
 export type MessagingAgentSurface = z.infer<typeof MessagingAgentSurfaceSchema>;
 export type ConnectorCapabilityKind = z.infer<typeof ConnectorCapabilityKindSchema>;
 export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
+export type ConnectorActivityFilterValueType = z.infer<typeof ConnectorActivityFilterValueTypeSchema>;
+export type ConnectorActivityFilterField = z.infer<typeof ConnectorActivityFilterFieldSchema>;
+export type ConnectorActivityTriggerDescriptor = z.infer<typeof ConnectorActivityTriggerDescriptorSchema>;
 /** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */
 export type ConnectorManifestInput = z.input<typeof ConnectorManifestSchema>;
 export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;

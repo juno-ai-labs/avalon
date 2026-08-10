@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@avalon/contracts";
+import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@avalon/contracts";
 import { z } from "zod";
 import {
   isRecord,
@@ -14,6 +14,7 @@ import {
   assertPrincipalAccess,
   connectorRetryAfterMs,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -74,6 +75,7 @@ export const SlackWorkspaceBotScopes = [
   "mpim:history",
   "mpim:read",
   "mpim:write",
+  "reactions:read",
   "reactions:write",
   "search:read.files",
   "search:read.public",
@@ -209,6 +211,296 @@ const SlackIngressEnvelopeSchema = z.object({
 }).passthrough();
 
 export type SlackIngressEnvelope = z.infer<typeof SlackIngressEnvelopeSchema>;
+
+export const SlackActivityEventTypes = [
+  "slack.message.posted",
+  "slack.message.replied",
+  "slack.message.edited",
+  "slack.message.deleted",
+  "slack.app_mention.received",
+  "slack.direct_message.received",
+  "slack.reaction.added",
+  "slack.reaction.removed",
+  "slack.file.shared",
+  "slack.channel.created",
+  "slack.member.joined_channel",
+  "slack.member.left_channel",
+] as const;
+
+export function slackActivityEventType(envelope: SlackIngressEnvelope): string | null {
+  const event = envelope.event ?? {};
+  const type = stringValue(event, "type");
+  if (type === "app_mention") return event.bot_id ? null : "slack.app_mention.received";
+  if (type === "message") {
+    const subtype = stringValue(event, "subtype");
+    const nestedMessage = isRecord(event.message) ? event.message : {};
+    const previousMessage = isRecord(event.previous_message) ? event.previous_message : {};
+    if (event.bot_id || nestedMessage.bot_id || previousMessage.bot_id) return null;
+    if (subtype === "message_changed") return "slack.message.edited";
+    if (subtype === "message_deleted") return "slack.message.deleted";
+    if (subtype && subtype !== "thread_broadcast") return null;
+    const channel = stringValue(event, "channel");
+    const channelType = stringValue(event, "channel_type");
+    if (channel?.startsWith("D") || channelType === "im") return "slack.direct_message.received";
+    return stringValue(event, "thread_ts") ? "slack.message.replied" : "slack.message.posted";
+  }
+  if (type === "reaction_added") return "slack.reaction.added";
+  if (type === "reaction_removed") return "slack.reaction.removed";
+  if (type === "file_shared") return "slack.file.shared";
+  if (type === "channel_created") return "slack.channel.created";
+  if (type === "member_joined_channel") return "slack.member.joined_channel";
+  if (type === "member_left_channel") return "slack.member.left_channel";
+  return null;
+}
+
+export function normalizeSlackActivity(
+  connection: ConnectorConnectionContext,
+  envelope: SlackIngressEnvelope,
+  payloadRef: string | null,
+): Omit<NormalizedActivity, "id"> | null {
+  const eventType = slackActivityEventType(envelope);
+  const event = envelope.event ?? {};
+  const eventId = envelope.event_id;
+  const teamId = envelope.team_id ?? connection.config.teamId;
+  if (!eventType || !eventId || typeof teamId !== "string" || !teamId) return null;
+
+  const nestedMessage = isRecord(event.message) ? event.message : {};
+  const previousMessage = isRecord(event.previous_message) ? event.previous_message : {};
+  const item = isRecord(event.item) ? event.item : {};
+  const channel = isRecord(event.channel) ? event.channel : {};
+  const message = eventType === "slack.message.edited"
+    ? nestedMessage
+    : eventType === "slack.message.deleted"
+      ? previousMessage
+      : event;
+  const channelId = firstSlackString(
+    event.channel_id,
+    event.channel,
+    item.channel,
+    channel.id,
+  );
+  const messageTs = firstSlackString(
+    event.deleted_ts,
+    message.ts,
+    event.message_ts,
+    item.ts,
+    event.ts,
+  );
+  const threadTs = firstSlackString(message.thread_ts, event.thread_ts);
+  const file = isRecord(event.file) ? event.file : {};
+  const itemType = firstSlackString(item.type);
+  const fileId = firstSlackString(event.file_id, file.id, item.file);
+  const fileCommentId = firstSlackString(item.file_comment);
+  const memberUserId = eventType === "slack.member.joined_channel" || eventType === "slack.member.left_channel"
+    ? firstSlackString(event.user)
+    : null;
+  const creatorUserId = eventType === "slack.channel.created"
+    ? firstSlackString(channel.creator, event.creator)
+    : null;
+  const userId = firstSlackString(
+    event.user_id,
+    event.user,
+    message.user,
+    memberUserId,
+    creatorUserId,
+  );
+  const text = firstSlackString(message.text, event.text) ?? "";
+  const reaction = firstSlackString(event.reaction);
+  const channelName = firstSlackString(channel.name);
+  const subjectId = fileId
+    ?? (channelId && messageTs ? `${channelId}:${messageTs}` : null)
+    ?? (channelId && memberUserId ? `${channelId}:${memberUserId}` : null)
+    ?? channelId;
+  const occurredAt = slackTimestampIso(
+    firstSlackString(event.event_ts, event.ts, message.ts),
+    envelope.event_time,
+  );
+  const receivedAt = new Date().toISOString();
+  const title = slackActivityTitle(eventType, channelName ?? channelId, reaction);
+  const summary = slackActivitySummary(eventType, text, userId, channelName ?? channelId, reaction, fileId);
+  const mentionedUserIds = slackMentionedUserIds(text);
+  const externalPeople = slackExternalPeople(teamId, [
+    ...(userId ? [{ userId, role: eventType.startsWith("slack.member.") ? "member" : "actor" }] : []),
+    ...mentionedUserIds.map((mentionedUserId) => ({ userId: mentionedUserId, role: "mentioned" })),
+    ...(typeof event.item_user === "string" ? [{ userId: event.item_user, role: "item_owner" }] : []),
+    ...(typeof event.inviter === "string" ? [{ userId: event.inviter, role: "inviter" }] : []),
+  ]);
+
+  return {
+    workspaceId: connection.workspaceId,
+    region: connection.config.region === "eu" ? "eu" : "global",
+    connectionId: connection.id,
+    connectionScope: connection.scope,
+    connectionOwnerUserId: connection.ownerUserId,
+    provider: "slack",
+    providerEventId: eventId,
+    eventType,
+    resourceType: fileId ? "slack_file" : channelId && messageTs ? "slack_message" : channelId ? "slack_channel" : null,
+    providerResourceId: subjectId,
+    actor: userId ? { id: userId } : {},
+    subject: {
+      ...(channelId ? { channelId } : {}),
+      ...(messageTs ? { messageTs } : {}),
+      ...(threadTs ? { threadTs } : {}),
+      ...(fileId ? { fileId } : {}),
+      ...(reaction ? { reaction } : {}),
+      ...(itemType ? { itemType } : {}),
+      ...(fileCommentId ? { fileCommentId } : {}),
+    },
+    occurredAt,
+    receivedAt,
+    title,
+    summary,
+    textSnippet: truncateSlackText(text, 4_000),
+    payloadRef,
+    visibility: { scope: connection.scope, teamId, ...(channelId ? { channelId } : {}) },
+    targetUserIds: [],
+    entityKeys: [...new Set([teamId, channelId, messageTs, threadTs, fileId, userId].filter((value): value is string => Boolean(value)))],
+    dedupeKey: `slack:${eventId}:${eventType}`,
+    rawContentHash: null,
+    externalPeople,
+    metadata: {
+      teamId,
+      ...(channelId ? { channelId } : {}),
+      ...(channelName ? { channelName } : {}),
+      ...(userId ? { userId } : {}),
+      ...(messageTs ? { messageTs } : {}),
+      ...(threadTs ? { threadTs, isThread: true } : { isThread: false }),
+      ...(reaction ? { reaction } : {}),
+      ...(typeof event.item_user === "string" ? { itemUserId: event.item_user } : {}),
+      ...(itemType ? { itemType } : {}),
+      ...(fileId ? { fileId } : {}),
+      ...(fileCommentId ? { fileCommentId } : {}),
+      ...(memberUserId ? { memberUserId } : {}),
+      ...(typeof event.inviter === "string" ? { inviterUserId: event.inviter } : {}),
+      ...(creatorUserId ? { creatorUserId } : {}),
+    },
+  };
+}
+
+function firstSlackString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function truncateSlackText(value: string, maximum: number): string {
+  return value.length <= maximum ? value : value.slice(0, maximum);
+}
+
+function slackTimestampIso(timestamp: string | null, eventTime?: number): string {
+  const timestampMs = timestamp && /^\d+(?:\.\d+)?$/u.test(timestamp)
+    ? Number(timestamp) * 1_000
+    : Number.NaN;
+  if (Number.isFinite(timestampMs)) return new Date(timestampMs).toISOString();
+  if (typeof eventTime === "number" && Number.isFinite(eventTime)) {
+    return new Date(eventTime * 1_000).toISOString();
+  }
+  return new Date().toISOString();
+}
+
+function slackActivityTitle(eventType: string, channel: string | null, reaction: string | null): string {
+  const location = channel ? ` in ${channel.startsWith("C") || channel.startsWith("G") ? channel : `#${channel}`}` : "";
+  const titles: Record<string, string> = {
+    "slack.message.posted": `New Slack message${location}`,
+    "slack.message.replied": `New Slack thread reply${location}`,
+    "slack.message.edited": `Slack message edited${location}`,
+    "slack.message.deleted": `Slack message deleted${location}`,
+    "slack.app_mention.received": `Avalon mentioned in Slack${location}`,
+    "slack.direct_message.received": "New Slack direct message",
+    "slack.reaction.added": `Slack reaction${reaction ? ` :${reaction}:` : ""} added${location}`,
+    "slack.reaction.removed": `Slack reaction${reaction ? ` :${reaction}:` : ""} removed${location}`,
+    "slack.file.shared": `File shared in Slack${location}`,
+    "slack.channel.created": `Slack channel created${location}`,
+    "slack.member.joined_channel": `Member joined a Slack channel${location}`,
+    "slack.member.left_channel": `Member left a Slack channel${location}`,
+  };
+  return truncateSlackText(titles[eventType] ?? "Slack activity", 500);
+}
+
+function slackActivitySummary(
+  eventType: string,
+  text: string,
+  userId: string | null,
+  channel: string | null,
+  reaction: string | null,
+  fileId: string | null,
+): string {
+  if (text) return truncateSlackText(text, 1_000);
+  const actor = userId ? `<@${userId}>` : "A Slack member";
+  const location = channel ? ` in ${channel}` : "";
+  if (eventType === "slack.reaction.added") return `${actor} added ${reaction ? `:${reaction}:` : "a reaction"}${location}`;
+  if (eventType === "slack.reaction.removed") return `${actor} removed ${reaction ? `:${reaction}:` : "a reaction"}${location}`;
+  if (eventType === "slack.file.shared") return `${actor} shared ${fileId ?? "a file"}${location}`;
+  if (eventType === "slack.channel.created") return `${actor} created ${channel ?? "a Slack channel"}`;
+  if (eventType === "slack.member.joined_channel") return `${actor} joined ${channel ?? "a Slack channel"}`;
+  if (eventType === "slack.member.left_channel") return `${actor} left ${channel ?? "a Slack channel"}`;
+  return `${actor} caused ${eventType}${location}`;
+}
+
+function slackMentionedUserIds(text: string): string[] {
+  return [...text.matchAll(/<@([A-Z0-9]+)(?:\|[^>]+)?>/giu)]
+    .flatMap((match) => match[1] ? [match[1]] : []);
+}
+
+function slackExternalPeople(
+  teamId: string,
+  people: Array<{ userId: string; role: string }>,
+): NonNullable<NormalizedActivity["externalPeople"]> {
+  const seen = new Set<string>();
+  return people.flatMap(({ userId, role }) => {
+    const key = `${userId}:${role}`;
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      provider: "slack",
+      providerTenantId: teamId,
+      providerUserId: userId,
+      handle: null,
+      email: null,
+      displayName: null,
+      role,
+      sourceText: `<@${userId}>`,
+    }];
+  });
+}
+
+const SlackMessageActivityFilterFields: ConnectorActivityFilterField[] = [
+  { key: "teamId", label: "Workspace ID", description: "Slack workspace/team ID.", valueType: "string" },
+  { key: "channelId", label: "Channel ID", description: "Slack conversation ID containing the message.", valueType: "string" },
+  { key: "channelName", label: "Channel name", description: "Resolved Slack channel name when available.", valueType: "string" },
+  { key: "channelType", label: "Channel type", description: "One of public, private, or im.", valueType: "string" },
+  { key: "userId", label: "Author ID", description: "Slack user ID that authored the message.", valueType: "string" },
+  { key: "messageTs", label: "Message timestamp", description: "Slack message timestamp identifying the message.", valueType: "string" },
+  { key: "threadTs", label: "Thread timestamp", description: "Root Slack timestamp for a thread reply.", valueType: "string" },
+  { key: "isThread", label: "Thread message", description: "Whether the message belongs to a thread.", valueType: "boolean" },
+];
+
+const SlackReactionActivityFilterFields: ConnectorActivityFilterField[] = [
+  ...SlackMessageActivityFilterFields,
+  { key: "reaction", label: "Reaction", description: "Emoji reaction name without surrounding colons.", valueType: "string" },
+  { key: "itemUserId", label: "Message author ID", description: "Slack user ID that authored the reacted-to message.", valueType: "string" },
+  { key: "itemType", label: "Reacted item type", description: "Slack item type: message, file, or file_comment.", valueType: "string" },
+  { key: "fileId", label: "File ID", description: "Slack file ID when the reaction targets a file or file comment.", valueType: "string" },
+  { key: "fileCommentId", label: "File comment ID", description: "Slack file-comment ID when the reaction targets a file comment.", valueType: "string" },
+];
+
+const SlackFileActivityFilterFields: ConnectorActivityFilterField[] = [
+  ...SlackMessageActivityFilterFields.filter((field) => field.key !== "messageTs" && field.key !== "threadTs" && field.key !== "isThread"),
+  { key: "fileId", label: "File ID", description: "Slack file ID that was shared.", valueType: "string" },
+];
+
+const SlackChannelActivityFilterFields: ConnectorActivityFilterField[] = [
+  { key: "teamId", label: "Workspace ID", description: "Slack workspace/team ID.", valueType: "string" },
+  { key: "channelId", label: "Channel ID", description: "Slack channel ID.", valueType: "string" },
+  { key: "channelName", label: "Channel name", description: "Resolved Slack channel name when available.", valueType: "string" },
+  { key: "channelType", label: "Channel type", description: "One of public or private.", valueType: "string" },
+  { key: "userId", label: "Member ID", description: "Slack user ID associated with the activity.", valueType: "string" },
+  { key: "memberUserId", label: "Member ID", description: "Slack user that joined or left the channel.", valueType: "string" },
+  { key: "inviterUserId", label: "Inviter ID", description: "Slack user that invited the member when supplied.", valueType: "string" },
+  { key: "creatorUserId", label: "Creator ID", description: "Slack user that created the channel.", valueType: "string" },
+];
 
 export type SlackAgentInvocation =
   | { kind: "event"; teamId: string; eventId: string; event: Record<string, unknown>; envelope: SlackIngressEnvelope }
@@ -1516,12 +1808,113 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       ],
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTypes: [],
-      resourceTypes: ["slack_message", "slack_thread", "slack_file", "slack_canvas"],
+      activityTriggers: defineConnectorActivityTriggers("Slack", SlackActivityEventTypes, {
+        "slack.message.posted": {
+          label: "Message posted",
+          description: "A human posted a new root message in a Slack channel selected by an automation.",
+          filterFields: SlackMessageActivityFilterFields,
+        },
+        "slack.message.replied": {
+          label: "Thread reply posted",
+          description: "A human replied in a Slack thread selected by an automation.",
+          filterFields: SlackMessageActivityFilterFields,
+        },
+        "slack.message.edited": {
+          label: "Message edited",
+          description: "A human-authored Slack message was edited.",
+          filterFields: SlackMessageActivityFilterFields,
+        },
+        "slack.message.deleted": {
+          label: "Message deleted",
+          description: "A human-authored Slack message was deleted.",
+          filterFields: SlackMessageActivityFilterFields,
+        },
+        "slack.app_mention.received": {
+          label: "Avalon mentioned",
+          description: "A Slack member explicitly mentioned Avalon in a channel.",
+          filterFields: SlackMessageActivityFilterFields,
+        },
+        "slack.direct_message.received": {
+          label: "Direct message received",
+          description: "A Slack member sent Avalon a direct message.",
+          filterFields: SlackMessageActivityFilterFields,
+        },
+        "slack.reaction.added": {
+          label: "Reaction added",
+          description: "A Slack member added an emoji reaction to a message, file, or file comment.",
+          filterFields: SlackReactionActivityFilterFields,
+        },
+        "slack.reaction.removed": {
+          label: "Reaction removed",
+          description: "A Slack member removed an emoji reaction from a message, file, or file comment.",
+          filterFields: SlackReactionActivityFilterFields,
+        },
+        "slack.file.shared": {
+          label: "File shared",
+          description: "A file was shared into a Slack conversation.",
+          filterFields: SlackFileActivityFilterFields,
+        },
+        "slack.channel.created": {
+          label: "Channel created",
+          description: "A new Slack channel was created.",
+          filterFields: SlackChannelActivityFilterFields,
+        },
+        "slack.member.joined_channel": {
+          label: "Member joined channel",
+          description: "A Slack member joined a channel visible to the installed app.",
+          filterFields: SlackChannelActivityFilterFields,
+        },
+        "slack.member.left_channel": {
+          label: "Member left channel",
+          description: "A Slack member left a channel visible to the installed app.",
+          filterFields: SlackChannelActivityFilterFields,
+        },
+      }),
+      resourceTypes: ["slack_message", "slack_thread", "slack_file", "slack_canvas", "slack_channel"],
       tools: slackTools,
       supportsWatches: false,
       supportsPolling: false,
       supportsWebhooks: true,
+    },
+    webhookActivity: {
+      async verify(input) {
+        const bytes = input.rawBodyBytes ?? new TextEncoder().encode(input.rawBody);
+        if (bytes.byteLength > input.maxBytes) {
+          throw new ConnectorError("payload_too_large", "Slack webhook payload exceeds the configured limit");
+        }
+        const verified = await verifySlackRequest({
+          signingSecret: input.verificationSecret ?? config.signingSecret,
+          rawBody: bytes,
+          timestamp: input.headers.get("x-slack-request-timestamp"),
+          signature: input.headers.get("x-slack-signature"),
+          now: input.now,
+        });
+        let payload: unknown;
+        try {
+          payload = JSON.parse(verified.body);
+        } catch (error) {
+          throw new ConnectorError("provider_error", "Slack sent malformed JSON", error);
+        }
+        const envelope = parseSlackEventEnvelope(payload, config.appId);
+        if (!envelope.team_id || !envelope.event_id || !envelope.event) {
+          throw new ConnectorError("provider_error", "Slack event identity is missing");
+        }
+        if (input.expectedProviderAccountId && input.expectedProviderAccountId !== envelope.team_id) {
+          throw new ConnectorError("unauthorized", "Slack event belongs to another workspace");
+        }
+        return {
+          deliveryId: envelope.event_id,
+          eventType: slackActivityEventType(envelope) ?? stringValue(envelope.event, "type") ?? "slack.unsupported",
+          providerAccountId: envelope.team_id,
+          bodyHash: verified.bodyHash,
+          receiptKey: envelope.event_id,
+          event: envelope,
+        };
+      },
+      normalize(connection, event, payloadRef) {
+        const envelope = SlackIngressEnvelopeSchema.parse(event.event);
+        return normalizeSlackActivity(connection, envelope, payloadRef);
+      },
     },
     agentPlugin: SlackAgentPluginDescriptor,
     capabilityConnectionScopes: {

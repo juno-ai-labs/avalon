@@ -3,9 +3,11 @@ import {
   ConnectorError,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
+  normalizeSlackActivity,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
+  slackActivityEventType,
   type ConnectorConnectionContext,
   type SlackAgentInvocation,
   type SlackIngressEnvelope,
@@ -15,6 +17,7 @@ import {
   SlackIngressQueueMessageSchema,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
+  TriggerDefinitionSchema,
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginContext,
@@ -34,6 +37,7 @@ import {
 } from "./connector-actor-identity";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { persistNormalizedActivity } from "./normalized-activity-service";
 import { SlackWorkspaceWorkstreamService } from "./slack-workspace-workstream-service";
 import { WorkstreamService } from "./workstream-service";
 
@@ -271,13 +275,24 @@ export class SlackAgentService {
     if (envelope.type === "url_verification") return { ok: true };
     const invocation = parseSlackAgentInvocation({ kind: "event", envelope });
     if (invocation.kind !== "event") throw new ApiError(422, "slack_event_invalid", "Slack event identity is missing");
+    const activityEventType = slackActivityEventType(envelope);
     if (invocation.event.type === "message"
       && !await this.shouldEnqueueSlackMessage(
         invocation.teamId,
         invocation.event,
         authorizedBotUserId(envelope),
+        activityEventType,
       )) {
       return { ok: true };
+    }
+    if (activityEventType
+      && invocation.event.type !== "message"
+      && invocation.event.type !== "app_mention") {
+      const connection = await this.connectionForTeam(invocation.teamId);
+      const botUserId = authorizedBotUserId(envelope) ?? await this.botUserId(connection);
+      if (botUserId && slackEventActorUserIds(invocation.event).includes(botUserId)) return { ok: true };
+      if (invocation.event.type !== "channel_created"
+        && !await this.hasSubscribedSlackActivity(connection, activityEventType)) return { ok: true };
     }
     return this.enqueueIngressJob({
       id: `event:${invocation.eventId}`,
@@ -447,7 +462,7 @@ export class SlackAgentService {
       const rawPayload: unknown = JSON.parse(job.payload_json);
       if (job.kind === "event") {
         const envelope = parseSlackEventEnvelope(rawPayload, this.env.SLACK_APP_ID);
-        await this.dispatchEvent(job.team_id, envelope);
+        await this.dispatchEvent(job.team_id, envelope, job.body_hash);
       } else if (job.kind === "interaction") {
         await this.dispatchQueuedInteraction(SlackInteractionPayloadSchema.parse(rawPayload), job.id);
       } else {
@@ -1036,7 +1051,7 @@ export class SlackAgentService {
     ).bind(status, JSON.stringify({ code: "slack_delivery_failed", message: error instanceof Error ? error.message : "Slack delivery failed" }), nowIso(), target.id).run();
   }
 
-  private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope): Promise<void> {
+  private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope, bodyHash: string): Promise<void> {
     const event = envelope.event!;
     const type = String(event.type ?? "");
     if (type === "avalon_public_channel_sync") {
@@ -1068,6 +1083,7 @@ export class SlackAgentService {
       });
       return;
     }
+    const activityChannelResolution = await this.persistSlackEventActivity(teamId, envelope, bodyHash);
     if (type === "channel_created") {
       const channelId = asRecord(event.channel).id;
       if (typeof channelId !== "string" || !channelId) return;
@@ -1196,7 +1212,8 @@ export class SlackAgentService {
     const channelResolution = existingSession
       && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
       ? { channelType: existingSession.channel_type, channelName: null, failure: null }
-      : await resolveSlackChannelType(token, channelId, event.channel_type);
+      : activityChannelResolution
+        ?? await resolveSlackChannelType(token, channelId, event.channel_type);
     await this.startFromPrompt(
       teamId,
       slackUserId,
@@ -1609,16 +1626,29 @@ export class SlackAgentService {
     teamId: string,
     event: Record<string, unknown>,
     authorizedBotId: string | null,
+    activityEventType: string | null,
   ): Promise<boolean> {
     const subtype = typeof event.subtype === "string" ? event.subtype : null;
+    const changedMessage = asRecord(event.message);
+    const previousMessage = asRecord(event.previous_message);
+    const hasMessageTimestamp = Boolean(
+      event.ts || event.deleted_ts || changedMessage.ts || previousMessage.ts,
+    );
     if (event.bot_id
-      || (subtype && subtype !== "thread_broadcast")
-      || !event.user
+      || changedMessage.bot_id
+      || previousMessage.bot_id
+      || (subtype && subtype !== "thread_broadcast" && subtype !== "message_changed" && subtype !== "message_deleted")
       || !event.channel
-      || !event.ts) return false;
-    if (isDirectSlackMessageEvent(event)) return true;
-    if (typeof event.thread_ts !== "string" || !event.thread_ts) return false;
+      || !hasMessageTimestamp) return false;
+    const lifecycleMessage = subtype === "message_changed" || subtype === "message_deleted";
+    if (!lifecycleMessage && !event.user) return false;
+    if (!lifecycleMessage && isDirectSlackMessageEvent(event)) return true;
     const connection = await this.connectionForTeam(teamId);
+    const activitySubscribed = activityEventType
+      ? await this.hasSubscribedSlackActivity(connection, activityEventType)
+      : false;
+    if (lifecycleMessage) return activitySubscribed;
+    if (typeof event.thread_ts !== "string" || !event.thread_ts) return activitySubscribed;
     const channelId = String(event.channel);
     const threadTs = event.thread_ts;
     const slackUserId = String(event.user);
@@ -1647,7 +1677,151 @@ export class SlackAgentService {
       slackUserId,
       nowIso(),
     ).first<{ routable: number }>();
-    return Boolean(routable);
+    return Boolean(routable) || activitySubscribed;
+  }
+
+  private async persistSlackEventActivity(
+    teamId: string,
+    envelope: SlackIngressEnvelope,
+    bodyHash: string,
+  ): Promise<Awaited<ReturnType<typeof resolveSlackChannelType>> | null> {
+    if (!slackActivityEventType(envelope)) return null;
+    const event = envelope.event ?? {};
+    const connection = await this.connectionForTeam(teamId);
+    const botUserId = authorizedBotUserId(envelope) ?? await this.botUserId(connection);
+    if (botUserId && slackEventActorUserIds(event).includes(botUserId)) return null;
+    const context: ConnectorConnectionContext = {
+      id: connection.id,
+      workspaceId: connection.workspace_id,
+      scope: "workspace",
+      ownerUserId: null,
+      grantedScopes: parseGrantedScopes(connection.granted_scopes_json),
+      credentials: {},
+      cursor: {},
+      config: { region: this.env.AVALON_REGION, teamId },
+    };
+    const normalized = normalizeSlackActivity(context, envelope, null);
+    if (!normalized) return null;
+    const activitySubscribed = await this.hasSubscribedSlackActivity(connection, normalized.eventType);
+    if (!activitySubscribed) return null;
+
+    const channelId = typeof normalized.metadata.channelId === "string"
+      ? normalized.metadata.channelId
+      : null;
+    const channelObject = asRecord(event.channel);
+    const channelHint = channelObject.is_private === true
+      ? "private"
+      : channelObject.is_private === false
+        ? "public"
+        : event.type === "channel_created"
+          ? "public"
+          : event.channel_type ?? asRecord(event.item).channel_type;
+    const rootTs = typeof event.thread_ts === "string"
+      ? event.thread_ts
+      : typeof event.ts === "string"
+        ? event.ts
+        : null;
+    const existingSession = channelId && rootTs && (event.type === "message" || event.type === "app_mention")
+      ? await this.loadSession(connection.id, channelId, rootTs)
+      : null;
+    const channelResolution = existingSession
+      && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
+      ? { channelType: existingSession.channel_type, channelName: null, failure: null }
+      : channelId
+      ? event.type === "channel_created"
+        ? {
+            channelType: "public" as const,
+            channelName: typeof normalized.metadata.channelName === "string"
+              ? normalized.metadata.channelName
+              : null,
+            failure: null,
+          }
+        : await resolveSlackChannelType(await this.botToken(connection), channelId, channelHint)
+      : { channelType: "unknown" as const, channelName: null, failure: null };
+    const workspaceAutomationAllowed = channelResolution.channelType === "public";
+    const allowedUserIds = workspaceAutomationAllowed
+      ? []
+      : await this.linkedAvalonUsersForSlackPeople(
+          connection,
+          normalized.externalPeople?.flatMap((person) => person.providerUserId ? [person.providerUserId] : []) ?? [],
+        );
+    if (!workspaceAutomationAllowed && allowedUserIds.length === 0) return channelResolution;
+
+    await persistNormalizedActivity(this.env, {
+      ...normalized,
+      rawContentHash: bodyHash,
+      visibility: {
+        ...normalized.visibility,
+        channelType: channelResolution.channelType,
+        workspaceAutomationAllowed,
+        ...(allowedUserIds.length > 0 ? { allowedUserIds } : {}),
+      },
+      targetUserIds: allowedUserIds,
+      metadata: {
+        ...normalized.metadata,
+        channelType: channelResolution.channelType,
+        ...(channelResolution.channelName ? { channelName: channelResolution.channelName } : {}),
+      },
+    });
+    return channelResolution;
+  }
+
+  private async linkedAvalonUsersForSlackPeople(
+    connection: SlackConnectionRow,
+    slackUserIds: string[],
+  ): Promise<string[]> {
+    const uniqueIds = [...new Set(slackUserIds.filter(Boolean))];
+    if (uniqueIds.length === 0) return [];
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const linked = await this.env.DB.prepare(
+      `SELECT DISTINCT l.user_id
+       FROM slack_user_links l
+       JOIN workspace_members wm
+         ON wm.workspace_id = l.workspace_id AND wm.user_id = l.user_id
+       WHERE l.connection_id = ? AND l.status = 'active' AND wm.status = 'active'
+         AND l.slack_user_id IN (${placeholders})`,
+    ).bind(connection.id, ...uniqueIds).all<{ user_id: string }>();
+    return linked.results.map((row) => row.user_id);
+  }
+
+  private async hasSubscribedSlackActivity(
+    connection: SlackConnectionRow,
+    eventType: string,
+  ): Promise<boolean> {
+    const subscriptions = await this.env.DB.prepare(
+      `SELECT s.connector_bindings_json, s.activity_trigger_bindings_json,
+              v.trigger_definitions_json
+       FROM automation_subscriptions s
+       JOIN automation_template_versions v ON v.id = s.template_version_id
+       WHERE s.workspace_id = ? AND s.status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM json_each(s.connector_bindings_json)
+           WHERE json_each.value = ?
+         )`,
+    ).bind(connection.workspace_id, connection.id).all<{
+      connector_bindings_json: string;
+      activity_trigger_bindings_json: string;
+      trigger_definitions_json: string;
+    }>();
+    return subscriptions.results.some((subscription) => {
+      const parsed = z.array(TriggerDefinitionSchema).safeParse(parseSlackJson(subscription.trigger_definitions_json, []));
+      if (!parsed.success) return false;
+      const connectorBindings = parseSlackJson<Record<string, string>>(subscription.connector_bindings_json, {});
+      const sourceBindings = parseSlackJson<Record<string, string>>(subscription.activity_trigger_bindings_json, {});
+      return parsed.data.some((trigger) => {
+        if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity") return false;
+        if (trigger.connectorType !== "slack") return false;
+        if (trigger.sourceBindingKey) {
+          const pluginId = sourceBindings[trigger.sourceBindingKey];
+          if (!pluginId || connectorBindings[pluginId] !== connection.id) return false;
+        } else if (!Object.values(connectorBindings).includes(connection.id)) {
+          return false;
+        }
+        if (trigger.type === "connector_activity") return trigger.eventTypes.includes(eventType);
+        const prefilterEventType = trigger.deterministicPrefilter.eventType;
+        return typeof prefilterEventType === "string" && prefilterEventType === eventType;
+      });
+    });
   }
 
   private async loadPendingPrompt(
@@ -2393,6 +2567,15 @@ function slackChannelType(value: unknown): SlackPromptSource["channelType"] {
   return "unknown";
 }
 
+function parseSlackJson<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function isDirectSlackMessageEvent(event: Record<string, unknown>): boolean {
   return slackChannelType(event.channel_type) === "im"
     || (typeof event.channel === "string" && event.channel.startsWith("D"));
@@ -2612,7 +2795,7 @@ function feedbackModal(workstreamId: string): Record<string, unknown> {
 function unlinkedHome(link: string): Record<string, unknown>[] {
   return [
     { type: "header", text: { type: "plain_text", text: "Meet Avalon" } },
-    { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon only reads Slack context when you ask it to; it does not mirror or scrape your workspace." } },
+    { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
     { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon." } },
     { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, url: link, action_id: "avalon_connect" }] },
     { type: "divider" },
@@ -2850,6 +3033,12 @@ function authorizedBotUserId(envelope: SlackIngressEnvelope): string | null {
   return null;
 }
 
+function slackEventActorUserIds(event: Record<string, unknown>): string[] {
+  const channel = asRecord(event.channel);
+  return [...new Set([event.user, event.user_id, channel.creator]
+    .filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
 function slackReconnectRequired(error: unknown): boolean {
   const reason = slackErrorReason(error);
   return (error instanceof ConnectorError
@@ -2904,6 +3093,7 @@ export const __slackAgentTesting = {
   slackOriginAttachments,
   slackOriginNearbyMessage,
   slackEventSearchAuthorization,
+  slackEventActorUserIds,
   slackChannelResolutionDenial,
   slackChannelType,
   slackIngressRetryable,

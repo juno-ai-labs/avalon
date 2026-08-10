@@ -1,6 +1,7 @@
 import {
   ConnectorManifestSchema,
   NormalizedActivitySchema,
+  type ConnectorActivityFilterField,
   type ConnectorManifest,
   type ConnectorSurface,
   type NormalizedActivity,
@@ -10,6 +11,7 @@ import { z } from "zod";
 import {
   assertPrincipalAccess,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   pollCheckpointedActivityStreams,
   type ConnectorAdapter,
@@ -30,6 +32,7 @@ export {
   connectorRetryAfterMs,
   connectorCapabilitySupportsScope,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAgentAdapter,
   type ConnectorAgentExecutionContext,
@@ -59,15 +62,18 @@ export {
   createSlackConnector,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
+  normalizeSlackActivity,
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
+  slackActivityEventType,
   slackAgentActivationAcknowledgement,
   verifySlackRequest,
   SlackAgentPluginDescriptor,
   SLACK_AGENT_ACKNOWLEDGEMENT_REACTION,
   SlackAgentAcknowledgementCommandSchema,
   SlackCapabilities,
+  SlackActivityEventTypes,
   SlackCapabilityScopes,
   SlackWorkspaceBotScopes,
   SlackWorkspaceCapabilities,
@@ -747,6 +753,35 @@ type GmailPollCursor = z.infer<typeof GmailPollCursorSchema>;
 type CalendarPollCursor = z.infer<typeof CalendarPollCursorSchema>;
 type DrivePollCursor = z.infer<typeof DrivePollCursorSchema>;
 
+const googleEmailActivityFilterFields = [
+  { key: "changeType", label: "Change type", description: "Gmail history change type.", valueType: "string" },
+  { key: "labelIds", label: "Labels", description: "Current Gmail label identifiers.", valueType: "string_array" },
+  { key: "changedLabelIds", label: "Changed labels", description: "Gmail labels changed by this history entry.", valueType: "string_array" },
+  { key: "messageHistoryId", label: "History ID", description: "Gmail message history identifier.", valueType: "string" },
+  { key: "reconciledAfterHistoryGap", label: "Reconciled", description: "Whether polling reconciled a history gap.", valueType: "boolean" },
+] satisfies ConnectorActivityFilterField[];
+
+const googleCalendarChangedActivityFilterFields = [
+  { key: "status", label: "Status", description: "Google Calendar event status.", valueType: "string" },
+  { key: "recurringEventId", label: "Recurring event", description: "Parent recurring event identifier.", valueType: "string" },
+  { key: "eventType", label: "Event type", description: "Google Calendar event type.", valueType: "string" },
+  { key: "htmlLink", label: "Event URL", description: "Canonical Google Calendar event URL.", valueType: "string" },
+  { key: "attendeesOmitted", label: "Attendees omitted", description: "Whether the event omitted some attendees.", valueType: "boolean" },
+] satisfies ConnectorActivityFilterField[];
+
+const googleCalendarCompletedActivityFilterFields = [
+  { key: "completedAt", label: "Completed at", description: "ISO timestamp when the event ended.", valueType: "string" },
+  ...googleCalendarChangedActivityFilterFields.filter((field) => field.key !== "status" && field.key !== "htmlLink"),
+] satisfies ConnectorActivityFilterField[];
+
+const googleDriveActivityFilterFields = [
+  { key: "removed", label: "Removed", description: "Whether the Drive item was removed.", valueType: "boolean" },
+  { key: "trashed", label: "Trashed", description: "Whether the Drive item is in the trash.", valueType: "boolean" },
+  { key: "driveId", label: "Drive", description: "Shared Drive identifier, when present.", valueType: "string" },
+  { key: "parents", label: "Parents", description: "Parent folder identifiers.", valueType: "string_array" },
+  { key: "mimeType", label: "MIME type", description: "Google Drive MIME type.", valueType: "string" },
+] satisfies ConnectorActivityFilterField[];
+
 export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorAdapter {
   if (!config.clientId || !config.clientSecret || !config.redirectUri) {
     throw new ConnectorError("invalid_configuration", "Google OAuth is not fully configured");
@@ -1293,7 +1328,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       displayName: "Google",
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTypes: [
+      activityTriggers: defineConnectorActivityTriggers("Google", [
         "email.received",
         "email.updated",
         "calendar.event_changed",
@@ -1301,7 +1336,15 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         "drive.file_changed",
         "docs.document_changed",
         "sheets.spreadsheet_changed"
-      ],
+      ], {
+        "email.received": { filterFields: googleEmailActivityFilterFields },
+        "email.updated": { filterFields: googleEmailActivityFilterFields },
+        "calendar.event_changed": { filterFields: googleCalendarChangedActivityFilterFields },
+        "calendar.event_completed": { filterFields: googleCalendarCompletedActivityFilterFields },
+        "drive.file_changed": { filterFields: googleDriveActivityFilterFields },
+        "docs.document_changed": { filterFields: googleDriveActivityFilterFields },
+        "sheets.spreadsheet_changed": { filterFields: googleDriveActivityFilterFields },
+      }),
       resourceTypes: ["gmail_thread", "calendar_event", "drive_file", "google_doc", "google_sheet"],
       tools: googleTools,
       supportsWatches: true,
@@ -3265,7 +3308,7 @@ export function createGenericWebhookConnector(): ConnectorAdapter {
       displayName: "Generic webhook",
       supportedScopes: ["personal", "workspace"],
       oauthRequired: false,
-      activityTypes: ["webhook.received"],
+      activityTriggers: defineConnectorActivityTriggers("Generic webhook", ["webhook.received"]),
       resourceTypes: ["webhook_resource"],
       tools: [],
       supportsWatches: false,

@@ -226,6 +226,11 @@ const wireTemplatePageSchema = z.object({
     usedBy: z.number(),
     requiredCapabilities: z.array(z.string()),
     latestVersion: z.number(),
+    activitySources: z.array(z.object({
+      bindingKey: z.string(),
+      connectorType: z.string(),
+      suggestedPluginId: z.string().optional(),
+    })).default([]),
   })),
 });
 const createWorkstreamResponseSchema = z.object({
@@ -520,6 +525,22 @@ function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): strin
   }
 }
 
+function activitySourcesFromTriggers(
+  triggers: WireAutomationDraft['triggers'],
+): Array<{ bindingKey: string; connectorType: string; suggestedPluginId?: string }> {
+  const sources = new Map<string, { bindingKey: string; connectorType: string; suggestedPluginId?: string }>();
+  for (const trigger of triggers) {
+    if (trigger.type !== 'connector_activity' && trigger.type !== 'semantic_activity' && trigger.type !== 'webhook') continue;
+    if (!trigger.sourceBindingKey) continue;
+    sources.set(trigger.sourceBindingKey, {
+      bindingKey: trigger.sourceBindingKey,
+      connectorType: trigger.type === 'webhook' ? 'generic_webhook' : trigger.connectorType ?? '',
+      ...(trigger.suggestedSourcePluginId ? { suggestedPluginId: trigger.suggestedSourcePluginId } : {}),
+    });
+  }
+  return [...sources.values()].filter((source) => source.connectorType);
+}
+
 function mapAutomationRun(run: WireAutomationRun, title: string): AutomationRunSummary {
   const triggerTime = run.plannedFor ?? run.startedAt ?? run.createdAt;
   const start = run.startedAt ? Date.parse(run.startedAt) : Number.NaN;
@@ -565,6 +586,8 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     expectedOutputs: detail.expectedOutputs,
     recommendedPlugins: detail.recommendedPlugins,
     defaultPluginIds: detail.defaultPluginIds,
+    activitySourcePluginIds: detail.activitySourcePluginIds,
+    activitySources: activitySourcesFromTriggers(detail.triggers),
     deliveryTargets: detail.deliveryTargets,
     executionScope: detail.executionPrincipal['type'] === 'workspace' ? 'Workspace' : 'You',
     runs,
@@ -579,6 +602,7 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
             capabilities: detail.templateUpdate.requiredCapabilities,
             expectedOutputs: detail.templateUpdate.expectedOutputs,
             recommendedPlugins: detail.templateUpdate.recommendedPlugins,
+            activitySources: activitySourcesFromTriggers(detail.templateUpdate.triggers),
           },
         }
       : {}),
@@ -837,7 +861,10 @@ export class AvalonApi {
     return mapAutomationDetail(raw);
   }
 
-  async updateAutomation(id: string, input: { instructions: string }): Promise<AutomationDetail> {
+  async updateAutomation(id: string, input: {
+    instructions: string;
+    activitySourcePluginIds?: Record<string, string>;
+  }): Promise<AutomationDetail> {
     const updated = await this.request(`/automations/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: input,
@@ -847,10 +874,14 @@ export class AvalonApi {
     return mapAutomationDetail(updated);
   }
 
-  async adoptAutomationUpdate(id: string, versionId: string): Promise<AutomationDetail> {
+  async adoptAutomationUpdate(
+    id: string,
+    versionId: string,
+    activitySourcePluginIds?: Record<string, string>,
+  ): Promise<AutomationDetail> {
     const updated = await this.request(`/automation-subscriptions/${encodeURIComponent(id)}/adopt-version`, {
       method: 'POST',
-      body: { versionId },
+      body: { versionId, ...(activitySourcePluginIds ? { activitySourcePluginIds } : {}) },
       schema: WireAutomationDetailSchema,
     });
     this.automationDetails.set(id, updated);
@@ -1495,6 +1526,7 @@ export class AvalonApi {
               description: raw.description,
               overview: raw.overview,
               recommendedPlugins: raw.recommendedPlugins,
+              activitySources: activitySourcesFromTriggers(raw.triggers),
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
@@ -1508,6 +1540,7 @@ export class AvalonApi {
   async createAutomation(
     draftId: string,
     defaultPluginIds: string[],
+    activitySourcePluginIds: Record<string, string>,
     resourceIds: string[],
     slackDeliveryConnectionId?: string,
   ): Promise<AutomationDetail> {
@@ -1519,6 +1552,7 @@ export class AvalonApi {
         draft: state.draft,
         scope: state.draft.suggestedScope,
         defaultPluginIds,
+        activitySourcePluginIds,
         resourceIds,
         deliveryTargets: slackDeliveryConnectionId
           ? [{ type: 'slack_agent_dm', connectionId: slackDeliveryConnectionId }]
@@ -1541,13 +1575,18 @@ export class AvalonApi {
       usageCount: template.usedBy,
       capabilities: template.requiredCapabilities,
       latestVersion: template.latestVersion,
+      activitySources: template.activitySources,
     }));
   }
 
-  async subscribeTemplate(templateId: string, defaultPluginIds: string[]): Promise<AutomationDetail> {
+  async subscribeTemplate(
+    templateId: string,
+    defaultPluginIds: string[],
+    activitySourcePluginIds: Record<string, string>,
+  ): Promise<AutomationDetail> {
     const raw = await this.request(`/automation-templates/${encodeURIComponent(templateId)}/subscribe`, {
       method: 'POST',
-      body: { defaultPluginIds },
+      body: { defaultPluginIds, activitySourcePluginIds },
       schema: WireAutomationDetailSchema,
     });
     this.automationDetails.set(raw.id, raw);

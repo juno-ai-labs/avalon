@@ -18,6 +18,7 @@ import {
 import {
   assertPrincipalAccess,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -372,7 +373,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       },
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTypes: [
+      activityTriggers: defineConnectorActivityTriggers("Linear", [
         "linear.issue.create", "linear.issue.update", "linear.issue.remove",
         "linear.comment.create", "linear.comment.update", "linear.comment.remove",
         "linear.attachment.create", "linear.attachment.update", "linear.attachment.remove",
@@ -393,7 +394,13 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
         "linear.oauth_app.revoked", "linear.oauth_authorization.revoked",
         "linear.permission_change.team_access_changed", "linear.app_user_notification.create",
         "linear.agent_session_event.created", "linear.agent_session_event.prompted",
-      ],
+      ], {}, [
+        { key: "deliveryId", label: "Delivery ID", description: "Unique Linear webhook delivery identifier.", valueType: "string" },
+        { key: "webhookId", label: "Webhook ID", description: "Linear webhook subscription identifier.", valueType: "string" },
+        { key: "organizationId", label: "Organization", description: "Linear organization identifier.", valueType: "string" },
+        { key: "action", label: "Action", description: "Linear webhook action.", valueType: "string" },
+        { key: "url", label: "URL", description: "Canonical URL for the Linear entity.", valueType: "string" },
+      ]),
       resourceTypes: [
         "linear_issue",
         "linear_comment",
