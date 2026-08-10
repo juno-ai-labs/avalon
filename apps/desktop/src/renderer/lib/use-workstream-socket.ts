@@ -570,6 +570,22 @@ export function useWorkstreamSocket(
           };
         });
       } else if (event.type === 'activity_suggestion_created' || event.type === 'activity_suggestion_resolved') {
+        // The detail's pending suggestions are what a transcript rebuild draws
+        // its cards from, so a resolution that only reached the transcript
+        // would be undone by the next message fetch.
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
+          if (!current) return current;
+          const remaining = (current.suggestions ?? []).filter((suggestion) => suggestion.id !== event.suggestion.id);
+          return {
+            ...current,
+            // The server lists suggestions newest first, and position in this
+            // array decides position in the transcript, so a new one belongs at
+            // the head. Appending would make the card jump on the next fetch.
+            suggestions: event.suggestion.status === 'pending'
+              ? [mapSuggestion(event.suggestion), ...remaining]
+              : remaining,
+          };
+        });
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, {
           id: `suggestion-${event.suggestion.id}`,
           workstreamId,

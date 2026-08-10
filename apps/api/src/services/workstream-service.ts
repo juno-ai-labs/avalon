@@ -897,14 +897,73 @@ export class WorkstreamService {
        WHERE id = ? AND workstream_id = ? AND workspace_id = ? AND status = 'pending'
        RETURNING activity_id`,
     ).bind(action, nowIso(), this.auth.userId, suggestionId, id, this.auth.workspaceId).first<{ activity_id: string }>();
-    if (!suggestion) throw new ApiError(404, "suggestion_not_found", "Activity suggestion not found or already resolved");
+    // A suggestion card that outlives its resolution invites a second click, and
+    // a duplicate click is a replay of a decision this work stream has already
+    // recorded rather than an error to show someone. Repeating the same
+    // resolution reports the state it already reached; only a genuinely
+    // contradictory one is refused.
+    const resolved = suggestion ?? await this.resolvedSuggestionReplay(id, suggestionId, action);
     let resourceId: string | null = null;
     if (action === "accepted") {
-      resourceId = await this.attachActivityResource(id, suggestion.activity_id);
+      // `accepted` records that the attachment already happened; it is not a
+      // standing instruction to repeat it. Re-attaching on a replay would
+      // silently restore a resource the user detached in between, which the
+      // 404 this replaces at least left alone.
+      resourceId = suggestion
+        ? await this.attachActivityResource(id, resolved.activity_id)
+        : await this.attachedActivityResourceId(id, resolved.activity_id);
     }
     const updated = (await this.loadSuggestions(id, true)).find((item) => item.id === suggestionId);
-    if (updated) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
+    // Only the request that moved the row announces it. A replay changed
+    // nothing, and the room already carries the resolution from the request
+    // that did; broadcasting it again would move the card, because the
+    // transcript upsert prefers the incoming copy and orders it by the newer
+    // room sequence that copy arrives with.
+    if (suggestion && updated) {
+      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "activity_suggestion_resolved", suggestion: updated });
+    }
     return { suggestion: updated, resourceId };
+  }
+
+  private async resolvedSuggestionReplay(
+    id: string,
+    suggestionId: string,
+    action: "accepted" | "dismissed",
+  ): Promise<{ activity_id: string }> {
+    const existing = await this.env.DB.prepare(
+      `SELECT activity_id, status FROM activity_suggestions
+       WHERE id = ? AND workstream_id = ? AND workspace_id = ?`,
+    ).bind(suggestionId, id, this.auth.workspaceId).first<{ activity_id: string; status: string }>();
+    if (!existing) throw new ApiError(404, "suggestion_not_found", "Activity suggestion not found");
+    if (existing.status === action) return { activity_id: existing.activity_id };
+    // The conditional UPDATE and this read are scoped identically apart from
+    // the status predicate, so a row that is still pending here lost a race
+    // rather than reaching a decision. Say that, instead of describing an open
+    // suggestion as one somebody already resolved.
+    if (existing.status === "pending") {
+      throw new ApiError(409, "suggestion_resolution_conflict", "This suggestion could not be resolved. Try again.");
+    }
+    throw new ApiError(
+      409,
+      "suggestion_already_resolved",
+      existing.status === "accepted"
+        ? "This suggestion was already added to the work stream"
+        : "This suggestion was already dismissed",
+    );
+  }
+
+  /** The resource an accepted suggestion attached, or null once it is detached. */
+  private async attachedActivityResourceId(workstreamId: string, activityId: string): Promise<string | null> {
+    const attached = await this.env.DB.prepare(
+      `SELECT wr.resource_id FROM workstream_resources wr
+       JOIN resources r ON r.id = wr.resource_id
+       JOIN activities a ON a.workspace_id = r.workspace_id
+         AND a.provider = r.provider
+         AND a.provider_resource_id = r.provider_resource_id
+         AND ((a.connection_id = r.connection_id) OR (a.connection_id IS NULL AND r.connection_id IS NULL))
+       WHERE wr.workstream_id = ? AND a.id = ? AND a.workspace_id = ?`,
+    ).bind(workstreamId, activityId, this.auth.workspaceId).first<{ resource_id: string }>();
+    return attached?.resource_id ?? null;
   }
 
   async stop(id: string): Promise<void> {
