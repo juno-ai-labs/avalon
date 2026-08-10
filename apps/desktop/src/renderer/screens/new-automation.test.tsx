@@ -214,9 +214,7 @@ describe('New automation composer', () => {
         name: 'Reviewing Google Drive + Docs + Sheets',
         summary: 'Using an authorized connector…',
         status: 'started',
-        plugins: [
-          { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
-        ],
+        plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
       });
     });
     const activeResearch = (await screen.findByText('Reviewing Google Drive + Docs + Sheets')).closest('details');
@@ -233,9 +231,7 @@ describe('New automation composer', () => {
         name: 'Reviewed Google Drive + Docs + Sheets',
         summary: 'Searched the authorized Drive folder',
         status: 'completed',
-        plugins: [
-          { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
-        ],
+        plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
         durationMs: 42,
       });
       stream({

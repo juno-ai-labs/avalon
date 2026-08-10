@@ -416,6 +416,11 @@ export const ToolInvocationSchema = z.object({
   toolCallId: z.string().min(1).max(160),
   toolName: z.string().min(1).max(160),
   connectionId: IdSchema.nullable(),
+  /**
+   * The connector plugin that owns this tool, resolved from `connectionId`, or
+   * null for Avalon-owned tools. Rows render this and only this as their icon.
+   */
+  plugin: AutomationPluginActivitySchema.nullable().default(null),
   status: z.enum(["pending", "started", "completed", "failed", "ambiguous"]),
   inputSummary: z.string().max(1000),
   outputSummary: z.string().max(4000).nullable(),
@@ -711,7 +716,8 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     name: z.string().min(1).max(200),
     summary: z.string().min(1).max(1000),
     status: z.enum(["started", "completed", "failed"]),
-    plugins: z.array(AutomationPluginActivitySchema).default([]),
+    /** The single plugin that owns this tool, or null for Avalon-owned tools. */
+    plugin: AutomationPluginActivitySchema.nullable().default(null),
     durationMs: z.number().int().nonnegative().optional()
   }),
   z.object({

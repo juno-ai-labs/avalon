@@ -315,14 +315,14 @@ describe("agent harness", () => {
         type: "tool",
         name: "Reviewing connected plugins",
         status: "started",
-        plugins: [],
+        plugin: null,
       }),
       expect.objectContaining({
         type: "tool",
         name: "Reviewed GitHub and Linear",
         summary: "Plugin capabilities are ready",
         status: "completed",
-        plugins: [],
+        plugin: null,
       }),
     ]));
   });
@@ -518,7 +518,7 @@ describe("agent harness", () => {
     expect(webRows).toHaveLength(2);
     for (const row of webRows) {
       if (row.type !== "tool") throw new Error("Expected a tool row");
-      expect(row.plugins).toEqual([]);
+      expect(row.plugin).toBeNull();
     }
   });
 
@@ -581,7 +581,7 @@ describe("agent harness", () => {
     // The label may enumerate every match, but a search owned by a core plugin
     // attributes the row to no connector — 45 icons is never the answer.
     expect(searchActivity.name).toBe("Found Service 0, Service 1, and 43 more");
-    expect(searchActivity.plugins).toEqual([]);
+    expect(searchActivity.plugin).toBeNull();
   });
 
   it("renders, loads, and executes authorized plugins while compiling an automation", async () => {
@@ -693,12 +693,12 @@ describe("agent harness", () => {
     );
     // The connector that owns the executed tool is the row's only attribution.
     const connectorRow = compilerEvents.find((event) =>
-      event.type === "tool" && event.status === "completed" && event.plugins.length > 0
+      event.type === "tool" && event.status === "completed" && event.plugin !== null
     );
     if (connectorRow?.type !== "tool") throw new Error("Expected a connector tool row");
-    expect(connectorRow.plugins).toEqual([
+    expect(connectorRow.plugin).toEqual(
       { pluginId: "plugin_google_2", displayName: "Google Drive · Work", icon: "brand-google-drive" },
-    ]);
+    );
   });
 
   it("accepts an incomplete recurring draft when the model omits its generated summary", async () => {
