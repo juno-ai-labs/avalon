@@ -101,27 +101,33 @@ guarantee. The inference ledger records what each attempt actually used.
 
 ## Provisioning
 
-Both regional Workers declare the binding without an `app_id`:
+Both regional Workers bind the **one** `avalon-api` Flagship app
+(`bec01d3a-d6b6-4d8c-b89a-37440ed63b8c`), already provisioned:
 
 ```jsonc
 "flagship": [
-  { "binding": "FLAGS", "remote": true }
+  { "binding": "FLAGS", "app_id": "bec01d3a-d6b6-4d8c-b89a-37440ed63b8c", "remote": true }
 ]
 ```
 
-Each region binds its own Flagship app so a model rollout can be staged per
-region. Create the app and let Wrangler write the id back:
+One app rather than one per region. Unlike D1, R2, and the Durable Object
+namespaces, a flag holds no workspace data — only model ids — so the regional
+isolation those resources need does not apply, and splitting would mean
+maintaining two copies of every flag that are meant to stay identical. Staging a
+rollout per region does not need a second app either: `region` is in the
+evaluation context, so a targeting rule reaches one region.
+
+To provision the app in a fresh account:
 
 ```bash
-pnpm exec wrangler flagship apps create "avalon-api-global" \
-  --binding FLAGS --update-config --config apps/api/wrangler.global.jsonc
-pnpm exec wrangler flagship apps create "avalon-api-eu" \
-  --binding FLAGS --update-config --config apps/api/wrangler.eu.jsonc
+pnpm exec wrangler flagship apps create "avalon-api" --json
 ```
 
-Wrangler also provisions an app automatically on the first deploy of a binding
-that has no `app_id`, and writes the id into the configuration file either way.
-Commit the resulting `app_id` values.
+Add the returned id as `app_id` to both regional Wrangler files by hand.
+`--binding FLAGS --update-config` writes it for you but reformats the whole
+configuration file — retabbing it and expanding every inline object — so it is
+not worth the diff. Wrangler also provisions an app automatically on the first
+deploy of a binding that has no `app_id`.
 
 Both paths need a Cloudflare API token carrying **Flagship write** access. A
 read-only Flagship grant is enough to list apps and flags but returns
@@ -130,8 +136,8 @@ read-only Flagship grant is enough to list apps and flags but returns
 [The runbook](RUNBOOK.md#required-hosted-resources) lists the full token
 permission set.
 
-Then create one JSON flag per agent, seeded with the model ids currently in that
-region's Wrangler variables so provisioning changes nothing:
+Then create one JSON flag per agent, seeded with the model ids currently in the
+Wrangler variables so provisioning changes nothing:
 
 ```bash
 pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type json \
@@ -159,6 +165,14 @@ pnpm exec wrangler flagship flags set <APP_ID> agent-model-workstream -V next
 Bucket the rollout by `workspaceId` rather than `workstreamId` or `userId`: it
 keeps every agent in a workspace on one generation, so a work-stream run and the
 subagents and classifiers around it stay consistent.
+
+Because both regions share the app, a rollout reaches both unless you scope it.
+To stage one region first, target `region` instead:
+
+```bash
+pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
+  --add-rule "serve=next; when=region equals eu"
+```
 
 To revert, `set` the flag back to the previous variation. Flagship keeps a
 changelog per flag (`wrangler flagship flags changelog <APP_ID> <key>`), which is
