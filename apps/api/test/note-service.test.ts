@@ -1,0 +1,601 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { GenerateMeetingNotesRequest } from "@avalon/contracts";
+import type { AuthContext, Env } from "../src/env";
+import { AutomationService } from "../src/services/automation-service";
+import { processPendingNotePrivacyNotifications } from "../src/services/note-privacy-notification-service";
+import { NoteService } from "../src/services/note-service";
+import { reapDeletedNoteObjects } from "../src/services/note-resource-cleanup";
+import { ResourceService } from "../src/services/resource-service";
+
+const migrationsDirectory = fileURLToPath(new URL("../../../packages/db/migrations/", import.meta.url));
+const userId = "00000000-0000-4000-8000-000000000201";
+const otherUserId = "00000000-0000-4000-8000-000000000202";
+const workspaceId = "00000000-0000-4000-8000-000000000203";
+const noteId = "00000000-0000-4000-8000-000000000204";
+
+class SqliteD1Statement {
+  private values: unknown[] = [];
+
+  constructor(private readonly statement: StatementSync) {}
+
+  bind(...values: unknown[]): SqliteD1Statement {
+    this.values = values;
+    return this;
+  }
+
+  async run<T>(): Promise<D1Result<T>> {
+    const result = this.statement.run(...this.values as SQLInputValue[]);
+    return { success: true, results: [], meta: { changes: Number(result.changes) } } as unknown as D1Result<T>;
+  }
+
+  async first<T>(): Promise<T | null> {
+    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
+  }
+
+  async all<T>(): Promise<D1Result<T>> {
+    return {
+      success: true,
+      results: this.statement.all(...this.values as SQLInputValue[]) as T[],
+      meta: { changes: 0 },
+    } as unknown as D1Result<T>;
+  }
+}
+
+function sqliteD1(database: DatabaseSync): D1Database {
+  return {
+    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+    batch: async (statements: D1PreparedStatement[]) => {
+      const results: D1Result<unknown>[] = [];
+      database.exec("BEGIN");
+      try {
+        for (const statement of statements) {
+          results.push(await (statement as unknown as SqliteD1Statement).run());
+        }
+        database.exec("COMMIT");
+        return results;
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  } as unknown as D1Database;
+}
+
+class MemoryBucket {
+  readonly objects = new Map<string, string>();
+  failNextDelete = false;
+
+  async put(key: string, value: string): Promise<void> {
+    this.objects.set(key, value);
+  }
+
+  async delete(key: string): Promise<void> {
+    if (this.failNextDelete) {
+      this.failNextDelete = false;
+      throw new Error("temporary R2 outage");
+    }
+    this.objects.delete(key);
+  }
+}
+
+const openDatabases: DatabaseSync[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+});
+
+function fixture(): { auth: AuthContext; bucket: MemoryBucket; database: DatabaseSync; env: Env } {
+  const database = new DatabaseSync(":memory:");
+  openDatabases.push(database);
+  for (const fileName of readdirSync(migrationsDirectory).filter((name) => name.endsWith(".sql")).sort()) {
+    database.exec(readFileSync(`${migrationsDirectory}/${fileName}`, "utf8"));
+  }
+  database.exec(`
+    INSERT INTO users
+      (id, google_subject, email, name, created_at, updated_at)
+    VALUES
+      ('${userId}', 'google-note-owner', 'owner@example.com', 'Note Owner', '2026-01-01', '2026-01-01'),
+      ('${otherUserId}', 'google-note-other', 'other@example.com', 'Other Member', '2026-01-01', '2026-01-01');
+    INSERT INTO workspaces
+      (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES ('${workspaceId}', 'Notes', 'notes', 'global', '${userId}', '2026-01-01', '2026-01-01');
+  `);
+  const bucket = new MemoryBucket();
+  return {
+    database,
+    bucket,
+    env: {
+      DB: sqliteD1(database),
+      PAYLOADS: bucket as unknown as R2Bucket,
+      AVALON_REGION: "global",
+    } as Env,
+    auth: {
+      sessionId: "note-session",
+      userId,
+      workspaceId,
+      region: "global",
+      role: "owner",
+    },
+  };
+}
+
+describe("NoteService", () => {
+  it("stores editable notes and timestamped transcript segments without creating a work stream", async () => {
+    const { auth, bucket, database, env } = fixture();
+    const service = new NoteService(env, auth);
+    const created = await service.create({ id: noteId, title: "Customer interview", scope: "personal" });
+
+    expect(created).toMatchObject({
+      id: noteId,
+      title: "Customer interview",
+      manualNotes: "",
+      segments: [],
+      recordingStatus: "idle",
+    });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
+
+    await service.update(noteId, { manualNotes: "Customer wants a faster import flow." });
+    const first = await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000205",
+      startOffsetMs: 1_250,
+      endOffsetMs: 4_750,
+      capturedAt: "2026-08-07T18:00:04.750Z",
+      speakerLabel: null,
+      text: "The current import takes too many steps.",
+    });
+    const repeated = await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000205",
+      startOffsetMs: 1_250,
+      endOffsetMs: 4_750,
+      capturedAt: "2026-08-07T18:00:04.750Z",
+      speakerLabel: null,
+      text: "The current import takes too many steps.",
+    });
+    const second = await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000206",
+      startOffsetMs: 5_000,
+      endOffsetMs: 8_500,
+      capturedAt: "2026-08-07T18:00:08.500Z",
+      speakerLabel: "Customer",
+      text: "I want to bring everything over at once.",
+    });
+
+    expect(first).toMatchObject({ sequenceNumber: 1, startOffsetMs: 1_250, endOffsetMs: 4_750 });
+    expect(repeated).toEqual(first);
+    expect(second).toMatchObject({ sequenceNumber: 2, speakerLabel: "Customer" });
+    const stored = await service.get(noteId);
+    expect(stored.manualNotes).toBe("Customer wants a faster import flow.");
+    expect(stored.segments.map((segment) => [segment.sequenceNumber, segment.startOffsetMs, segment.endOffsetMs, segment.text])).toEqual([
+      [1, 1_250, 4_750, "The current import takes too many steps."],
+      [2, 5_000, 8_500, "I want to bring everything over at once."],
+    ]);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM note_transcript_segments WHERE note_id = ?").get(noteId))
+      .toEqual({ count: 2 });
+
+    const resource = database.prepare(
+      "SELECT content_ref, model_content_ref FROM resources WHERE id = ?",
+    ).get(created.resourceId) as { content_ref: string; model_content_ref: string };
+    const humanDocument = bucket.objects.get(resource.content_ref);
+    const modelDocument = bucket.objects.get(resource.model_content_ref);
+    expect(humanDocument).toContain("Customer wants a faster import flow.");
+    expect(humanDocument).toContain("The current import takes too many steps.");
+    expect(humanDocument).not.toContain("00:00:01");
+    expect(modelDocument).toContain("[00:00:01–00:00:04]");
+    expect(modelDocument).toContain("[00:00:05–00:00:08] Customer:");
+  });
+
+  it("keeps private notes creator-only and makes public notes workspace-visible", async () => {
+    const { auth, env } = fixture();
+    const ownerService = new NoteService(env, auth);
+    const created = await ownerService.create({ id: noteId, title: "Private notes", scope: "personal" });
+    const otherAuth = { ...auth, userId: otherUserId, role: "member" as const };
+
+    await expect(new NoteService(env, otherAuth).get(noteId)).rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(new NoteService(env, otherAuth).create({
+      id: noteId,
+      title: "Guessed private note",
+      scope: "workspace",
+    })).rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(new ResourceService(env, otherAuth).get(created.resourceId)).rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+
+    await ownerService.update(noteId, { scope: "workspace" });
+    const otherService = new NoteService(env, otherAuth);
+    await expect(otherService.get(noteId)).resolves.toMatchObject({ id: noteId, scope: "workspace" });
+    await expect(otherService.create({
+      id: noteId,
+      title: "Ignored idempotent title",
+      scope: "personal",
+    })).resolves.toMatchObject({ id: noteId, title: "Private notes", scope: "workspace" });
+    await expect(otherService.update(noteId, { manualNotes: "Unauthorized edit" }))
+      .rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(otherService.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000207",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: null,
+      text: "Unauthorized transcript",
+    })).rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(otherService.generate(noteId, "request-other"))
+      .rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(new ResourceService(env, otherAuth).get(created.resourceId)).resolves.toMatchObject({ id: created.resourceId });
+  });
+
+  it("injects an authored message only into workstreams that lose access when a note becomes private", async () => {
+    const { auth, database, env } = fixture();
+    const service = new NoteService(env, auth);
+    const note = await service.create({ id: noteId, title: "Shared research", scope: "workspace" });
+    const templateId = "00000000-0000-4000-8000-000000000220";
+    const versionId = "00000000-0000-4000-8000-000000000221";
+    const workspaceSubscriptionId = "00000000-0000-4000-8000-000000000222";
+    const otherSubscriptionId = "00000000-0000-4000-8000-000000000223";
+    const ownerSubscriptionId = "00000000-0000-4000-8000-000000000224";
+    const ownerAdHocId = "00000000-0000-4000-8000-000000000225";
+    const otherAdHocId = "00000000-0000-4000-8000-000000000226";
+    const workspaceAutomationId = "00000000-0000-4000-8000-000000000227";
+    const otherAutomationId = "00000000-0000-4000-8000-000000000228";
+    const ownerAutomationId = "00000000-0000-4000-8000-000000000229";
+    const at = "2026-08-07T18:00:00.000Z";
+
+    database.exec(`
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES
+        ('${templateId}', '${workspaceId}', '${userId}', 'Note consumer', '', 'workspace', 1, '${at}', '${at}');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         created_by_user_id, created_at)
+      VALUES
+        ('${versionId}', '${templateId}', 1, 'Use the note', '[]', '${userId}', '${at}');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, status, created_at, updated_at)
+      VALUES
+        ('${workspaceSubscriptionId}', '${workspaceId}', '${templateId}', '${versionId}',
+         'workspace', NULL, '{"type":"workspace","workspaceId":"${workspaceId}"}', 'active', '${at}', '${at}'),
+        ('${otherSubscriptionId}', '${workspaceId}', '${templateId}', '${versionId}',
+         'personal', '${otherUserId}', '{"type":"user","userId":"${otherUserId}"}', 'active', '${at}', '${at}'),
+        ('${ownerSubscriptionId}', '${workspaceId}', '${templateId}', '${versionId}',
+         'personal', '${userId}', '{"type":"user","userId":"${userId}"}', 'active', '${at}', '${at}');
+      INSERT INTO workstreams
+        (id, workspace_id, title, origin_type, created_by_user_id,
+         automation_subscription_id, last_activity_at, created_at, updated_at)
+      VALUES
+        ('${ownerAdHocId}', '${workspaceId}', 'Owner ad hoc', 'ad_hoc', '${userId}', NULL, '${at}', '${at}', '${at}'),
+        ('${otherAdHocId}', '${workspaceId}', 'Other ad hoc', 'ad_hoc', '${otherUserId}', NULL, '${at}', '${at}', '${at}'),
+        ('${workspaceAutomationId}', '${workspaceId}', 'Workspace automation', 'automation', '${userId}',
+         '${workspaceSubscriptionId}', '${at}', '${at}', '${at}'),
+        ('${otherAutomationId}', '${workspaceId}', 'Other automation', 'automation', '${otherUserId}',
+         '${otherSubscriptionId}', '${at}', '${at}', '${at}'),
+        ('${ownerAutomationId}', '${workspaceId}', 'Owner automation', 'automation', '${userId}',
+         '${ownerSubscriptionId}', '${at}', '${at}', '${at}');
+    `);
+    const attach = database.prepare(
+      `INSERT INTO workstream_resources
+       (workstream_id, resource_id, attached_by_user_id, watch_enabled, relationship_type, attached_at)
+       VALUES (?, ?, ?, 0, 'context', ?)`,
+    );
+    for (const workstreamId of [
+      ownerAdHocId,
+      otherAdHocId,
+      workspaceAutomationId,
+      otherAutomationId,
+      ownerAutomationId,
+    ]) {
+      attach.run(workstreamId, note.resourceId, userId, at);
+    }
+
+    await service.update(noteId, { scope: "personal" });
+
+    const messages = database.prepare(
+      `SELECT workstream_id, author_type, author_user_id, message_type, text_content, sequence_number
+       FROM messages ORDER BY workstream_id`,
+    ).all() as Array<Record<string, unknown>>;
+    expect(messages).toEqual([
+      {
+        workstream_id: otherAdHocId,
+        author_type: "human",
+        author_user_id: userId,
+        message_type: "text",
+        text_content: "Shared research is now private and no longer accessible",
+        sequence_number: 1,
+      },
+      {
+        workstream_id: workspaceAutomationId,
+        author_type: "human",
+        author_user_id: userId,
+        message_type: "text",
+        text_content: "Shared research is now private and no longer accessible",
+        sequence_number: 1,
+      },
+      {
+        workstream_id: otherAutomationId,
+        author_type: "human",
+        author_user_id: userId,
+        message_type: "text",
+        text_content: "Shared research is now private and no longer accessible",
+        sequence_number: 1,
+      },
+    ]);
+    expect(database.prepare(
+      `SELECT id, next_sequence_number, latest_attention_sequence_number
+       FROM workstreams ORDER BY id`,
+    ).all()).toEqual([
+      { id: ownerAdHocId, next_sequence_number: 1, latest_attention_sequence_number: 0 },
+      { id: otherAdHocId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
+      { id: workspaceAutomationId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
+      { id: otherAutomationId, next_sequence_number: 2, latest_attention_sequence_number: 1 },
+      { id: ownerAutomationId, next_sequence_number: 1, latest_attention_sequence_number: 0 },
+    ]);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM harness_runs").get()).toEqual({ count: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_participants").get()).toEqual({ count: 0 });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",
+    ).get()).toEqual({ count: 1 });
+
+    await processPendingNotePrivacyNotifications(env, { noteId });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 3 });
+
+    await service.update(noteId, { scope: "workspace" });
+    await service.update(noteId, { scope: "personal" });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM messages").get()).toEqual({ count: 6 });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",
+    ).get()).toEqual({ count: 2 });
+  });
+
+  it("keeps generated-note progress monotonic when two windows generate concurrently", async () => {
+    const { auth, env } = fixture();
+    const invocations: Array<{
+      input: GenerateMeetingNotesRequest;
+      resolve: (value: { notes: string; generatedAt: string }) => void;
+    }> = [];
+    const generator = {
+      generate: vi.fn((input: GenerateMeetingNotesRequest) =>
+        new Promise<{ notes: string; generatedAt: string }>((resolve) => invocations.push({ input, resolve }))),
+    };
+    const service = new NoteService(env, auth, generator);
+    await service.create({ id: noteId, title: "Concurrent notes", scope: "personal" });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000211",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: null,
+      text: "First segment",
+    });
+
+    const olderGeneration = service.generate(noteId, "request-older");
+    await vi.waitFor(() => expect(invocations).toHaveLength(1));
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000212",
+      startOffsetMs: 1_000,
+      endOffsetMs: 2_000,
+      capturedAt: "2026-08-07T18:00:02.000Z",
+      speakerLabel: null,
+      text: "Second segment",
+    });
+    const newerGeneration = service.generate(noteId, "request-newer");
+    await vi.waitFor(() => expect(invocations).toHaveLength(2));
+
+    invocations[1]!.resolve({ notes: "Newer summary", generatedAt: "2026-08-07T18:01:00.000Z" });
+    await expect(newerGeneration).resolves.toMatchObject({ liveNotes: "Newer summary", notesThroughSequence: 2 });
+    invocations[0]!.resolve({ notes: "Stale summary", generatedAt: "2026-08-07T18:00:30.000Z" });
+    await expect(olderGeneration).resolves.toMatchObject({ liveNotes: "Newer summary", notesThroughSequence: 2 });
+    await expect(service.get(noteId)).resolves.toMatchObject({ liveNotes: "Newer summary", notesThroughSequence: 2 });
+  });
+
+  it("retries a final summary that loses a race with a live Control Tower refresh", async () => {
+    const { auth, env } = fixture();
+    const invocations: Array<{
+      input: GenerateMeetingNotesRequest;
+      resolve: (value: { notes: string; generatedAt: string }) => void;
+    }> = [];
+    const service = new NoteService(env, auth, {
+      generate: vi.fn((input: GenerateMeetingNotesRequest) =>
+        new Promise<{ notes: string; generatedAt: string }>((resolve) => invocations.push({ input, resolve }))),
+    });
+    await service.create({ id: noteId, title: "Final summary race", scope: "personal" });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000232",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: null,
+      text: "The complete meeting transcript.",
+    });
+
+    const liveGeneration = service.generate(noteId, "request-live-race", "live", "partial");
+    await vi.waitFor(() => expect(invocations).toHaveLength(1));
+    const finalGeneration = service.generate(noteId, "request-final-race", "final", "complete");
+    await vi.waitFor(() => expect(invocations).toHaveLength(2));
+
+    invocations[0]!.resolve({ notes: "## Right now\n\nLive briefing", generatedAt: "2026-08-07T18:01:00.000Z" });
+    await expect(liveGeneration).resolves.toMatchObject({ liveNotes: expect.stringContaining("Live briefing") });
+    invocations[1]!.resolve({ notes: "## Action items\n\nOriginal final result", generatedAt: "2026-08-07T18:01:01.000Z" });
+    await vi.waitFor(() => expect(invocations).toHaveLength(3));
+
+    expect(invocations[2]!.input).toMatchObject({ mode: "final", transcriptStatus: "complete" });
+    expect(invocations[2]!.input.transcript).toContain("The complete meeting transcript.");
+    invocations[2]!.resolve({ notes: "## Action items\n\nRetried final summary", generatedAt: "2026-08-07T18:01:02.000Z" });
+
+    await expect(finalGeneration).resolves.toMatchObject({
+      liveNotes: "## Action items\n\nRetried final summary",
+      notesThroughSequence: 1,
+    });
+    await expect(service.get(noteId)).resolves.toMatchObject({
+      liveNotes: "## Action items\n\nRetried final summary",
+      notesThroughSequence: 1,
+    });
+  });
+
+  it("validates note resources against automation scope and current visibility", async () => {
+    const { auth, env } = fixture();
+    const noteService = new NoteService(env, auth);
+    const note = await noteService.create({ id: noteId, title: "Automation context", scope: "personal" });
+    const validate = (service: AutomationService, scope: "personal" | "workspace", resourceIds: string[]) =>
+      (service as unknown as {
+        validateAutomationResources: (targetScope: "personal" | "workspace", ids: string[]) => Promise<string[]>;
+      }).validateAutomationResources(scope, resourceIds);
+    const ownerAutomation = new AutomationService(env, auth);
+
+    await expect(validate(ownerAutomation, "personal", [note.resourceId])).resolves.toEqual([note.resourceId]);
+    await expect(validate(ownerAutomation, "workspace", [note.resourceId]))
+      .rejects.toMatchObject({ status: 422, code: "personal_resource_in_workspace_automation" });
+
+    await noteService.update(noteId, { scope: "workspace" });
+    await expect(validate(ownerAutomation, "workspace", [note.resourceId])).resolves.toEqual([note.resourceId]);
+    const otherAutomation = new AutomationService(env, { ...auth, userId: otherUserId, role: "member" });
+    await expect(validate(otherAutomation, "personal", [note.resourceId])).resolves.toEqual([note.resourceId]);
+
+    await noteService.update(noteId, { scope: "personal" });
+    await expect(validate(otherAutomation, "personal", [note.resourceId]))
+      .rejects.toMatchObject({ status: 422, code: "invalid_automation_resource" });
+  });
+
+  it("bounds model context without silently cutting off either end", async () => {
+    const { auth, database, env } = fixture();
+    let captured: GenerateMeetingNotesRequest | undefined;
+    const service = new NoteService(env, auth, {
+      generate: vi.fn(async (input: GenerateMeetingNotesRequest) => {
+        captured = input;
+        return { notes: "Bounded summary", generatedAt: "2026-08-07T18:01:00.000Z" };
+      }),
+    });
+    await service.create({ id: noteId, title: "Long notes", scope: "personal" });
+    const manualNotes = `manual-start\n\n${"m".repeat(30_000)}\n\nmanual-end`;
+    const liveNotes = `live-start\n\n${"l".repeat(30_000)}\n\nlive-end`;
+    await service.update(noteId, { manualNotes });
+    database.prepare("UPDATE notes SET live_notes_markdown = ? WHERE id = ?").run(liveNotes, noteId);
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000213",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: "Speaker",
+      text: `segment-start-${"x".repeat(79_960)}-segment-end`,
+    });
+
+    await service.generate(noteId, "request-bounded");
+
+    expect(captured?.previousNotes.length).toBeLessThanOrEqual(50_000);
+    expect(captured?.previousNotes).toContain("live-start");
+    expect(captured?.previousNotes).toContain("live-end");
+    expect(captured?.userNotes).toBe(manualNotes);
+    expect(captured?.mode).toBe("live");
+    expect(captured?.transcript.length).toBeLessThanOrEqual(400_000);
+    expect(captured?.transcript).toContain("segment-start");
+    expect(captured?.transcript).toContain("segment-end");
+    expect(captured?.recentTranscript).toContain("segment-start");
+    expect(captured?.recentTranscript).toContain("segment-end");
+  });
+
+  it("uses full history for live briefings and runs a separate final pass even with no pending segments", async () => {
+    const { auth, env } = fixture();
+    const inputs: GenerateMeetingNotesRequest[] = [];
+    const service = new NoteService(env, auth, {
+      generate: vi.fn(async (input: GenerateMeetingNotesRequest) => {
+        inputs.push(input);
+        return {
+          notes: input.mode === "final" ? "## Action items\n\nNo explicit action items captured." : "## Right now\n\nA live briefing.",
+          generatedAt: input.mode === "final" ? "2026-08-07T18:31:00.000Z" : "2026-08-07T18:30:00.000Z",
+        };
+      }),
+    });
+    await service.create({ id: noteId, title: "Whole meeting", scope: "personal" });
+    await service.update(noteId, {
+      manualNotes: "User context that should reach both passes.",
+      startedAt: "2026-08-07T18:00:00.000Z",
+    });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000230",
+      startOffsetMs: 0,
+      endOffsetMs: 1_000,
+      capturedAt: "2026-08-07T18:00:01.000Z",
+      speakerLabel: "Maya",
+      text: "The original launch constraint.",
+    });
+    await service.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000231",
+      startOffsetMs: 11 * 60 * 1_000,
+      endOffsetMs: 11 * 60 * 1_000 + 1_000,
+      capturedAt: "2026-08-07T18:11:01.000Z",
+      speakerLabel: "Leo",
+      text: "The current launch question.",
+    });
+
+    await service.generate(noteId, "request-live", "live", "partial");
+    await service.generate(noteId, "request-final", "final", "complete");
+
+    expect(inputs).toHaveLength(2);
+    expect(inputs[0]).toMatchObject({
+      mode: "live",
+      meetingTitle: "Whole meeting",
+      userNotes: "User context that should reach both passes.",
+      transcriptStatus: "partial",
+    });
+    expect(inputs[0]!.transcript).toContain("The original launch constraint");
+    expect(inputs[0]!.transcript).toContain("The current launch question");
+    expect(inputs[0]!.recentTranscript).not.toContain("The original launch constraint");
+    expect(inputs[0]!.recentTranscript).toContain("The current launch question");
+    expect(inputs[1]).toMatchObject({
+      mode: "final",
+      previousNotes: "",
+      recentTranscript: "",
+      transcriptStatus: "complete",
+    });
+    expect(inputs[1]!.transcript).toContain("The original launch constraint");
+    expect(inputs[1]!.transcript).toContain("The current launch question");
+    await expect(service.get(noteId)).resolves.toMatchObject({
+      liveNotes: "## Action items\n\nNo explicit action items captured.",
+      notesThroughSequence: 2,
+    });
+  });
+
+  it("deletes the owned resource row when a note is deleted", async () => {
+    const { auth, bucket, database, env } = fixture();
+    const noteService = new NoteService(env, auth);
+    const created = await noteService.create({ id: noteId, title: "Disposable", scope: "personal" });
+
+    database.prepare("DELETE FROM notes WHERE id = ?").run(noteId);
+
+    expect(database.prepare("SELECT id FROM resources WHERE id = ?").get(created.resourceId)).toBeUndefined();
+    expect(database.prepare(
+      "SELECT resource_id, content_ref, model_content_ref FROM note_resource_deletion_outbox WHERE resource_id = ?",
+    ).get(created.resourceId)).toMatchObject({
+      resource_id: created.resourceId,
+      content_ref: expect.stringContaining("/note.md"),
+      model_content_ref: expect.stringContaining("/note-model.md"),
+    });
+    const foreignKeys = database.prepare("PRAGMA foreign_key_list(automation_resources)").all() as Array<Record<string, unknown>>;
+    expect(foreignKeys.find((row) => row.table === "resources")?.on_delete).toBe("CASCADE");
+
+    const secondNoteId = "00000000-0000-4000-8000-000000000214";
+    const second = await noteService.create({ id: secondNoteId, title: "Resource-deleted", scope: "personal" });
+    database.prepare("DELETE FROM resources WHERE id = ?").run(second.resourceId);
+    expect(database.prepare("SELECT id FROM notes WHERE id = ?").get(secondNoteId)).toBeUndefined();
+    expect(database.prepare(
+      "SELECT resource_id FROM note_resource_deletion_outbox WHERE resource_id = ?",
+    ).get(second.resourceId)).toEqual({ resource_id: second.resourceId });
+
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    bucket.failNextDelete = true;
+    await reapDeletedNoteObjects(env);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM note_resource_deletion_outbox").get())
+      .toEqual({ count: 1 });
+    expect(warning).toHaveBeenCalledWith("Deleted note object cleanup failed", expect.objectContaining({
+      reason: "temporary R2 outage",
+    }));
+
+    await reapDeletedNoteObjects(env);
+    expect(bucket.objects.size).toBe(0);
+    expect(database.prepare(
+      "SELECT resource_id FROM note_resource_deletion_outbox WHERE resource_id = ?",
+    ).get(created.resourceId)).toBeUndefined();
+    warning.mockRestore();
+  });
+});

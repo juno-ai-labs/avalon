@@ -112,6 +112,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   });
   const dictationActive = !['idle', 'error'].includes(dictation.state);
   const dictationBlocking = ['requesting', 'connecting', 'listening'].includes(dictation.state);
+  const dictationEditingBlocked = dictationBlocking || dictation.state === 'finalizing';
 
   const startDictation = (): void => {
     dictationBaseRef.current = value;
@@ -125,12 +126,12 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
 
   const submit = async (): Promise<void> => {
     if (dictationBlocking || submitDisabled) return;
-    if (dictation.state === 'transcribing') await dictation.stop();
+    if (dictation.state === 'transcribing' || dictation.state === 'finalizing') await dictation.stop();
     await onSubmit();
   };
 
   const beginMention = (): void => {
-    if (dictation.state === 'transcribing') void dictation.stop();
+    if (dictation.state === 'transcribing' || dictation.state === 'finalizing') void dictation.stop();
     onMention();
   };
 
@@ -161,7 +162,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
           aria-label={ariaLabel}
           autoFocus={autoFocus}
           onChange={(event) => {
-            if (dictation.state === 'transcribing') void dictation.stop();
+            if (dictation.state === 'transcribing' || dictation.state === 'finalizing') void dictation.stop();
             onValueChange(event.target.value);
             resizeTextarea(event.target.value);
           }}
@@ -178,7 +179,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             }
           }}
           placeholder={placeholder}
-          readOnly={dictationBlocking}
+          readOnly={dictationEditingBlocked}
           ref={(element) => {
             textareaRef.current = element;
             setForwardedRef(forwardedRef, element);
@@ -188,7 +189,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <IconButton disabled={submitting || dictationBlocking || mentionDisabled} label={mentionLabel} onClick={beginMention}>
+            <IconButton disabled={submitting || dictationEditingBlocked || mentionDisabled} label={mentionLabel} onClick={beginMention}>
               <AtSign size={15} />
             </IconButton>
             <IconButton disabled={submitting} label="Attach a file" onClick={() => fileInputRef.current?.click()}>
@@ -199,9 +200,11 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 aria-pressed={dictationActive}
                 className="dictation-button"
                 disabled={!api || submitting}
-                label={dictation.state === 'transcribing'
-                  ? 'Cancel dictation'
-                  : dictationActive ? 'Stop dictation' : 'Click or hold to dictate'}
+                label={dictation.state === 'finalizing'
+                  ? 'Finalizing dictation'
+                  : dictation.state === 'transcribing'
+                    ? 'Cancel dictation'
+                    : dictationActive ? 'Stop dictation' : 'Click or hold to dictate'}
                 onClick={(event) => {
                   if (event.detail === 0) toggleDictation();
                 }}
@@ -228,13 +231,13 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                   }
                 }}
               >
-                {dictation.state === 'requesting' || dictation.state === 'connecting' || dictation.state === 'transcribing'
+                {dictation.state === 'requesting' || dictation.state === 'connecting' || dictation.state === 'transcribing' || dictation.state === 'finalizing'
                   ? <LoaderCircle className="spin" size={15} />
                   : <Mic size={15} />}
               </IconButton>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
-                  <IconButton className="microphone-menu-trigger" disabled={submitting || dictationBlocking} label="Choose microphone">
+                  <IconButton className="microphone-menu-trigger" disabled={submitting || dictationEditingBlocked} label="Choose microphone">
                     <ChevronDown size={14} />
                   </IconButton>
                 </DropdownMenu.Trigger>

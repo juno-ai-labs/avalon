@@ -6,8 +6,10 @@ import {
   classifyAddressing,
   classifyAddressingHeuristically,
   compileAutomation,
+  composeBeforeToolCallHooks,
   memberSafeHarnessFailureMessage,
   OpenRouterClient,
+  rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
   type AutomationCompilerStreamEvent,
@@ -946,6 +948,28 @@ describe("agent harness", () => {
     expect(stopped.failure).toBeUndefined();
   });
 
+  it("supports model-only loops without any plugin or discovery tools", async () => {
+    let body: Record<string, unknown> | undefined;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        choices: [{ delta: { content: "Concise live notes" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      pluginDiscovery: false,
+      plugins: [],
+    })).resolves.toMatchObject({ status: "completed", content: "Concise live notes" });
+
+    expect(body).toBeDefined();
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("plugins");
+    expect(String((body!.messages as Array<{ content: string }>)[0]!.content))
+      .not.toContain("Discover and activate plugins");
+  });
+
   it("returns distinct member-safe codes for each active hard run ceiling", async () => {
     const terminalWithUsage = (usage: Record<string, number>) => streamResponse([{
       choices: [{ delta: { content: "complete" }, finish_reason: "stop" }],
@@ -1240,6 +1264,68 @@ describe("agent harness", () => {
       { id: inferenceRequests[0]?.inferenceRequestId, inputTokens: 10, outputTokens: 2 },
       { id: inferenceRequests[1]?.inferenceRequestId, inputTokens: 5, outputTokens: 3 },
     ]);
+  });
+
+  it("keeps blocked write tools visible while rejecting them before durable or provider work", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: string }>;
+      tools?: Array<{ function: { name: string } }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "I could not write." }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const executionOrder: string[] = [];
+    const events: HarnessEvent[] = [];
+    const findCompletedToolResult = vi.fn();
+    const persistToolExecutionPlan = vi.fn();
+    const onToolCallRejected = vi.fn();
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("create_record", "write", executionOrder)])],
+      beforeToolCall: composeBeforeToolCallHooks(
+        rejectToolModesBeforeCall(
+          ["write"],
+          "Writes are not currently allowed",
+          "hypersight_writes_not_allowed",
+        ),
+      ),
+      findCompletedToolResult,
+      persistToolExecutionPlan,
+      onToolCallRejected,
+      onEvent: (event) => { events.push(event); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "I could not write." });
+    expect(requestBodies[0]?.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({ function: expect.objectContaining({ name: "test_create_record" }) }),
+    ]));
+    expect(executionOrder).toEqual([]);
+    expect(findCompletedToolResult).not.toHaveBeenCalled();
+    expect(persistToolExecutionPlan).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === "tool_started")).toEqual([]);
+    expect(events.find((event) => event.type === "tool_failed")).toMatchObject({
+      error: "Writes are not currently allowed",
+      phase: "validation",
+      outcome: "definitive_failure",
+      policy: { mode: "write" },
+    });
+    expect(requestBodies[1]?.messages.find((message) => message.role === "tool")?.content)
+      .toContain("Writes are not currently allowed");
+    expect(onToolCallRejected).toHaveBeenCalledWith({
+      toolCallId: "run-1:turn:1:tool:0",
+      code: "hypersight_writes_not_allowed",
+    });
   });
 
   it("bounds a signal-ignoring tool and emits one terminal event for its start", async () => {

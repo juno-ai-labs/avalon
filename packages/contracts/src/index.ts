@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { ConnectorOAuthProviders } from "./connector-oauth-providers";
+
+export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 
 export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
@@ -216,11 +219,86 @@ export const ResourceSchema = z.object({
   sizeBytes: z.number().int().nonnegative().default(0),
 });
 
+export const NoteRecordingStatusSchema = z.enum(["idle", "recording", "complete"]);
+
+export const NoteTranscriptSegmentSchema = z.object({
+  id: IdSchema,
+  noteId: IdSchema,
+  sequenceNumber: z.number().int().positive(),
+  startOffsetMs: z.number().int().nonnegative(),
+  endOffsetMs: z.number().int().nonnegative(),
+  capturedAt: TimestampSchema,
+  speakerLabel: z.string().trim().min(1).max(120).nullable(),
+  text: z.string().trim().min(1).max(80_000),
+  createdAt: TimestampSchema,
+}).refine((segment) => segment.endOffsetMs >= segment.startOffsetMs, {
+  message: "Segment end time must not precede its start time",
+  path: ["endOffsetMs"],
+});
+
+export const NoteSummarySchema = z.object({
+  id: IdSchema,
+  workspaceId: IdSchema,
+  resourceId: IdSchema,
+  ownerUserId: IdSchema,
+  scope: ScopeSchema,
+  title: z.string().trim().min(1).max(180),
+  recordingStatus: NoteRecordingStatusSchema,
+  recordedMs: z.number().int().nonnegative(),
+  startedAt: TimestampSchema.nullable(),
+  endedAt: TimestampSchema.nullable(),
+  generatedAt: TimestampSchema.nullable(),
+  lastActivityAt: TimestampSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  archivedAt: TimestampSchema.nullable(),
+});
+
+export const NoteDetailSchema = NoteSummarySchema.extend({
+  manualNotes: z.string().max(200_000),
+  liveNotes: z.string().max(50_000),
+  notesThroughSequence: z.number().int().nonnegative(),
+  segments: z.array(NoteTranscriptSegmentSchema),
+});
+
+export const CreateNoteRequestSchema = z.object({
+  id: IdSchema,
+  title: z.string().trim().min(1).max(180),
+  scope: ScopeSchema.default("personal"),
+}).strict();
+
+export const UpdateNoteRequestSchema = z.object({
+  title: z.string().trim().min(1).max(180).optional(),
+  manualNotes: z.string().max(200_000).optional(),
+  scope: ScopeSchema.optional(),
+  recordingStatus: NoteRecordingStatusSchema.optional(),
+  recordedMs: z.number().int().nonnegative().optional(),
+  startedAt: TimestampSchema.nullable().optional(),
+  endedAt: TimestampSchema.nullable().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "At least one note field is required");
+
+export const AppendNoteTranscriptSegmentRequestSchema = z.object({
+  clientSegmentId: IdSchema,
+  startOffsetMs: z.number().int().nonnegative(),
+  endOffsetMs: z.number().int().nonnegative(),
+  capturedAt: TimestampSchema,
+  speakerLabel: z.string().trim().min(1).max(120).nullable().default(null),
+  text: z.string().trim().min(1).max(80_000),
+}).strict().refine((segment) => segment.endOffsetMs >= segment.startOffsetMs, {
+  message: "Segment end time must not precede its start time",
+  path: ["endOffsetMs"],
+});
+
+export const GenerateNoteNotesRequestSchema = z.object({
+  mode: z.enum(["live", "final"]).default("live"),
+  transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+}).strict();
+
 export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
   workspaceId: IdSchema,
-  connectorType: z.enum(["google", "generic_webhook", "github", "linear", "notion", "slack", "x"]),
+  connectorType: z.enum(["google", "generic_webhook", "github", "granola", "linear", "notion", "slack", "x"]),
   scope: ScopeSchema,
   ownerUserId: IdSchema.nullable(),
   ownerName: z.string().nullable(),
@@ -419,6 +497,63 @@ export const ActivitySuggestionSchema = z.object({
   status: z.enum(["pending", "accepted", "dismissed"]),
   createdAt: TimestampSchema,
   resolvedAt: TimestampSchema.nullable()
+});
+
+export const HyperSightBlockRunStatusSchema = z.enum([
+  "queued",
+  "running",
+  "completed",
+  "failed",
+  "stopped"
+]);
+export const HyperSightBlockRunSchema = z.object({
+  id: IdSchema,
+  blockId: IdSchema,
+  configurationVersionId: IdSchema,
+  triggerSequence: z.number().int().nonnegative(),
+  status: HyperSightBlockRunStatusSchema,
+  markdown: z.string().nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable(),
+  createdAt: TimestampSchema,
+  startedAt: TimestampSchema.nullable(),
+  completedAt: TimestampSchema.nullable()
+});
+export const HyperSightBlockSchema = z.object({
+  id: IdSchema,
+  prompt: z.string().max(12_000),
+  latestRun: HyperSightBlockRunSchema.nullable()
+});
+export const HyperSightSchema = z.object({
+  versionId: IdSchema.nullable(),
+  versionNumber: z.number().int().nonnegative(),
+  blocks: z.array(HyperSightBlockSchema).max(24),
+  updatedAt: TimestampSchema.nullable()
+});
+export const HyperSightPreferenceSchema = z.object({
+  visible: z.boolean(),
+  updatedAt: TimestampSchema.nullable()
+});
+export const UpdateHyperSightPreferenceRequestSchema = z.object({
+  visible: z.boolean()
+}).strict();
+export const UpdateHyperSightRequestSchema = z.object({
+  expectedVersionNumber: z.number().int().nonnegative(),
+  blocks: z.array(z.object({
+    id: IdSchema,
+    prompt: z.string().max(12_000)
+  }).strict()).max(24)
+}).strict().superRefine((value, context) => {
+  const seen = new Set<string>();
+  value.blocks.forEach((block, index) => {
+    if (seen.has(block.id)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "HyperSight block IDs must be unique",
+        path: ["blocks", index, "id"]
+      });
+    }
+    seen.add(block.id);
+  });
 });
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
@@ -626,7 +761,7 @@ export const DesktopExchangeRequestSchema = z.object({
   codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/u),
   timezone: IanaTimezoneSchema.default("America/Los_Angeles")
 });
-export const ConnectorOAuthProviderSchema = z.enum(["google", "github", "linear", "notion", "slack"]);
+export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
 export const ConnectorOAuthStartSchema = z.object({
   url: z.string().url(),
@@ -720,6 +855,7 @@ export const CreateAutomationRequestSchema = z.object({
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
+  resourceIds: z.array(IdSchema).max(20).default([]),
   deliveryTargets: z.array(z.object({
     type: z.literal("slack_agent_dm"),
     connectionId: IdSchema,
@@ -796,6 +932,8 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("resource_updated"), resource: ResourceSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_created"), suggestion: ActivitySuggestionSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("activity_suggestion_resolved"), suggestion: ActivitySuggestionSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("hypersight_configuration_updated"), hypersight: HyperSightSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("hypersight_block_run_updated"), run: HyperSightBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
     reason: z.enum(["history_unavailable", "sequence_ahead"]),
@@ -803,6 +941,32 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   }),
   ServerEventBaseSchema.extend({ type: z.literal("error"), code: z.string(), message: z.string() })
 ]);
+
+/** Events delivered to one authenticated user and intentionally excluded from room replay sequencing. */
+export const PersonalSocketEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("hypersight_preference_updated"),
+    occurredAt: TimestampSchema,
+    preference: HyperSightPreferenceSchema
+  })
+]);
+
+export const GenerateMeetingNotesRequestSchema = z.object({
+  mode: z.enum(["live", "final"]).default("live"),
+  meetingTitle: z.string().trim().min(1).max(180).default("Meeting notes"),
+  transcript: z.string().trim().min(1).max(400_000),
+  recentTranscript: z.string().max(100_000).default(""),
+  previousNotes: z.string().max(50_000).default(""),
+  userNotes: z.string().max(200_000).default(""),
+  startedAt: TimestampSchema.nullable().default(null),
+  endedAt: TimestampSchema.nullable().default(null),
+  transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+}).strict();
+
+export const MeetingNotesResponseSchema = z.object({
+  notes: z.string().trim().min(1).max(50_000),
+  generatedAt: TimestampSchema
+});
 
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
@@ -861,6 +1025,44 @@ export const ExecutionPrincipalSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("workspace"), workspaceId: IdSchema })
 ]);
 
+export const SlackOriginAttachmentSchema = z.object({
+  id: z.string().min(1).max(255).nullable(),
+  name: z.string().min(1).max(500),
+  title: z.string().max(500).nullable(),
+  mimeType: z.string().max(255).nullable(),
+  fileType: z.string().max(120).nullable(),
+  permalink: z.string().url().max(2000).nullable()
+}).strict();
+
+export const SlackOriginNearbyMessageSchema = z.object({
+  timestamp: z.string().min(1).max(80),
+  userId: z.string().min(1).max(255).nullable(),
+  text: z.string().max(2000),
+  attachments: z.array(SlackOriginAttachmentSchema).max(10)
+}).strict();
+
+export const SlackOriginContextSchema = z.object({
+  teamId: z.string().min(1).max(255),
+  channelId: z.string().min(1).max(255).nullable(),
+  channelName: z.string().min(1).max(255).nullable(),
+  threadTs: z.string().min(1).max(80).nullable(),
+  invocationType: z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]),
+  channelType: z.enum(["public", "private", "im", "unknown"]),
+  matchedAvalonUserId: IdSchema.nullable(),
+  nearbyMessagesStatus: z.enum(["available", "unavailable", "not_applicable"]),
+  nearbyMessages: z.array(SlackOriginNearbyMessageSchema).max(8),
+  attachments: z.array(SlackOriginAttachmentSchema).max(10)
+}).strict();
+
+/**
+ * Short-lived Slack authorization attached to a user-initiated Events API
+ * delivery. This is runtime-only credential material: it must never be
+ * rendered into model instructions, messages, tool arguments, or logs.
+ */
+export const SlackSearchAuthorizationSchema = z.object({
+  actionToken: z.string().min(1).max(4096)
+}).strict();
+
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: IdSchema,
@@ -870,6 +1072,8 @@ export const WorkstreamWorkflowInputSchema = z.object({
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
   executionPrincipal: ExecutionPrincipalSchema,
+  slackOrigin: SlackOriginContextSchema.optional(),
+  slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
   reason: z.string().min(1).max(500)
 });
 export const ConnectorPollWorkflowInputSchema = z.object({
@@ -1152,6 +1356,13 @@ export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;
 export type Message = z.infer<typeof MessageSchema>;
 export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
+export type NoteRecordingStatus = z.infer<typeof NoteRecordingStatusSchema>;
+export type NoteTranscriptSegment = z.infer<typeof NoteTranscriptSegmentSchema>;
+export type NoteSummary = z.infer<typeof NoteSummarySchema>;
+export type NoteDetail = z.infer<typeof NoteDetailSchema>;
+export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
+export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
+export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
@@ -1160,6 +1371,12 @@ export type Elicitation = z.infer<typeof ElicitationSchema>;
 export type ActivitySuggestion = z.infer<typeof ActivitySuggestionSchema>;
 export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
 export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
+export type HyperSight = z.infer<typeof HyperSightSchema>;
+export type HyperSightBlock = z.infer<typeof HyperSightBlockSchema>;
+export type HyperSightBlockRun = z.infer<typeof HyperSightBlockRunSchema>;
+export type HyperSightPreference = z.infer<typeof HyperSightPreferenceSchema>;
+export type UpdateHyperSightPreferenceRequest = z.infer<typeof UpdateHyperSightPreferenceRequestSchema>;
+export type UpdateHyperSightRequest = z.infer<typeof UpdateHyperSightRequestSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
@@ -1176,11 +1393,18 @@ export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
+export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
+export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;
+export type MeetingNotesResponse = z.infer<typeof MeetingNotesResponseSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;
 export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;
+export type SlackOriginAttachment = z.infer<typeof SlackOriginAttachmentSchema>;
+export type SlackOriginNearbyMessage = z.infer<typeof SlackOriginNearbyMessageSchema>;
+export type SlackOriginContext = z.infer<typeof SlackOriginContextSchema>;
 export type WorkstreamWorkflowInput = z.infer<typeof WorkstreamWorkflowInputSchema>;
+export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSchema>;
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
 export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;

@@ -10,6 +10,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { getAuth } from "../middleware/auth";
 import { ApiError } from "../lib/api-error";
+import { classifyConnectorOAuthCallbackFailure } from "../lib/connector-oauth-error";
 import { connectorAttemptTarget, desktopHandoffUrl } from "../lib/desktop-handoff";
 import { logEvent } from "../observability/logger";
 import { ConnectionService } from "../services/connection-service";
@@ -55,6 +56,14 @@ const notionStart = z.object({
   scope: z.literal("personal"),
   capabilities: z.array(z.enum(["notion.read", "notion.insert", "notion.update", "notion.comment.read", "notion.comment.insert"])).min(1),
 });
+const granolaStart = z.object({
+  scope: z.literal("personal"),
+  capabilities: z.array(z.literal("granola.personal.read")).length(1),
+});
+const granolaWorkspace = z.object({
+  apiKey: z.string().trim().regex(/^grn_[\x21-\x7E]{1,508}$/u),
+  capabilities: z.array(z.literal("granola.workspace.read")).length(1),
+});
 const githubStart = z.object({
   scope: ScopeSchema,
   capabilities: z.array(z.enum([
@@ -71,7 +80,11 @@ const githubStart = z.object({
 const slackStart = z.discriminatedUnion("scope", [
   z.object({
     scope: z.literal("workspace"),
-    capabilities: z.array(z.enum(["slack.agent", "slack.notifications.write"])).min(1),
+    capabilities: z.array(z.enum([
+      "slack.search", "slack.messages.read", "slack.files.read", "slack.users.read",
+      "slack.messages.write", "slack.conversations.write", "slack.reactions.write",
+      "slack.agent", "slack.notifications.write",
+    ])).min(1),
   }),
   z.object({
     scope: z.literal("personal"),
@@ -83,7 +96,7 @@ const slackStart = z.discriminatedUnion("scope", [
   }),
 ]);
 const xCreate = z.object({
-  scope: ScopeSchema,
+  scope: z.literal("workspace"),
   capabilities: z.array(z.literal("x.read")).min(1),
 });
 const githubSetup = z.object({
@@ -97,7 +110,6 @@ const googleCallback = z.object({
   error: z.string().min(1).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
 const slackLink = z.object({ token: z.string().min(20).max(500) });
-
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
 connectionRoutes.get("/", async (c) => c.json({ items: await new ConnectionService(c.env, getAuth(c)).list() }));
@@ -112,6 +124,12 @@ connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c
 );
 connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("notion", c.req.valid("json"))),
+);
+connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("granola", c.req.valid("json"))),
+);
+connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).createGranolaWorkspace(c.req.valid("json")), 201),
 );
 connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json"))),
@@ -181,16 +199,17 @@ async function connectorCallback(
       : await complete(service, query.code!, query.state);
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   } catch (error) {
-    const errorCode = error instanceof ApiError ? error.code : "connector_oauth_failed";
-    logEvent(c, error instanceof ApiError ? "warn" : "error", "connector_oauth_callback_failed", {
+    const failure = classifyConnectorOAuthCallbackFailure(error);
+    logEvent(c, failure.level, "connector_oauth_callback_failed", {
       provider,
-      code: errorCode,
+      code: failure.errorCode,
+      ...failure.diagnostics,
     });
     const target = await recoverConnectorCallback(
       c,
       provider,
-      errorCode,
-      () => service.failProviderAttempt(provider, query.state, errorCode),
+      failure.errorCode,
+      () => service.failProviderAttempt(provider, query.state, failure.errorCode),
     );
     return c.redirect(desktopHandoffUrl(c.env, target), 302);
   }
@@ -236,6 +255,10 @@ connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallb
   const query = c.req.valid("query");
   return connectorCallback(c, "notion", query, (service, code, state) => service.completeProvider("notion", code, state));
 });
+connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
+  const query = c.req.valid("query");
+  return connectorCallback(c, "granola", query, (service, code, state) => service.completeProvider("granola", code, state));
+});
 connectionCallbackRoutes.get("/slack/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
   return connectorCallback(c, "slack", query, (service, code, state) => service.completeProvider("slack", code, state));
@@ -264,6 +287,18 @@ webhookIngestionRoutes.post("/notion", async (c) => {
     new Uint8Array(await c.req.arrayBuffer()),
     c.req.raw.headers,
     c.req.query("setup") ?? null,
+  );
+  return c.json(result, result.duplicate ? 200 : 202);
+});
+webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
+  const result = await new ConnectionService(c.env).ingestGranolaWebhook(
+    c.req.valid("param").id,
+    new Uint8Array(await c.req.arrayBuffer()),
+    {
+      webhookId: c.req.header("webhook-id") ?? null,
+      webhookTimestamp: c.req.header("webhook-timestamp") ?? null,
+      webhookSignature: c.req.header("webhook-signature") ?? null,
+    },
   );
   return c.json(result, result.duplicate ? 200 : 202);
 });

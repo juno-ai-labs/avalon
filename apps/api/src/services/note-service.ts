@@ -1,0 +1,523 @@
+import { newId, nowIso } from "@avalon/db";
+import type {
+  AppendNoteTranscriptSegmentRequest,
+  CreateNoteRequest,
+  NoteDetail,
+  NoteSummary,
+  NoteTranscriptSegment,
+  UpdateNoteRequest,
+} from "@avalon/contracts";
+import type { AuthContext, Env } from "../env";
+import { ApiError, isConstraintError } from "../lib/api-error";
+import { MeetingNotesService } from "./meeting-notes-service";
+import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
+
+const MAX_NOTES_CONTEXT_CHARACTERS = 50_000;
+const MAX_TRANSCRIPT_CONTEXT_CHARACTERS = 400_000;
+const MAX_RECENT_TRANSCRIPT_CHARACTERS = 100_000;
+const RECENT_TRANSCRIPT_WINDOW_MS = 10 * 60 * 1_000;
+const OMITTED_CONTEXT_MARKER = "\n\n[… middle content omitted to fit model context …]\n\n";
+
+type MeetingNotesGenerator = Pick<MeetingNotesService, "generate">;
+
+interface NoteRow extends Record<string, unknown> {
+  id: string;
+  workspace_id: string;
+  owner_user_id: string;
+  resource_id: string;
+  scope: "personal" | "workspace";
+  title: string;
+  recording_status: "idle" | "recording" | "complete";
+  manual_notes_markdown: string;
+  live_notes_markdown: string;
+  notes_through_sequence: number;
+  recorded_ms: number;
+  started_at: string | null;
+  ended_at: string | null;
+  generated_at: string | null;
+  last_activity_at: string;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+}
+
+interface SegmentRow extends Record<string, unknown> {
+  id: string;
+  note_id: string;
+  sequence_number: number;
+  start_offset_ms: number;
+  end_offset_ms: number;
+  captured_at: string;
+  speaker_label: string | null;
+  text_content: string;
+  created_at: string;
+}
+
+const NOTE_SELECT = `SELECT * FROM notes
+  WHERE id = ? AND workspace_id = ? AND archived_at IS NULL
+    AND (scope = 'workspace' OR owner_user_id = ?)`;
+
+export class NoteService {
+  private readonly meetingNotesGenerator: MeetingNotesGenerator;
+
+  constructor(
+    private readonly env: Env,
+    private readonly auth: AuthContext,
+    meetingNotesGenerator?: MeetingNotesGenerator,
+  ) {
+    this.meetingNotesGenerator = meetingNotesGenerator ?? new MeetingNotesService(env, auth);
+  }
+
+  async list(limit: number): Promise<{ items: NoteSummary[] }> {
+    const result = await this.env.DB.prepare(
+      `SELECT * FROM notes
+       WHERE workspace_id = ? AND archived_at IS NULL
+         AND (scope = 'workspace' OR owner_user_id = ?)
+       ORDER BY last_activity_at DESC, id DESC
+       LIMIT ?`,
+    ).bind(this.auth.workspaceId, this.auth.userId, Math.min(Math.max(limit, 1), 250)).all<NoteRow>();
+    return { items: (result.results ?? []).map(toNoteSummary) };
+  }
+
+  async create(input: CreateNoteRequest): Promise<NoteDetail> {
+    const existing = await this.env.DB.prepare(
+      "SELECT * FROM notes WHERE id = ? AND workspace_id = ?",
+    ).bind(input.id, this.auth.workspaceId).first<NoteRow>();
+    if (existing) {
+      // Opening a note uses the same idempotent endpoint as creating it. The
+      // normal read guard keeps private IDs opaque while allowing workspace
+      // notes to open for other members.
+      return this.get(input.id);
+    }
+    const resourceId = newId();
+    const at = nowIso();
+    const refs = this.resourceRefs(resourceId);
+    const plain = plainNoteMarkdown(input.title, "", "", []);
+    const model = modelNoteMarkdown(input.title, "", "", []);
+    try {
+      await this.putResourceObjects(refs, plain, model);
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, provider_resource_id, title,
+            mime_type, content_ref, metadata_json, last_hydrated_at,
+            uploaded_by_user_id, attachment_status, model_content_ref, model_mime_type,
+            created_at, updated_at)
+           VALUES (?, ?, 'note', 'avalon_note', ?, ?, 'text/markdown; charset=utf-8', ?, ?, ?, ?,
+             'attached', ?, 'text/markdown; charset=utf-8', ?, ?)`,
+        ).bind(
+          resourceId,
+          this.auth.workspaceId,
+          input.id,
+          input.title,
+          refs.content,
+          JSON.stringify({ noteId: input.id, ownerUserId: this.auth.userId, scope: input.scope, size: byteLength(plain) }),
+          at,
+          this.auth.userId,
+          refs.model,
+          at,
+          at,
+        ),
+        this.env.DB.prepare(
+          `INSERT INTO notes
+           (id, workspace_id, owner_user_id, resource_id, scope, title,
+            last_activity_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(input.id, this.auth.workspaceId, this.auth.userId, resourceId, input.scope, input.title, at, at, at),
+      ]);
+    } catch (error) {
+      await Promise.all([
+        this.env.PAYLOADS.delete(refs.content).catch(() => undefined),
+        this.env.PAYLOADS.delete(refs.model).catch(() => undefined),
+      ]);
+      throw error;
+    }
+    return this.get(input.id);
+  }
+
+  async get(id: string): Promise<NoteDetail> {
+    const note = await this.requireNote(id, false);
+    const segments = await this.loadSegments(id);
+    return toNoteDetail(note, segments);
+  }
+
+  async update(id: string, input: UpdateNoteRequest): Promise<NoteDetail> {
+    const existing = await this.requireNote(id, true);
+    const becamePrivate = existing.scope === "workspace" && input.scope === "personal";
+    const assignments: string[] = [];
+    const bindings: unknown[] = [];
+    if (input.title !== undefined) {
+      assignments.push("title = ?");
+      bindings.push(input.title);
+    }
+    if (input.manualNotes !== undefined) {
+      assignments.push("manual_notes_markdown = ?");
+      bindings.push(input.manualNotes);
+    }
+    if (input.scope !== undefined) {
+      assignments.push("scope = ?", "privacy_changed_by_user_id = ?");
+      bindings.push(input.scope, this.auth.userId);
+    }
+    if (input.recordingStatus !== undefined) {
+      assignments.push("recording_status = ?");
+      bindings.push(input.recordingStatus);
+    }
+    if (input.recordedMs !== undefined) {
+      assignments.push("recorded_ms = ?");
+      bindings.push(input.recordedMs);
+    }
+    if ("startedAt" in input) {
+      assignments.push("started_at = ?");
+      bindings.push(input.startedAt ?? null);
+    }
+    if ("endedAt" in input) {
+      assignments.push("ended_at = ?");
+      bindings.push(input.endedAt ?? null);
+    }
+    const at = nowIso();
+    assignments.push("last_activity_at = ?", "updated_at = ?");
+    bindings.push(at, at, id, this.auth.workspaceId, this.auth.userId);
+    const result = await this.env.DB.prepare(
+      `UPDATE notes SET ${assignments.join(", ")}
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
+    ).bind(...bindings).run();
+    if (!result.meta.changes) throw new ApiError(404, "note_not_found", "Note not found");
+    await this.materialize(id);
+    if (becamePrivate) {
+      await processPendingNotePrivacyNotifications(this.env, { noteId: id }).catch((error: unknown) => {
+        console.warn("Note privacy workstream notification deferred", {
+          noteId: id,
+          reason: error instanceof Error ? error.message : "unknown notification error",
+        });
+      });
+    }
+    return this.get(id);
+  }
+
+  async appendSegment(id: string, input: AppendNoteTranscriptSegmentRequest): Promise<NoteTranscriptSegment> {
+    await this.requireNote(id, true);
+    const duplicate = await this.env.DB.prepare(
+      `SELECT * FROM note_transcript_segments
+       WHERE note_id = ? AND client_segment_id = ?`,
+    ).bind(id, input.clientSegmentId).first<SegmentRow>();
+    if (duplicate) {
+      await this.materialize(id);
+      return toSegment(duplicate);
+    }
+
+    const allocation = await this.env.DB.prepare(
+      `UPDATE notes SET next_segment_sequence = next_segment_sequence + 1
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL
+       RETURNING next_segment_sequence - 1 AS sequence_number`,
+    ).bind(id, this.auth.workspaceId, this.auth.userId).first<{ sequence_number: number }>();
+    if (!allocation) throw new ApiError(404, "note_not_found", "Note not found");
+
+    const segmentId = newId();
+    const at = nowIso();
+    try {
+      await this.env.DB.batch([
+        this.env.DB.prepare(
+          `INSERT INTO note_transcript_segments
+           (id, note_id, client_segment_id, sequence_number, start_offset_ms,
+            end_offset_ms, captured_at, speaker_label, text_content, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(
+          segmentId,
+          id,
+          input.clientSegmentId,
+          allocation.sequence_number,
+          input.startOffsetMs,
+          input.endOffsetMs,
+          input.capturedAt,
+          input.speakerLabel,
+          input.text,
+          at,
+        ),
+        this.env.DB.prepare(
+          `UPDATE notes
+           SET recorded_ms = MAX(recorded_ms, ?), last_activity_at = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND owner_user_id = ?`,
+        ).bind(input.endOffsetMs, at, at, id, this.auth.workspaceId, this.auth.userId),
+      ]);
+    } catch (error) {
+      if (!isConstraintError(error)) throw error;
+      const raced = await this.env.DB.prepare(
+        `SELECT * FROM note_transcript_segments
+         WHERE note_id = ? AND client_segment_id = ?`,
+      ).bind(id, input.clientSegmentId).first<SegmentRow>();
+      if (!raced) throw error;
+      await this.materialize(id);
+      return toSegment(raced);
+    }
+    await this.materialize(id);
+    const created = await this.env.DB.prepare(
+      "SELECT * FROM note_transcript_segments WHERE id = ? AND note_id = ?",
+    ).bind(segmentId, id).first<SegmentRow>();
+    if (!created) throw new ApiError(500, "note_segment_write_failed", "The transcript segment could not be stored");
+    return toSegment(created);
+  }
+
+  async generate(
+    id: string,
+    requestId: string,
+    mode: "live" | "final" = "live",
+    transcriptStatus: "complete" | "partial" = mode === "final" ? "complete" : "partial",
+  ): Promise<NoteDetail> {
+    return this.generateAttempt(id, requestId, mode, transcriptStatus, false);
+  }
+
+  private async generateAttempt(
+    id: string,
+    requestId: string,
+    mode: "live" | "final",
+    transcriptStatus: "complete" | "partial",
+    retriedFinalConflict: boolean,
+  ): Promise<NoteDetail> {
+    const note = await this.requireNote(id, true);
+    const startingSequence = Number(note.notes_through_sequence);
+    const rows = await this.env.DB.prepare(
+      `SELECT * FROM note_transcript_segments
+       WHERE note_id = ?
+       ORDER BY sequence_number ASC`,
+    ).bind(id).all<SegmentRow>();
+    const allSegments = rows.results ?? [];
+    const pending = allSegments.filter((segment) => Number(segment.sequence_number) > startingSequence);
+    if (allSegments.length === 0 || (mode === "live" && pending.length === 0)) {
+      await this.materialize(id);
+      return this.get(id);
+    }
+    const completeTranscript = boundedTranscript(allSegments, MAX_TRANSCRIPT_CONTEXT_CHARACTERS);
+
+    const generated = await this.meetingNotesGenerator.generate({
+      mode,
+      meetingTitle: note.title,
+      previousNotes: mode === "live" ? elideMiddle(note.live_notes_markdown.trim(), MAX_NOTES_CONTEXT_CHARACTERS) : "",
+      userNotes: note.manual_notes_markdown,
+      transcript: completeTranscript.transcript,
+      recentTranscript: mode === "live" ? recentTranscriptContext(allSegments) : "",
+      startedAt: note.started_at,
+      endedAt: mode === "final" ? note.ended_at ?? nowIso() : note.ended_at,
+      transcriptStatus: completeTranscript.omitted ? "partial" : transcriptStatus,
+    }, requestId);
+    const throughSequence = Number(allSegments.at(-1)!.sequence_number);
+    const update = await this.env.DB.prepare(
+      `UPDATE notes
+       SET live_notes_markdown = ?, notes_through_sequence = ?, generated_at = ?,
+           last_activity_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ?
+         AND notes_through_sequence = ?
+         AND ((generated_at IS NULL AND ? IS NULL) OR generated_at = ?)`,
+    ).bind(
+      generated.notes,
+      throughSequence,
+      generated.generatedAt,
+      generated.generatedAt,
+      generated.generatedAt,
+      id,
+      this.auth.workspaceId,
+      this.auth.userId,
+      startingSequence,
+      note.generated_at,
+      note.generated_at,
+    ).run();
+    // Another window may have summarized a newer segment range while this
+    // inference was running. Discard this stale result rather than rewinding
+    // the cursor or overwriting the newer notes.
+    if (!update.meta.changes) {
+      // A final whole-meeting summary must not be silently lost to a live
+      // Control Tower refresh. Re-read the complete transcript and retry once;
+      // a second conflict means another result is newer and should win.
+      if (mode === "final" && !retriedFinalConflict) {
+        return this.generateAttempt(id, requestId, mode, transcriptStatus, true);
+      }
+      await this.materialize(id);
+      return this.get(id);
+    }
+    await this.materialize(id);
+    return this.get(id);
+  }
+
+  private async requireNote(id: string, edit: boolean): Promise<NoteRow> {
+    const row = edit
+      ? await this.env.DB.prepare(
+          `SELECT * FROM notes
+           WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
+        ).bind(id, this.auth.workspaceId, this.auth.userId).first<NoteRow>()
+      : await this.env.DB.prepare(NOTE_SELECT)
+          .bind(id, this.auth.workspaceId, this.auth.userId).first<NoteRow>();
+    if (!row) throw new ApiError(404, "note_not_found", "Note not found");
+    return row;
+  }
+
+  private async loadSegments(id: string): Promise<SegmentRow[]> {
+    const result = await this.env.DB.prepare(
+      `SELECT * FROM note_transcript_segments WHERE note_id = ? ORDER BY sequence_number ASC`,
+    ).bind(id).all<SegmentRow>();
+    return result.results ?? [];
+  }
+
+  private async materialize(id: string): Promise<void> {
+    const note = await this.requireNote(id, false);
+    const segments = await this.loadSegments(id);
+    const refs = this.resourceRefs(note.resource_id);
+    const plain = plainNoteMarkdown(note.title, note.manual_notes_markdown, note.live_notes_markdown, segments);
+    const model = modelNoteMarkdown(note.title, note.manual_notes_markdown, note.live_notes_markdown, segments);
+    await this.putResourceObjects(refs, plain, model);
+    const at = nowIso();
+    await this.env.DB.prepare(
+      `UPDATE resources
+       SET title = ?, content_ref = ?, model_content_ref = ?, model_mime_type = ?,
+           metadata_json = ?, last_hydrated_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ?`,
+    ).bind(
+      note.title,
+      refs.content,
+      refs.model,
+      "text/markdown; charset=utf-8",
+      JSON.stringify({
+        noteId: note.id,
+        ownerUserId: note.owner_user_id,
+        scope: note.scope,
+        segmentCount: segments.length,
+        size: byteLength(plain),
+      }),
+      at,
+      at,
+      note.resource_id,
+      this.auth.workspaceId,
+    ).run();
+  }
+
+  private resourceRefs(resourceId: string): { content: string; model: string } {
+    const base = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${resourceId}`;
+    return { content: `${base}/note.md`, model: `${base}/note-model.md` };
+  }
+
+  private async putResourceObjects(
+    refs: { content: string; model: string },
+    plain: string,
+    model: string,
+  ): Promise<void> {
+    await Promise.all([
+      this.env.PAYLOADS.put(refs.content, plain, {
+        httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      }),
+      this.env.PAYLOADS.put(refs.model, model, {
+        httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      }),
+    ]);
+  }
+}
+
+function toNoteSummary(row: NoteRow): NoteSummary {
+  return {
+    id: String(row.id),
+    workspaceId: String(row.workspace_id),
+    resourceId: String(row.resource_id),
+    ownerUserId: String(row.owner_user_id),
+    scope: row.scope,
+    title: String(row.title),
+    recordingStatus: row.recording_status,
+    recordedMs: Number(row.recorded_ms),
+    startedAt: row.started_at == null ? null : String(row.started_at),
+    endedAt: row.ended_at == null ? null : String(row.ended_at),
+    generatedAt: row.generated_at == null ? null : String(row.generated_at),
+    lastActivityAt: String(row.last_activity_at),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    archivedAt: row.archived_at == null ? null : String(row.archived_at),
+  };
+}
+
+function toSegment(row: SegmentRow): NoteTranscriptSegment {
+  return {
+    id: String(row.id),
+    noteId: String(row.note_id),
+    sequenceNumber: Number(row.sequence_number),
+    startOffsetMs: Number(row.start_offset_ms),
+    endOffsetMs: Number(row.end_offset_ms),
+    capturedAt: String(row.captured_at),
+    speakerLabel: row.speaker_label == null ? null : String(row.speaker_label),
+    text: String(row.text_content),
+    createdAt: String(row.created_at),
+  };
+}
+
+function toNoteDetail(note: NoteRow, segments: SegmentRow[]): NoteDetail {
+  return {
+    ...toNoteSummary(note),
+    manualNotes: String(note.manual_notes_markdown),
+    liveNotes: String(note.live_notes_markdown),
+    notesThroughSequence: Number(note.notes_through_sequence),
+    segments: segments.map(toSegment),
+  };
+}
+
+function formatOffset(milliseconds: number): string {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1_000));
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  const remainder = seconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function timestampedSegment(segment: SegmentRow): string {
+  const speaker = segment.speaker_label ? ` ${segment.speaker_label}:` : "";
+  return `[${formatOffset(Number(segment.start_offset_ms))}–${formatOffset(Number(segment.end_offset_ms))}]${speaker} ${segment.text_content}`;
+}
+
+function elideMiddle(value: string, maximum: number): string {
+  if (value.length <= maximum) return value;
+  if (maximum <= OMITTED_CONTEXT_MARKER.length) return OMITTED_CONTEXT_MARKER.slice(0, maximum);
+  const remaining = maximum - OMITTED_CONTEXT_MARKER.length;
+  const headLength = Math.ceil(remaining / 2);
+  const tailLength = remaining - headLength;
+  return `${value.slice(0, headLength)}${OMITTED_CONTEXT_MARKER}${value.slice(value.length - tailLength)}`;
+}
+
+function boundedTranscript(rows: SegmentRow[], maximum: number): { omitted: boolean; transcript: string } {
+  const transcript = rows.map(timestampedSegment).join("\n\n");
+  return {
+    omitted: transcript.length > maximum,
+    transcript: elideMiddle(transcript, maximum),
+  };
+}
+
+function recentTranscriptContext(rows: SegmentRow[]): string {
+  const latestOffset = Math.max(...rows.map((segment) => Number(segment.end_offset_ms)));
+  const windowStartsAt = Math.max(0, latestOffset - RECENT_TRANSCRIPT_WINDOW_MS);
+  const recent = rows.filter((segment) => Number(segment.end_offset_ms) >= windowStartsAt);
+  return boundedTranscript(recent, MAX_RECENT_TRANSCRIPT_CHARACTERS).transcript;
+}
+
+function plainNoteMarkdown(title: string, manualNotes: string, notes: string, segments: SegmentRow[]): string {
+  const transcript = segments.map((segment) => String(segment.text_content)).join("\n\n");
+  return [
+    `# ${title}`,
+    "## Notes",
+    manualNotes.trim() || "_No written notes yet._",
+    "## AI notes",
+    notes.trim() || "_No live notes yet._",
+    "## Transcript",
+    transcript || "_No transcript yet._",
+    "",
+  ].join("\n\n");
+}
+
+function modelNoteMarkdown(title: string, manualNotes: string, notes: string, segments: SegmentRow[]): string {
+  const transcript = segments.map(timestampedSegment).join("\n\n");
+  return [
+    `# ${title}`,
+    "## User-written notes",
+    manualNotes.trim() || "_No written notes yet._",
+    "## AI-generated meeting brief",
+    notes.trim() || "_No live notes yet._",
+    "## Timestamped transcript",
+    transcript || "_No transcript yet._",
+    "",
+  ].join("\n\n");
+}
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}

@@ -15,6 +15,7 @@ import {
   ConnectorError,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
+  type ConnectorConnectionContext,
 } from "./types";
 
 const DEFAULT_X_API_BASE_URL = "https://api.twitterapi.io";
@@ -186,7 +187,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
     manifest: {
       type: "x",
       displayName: "X",
-      supportedScopes: ["personal", "workspace"],
+      supportedScopes: ["workspace"],
       oauthRequired: false,
       activityTypes: [],
       resourceTypes: [],
@@ -197,6 +198,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
     },
 
     async executeTool(name, rawArgs, context) {
+      assertWorkspaceConnection(context.connection);
       assertPrincipalAccess(context.connection, context.principal);
       const definition = xTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
@@ -266,6 +268,12 @@ type XRequest = (
   query: Record<string, string | boolean | null | undefined>,
   signal: AbortSignal,
 ) => Promise<Record<string, unknown>>;
+
+function assertWorkspaceConnection(connection: ConnectorConnectionContext): void {
+  if (connection.scope !== "workspace" || connection.ownerUserId !== null) {
+    throw new ConnectorError("unauthorized", "X connections must belong to a workspace");
+  }
+}
 
 async function getThreadContext(
   request: XRequest,

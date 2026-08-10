@@ -4,12 +4,27 @@ const DEFAULT_RESPONSE_BYTES = 1_000_000;
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+export interface ProviderJsonResponse {
+  data: Record<string, unknown>;
+  headers: Headers;
+  status: number;
+}
+
 export async function providerJson(
   fetcher: FetchLike,
   url: string | URL,
   init: RequestInit = {},
   maxBytes = DEFAULT_RESPONSE_BYTES,
 ): Promise<Record<string, unknown>> {
+  return (await providerJsonResponse(fetcher, url, init, maxBytes)).data;
+}
+
+export async function providerJsonResponse(
+  fetcher: FetchLike,
+  url: string | URL,
+  init: RequestInit = {},
+  maxBytes = DEFAULT_RESPONSE_BYTES,
+): Promise<ProviderJsonResponse> {
   let response: Response;
   try {
     response = await fetcher(url, init);
@@ -36,7 +51,11 @@ export async function providerJson(
     });
   }
   if (!isRecord(payload)) throw new ConnectorError("provider_error", "The provider returned an invalid response");
-  return payload;
+  return {
+    data: payload,
+    headers: new Headers(response.headers),
+    status: response.status,
+  };
 }
 
 function parseRetryAfterMs(value: string | null): number | null {

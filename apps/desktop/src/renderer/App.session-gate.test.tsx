@@ -31,6 +31,8 @@ vi.mock('./screens/onboarding', () => ({
 }));
 vi.mock('./components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>main workspace UI</div> }));
+vi.mock('./screens/meeting-notes', () => ({ MeetingNotesScreen: () => <div>meeting notes</div> }));
+vi.mock('./screens/note-detail', () => ({ NoteDetailScreen: () => <div>note detail</div> }));
 vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
 vi.mock('./screens/new-automation', () => ({ NewAutomationScreen: () => <div>new automation</div> }));
 vi.mock('./screens/automation-overview', () => ({ AutomationOverviewScreen: () => <div>automation</div> }));
@@ -56,7 +58,7 @@ describe('SessionGate identity-first ordering', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    window.location.hash = '';
+    window.history.replaceState({}, '', '/');
     sessionState.booting = false;
     sessionState.session = null;
     sessionState.getOnboardingState.mockResolvedValue({ workspace: null, invitations: [] });
@@ -85,6 +87,18 @@ describe('SessionGate identity-first ordering', () => {
 
     expect(await screen.findByText('main workspace UI')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
+  });
+
+  it('renders the dedicated meeting surface without the workspace shell', async () => {
+    window.history.replaceState({}, '', '/?surface=meeting#/meeting');
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Avalon Studio', region: 'global', role: 'owner' },
+    };
+    renderGate();
+
+    expect(await screen.findByText('meeting notes')).toBeVisible();
+    expect(screen.queryByText('main workspace UI')).not.toBeInTheDocument();
   });
 
   it('refreshes workspace members every five minutes while the workspace is open', async () => {

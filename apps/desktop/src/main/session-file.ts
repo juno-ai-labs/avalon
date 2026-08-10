@@ -195,13 +195,11 @@ export async function removeStoredSessionFiles(userDataDirectory: string): Promi
   if (failure !== undefined) throw failure;
 }
 
-export async function removeStoredStateFiles(userDataDirectory: string): Promise<void> {
+export async function removeStoredCredentialFiles(userDataDirectory: string): Promise<void> {
   let failure: unknown;
   for (const path of [
     storedAuthFilePath(userDataDirectory),
     temporaryStoredAuthFilePath(userDataDirectory),
-    storedProfileFilePath(userDataDirectory),
-    temporaryStoredProfileFilePath(userDataDirectory),
   ]) {
     try {
       await unlink(path);
@@ -217,14 +215,43 @@ export async function removeStoredStateFiles(userDataDirectory: string): Promise
   if (failure !== undefined) throw failure;
 }
 
-export async function tombstoneStoredStateFiles(
+export async function removeStoredStateFiles(userDataDirectory: string): Promise<void> {
+  let failure: unknown;
+  for (const path of [
+    storedProfileFilePath(userDataDirectory),
+    temporaryStoredProfileFilePath(userDataDirectory),
+  ]) {
+    try {
+      await unlink(path);
+    } catch (error) {
+      if (errorCode(error) !== 'ENOENT' && failure === undefined) failure = error;
+    }
+  }
+  try {
+    await removeStoredCredentialFiles(userDataDirectory);
+  } catch (error) {
+    if (failure === undefined) failure = error;
+  }
+  if (failure !== undefined) throw failure;
+}
+
+export async function tombstoneStoredCredentialFiles(
   userDataDirectory: string,
   encryptedInvalidValue: Uint8Array,
 ): Promise<void> {
   await Promise.all([
     writeStoredAuthFile(userDataDirectory, encryptedInvalidValue),
-    writeStoredProfileFile(userDataDirectory, encryptedInvalidValue),
     writeStoredSessionFile(userDataDirectory, encryptedInvalidValue),
     writeFile(legacyStoredSessionFilePath(userDataDirectory), encryptedInvalidValue, { mode: 0o600 }),
+  ]);
+}
+
+export async function tombstoneStoredStateFiles(
+  userDataDirectory: string,
+  encryptedInvalidValue: Uint8Array,
+): Promise<void> {
+  await Promise.all([
+    writeStoredProfileFile(userDataDirectory, encryptedInvalidValue),
+    tombstoneStoredCredentialFiles(userDataDirectory, encryptedInvalidValue),
   ]);
 }

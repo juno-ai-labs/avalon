@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   createAutomation: vi.fn(),
   deleteDraftResource: vi.fn(),
   getConnections: vi.fn(),
+  getNotes: vi.fn(),
   getResourceContent: vi.fn(),
   uploadResource: vi.fn(),
 }));
@@ -45,6 +46,7 @@ describe('New automation composer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.getConnections.mockResolvedValue([]);
+    api.getNotes.mockResolvedValue([]);
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-1',
       assistantMessage: 'What should the automation monitor?',
@@ -326,7 +328,7 @@ describe('New automation composer', () => {
     expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear']));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear'], []));
   });
 
   it('allows Avalon-only delivery when a draft recommends Slack', async () => {
@@ -376,7 +378,56 @@ describe('New automation composer', () => {
     expect(delivery).toHaveValue('');
     expect(createButton).toBeEnabled();
     fireEvent.click(createButton);
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-slack-digest', []));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-slack-digest', [], []));
+  });
+
+  it('attaches selected note resources to the created automation', async () => {
+    api.getNotes.mockResolvedValue([{
+      id: '00000000-0000-4000-8000-000000000301',
+      workspaceId: '00000000-0000-4000-8000-000000000302',
+      resourceId: '00000000-0000-4000-8000-000000000303',
+      ownerUserId: '00000000-0000-4000-8000-000000000304',
+      scope: 'personal',
+      title: 'Customer interview',
+      recordingStatus: 'complete',
+      recordedMs: 90_000,
+      startedAt: '2026-08-07T18:00:00.000Z',
+      endedAt: '2026-08-07T18:01:30.000Z',
+      generatedAt: null,
+      lastActivityAt: '2026-08-07T18:01:30.000Z',
+      createdAt: '2026-08-07T18:00:00.000Z',
+      updatedAt: '2026-08-07T18:01:30.000Z',
+      archivedAt: null,
+    }]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-with-note',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Customer follow-up',
+        description: 'Uses the interview as context.',
+        overview: 'Prepares a follow-up from the attached customer note.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Manual',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Prepare a customer follow-up' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    const resourceSection = await screen.findByRole('region', { name: 'Note resources' });
+    fireEvent.click(resourceSection.querySelector('label')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
+      'draft-with-note',
+      [],
+      ['00000000-0000-4000-8000-000000000303'],
+    ));
   });
 
   it('reuses one elicitation identity and preserves answer-response order', async () => {

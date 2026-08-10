@@ -11,7 +11,7 @@ The renderer, inbound internet, connector providers, monitored URLs, model outpu
 - Every IPC argument is parsed before use.
 - Navigation and popup creation are denied by default; OAuth opens in the system browser.
 - A strict Content Security Policy allows bundled content and the configured regional API only.
-- Refresh material is encrypted in the main process. By default the desktop uses an application-wide embedded key so a saved session survives signing-identity and keystore changes. Application → **Lockdown mode** replaces that with Electron `safeStorage`, binding the saved authentication state to the operating-system keystore. Switching the setting re-encrypts every durable session component before committing the new preference. The renderer receives short-lived access only through the narrow session bridge.
+- Refresh material is encrypted in the main process. By default the desktop uses an application-wide embedded key so a saved session survives signing-identity and keystore changes. Application → **Lockdown mode** replaces that with Electron `safeStorage`, binding the saved authentication state to the operating-system keystore. An in-app toggle re-encrypts every durable session component before committing the new preference. The plaintext preference lives in owner-readable `application-settings.json` under Electron's `userData` directory. If that file is edited to turn Lockdown off while a Lockdown credential envelope remains, Avalon removes only local credential-bearing files and requires sign-in instead of exporting the protected session. An unavailable keystore also turns Lockdown off and requires sign-in automatically. The renderer receives short-lived access only through the narrow session bridge.
 - The custom `avalon://` callback carries only an opaque, expiring, single-use login ticket or a non-secret connector result—never provider codes or tokens.
 - The native Settings window uses the same sandbox, preload, CSP, navigation denial, and regional session bridge as the main window. **Command-,** opens a singleton window rather than a privileged remote page.
 
@@ -41,11 +41,15 @@ This is retry safety, not a broad approval gate.
 
 Provider refresh tokens remain in the regional backend, encrypted with AES-GCM and additional authenticated data tied to the connection ID. Key version is stored beside ciphertext so rotation can decrypt with an old key and re-encrypt with the active key. Global and EU deployments use independent keys.
 
+Granola Workspace API keys and the signing secrets returned while registering Granola webhook endpoints use the same versioned credential envelope and connection-bound additional authenticated data. The admin setup form treats the key as a password and submits it once to the selected regional backend. Plaintext keys and signing secrets are excluded from connection configuration, API responses, provider identifiers, audit metadata, and logs. Personal Granola OAuth and refresh credentials remain user-scoped; workspace keys remain workspace-scoped.
+
 Google scopes are requested incrementally. Sign-in does not grant Gmail, Calendar, or Drive access. Revoked/expired grants become an explicit reconnect state.
 
 ## Webhooks
 
 Generic webhooks use an endpoint-specific secret, a timestamped HMAC-SHA256 signature, a bounded replay window, a stored receipt, schema validation, size limits, and provider dedupe keys.
+
+Granola webhooks are verified using the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers over the exact raw request body. Verification and size checks happen before JSON parsing, R2 persistence, receipt creation, or queueing.
 
 ## Model boundary
 

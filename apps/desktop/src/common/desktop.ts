@@ -66,6 +66,25 @@ export interface DesktopWorkspaceOnboardingState {
   invitations: DesktopPendingWorkspaceInvitation[];
 }
 
+export type DesktopMediaPermissionStatus =
+  | 'not-determined'
+  | 'granted'
+  | 'denied'
+  | 'restricted'
+  | 'unknown';
+
+export type MeetingAudioPermissionKind = 'microphone' | 'system-audio';
+
+export interface DesktopMeetingAudioPermissions {
+  microphone: DesktopMediaPermissionStatus;
+  systemAudio: DesktopMediaPermissionStatus;
+}
+
+export interface DesktopSystemAudioCaptureInfo {
+  channels: 1;
+  sampleRate: number;
+}
+
 export interface AvalonDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
@@ -91,10 +110,23 @@ export interface AvalonDesktopBridge {
   acceptInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<DesktopSession>;
   declineInvitation: (input: { region: AvalonRegion; invitationId: string }) => Promise<void>;
   refreshSession: () => Promise<DesktopSession>;
+  /** Pure read of whether a durable credential is still stored. Unlike
+   * `getSession`, this never reaches the network, so it can answer "was the
+   * credential surrendered?" without a refresh of its own failing the probe. */
+  hasStoredCredential: () => Promise<boolean>;
   logout: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
   openExternal: (url: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
+  openMeetingNotes: (noteId?: string) => Promise<void>;
+  closeMeetingNotes: () => Promise<void>;
+  getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
+  prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
+  startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
+  stopMeetingSystemAudioCapture: () => Promise<void>;
+  onMeetingSystemAudioData: (listener: (data: ArrayBuffer, sampleRate: number) => void) => () => void;
+  openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
+  onMeetingCloseRequested: (listener: () => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
   consumePendingDeepLinks: () => Promise<string[]>;
   onDeepLink: (listener: (url: string) => void) => () => void;

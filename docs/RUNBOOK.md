@@ -98,13 +98,141 @@ expected `Strict-Transport-Security` header over HTTPS.
 
 ### Release version policy
 
-Every new Avalon release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Immediately after a verified publication, move the root and desktop package versions to the next minor development version. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
+Every new Avalon release advances exactly one minor version and resets the patch to zero. The one stable-promotion exception permits a `0.x` release to advance to `1.0.0`; after that, releases continue by minor version (`1.0.0` → `1.1.0`). Do not create patch releases, prereleases, skip a minor, or make any other major-version jump. Do **not** move the package versions to the next minor immediately after publication, as earlier revisions of this policy directed: an unreleased version in `package.json` is now the instruction to release it, so the next merge to `main` would ship it. Bump in the change that is meant to go out. See "Releasing the desktop app by bumping the version" below. Leave `apps/site/release.config.json` on the currently published version until the immutable desktop artifacts and update feed for the next version have been uploaded and verified. The release tag and site-promotion tooling enforce this policy and allow the same published version only for an idempotent retry.
+
+### Desktop release retention
+
+Keep the five highest semantic versions in the public `avalon-desktop-releases`
+R2 bucket. Move every older complete release to the private
+`avalon-desktop-releases-archive` bucket in the same WNAM location. The archive
+bucket's default storage class is `InfrequentAccess`; keep its `r2.dev` URL
+disabled and do not attach a custom domain. Infrequent Access has retrieval
+charges and a 30-day minimum storage duration, so it is appropriate only for
+release artifacts that are rarely restored. See Cloudflare's
+[storage-class](https://developers.cloudflare.com/r2/buckets/storage-classes/)
+and [pricing](https://developers.cloudflare.com/r2/pricing/) documentation.
+
+Create the archive bucket only if it does not already exist:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler r2 bucket create avalon-desktop-releases-archive --location wnam --storage-class InfrequentAccess
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/api exec wrangler r2 bucket info avalon-desktop-releases-archive
+```
+
+Use the live R2 inventory as the retention authority. Do not derive the keep set
+from Git tags, `apps/site/release.config.json`, upload timestamps, or local
+release directories; any of those can lag a completed publication. Under
+`stable/darwin/arm64/`, one complete release currently has five immutable
+objects:
+
+- A versioned DMG
+- A versioned ZIP
+- The DMG and ZIP blockmaps
+- `<version>/SHA256SUMS`
+
+`stable/darwin/arm64/Avalon.dmg` and
+`stable/darwin/arm64/latest-mac.yml` are mutable channel pointers, not releases.
+They must always remain in the public bucket.
+
+Production retention is automated by the private `avalon-release-retention`
+Worker in `apps/release-retention`. It has no route, `workers.dev` URL, preview
+URL, or application secret. Its only capabilities are bindings to the active and
+archive release buckets. Deploy it from the repository root with:
+
+```text
+pnpm deploy:release-retention
+```
+
+Cloudflare Cron Triggers execute in UTC. The checked-in configuration therefore
+fires at both `0 9 * * *` and `0 10 * * *`, while the handler admits only the
+invocation whose scheduled time is 02:00 in `America/Los_Angeles`. This produces
+one run at 02:00 Pacific under both PST and PDT. On the spring-forward night,
+when 02:00 does not exist, the 10:00 UTC invocation runs once at 03:00 Pacific.
+The other daily invocation logs `desktop_release_retention_skipped` and exits.
+Do not replace the two expressions with one fixed UTC hour. Cron changes can
+take up to 15 minutes to propagate. See Cloudflare's
+[Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+documentation.
+
+Each admitted invocation performs this fail-closed transaction:
+
+1. Page through every active object under `stable/darwin/arm64/`. Parse and sort
+   semantic versions, require all five immutable objects for every release, and
+   require the two mutable pointers. An unexpected, duplicate, or incomplete
+   key aborts the run before any copy or deletion.
+2. Select all versions older than the highest five. For each exact candidate
+   key, stream the source object into the archive with its HTTP and custom
+   metadata and `InfrequentAccess`. A matching existing archive object is reused
+   without another write, which keeps retries idempotent and avoids resetting
+   the archive storage-duration clock.
+3. Before deleting anything, require the archive copy to have the same key,
+   size, ETag, HTTP metadata values, and custom metadata values as the source,
+   and require its storage class to be `InfrequentAccess`.
+4. Re-list the active bucket immediately before deletion. Abort without deleting
+   if any key, metadata, ETag, release grouping, or retained-version decision
+   changed while copies were in progress. This protects a release that races the
+   nightly job.
+5. Delete only the computed, verified candidate-key array. Re-list both sides,
+   require exactly five complete releases plus `Avalon.dmg` and
+   `latest-mac.yml` in active storage, prove every candidate is absent from the
+   active bucket, and prove its verified archive copy remains present.
+
+The Worker calls `noRetry()` so Cloudflare cannot start a concurrent automatic
+retry after a partial failure; the next nightly invocation safely reuses any
+verified archive copies. A successful admitted run logs
+`desktop_release_retention_completed` with its plan and copy/delete counts. An
+exception is a failed Cron event and must be investigated before manually
+deleting any object.
+
+Before deploying a change, run:
+
+```text
+pnpm --filter @avalon/release-retention test
+pnpm --filter @avalon/release-retention typecheck
+pnpm --filter @avalon/release-retention build
+```
+
+Exercise the real scheduled handler against the remote buckets without writes
+by starting Wrangler with the dedicated `wrangler.dry-run.jsonc` configuration.
+That configuration pins `RETENTION_DRY_RUN=true` and is the only checked-in
+configuration whose development bindings access the remote buckets:
+
+```text
+pnpm dotenv -e .env.local -- pnpm --filter @avalon/release-retention dev:dry-run
+curl "http://localhost:8799/cdn-cgi/handler/scheduled?cron=0+9+*+*+*&time=1786093200000&format=json"
+```
+
+The timestamp above simulates 02:00 PDT on 2026-08-07. Require an `ok` outcome
+and a structured completion log with `dryRun: true`. After deployment, preserve
+the Wrangler output showing both Cron Triggers and inspect Workers & Pages →
+`avalon-release-retention` → Cron Events after the next window. Alert on failed
+events, unexpected `dry-run` production reports, a non-five retained set, or any
+copy/delete count that does not match the plan.
+
+For a one-off repair, set `RETENTION_DRY_RUN` to `true` in the checked-in Worker
+configuration, deploy, and inspect one scheduled plan before authorizing live
+mode. Do not run ad hoc deletion commands while the scheduled Worker is enabled.
+If manual copying is unavoidable, preserve metadata and explicitly set
+`InfrequentAccess`, verify the exact objects as described above, and disable the
+Cron Triggers for the whole maintenance window.
+
+R2 aggregate object-count and bucket-size counters can lag object operations.
+Use successful object-list, HEAD, and GET checks as the completion authority;
+do not repeat a migration merely because `wrangler r2 bucket info` has stale
+totals.
+
+To restore an archived release, copy its five objects back to the public bucket
+as `Standard` storage while preserving metadata, then repeat the key, size,
+ETag/hash, and public HEAD verification. Restoring immutable objects does not
+change the update channel. Change `latest-mac.yml` or `Avalon.dmg` only as a
+separate, explicitly approved release rollback using the normal publisher's
+ordering and cache-purge safeguards.
 
 ### Desktop icon release gate
 
 If desktop icon artwork, generated icon assets, or the icon-family configuration changed, follow [Desktop application icons](DESKTOP_ICONS.md). Regenerate the assets, build the guarded local desktop package, and verify the running Dock icon in both light and dark macOS appearances before creating a release build. Also inspect Finder to confirm the static bundle icon remains correct.
 
-Current production status: the site and both regional APIs are deployed, migrations through `0026_bind_runtime_durability.sql` are live in both D1 databases, and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
+Current production status: the site, both regional APIs, and the private nightly `avalon-release-retention` Worker are deployed. The retention Worker keeps the five newest complete desktop releases active and archives older releases to private Infrequent Access storage at 02:00 Pacific. Migrations through `0026_bind_runtime_durability.sql` are live in both D1 databases, and both regional infrastructure health checks pass. Firecrawl, Resend invitation delivery, and work-stream and automation inbound email on `automation.with-avalon.com` are configured. Google identity OAuth is configured only on the Global Worker; the separate Google connector OAuth client is configured in both regions, and credentials issued by the former shared client were invalidated during the cutover. Expanded API enablement, consent-screen review, and human acceptance of both Google presets remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are registered with their regional secrets, callbacks, and ingress deployed. Notion provider-owned registration and secrets remain to be completed using `docs/PROVIDER_APPS.md`. Human test-account identity, cross-region invitation, connector, and inbound-email acceptance runs remain release gates.
 
 Deploy the EU Worker first for ordinary releases because the Global Worker has named service bindings to EU entrypoints. The first release that introduces work-stream inbound email is a special, compatibility-staged rollout: Global must export `WorkstreamEmailRoutingBridge` before EU can bind to it, while Global must not require `InboundEmailRegionalBridge` until EU exports that entrypoint. Use a bootstrap Global deployment with the new router export and without the `EU_INBOUND_EMAIL_BRIDGE` binding, deploy the full EU Worker, then deploy the full Global Worker. Never deploy either caller before its target entrypoint exists. Apply migrations to both D1 databases before the staged Worker rollout.
 
@@ -114,9 +242,9 @@ For ordinary releases after both entrypoints exist:
 2. Create or confirm each region's named Cloudflare resources. Scoped memory requires `avalon-global-memory` and `avalon-eu-memory` Vectorize indexes with 1,024 dimensions and cosine distance, plus the Workers AI binding declared by each API Worker.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
-5. Apply the D1 migration remotely to EU and Global.
+5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
 6. Deploy the EU Worker, then the Global Worker. For the first inbound-email release only, use the three-stage bootstrap order above.
-7. Call `GET /health` on both regional APIs.
+7. Call `GET /health` on both regional APIs with `pnpm health:regions`, which fails unless both regions report `ok`.
 8. Send a workspace invitation to a real test inbox, confirm Resend accepts it, and complete the one-time email-bound acceptance flow.
 9. Complete one Google identity login in a provider test account.
 10. Connect **Google Mail + Calendar** and verify a Gmail read, Gmail draft, Calendar read, and Calendar test-event create/update. Delete the provider-side test fixture afterward.
@@ -126,6 +254,48 @@ For ordinary releases after both entrypoints exist:
 14. After every successful deployment, run the configured Gitleaks gate, commit the complete verified release transaction, and push the authorized current branch. A deployment is not complete until its source and release metadata are present on the remote. Never stage `.env.local`, generated release bundles, dependency directories, or local Cloudflare state.
 
 Use `pnpm deploy:global` and `pnpm deploy:eu` to publish the regional Workers after the infrastructure prerequisites are satisfied. Do not mark Google capabilities release-ready until the provider credentials and APIs are configured, provider verification is complete where required, and steps 9–12 pass. A failed regional health check blocks desktop distribution for that region.
+
+### Automated workflows
+
+Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
+
+- `.github/workflows/ci.yml` runs on every pull request and on `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. It cannot gate the deployment workflows — they start on the same push, so CI is a race, not a barrier — which is why each deployment verifies the workspace itself before touching production. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place; nothing in the repository can enforce that on its own.
+- `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref. It does not create resources, confirm regional D1 IDs, or set Worker secrets — steps 2–4 stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
+- `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, and deploys the landing site. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` whose workspace version is ahead of the published record, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
+
+#### Releasing the desktop app by bumping the version
+
+Every published payload is immutable under `v<version>`, so a version can only be released once. The gate compares the workspace version against the last one actually published, recorded in `apps/site/release.config.json`: a merge whose version is ahead of that record releases it, and every merge after that skips. `apps/desktop/scripts/plan-release.mjs` makes that decision on a cheap runner before any macOS runner is claimed.
+
+**A tag is an artifact of a release, never an input to one.** Nothing triggers on `v*`, and the planner never reads tags, so pushing a tag by hand starts nothing and records nothing — the release record is the authority. That also keeps the decision on durable committed state: the concurrency group keeps only the newest pending run, so a rule derived from a single push's diff could have its run discarded and then skip forever, retiring a version silently. The record survives run collapse, which makes the planner idempotent — replaying a merge cannot double-publish.
+
+This inverts the older convention of recording a release and bumping to the next version afterward. Bump the version in the change you intend to ship; do not pre-bump at the start of a cycle, because the next merge to `main` will release it.
+
+The API and the desktop app are ordered by their own durations rather than by coordination between runners. A merge that changes both starts the two workflows together; the Workers deploy in minutes while the signed, notarized app takes tens of minutes, so the API is live long before anything reaches the update channel. The guarantee that matters is not the start order but the regional health gate, which runs after the verified build and before the payloads are published, and blocks distribution when a region is unhealthy. Each workflow serializes itself through its own concurrency group, all of them non-cancelling with `queue: single`: a run already in flight is never killed, and a newer arrival supersedes the older *pending* one. For releases that is the intended policy — intermediate versions do not need to ship, and the newest pending run carries the newest work.
+
+The release and the site deployment deliberately keep separate groups. Sharing one would order them, but `single` cancels the pending member when another queues, so a site deployment could discard a pending release. The residual overlap is that a release deploys the site as its final step from the config it just rewrote, and a standalone site deployment landing immediately afterwards could restore the superseded version; the guard is `check-site-release-config.mjs`, which runs against the live channel in the step immediately before the publish, leaving only a seconds-wide window. That group is declared on the release *job* rather than on the release workflow, so the planning job stays outside the queue — at workflow level a push that plans a skip would still occupy the single pending slot and could displace a queued release that had work to do.
+
+The tag is created locally so the existing guards can verify it against HEAD, and is pushed immediately after the payloads are published and the channel is promoted — before the release config is recorded and before the site is deployed. A release that fails before publication leaves no tag, so the same version can be retried by re-running the workflow or by merging a fix. After publication the release is live to updaters and cannot be retried, because a rebuild is not byte-identical and the immutable-object guard rejects it; the tag therefore has to exist by then, so that the remaining steps can be re-run or dispatched on their own. Pushing the tag with `GITHUB_TOKEN` deliberately does not start another run.
+
+A version whose bump has already merged still ships: the next merge to `main` releases it. That covers `1.33.0`, which was pre-bumped under the old convention — the record still reads `1.32.0`, so the first merge to `main` after this lands will release it. Bumping past it is rejected by `assertNextReleaseVersion`, which requires each release to be exactly one minor above the record.
+
+- `.github/workflows/deploy-site.yml` deploys the landing site on a merge to `main` that touches `apps/site`, and on manual dispatch. The site also deploys as the last step of every desktop release; this workflow covers copy and layout changes that have no release to ride along with.
+
+#### How the site learns the desktop version
+
+`apps/site/release.config.json` is the site's source of truth for the version it advertises and the digests it records. The desktop release publisher rewrites that file on its own runner after the payloads are published and the channel is promoted, and the release then builds and deploys the site from the rewritten copy — so a release always ships accurate information. The release then commits the rewritten file back to `main`, retrying if `main` moved, and refuses to move the record backwards when an older tag is replayed.
+
+That commit is load-bearing rather than tidy bookkeeping. `publish-r2-release.mjs` reads the committed copy through `assertNextReleaseVersion`, so a stale record rejects the *next* release outright, and `check-site-release-config.mjs` compares the same copy against the live channel, so a stale record fails every later site deployment.
+
+The site build only queries the live channel when the config is unpublished: `pnpm deploy` sets `AVALON_RELEASE_DISCOVERY=1`, and `discoverDesktopRelease` returns the configured version immediately when `published` is `true`, falling back to reading `latest-mac.yml` and verifying the canonical installer when it is not. That makes the committed config authoritative for a published channel, and it is why a standalone site deploy between a release and its recorded config would advertise the superseded version. The download link is the canonical `Avalon.dmg` regardless, so the failure is a wrong version string rather than a broken download. `scripts/check-site-release-config.mjs` runs in the site deployment and fails on that mismatch, naming the fix; an unreachable manifest is reported and passed over rather than blocking an unrelated copy change.
+
+Required repository configuration: secret `CLOUDFLARE_API_TOKEN` and variable `CLOUDFLARE_ACCOUNT_ID` in the `api-production` environment for the API deployment and in `site-production` for the site deployment, and the existing `desktop-release` environment for the macOS release. Worker secrets are never held by Actions; they are set per region with Wrangler.
+
+Deployments cannot overlap. Each workflow declares a concurrency group, so a second run waits for the first to finish, and a burst of merges collapses to the newest commit: GitHub keeps only one run pending per group and drops the superseded ones. Runs already in progress are never cancelled, so a migration cannot be interrupted halfway. Each run deploys the commit that triggered it, not the tip of `main` at the time it starts.
+
+The one interaction the platform does not sequence is an API deployment overlapping a macOS release, because they are separate workflows. The visible symptom is the desktop release failing its regional health gate while a Worker deployment is mid-flight; re-dispatch the tag once the API run is green. Avoid tagging a desktop release in the same minutes as an API-touching merge.
+
+Because API deployment is continuous, a merge to `main` is a production release. Do not add required reviewers to `api-production`; that environment scopes the Cloudflare token to the deployment job and is not an approval gate. Migrations apply automatically, so a migration is live the moment its pull request merges: an irreversible or destructive migration must be split into backward-compatible steps, and a rollback is a forward migration, never a redeployment of the previous Worker. A failed deployment leaves the migrations applied; recover by fixing forward on `main`.
 
 ## Provider configuration
 

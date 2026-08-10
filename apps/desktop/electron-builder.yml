@@ -30,9 +30,12 @@ mac:
         - "*.icns"
     - from: native/set-application-icon.js
       to: native/set-application-icon.js
+    - from: .native-build/system-audio-tap.node
+      to: native/system-audio-tap.node
   category: public.app-category.productivity
   extendInfo:
-    NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation.
+    NSMicrophoneUsageDescription: Avalon uses the microphone only when you start dictation or meeting notes.
+    NSAudioCaptureUsageDescription: Avalon captures computer audio only when you record meeting notes.
     NSDockTilePlugIn: AvalonDockTilePlugin.docktileplugin
   hardenedRuntime: true
   forceCodeSigning: true

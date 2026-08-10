@@ -1,4 +1,5 @@
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@avalon/connectors";
+import { nowIso } from "@avalon/db";
 import { z } from "zod";
 
 import type { Env } from "../env";
@@ -134,6 +135,16 @@ export async function sendWorkstreamMentionSlack(
     return "sent";
   } catch (error) {
     const reason = slackFailureReason(error);
+    if (connectionId && (reason === "missing_scope" || reason === "unauthorized")) {
+      await env.DB.prepare(
+        `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
+         WHERE id = ? AND connector_type = 'slack' AND scope = 'workspace' AND status <> 'disabled'`,
+      ).bind(JSON.stringify({
+        code: "slack_authorization_invalid",
+        message: `Slack workspace authorization needs reconnect (${reason})`,
+        reconnectRequired: true,
+      }), nowIso(), connectionId).run();
+    }
     const outcome = postedChunks > 0 ? "partial" : "skipped";
     console.warn(`Slack mention delivery ${outcome}`, {
       message_id: input.messageId,
