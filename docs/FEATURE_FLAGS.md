@@ -34,12 +34,23 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Activity classifier | `agent-model-activity-structured` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The first five names match the `AgentInferenceSource` values written to the
-inference ledger, so a ledger row and a flag key name the same agent. The last
-two are the standalone structured-output classifiers — message addressing, and
-semantic activity triggering plus contextual routing — which call OpenRouter
-directly rather than through the harness.
+inference ledger, so a ledger row and a flag key name the same agent. The rest
+are the standalone structured-output agents, which call OpenRouter directly
+rather than through the harness: message addressing; semantic activity
+triggering plus contextual routing; and the two halves of suggested work, which
+get separate flags because admission turns connector activity into prompts while
+ranking orders them per user, and pinning one should not move the other.
+
+**Adding an agent means adding a flag.** The set above is the whole of what
+`agent-model-flags.ts` knows about; an agent that reads `OPENROUTER_*` directly
+is invisible to every rollout. The exhaustiveness checks on
+`AGENT_MODEL_FLAG_KEYS` and `defaultAgentModelRouting` catch a *role* that was
+declared and not wired, but nothing catches a new service that never declared
+one.
 
 HyperSight deliberately has no fallbacks. Its blocks pin one model and never
 route onward, so a refresh cannot change voice partway through a configuration.
