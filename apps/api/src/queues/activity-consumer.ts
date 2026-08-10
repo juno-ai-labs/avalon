@@ -12,17 +12,16 @@ import {
   TriggerDefinitionSchema,
   WorkstreamWorkflowInputSchema,
   type ActivityQueueMessage,
-  type ActivityRoutingResult,
   type Message as AvalonMessage,
   type WorkstreamWorkflowInput
 } from "@avalon/contracts";
 import { z } from "zod";
 
-import { workstreamRoomName } from "../durable-objects/workstream-room";
 import type { Env } from "../env";
-import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 
 interface ActivityRow {
   id: string;
@@ -228,7 +227,10 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     const directWorkstreamIds = await routeDirectWatches(env, activity);
     const automationWorkstreamIds = await runMatchingAutomations(env, activity);
     for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
-    await routeContextually(env, activity, directWorkstreamIds);
+    const routedContextually = await routeContextually(env, activity, directWorkstreamIds);
+    if (directWorkstreamIds.size === 0 && !routedContextually) {
+      await enqueueActivityOpportunity(env, activity.id);
+    }
 
     await env.DB.prepare(
       `UPDATE activities
@@ -404,7 +406,7 @@ async function injectActivityMessage(
     createdAt,
     editedAt: null
   };
-  await publishRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
+  await publishWorkstreamRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
     type: "message_created",
     message: canonicalMessage
   });
@@ -645,8 +647,8 @@ async function routeContextually(
   env: Env,
   activity: ActivityRow,
   excludedWorkstreamIds: Set<string>
-): Promise<void> {
-  if (!env.OPENROUTER_API_KEY) return;
+): Promise<boolean> {
+  if (!env.OPENROUTER_API_KEY) return false;
   const personalOwner = activity.connection_scope === "personal" ? activity.connection_owner_user_id : null;
   const candidates = await env.DB.prepare(
     `SELECT w.id, w.title, w.objective, w.last_activity_at
@@ -664,7 +666,7 @@ async function routeContextually(
     .bind(activity.workspace_id, personalOwner)
     .all<WorkstreamCandidate>();
   const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
-  if (eligible.length === 0) return;
+  if (eligible.length === 0) return false;
 
   const result = await structuredClient(env).structured({
     messages: renderActivityRoutingMessages({
@@ -688,54 +690,20 @@ async function routeContextually(
     parse: (value) => ActivityRoutingResultSchema.parse(value)
   });
 
-  if (!result.suggest || result.confidence < 0.8 || !result.candidateWorkstreamId) return;
-  if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return;
-  await createSuggestion(env, activity, result);
-}
-
-async function createSuggestion(
-  env: Env,
-  activity: ActivityRow,
-  result: ActivityRoutingResult
-): Promise<void> {
-  const workstreamId = result.candidateWorkstreamId;
-  if (!workstreamId) return;
-  const id = crypto.randomUUID();
-  const createdAt = new Date().toISOString();
-  const inserted = await env.DB.prepare(
-    `INSERT OR IGNORE INTO activity_suggestions (
-       id, workspace_id, activity_id, workstream_id, confidence, reason,
-       matched_entities_json, status, created_at, resolved_at, resolved_by_user_id
-     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8, NULL, NULL)`
-  )
-    .bind(
-      id,
-      activity.workspace_id,
-      activity.id,
-      workstreamId,
-      result.confidence,
-      result.reason,
-      JSON.stringify(result.matchedEntities),
-      createdAt
-    )
-    .run();
-  if ((inserted.meta.changes ?? 0) === 0) return;
-
-  await publishRoomEvent(env, activity.workspace_region, activity.workspace_id, workstreamId, {
-    type: "activity_suggestion_created",
-    suggestion: {
-      id,
-      activityId: activity.id,
-      workstreamId,
-      title: activity.title,
-      summary: activity.summary,
-      confidence: result.confidence,
-      reason: result.reason,
-      status: "pending",
-      createdAt,
-      resolvedAt: null
-    }
+  if (!result.suggest || result.confidence < 0.8 || !result.candidateWorkstreamId) return false;
+  if (!eligible.some((candidate) => candidate.id === result.candidateWorkstreamId)) return false;
+  await createActivitySuggestion(env, {
+    region: activity.workspace_region,
+    workspaceId: activity.workspace_id,
+    activityId: activity.id,
+    activityTitle: activity.title,
+    activitySummary: activity.summary,
+    workstreamId: result.candidateWorkstreamId,
+    confidence: result.confidence,
+    reason: result.reason,
+    matchedEntities: result.matchedEntities,
   });
+  return true;
 }
 
 function structuredClient(env: Env): OpenRouterClient {
@@ -766,24 +734,4 @@ async function isWorkstreamVisibleToUser(
     .bind(workstreamId, userId)
     .first();
   return Boolean(visible);
-}
-
-async function publishRoomEvent(
-  env: Env,
-  region: "global" | "eu",
-  workspaceId: string,
-  workstreamId: string,
-  event: unknown
-): Promise<void> {
-  const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, region, env.APP_ENV);
-  const id = rooms.idFromName(workstreamRoomName(region, workspaceId, workstreamId));
-  const response = await rooms.get(id).fetch(
-    "https://workstream-room/internal/events",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event })
-    }
-  );
-  if (!response.ok) throw new Error(`workstream_event_rejected:${response.status}`);
 }

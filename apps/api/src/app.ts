@@ -14,6 +14,7 @@ import { resendInboundRoutes } from "./routes/resend";
 import { socketRoutes } from "./routes/socket";
 import { workspaceRoutes } from "./routes/workspace";
 import { workstreamRoutes } from "./routes/workstreams";
+import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { slackIngressRoutes } from "./routes/slack";
 import {
   isAllowedGitHubIngressRoute,
@@ -100,6 +101,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.use("*", requireAuth);
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
+  protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/automation-templates", templateRoutes);
   protectedApi.route("/automation-subscriptions", subscriptionRoutes);

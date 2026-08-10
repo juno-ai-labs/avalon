@@ -132,6 +132,28 @@ function streamResponse(content: string): Response {
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("launches a selected expanded suggested-work brief as the executable user turn", async () => {
+    const messageId = "00000000-0000-4000-8000-000000000030";
+    const projection = await __integrationTesting.projectModelProtocolTranscript(
+      projectionEnv([], {}),
+      { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, triggerMessageId: messageId },
+      [message(messageId, 1, {
+        author: "agent",
+        textContent: "Trace the failed release, identify the owner, and prepare the fix.",
+        structuredContent: {
+          kind: "suggested_work_expansion",
+          label: "Expanded by Avalon from suggested work",
+        },
+      })],
+    );
+
+    expect(projection.messages).toEqual([{
+      role: "user",
+      content: expect.stringContaining("USER-SELECTED AVALON SUGGESTED-WORK BRIEF"),
+    }]);
+    expect(projection.messages[0]?.content).toContain("Trace the failed release");
+  });
+
   it("projects an external Slack actor as an attributed user request", async () => {
     const projection = await __integrationTesting.projectModelProtocolTranscript(
       projectionEnv([], {}),

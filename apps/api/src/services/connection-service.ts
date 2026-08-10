@@ -188,11 +188,16 @@ export class ConnectionService {
       "google",
       stateData.connectionId ? connectionId : null,
     );
+    const identityConfig = JSON.stringify(verifiedIdentityConfig(
+      "google",
+      account.credentials,
+      account.providerAccountId,
+    ));
     if (stateData.connectionId) {
       const updated = await this.persistConnectionMutation(this.env.DB.prepare(
         `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
          credential_key_version = ?, granted_scopes_json = ?, provider_account_id = ?, display_name = ?,
-         model_plugin_id = ?, status = 'healthy', error_json = NULL,
+         model_plugin_id = ?, status = 'healthy', error_json = NULL, config_json = ?,
          next_poll_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
       ).bind(
@@ -203,6 +208,7 @@ export class ConnectionService {
         account.providerAccountId,
         displayName,
         modelPluginId,
+        identityConfig,
         at,
         at,
         connectionId,
@@ -217,7 +223,7 @@ export class ConnectionService {
          (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
           encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
           model_plugin_id, status, cursor_json, config_json, next_poll_at, created_at, updated_at)
-         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?, ?)`,
+         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?, ?)`,
       ).bind(
         connectionId,
         row.workspace_id,
@@ -230,6 +236,7 @@ export class ConnectionService {
         Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
         JSON.stringify(stateData.capabilities),
         modelPluginId,
+        identityConfig,
         at,
         at,
         at,
@@ -494,6 +501,9 @@ export class ConnectionService {
       installationId: providerAccountId,
       githubUserId,
       githubLogin: stateData.scope === "personal" ? stringField(credentials, "githubLogin") : null,
+      githubName: stateData.scope === "personal" ? stringField(credentials, "githubName") : null,
+      githubEmail: stateData.scope === "personal" ? stringField(credentials, "githubEmail") : null,
+      ...verifiedIdentityConfig("github", credentials, providerAccountId),
       repositorySelection: credentials["repositorySelection"] ?? null,
       repositoryBootstrap: {
         status: repositoryBootstrapStatus,
@@ -685,7 +695,10 @@ export class ConnectionService {
         providerAccountId,
         displayName,
         modelPluginId,
-        JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
+        JSON.stringify({
+          region: this.env.AVALON_REGION,
+          ...verifiedIdentityConfig(provider, credentials, providerAccountId),
+        }),
         at,
         connectionId,
         row.workspace_id,
@@ -712,7 +725,10 @@ export class ConnectionService {
           Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
           JSON.stringify(grantedCapabilities),
           modelPluginId,
-          JSON.stringify({ region: this.env.AVALON_REGION, providerAccountId }),
+          JSON.stringify({
+            region: this.env.AVALON_REGION,
+            ...verifiedIdentityConfig(provider, credentials, providerAccountId),
+          }),
           at,
           at,
         ), attemptId, connectionId);
@@ -1220,9 +1236,9 @@ export class ConnectionService {
          (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
           provider, provider_event_id, event_type, resource_type, provider_resource_id,
           actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash, external_people_json,
           processing_status, metadata_json)
-         VALUES (?, ?, ?, ?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+         VALUES (?, ?, ?, ?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
          ON CONFLICT DO NOTHING`,
       ).bind(
         activityId,
@@ -1246,6 +1262,7 @@ export class ConnectionService {
         JSON.stringify(arrayField(event, "entity_keys")),
         dedupeKey,
         await sha256(rawBody),
+        JSON.stringify(arrayField(event, "external_people")),
         JSON.stringify(recordField(event, "metadata")),
       ),
     ]);
@@ -1655,6 +1672,48 @@ function recordField(record: Record<string, unknown>, key: string): Record<strin
 function arrayField(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function verifiedIdentityConfig(
+  provider: ConnectorOAuthProvider,
+  credentials: Record<string, unknown>,
+  providerAccountId: string,
+): Record<string, string | null> {
+  if (provider === "google") return {
+    providerTenantId: providerAccountId,
+    providerUserId: providerAccountId,
+    handle: null,
+    verifiedEmail: stringField(credentials, "providerAccountEmail"),
+    identityDisplayName: stringField(credentials, "providerAccountName"),
+  };
+  if (provider === "github") return {
+    providerTenantId: providerAccountId,
+    providerUserId: stringField(credentials, "githubUserId"),
+    handle: stringField(credentials, "githubLogin"),
+    verifiedEmail: stringField(credentials, "githubEmail"),
+    identityDisplayName: stringField(credentials, "githubName"),
+  };
+  if (provider === "linear") return {
+    providerTenantId: stringField(credentials, "organizationId") ?? providerAccountId,
+    providerUserId: stringField(credentials, "authorizedUserId"),
+    handle: null,
+    verifiedEmail: stringField(credentials, "authorizedUserEmail"),
+    identityDisplayName: stringField(credentials, "authorizedUserName"),
+  };
+  if (provider === "notion") return {
+    providerTenantId: stringField(credentials, "notionWorkspaceId") ?? providerAccountId,
+    providerUserId: stringField(credentials, "notionOwnerUserId"),
+    handle: null,
+    verifiedEmail: stringField(credentials, "notionOwnerUserEmail"),
+    identityDisplayName: stringField(credentials, "notionOwnerUserName"),
+  };
+  return {
+    providerTenantId: stringField(credentials, "teamId") ?? providerAccountId.split(":")[0] ?? providerAccountId,
+    providerUserId: stringField(credentials, "slackUserId") ?? providerAccountId.split(":")[1] ?? null,
+    handle: null,
+    verifiedEmail: null,
+    identityDisplayName: null,
+  };
 }
 
 function reconcileGoogleAccount(
