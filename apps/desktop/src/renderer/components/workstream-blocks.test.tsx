@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ElicitationData, Message } from '../lib/types';
-import { ElicitationPanel, MessageBlock } from './workstream-blocks';
+import { createConnectorMentionToken, ElicitationPanel, MessageBlock, withConnectorMentionLinks } from './workstream-blocks';
 
 const copyText = vi.hoisted(() => vi.fn());
 
@@ -338,6 +338,118 @@ describe('MessageBlock markdown', () => {
     expect(screen.getByText('@Grace Hopper')).toHaveClass('mention-text-fallback');
     expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '@Grace Hopper' })).not.toBeInTheDocument();
+  });
+
+  it('renders connection mentions as chips from their stored offsets', () => {
+    const text = 'Ask @Google Drive and @Linear to sync.';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-mention',
+      text,
+      mentions: [
+        { type: 'connector', connectorType: 'google_drive', startOffset: 4, endOffset: 17 },
+        { type: 'connector', connectorType: 'linear', startOffset: 22, endOffset: 29 },
+      ],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    const drive = screen.getByText('@Google Drive').closest('.mention-chip');
+    expect(drive).toHaveAttribute('data-connector-type', 'google_drive');
+    expect(drive?.tagName).toBe('SPAN');
+    expect(screen.getByText('@Linear').closest('.mention-chip'))
+      .toHaveAttribute('data-connector-type', 'linear');
+    expect(screen.queryByRole('link', { name: '@Google Drive' })).not.toBeInTheDocument();
+    expect(document.querySelector('.markdown-body')).toHaveTextContent(text);
+  });
+
+  it('leaves connection text alone when its offsets do not name a mention', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-mention-stale',
+      text: 'Ask @Google Drive to sync.',
+      mentions: [{ type: 'connector', connectorType: 'google_drive', startOffset: 0, endOffset: 3 }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
+    expect(document.querySelector('.markdown-body')).toHaveTextContent('Ask @Google Drive to sync.');
+  });
+
+  it('escapes connection labels and ignores overlapping or malformed ranges', () => {
+    expect(withConnectorMentionLinks('Ping @Ops [beta]', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 16 },
+    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector:tok:ops)');
+
+    expect(withConnectorMentionLinks('Ping @Ops *now* & co', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 20 },
+    ], 'tok')).toBe('Ping [@Ops \\*now\\* \\& co](connector:tok:ops)');
+
+    expect(withConnectorMentionLinks('Ping @Ops', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
+      { type: 'connector', connectorType: 'ops', startOffset: 6, endOffset: 9 },
+    ], 'tok')).toBe('Ping [@Ops](connector:tok:ops)');
+
+    expect(withConnectorMentionLinks('Ping @Ops', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 40 },
+      { type: 'person', personId: 'user-1', startOffset: 0, endOffset: 4 },
+    ], 'tok')).toBe('Ping @Ops');
+  });
+
+  it('mints a distinct connector token per call', () => {
+    expect(createConnectorMentionToken()).not.toBe(createConnectorMentionToken());
+    expect(createConnectorMentionToken()).toMatch(/^[0-9a-z]+$/u);
+  });
+
+  it('does not chip a hand-authored connector link that no mention backs', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-forged',
+      authorType: 'agent',
+      author: undefined,
+      text: 'Routed through [@Slack workspace](connector:slack) already.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
+    expect(screen.getByText('@Slack workspace')).toHaveClass('mention-text-fallback');
+    expect(screen.queryByRole('link', { name: '@Slack workspace' })).not.toBeInTheDocument();
+  });
+
+  it('does not let a forged link borrow a label from a genuine mention beside it', () => {
+    const text = 'Ping @Ops and [@Ops](connector:ops) again';
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-borrowed',
+      authorType: 'agent',
+      author: undefined,
+      text,
+      mentions: [{ type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 }],
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    // The genuine occurrence chips; the hand-authored one beside it does not.
+    const chips = [...document.querySelectorAll('.mention-chip')];
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveAttribute('data-connector-type', 'ops');
+    expect(document.querySelector('.mention-text-fallback')).toHaveTextContent('@Ops');
+  });
+
+  it('renders a message carrying a malformed connector escape without throwing', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-malformed',
+      authorType: 'agent',
+      author: undefined,
+      text: 'See [broken](connector:%) and carry on.',
+    };
+
+    expect(() => render(<MessageBlock {...actions} message={message} />)).not.toThrow();
+    expect(document.querySelector('.markdown-body')).toHaveTextContent('See broken and carry on.');
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
   });
 
   it('does not treat legacy mention links as person chips', () => {

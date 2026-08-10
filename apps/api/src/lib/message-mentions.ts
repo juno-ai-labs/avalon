@@ -90,9 +90,14 @@ export function prepareMentionMarkdown(
     }
   });
 
+  // Overlapping ranges are resolved by the loop below, which keeps the first and
+  // skips anything starting inside it — so this order decides who wins. Longest
+  // first at a shared start: a workspace holding both "Bob" and "Bob Builder"
+  // emits a range for each against `@Bob Builder`, and the writer meant the
+  // longer one. It is also what the composer highlights while the draft is typed.
   accepted.sort((left, right) =>
     left.mention.startOffset - right.mention.startOffset
-    || left.mention.endOffset - right.mention.endOffset
+    || right.mention.endOffset - left.mention.endOffset
     || left.inputOrder - right.inputOrder,
   );
 
