@@ -5,8 +5,9 @@ in this repository. Read it before opening a PR. The diff shows *how* something
 changed; the description is the durable record of *what* changed and *why*, and
 it is the reviewer's map through the change.
 
-The repository has no `.github/pull_request_template.md` — this document is the
-template.
+[`.github/pull_request_template.md`](../.github/pull_request_template.md)
+pre-fills a new PR with this shape. The template is the layout; this document is
+the specification behind it, and the two are updated together.
 
 ## Required sections
 
