@@ -2,6 +2,9 @@
 
 ## Local development
 
+[The development environment guide](dev-environment.md) covers this in full,
+including the sandbox-specific differences; the summary follows.
+
 From the repository root:
 
 ```text
