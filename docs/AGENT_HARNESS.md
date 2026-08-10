@@ -101,7 +101,7 @@ OPENROUTER_API_KEY=... pnpm eval:models --models x-ai/grok-4.3,google/gemini-3.6
 OPENROUTER_API_KEY=... pnpm eval:models --suite activity_routing --json
 ```
 
-Behind an HTTP proxy, set `NODE_USE_ENV_PROXY=1` as well: Node's `fetch` does not read `HTTPS_PROXY` on its own, so a proxied network otherwise fails with a bare connection error. The run also needs `openrouter.ai` reachable — a managed environment with an egress allowlist must include that host, which is a network setting rather than anything the runner can configure.
+A run needs `openrouter.ai` reachable. Behind an HTTP proxy, set `NODE_USE_ENV_PROXY=1` as well: Node's `fetch` does not read `HTTPS_PROXY` on its own, so a proxied network otherwise fails with a bare connection error. In an agent sandbox the host must also be permitted by the network policy; [outbound HTTPS through the sandbox proxy](sandbox-proxy.md) covers telling a policy denial apart from a client that breaks on the tunnel, and neither is something the runner can configure around.
 
 Runs default to three repeats per case because these decisions are stochastic; the report lists any case that failed on even one run, along with median latency and how often the model needed a schema repair. The exit status is non-zero when any run failed.
 
