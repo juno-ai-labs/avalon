@@ -105,7 +105,10 @@ const SURFACE: Array<{
         mode: "read",
         idempotency: "safe",
         inputSchema: { type: "object", additionalProperties: false, properties: {} },
-        result: { nowIso: "2026-08-10T09:15:00.000Z", timezone: "America/Los_Angeles" },
+        // 09:15 in the stated zone, so "today at 10" is an hour out and a model
+        // that honours the timezone lands on a different instant than one that
+        // reads the UTC clock as local.
+        result: { nowIso: "2026-08-10T16:15:00.000Z", timezone: "America/Los_Angeles" },
       },
       {
         name: "request_elicitation",
@@ -341,6 +344,45 @@ const SURFACE: Array<{
         },
       },
       {
+        name: "directory_search",
+        description: "Resolve a person's name to their workspace directory entry and email address.",
+        capability: "google.directory_search",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: QUERY_SCHEMA as unknown as Record<string, unknown>,
+        result: {
+          people: [
+            { name: "Priya Raman", email: "priya.raman@northwind.example" },
+            { name: "Mira Okonkwo", email: "mira.okonkwo@northwind.example" },
+          ],
+        },
+      },
+      {
+        name: "calendar_create_event",
+        description:
+          "Create one calendar event. Set addGoogleMeet to attach a Google Meet conference to the event.",
+        capability: "google.calendar_create_event",
+        mode: "write",
+        idempotency: "provider_key",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string" },
+            startIso: { type: "string" },
+            endIso: { type: "string" },
+            attendees: { type: "array", items: { type: "string" } },
+            addGoogleMeet: { type: "boolean" },
+          },
+          required: ["summary", "startIso"],
+        },
+        result: {
+          eventId: "evt-5512",
+          htmlLink: "https://calendar.example/event/evt-5512",
+          hangoutLink: "https://meet.example/abc-defg-hij",
+        },
+      },
+      {
         name: "gmail_read_message",
         description: "Read the full body of one Gmail message by identifier.",
         capability: "google.gmail_read_message",
@@ -511,6 +553,38 @@ export interface AgenticExpectation {
   expectedStatus?: HarnessOutcome["status"];
   /** The final message must not assert that a failed write succeeded. */
   forbidSuccessClaim?: boolean;
+  /**
+   * Constraints on the arguments of a call, not just its name. Reaching the
+   * right tool is not the same as asking it for the right thing: a request to
+   * attach conferencing is satisfied by an argument, and a run that creates the
+   * event without it has done the wrong work with the right tool.
+   */
+  requireArgument?: Array<{
+    tool: string;
+    /** Dotted path into the tool input. */
+    path: string;
+    /** Present and not false/null/empty when omitted; otherwise deep-equal. */
+    equals?: unknown;
+    /** Human-readable description used in the failure note. */
+    describe: string;
+  }>;
+}
+
+function readPath(input: unknown, path: string): unknown {
+  let current = input;
+  for (const segment of path.split(".")) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function argumentSatisfied(value: unknown, equals: unknown, hasEquals: boolean): boolean {
+  if (hasEquals) return JSON.stringify(value) === JSON.stringify(equals);
+  if (value === undefined || value === null || value === false) return false;
+  if (typeof value === "string") return value.length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
 }
 
 export interface AgenticCase {
@@ -695,6 +769,39 @@ export const agenticCases: AgenticCase[] = [
     },
   },
   {
+    id: "agentic/calendar_with_conferencing",
+    intent:
+      "A scheduling request carries three separable requirements — a relative date that only core_current_time can resolve, attendees named without addresses, and conferencing that is an argument rather than a tool — and reaching the calendar tool satisfies none of them on its own.",
+    objective: "Keep the team's calendar current and schedule meetings when asked.",
+    message: "create a meeting with Priya and Mira today at 10 AM. Make sure it has a Google meet attached.",
+    expected: {
+      mustCall: [
+        wireToolName("core", "current_time"),
+        wireToolName("google", "directory_search"),
+        wireToolName("google", "calendar_create_event"),
+      ],
+      order: [
+        [wireToolName("core", "current_time"), wireToolName("google", "calendar_create_event")],
+        [wireToolName("google", "directory_search"), wireToolName("google", "calendar_create_event")],
+      ],
+      requireArgument: [
+        {
+          tool: wireToolName("google", "calendar_create_event"),
+          path: "addGoogleMeet",
+          equals: true,
+          describe: "a Google Meet attached",
+        },
+        {
+          tool: wireToolName("google", "calendar_create_event"),
+          path: "attendees",
+          describe: "the named attendees",
+        },
+      ],
+      requireDiscoveryBeforeConnector: true,
+      expectedStatus: "completed",
+    },
+  },
+  {
     id: "agentic/slack_reply",
     intent: "A message the user asks to be posted goes through the connector rather than being drafted in the reply.",
     objective: "Keep the team channel updated on release status.",
@@ -760,6 +867,20 @@ export function gradeAgenticCase(
       failures.push("claimed the write succeeded after the tool call failed");
     }
   }
+  for (const requirement of expectation.requireArgument ?? []) {
+    const calls = events.filter(
+      (event): event is Extract<HarnessEvent, { type: "tool_started" }> =>
+        event.type === "tool_started" && event.toolName === requirement.tool,
+    );
+    if (calls.length === 0) continue; // A missing call is already reported by mustCall.
+    const hasEquals = Object.prototype.hasOwnProperty.call(requirement, "equals");
+    const satisfied = calls.some((call) =>
+      argumentSatisfied(readPath(call.input, requirement.path), requirement.equals, hasEquals));
+    if (!satisfied) {
+      const seen = calls.map((call) => JSON.stringify(readPath(call.input, requirement.path))).join(", ");
+      failures.push(`${requirement.tool} was called without ${requirement.describe} (${requirement.path}=${seen})`);
+    }
+  }
 
   const verdict: AgenticVerdict = {
     passed: failures.length === 0,
@@ -779,5 +900,8 @@ function describeExpectation(expectation: AgenticExpectation): string {
   }
   if (expectation.expectedStatus) parts.push(`ends ${expectation.expectedStatus}`);
   if (expectation.forbidSuccessClaim) parts.push("no fabricated success");
+  for (const requirement of expectation.requireArgument ?? []) {
+    parts.push(`${requirement.tool} with ${requirement.describe}`);
+  }
   return parts.join("; ");
 }

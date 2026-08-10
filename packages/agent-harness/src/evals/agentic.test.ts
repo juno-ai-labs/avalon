@@ -8,14 +8,14 @@ import {
   wireToolName,
 } from "./agentic";
 
-function started(toolName: string): HarnessEvent {
+function started(toolName: string, input: unknown = {}): HarnessEvent {
   return {
     type: "tool_started",
     toolCallId: `call-${toolName}`,
     toolName,
     pluginId: "plugin",
     policy: {},
-    input: {},
+    input,
   } as unknown as HarnessEvent;
 }
 
@@ -120,6 +120,47 @@ describe("agentic grading", () => {
       events,
     );
     expect(honest.passed).toBe(true);
+  });
+
+  it("fails when the right tool is called with the wrong arguments", () => {
+    const expectation = {
+      requireArgument: [
+        { tool: "google_calendar_create_event", path: "addGoogleMeet", equals: true, describe: "a Google Meet" },
+      ],
+    };
+    const without = gradeAgenticCase(expectation, outcome(), [
+      started("google_calendar_create_event", { summary: "Sync", startIso: "2026-08-10T17:00:00.000Z" }),
+    ]);
+    expect(without.passed).toBe(false);
+    expect(without.note).toContain("without a Google Meet");
+
+    const with_ = gradeAgenticCase(expectation, outcome(), [
+      started("google_calendar_create_event", { summary: "Sync", addGoogleMeet: true }),
+    ]);
+    expect(with_.passed).toBe(true);
+  });
+
+  it("treats an absent, empty, or false argument as unsatisfied but a non-empty one as met", () => {
+    const expectation = {
+      requireArgument: [{ tool: "google_calendar_create_event", path: "attendees", describe: "attendees" }],
+    };
+    for (const input of [{}, { attendees: [] }, { attendees: null }]) {
+      expect(gradeAgenticCase(expectation, outcome(), [started("google_calendar_create_event", input)]).passed)
+        .toBe(false);
+    }
+    const populated = gradeAgenticCase(expectation, outcome(), [
+      started("google_calendar_create_event", { attendees: ["a@b.example"] }),
+    ]);
+    expect(populated.passed).toBe(true);
+  });
+
+  it("leaves an argument requirement to mustCall when the tool was never called", () => {
+    const verdict = gradeAgenticCase(
+      { requireArgument: [{ tool: "google_calendar_create_event", path: "addGoogleMeet", describe: "a Meet" }] },
+      outcome(),
+      [started("core_current_time")],
+    );
+    expect(verdict.passed).toBe(true);
   });
 
   it("does not penalise a success claim when no tool failed", () => {

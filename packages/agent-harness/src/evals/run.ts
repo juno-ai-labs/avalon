@@ -52,6 +52,8 @@ interface Options {
   repeat: number;
   concurrency: number;
   suites: SuiteId[] | null;
+  /** Substring filter over case ids, for iterating on one case. */
+  caseFilter: string | null;
   json: boolean;
 }
 
@@ -83,6 +85,7 @@ function parseOptions(argv: string[]): Options {
     repeat: 3,
     concurrency: 4,
     suites: null,
+    caseFilter: null,
     json: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -105,6 +108,9 @@ function parseOptions(argv: string[]): Options {
         break;
       case "--suite":
         options.suites = value.split(",").map((suite) => suite.trim()) as SuiteId[];
+        break;
+      case "--case":
+        options.caseFilter = value;
         break;
       default:
         throw new Error(`Unknown argument ${flag}`);
@@ -142,7 +148,13 @@ function structuredOutcome(verdict: CaseVerdict): TaskOutcome {
 
 function buildTasks(options: Options): Task[] {
   const wanted = (suite: SuiteId): boolean => options.suites === null || options.suites.includes(suite);
-  const tasks: Task[] = [];
+  const built: Task[] = [];
+  const tasks = {
+    push(task: Task): void {
+      if (options.caseFilter !== null && !task.caseId.includes(options.caseFilter)) return;
+      built.push(task);
+    },
+  };
   for (const model of options.models) {
     for (let run = 1; run <= options.repeat; run += 1) {
       if (wanted("addressing")) {
@@ -256,7 +268,10 @@ function buildTasks(options: Options): Task[] {
       }
     }
   }
-  return tasks;
+  if (options.caseFilter !== null && built.length === 0) {
+    throw new Error(`--case ${options.caseFilter} matched no case`);
+  }
+  return built;
 }
 
 async function runTask(task: Task, context: RunContext): Promise<Attempt> {
