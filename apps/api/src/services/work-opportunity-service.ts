@@ -15,6 +15,11 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  resolveAgentModelRouting,
+  type AgentModelFlagContext,
+  type AgentModelRole,
+} from "./agent-model-flags";
 import { createActivitySuggestion } from "./activity-suggestion-service";
 import { hydrateConnectorActivitySource } from "./integrations";
 import { WorkstreamService } from "./workstream-service";
@@ -166,16 +171,25 @@ interface OpportunityCandidateRow {
   last_impressed_at: string | null;
 }
 
-function splitFallbacks(value: string): string[] {
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
-}
-
-function modelClient(env: Env): OpenRouterClient {
-  return new OpenRouterClient({
-    apiKey: env.OPENROUTER_API_KEY,
-    primaryModel: env.OPENROUTER_STRUCTURED_MODEL,
-    fallbackModels: splitFallbacks(env.OPENROUTER_FALLBACK_MODELS),
-  });
+/**
+ * Admission and ranking are separate agents with separate flags: admission turns
+ * connector activity into prompts, ranking orders them per user, and pinning one
+ * to a different model should not move the other.
+ */
+async function modelClient(
+  env: Env,
+  role: Extract<AgentModelRole, "work_opportunity_admission" | "work_opportunity_ranking">,
+  context: AgentModelFlagContext,
+): Promise<{ client: OpenRouterClient; model: string }> {
+  const routing = await resolveAgentModelRouting(env, role, context);
+  return {
+    client: new OpenRouterClient({
+      apiKey: env.OPENROUTER_API_KEY,
+      primaryModel: routing.model,
+      fallbackModels: routing.fallbackModels,
+    }),
+    model: routing.model,
+  };
 }
 
 function parseRecord(value: unknown): Record<string, unknown> {
@@ -1059,7 +1073,11 @@ async function processModelBatch(
     `UPDATE opportunity_batch_events SET status = 'processing', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?`,
   ).bind(at, event.id)));
   try {
-    const result = await modelClient(env).structured({
+    const admission = await modelClient(env, "work_opportunity_admission", {
+      workspaceId: window.workspace_id,
+      userId: window.audience_user_id ?? undefined,
+    });
+    const result = await admission.client.structured({
       messages: renderWorkOpportunityAdmissionMessages({
         audience: { scope: window.audience_scope, userId: window.audience_user_id },
         members: context.members,
@@ -1282,7 +1300,8 @@ async function rankBatch(
   candidates: Awaited<ReturnType<typeof rankingCandidates>>,
   roundNumber: number,
 ) {
-  const result = await modelClient(env).structured({
+  const ranking = await modelClient(env, "work_opportunity_ranking", { workspaceId, userId });
+  const result = await ranking.client.structured({
     messages: renderWorkOpportunityRankingMessages({
       user: { id: userId, name: userName },
       candidates: candidates.map((candidate) => ({
@@ -1310,7 +1329,7 @@ async function rankBatch(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     newId(), workspaceId, userId, JSON.stringify(candidates.map((candidate) => candidate.id)),
-    JSON.stringify(ids), result.rankingReasoning, env.OPENROUTER_STRUCTURED_MODEL ?? null, roundNumber, nowIso(),
+    JSON.stringify(ids), result.rankingReasoning, ranking.model, roundNumber, nowIso(),
   ).run();
   return { ids, reasoning: result.rankingReasoning };
 }
@@ -1418,6 +1437,11 @@ async function storeRankingSet(
   status: "ready" | "failed",
 ): Promise<void> {
   const at = nowIso();
+  // The ranking agent's flagged model, so this column names the model the set
+  // would be produced with rather than a variable the agent may not be using.
+  // Still nullable: a deployment with no structured model configured resolves an
+  // empty default, and the column has always recorded that as NULL.
+  const { model } = await resolveAgentModelRouting(env, "work_opportunity_ranking", { workspaceId, userId });
   await env.DB.prepare(
     `INSERT INTO suggested_work_sets
      (workspace_id, user_id, workspace_version, candidate_fingerprint, opportunity_ids_json,
@@ -1430,7 +1454,7 @@ async function storeRankingSet(
       updated_at = excluded.updated_at`,
   ).bind(
     workspaceId, userId, version, fingerprint, JSON.stringify(ids), reasoning.slice(0, 20_000),
-    env.OPENROUTER_STRUCTURED_MODEL ?? null, status, at, at,
+    model.length > 0 ? model : null, status, at, at,
   ).run();
 }
 
