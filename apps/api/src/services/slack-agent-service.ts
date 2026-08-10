@@ -2219,17 +2219,62 @@ export class SlackAgentService {
     const links = Array.isArray(event.links) ? event.links.filter((link): link is Record<string, unknown> => Boolean(link) && typeof link === "object") : [];
     if (!channel || !ts || links.length === 0) return;
     const connection = await this.connectionForTeam(teamId);
-    const unfurls: Record<string, unknown> = {};
+    const linkedWorkstreams = new Map<string, string>();
     for (const link of links) {
-      if (typeof link.url !== "string") continue;
+      if (typeof link.url !== "string" || linkedWorkstreams.size >= SLACK_UNFURL_MAX_LINKS) continue;
       // Slack only delivers link_shared for the app's registered unfurl domain,
       // so only the HTTPS shapes below can ever arrive here. The shared parser
       // still accepts the raw deep link, and it never throws on a malformed URL.
       const workstreamId = parseWorkstreamLink(link.url, { webBaseUrl: this.env.PUBLIC_WEB_BASE_URL });
-      if (!workstreamId) continue;
-      unfurls[link.url] = { blocks: [{ type: "section", text: { type: "mrkdwn", text: "*Avalon*\nOpen this item in Avalon to view it with your existing workspace permissions." } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open in Avalon" }, url: workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId), action_id: "avalon_open_unfurl" }] }] };
+      if (workstreamId) linkedWorkstreams.set(link.url, workstreamId);
     }
-    if (Object.keys(unfurls).length) await slackApi(await this.botToken(connection), "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
+    if (linkedWorkstreams.size === 0) return;
+    const token = await this.botToken(connection);
+    // Summary detail is withheld only where Slack itself has put another
+    // company in the room. Every conversation inside the workspace — public,
+    // private, DM, group DM — sees it, and an audience lookup that fails falls
+    // back to the anonymous card rather than dropping the unfurl.
+    const externallyShared = await slackChannelIsExternallyShared(token, channel);
+    const summaries = externallyShared
+      ? new Map<string, WorkstreamUnfurlSummary>()
+      : await this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]);
+    const unfurls: Record<string, unknown> = {};
+    for (const [url, workstreamId] of linkedWorkstreams) {
+      unfurls[url] = {
+        blocks: workstreamUnfurlBlocks(
+          summaries.get(workstreamId) ?? null,
+          workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId),
+        ),
+      };
+    }
+    await slackApi(token, "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
+  }
+
+  private async workstreamUnfurlSummaries(
+    workspaceId: string,
+    workstreamIds: string[],
+  ): Promise<Map<string, WorkstreamUnfurlSummary>> {
+    if (!workstreamIds.length) return new Map();
+    // Scoping to the connection's own workspace is the one check here that is
+    // not a matter of taste: a link to another Avalon workspace's work stream
+    // must fall through to the anonymous card rather than be named in this
+    // Slack team. A miss is indistinguishable from a link that never existed.
+    const rows = await this.env.DB.prepare(
+      `SELECT w.id, w.title, w.harness_status, w.last_activity_at, w.origin_type,
+              t.name AS automation_name
+         FROM workstreams w
+         LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
+         LEFT JOIN automation_templates t ON t.id = s.template_id
+        WHERE w.workspace_id = ? AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
+    ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
+    return new Map((rows.results ?? []).map((row) => [String(row.id), {
+      title: typeof row.title === "string" ? row.title : "",
+      harnessStatus: typeof row.harness_status === "string" ? row.harness_status : "",
+      lastActivityAt: typeof row.last_activity_at === "string" ? row.last_activity_at : null,
+      automationName: row.origin_type === "automation" && typeof row.automation_name === "string"
+        ? row.automation_name
+        : null,
+    } satisfies WorkstreamUnfurlSummary]));
   }
 
   private async linkedIdentity(teamId: string, slackUserId: string): Promise<SlackIdentity | null> {
@@ -3085,6 +3130,87 @@ function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+interface WorkstreamUnfurlSummary {
+  title: string;
+  harnessStatus: string;
+  lastActivityAt: string | null;
+  automationName: string | null;
+}
+
+/** Slack sends at most a handful of links per message; bound the batch anyway. */
+const SLACK_UNFURL_MAX_LINKS = 10;
+
+const SLACK_UNFURL_STATUS_LABELS: Record<string, string> = {
+  needs_input: ":warning: Needs input",
+  running: ":large_green_circle: Running",
+  scheduled: "Scheduled",
+  completed: "Completed",
+  failed: ":red_circle: Failed",
+  idle: "Idle",
+};
+
+/**
+ * True when Slack has put another company in this conversation — an externally
+ * shared channel or a Slack Connect DM. A lookup that fails is treated as
+ * external: the unfurl still posts, without the work stream's details.
+ */
+async function slackChannelIsExternallyShared(token: string, channelId: string): Promise<boolean> {
+  try {
+    const result = await slackApi(token, "conversations.info", {
+      channel: channelId,
+    }, AbortSignal.timeout(5_000));
+    return result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true;
+  } catch (error) {
+    console.warn("Slack unfurl audience lookup failed; withholding work-stream detail", {
+      channel_id: channelId,
+      reason: slackErrorReason(error),
+    });
+    return true;
+  }
+}
+
+function slackUnfurlUpdatedAt(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  // Slack renders this token in each reader's own timezone. An absolute stamp
+  // also cannot rot: the card is written once and never re-rendered, so a
+  // relative "24m ago" would still claim 24m a week later.
+  return `Updated <!date^${Math.floor(parsed / 1000)}^{date_short_pretty} at {time}|${new Date(parsed).toISOString()}>`;
+}
+
+function workstreamUnfurlBlocks(
+  summary: WorkstreamUnfurlSummary | null,
+  url: string,
+): Record<string, unknown>[] {
+  const openButton = {
+    type: "actions",
+    elements: [{
+      type: "button",
+      text: { type: "plain_text", text: "Open in Avalon" },
+      url,
+      action_id: "avalon_open_unfurl",
+    }],
+  };
+  if (!summary) {
+    return [
+      { type: "section", text: { type: "mrkdwn", text: "*Avalon*\nOpen this item in Avalon to view it with your existing workspace permissions." } },
+      openButton,
+    ];
+  }
+  // Truncate before escaping, or a cut can land inside an `&amp;` entity.
+  const title = escapeMrkdwn(summary.title.trim().slice(0, 200) || "Untitled work stream");
+  const detail = [
+    SLACK_UNFURL_STATUS_LABELS[summary.harnessStatus] ?? null,
+    slackUnfurlUpdatedAt(summary.lastActivityAt),
+    summary.automationName ? `via ${escapeMrkdwn(summary.automationName.trim().slice(0, 100))}` : null,
+  ].filter((part): part is string => part !== null).join(" · ");
+  return [
+    { type: "section", text: { type: "mrkdwn", text: `*<${url}|${title}>*${detail ? `\n${detail}` : ""}` } },
+    openButton,
+  ];
+}
+
 export const __slackAgentTesting = {
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
@@ -3099,6 +3225,7 @@ export const __slackAgentTesting = {
   slackEventActorUserIds,
   slackChannelResolutionDenial,
   slackChannelType,
+  workstreamUnfurlBlocks,
   slackIngressRetryable,
   slackReconnectRequired,
 };
