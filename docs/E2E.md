@@ -27,6 +27,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 6. Open **New automation**, verify that required capabilities must each be bound to a healthy connection, and browse workspace templates without exposing the regular work-stream composer.
 7. Send a human-only acknowledgment and confirm no agent run starts; then submit an actionable request and confirm streaming/tool events appear once despite reconnects.
 8. Mention a workspace member who is not participating and confirm that no participant is added until the person accepts the confirmation prompt.
+9. Type `@` mentions in the composer and confirm each participant or connection Avalon recognizes is highlighted in the brand color as soon as its full name is typed or picked, while half-typed and unknown handles stay plain. Confirm the highlight tracks the caret, wrapping, and scrolling exactly, and that an IME composition still shows its in-flight text.
 
 ## Desktop signup, invitations, and settings
 
