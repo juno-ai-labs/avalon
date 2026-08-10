@@ -59,6 +59,8 @@ const bridge: AvalonDesktopBridge = {
   getApplicationSettings: () => ipcRenderer.invoke('application-settings:get') as Promise<DesktopApplicationSettings>,
   setLockdownMode: (enabled) =>
     ipcRenderer.invoke('application-settings:set-lockdown-mode', enabled) as Promise<DesktopApplicationSettings>,
+  setDebugEnabled: (enabled) =>
+    ipcRenderer.invoke('application-settings:set-debug-enabled', enabled) as Promise<DesktopApplicationSettings>,
   onApplicationSettingsChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, settings: DesktopApplicationSettings): void => listener(settings);
     ipcRenderer.on('application-settings:changed', handler);
