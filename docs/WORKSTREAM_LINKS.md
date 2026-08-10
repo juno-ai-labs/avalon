@@ -65,11 +65,51 @@ inside the workspace sees the summary, on the same reasoning that lets any
 internal tool unfurl a title into an internal channel. **A failed check degrades
 the card; it never drops the unfurl.**
 
-Two consequences worth knowing. An unfurl posted when a channel was internal
-stays visible if that channel is later shared externally — re-unfurling is the
-redaction path if that matters. And the card is written once and never
-re-rendered, which is why last activity is a Slack `<!date^…>` token rather than
-a baked "24m ago" that would still claim 24m a week later.
+Last activity is a Slack `<!date^…>` token rather than a baked "24m ago", so it
+renders in each reader's timezone and cannot rot between refreshes.
+
+## Keeping a posted card current
+
+A card would otherwise be frozen at the moment the link was pasted: a work
+stream shared while `running` would still read `running` after it completed.
+`chat.unfurl` accepts the same `channel` + `ts` + `url` again and "will modify
+the same attachments," so the fix is to rewrite the card when the work stream
+moves on.
+
+Doing that needs the exact `(channel, message_ts, url)` of every message a link
+was pasted into, and **Slack only ever reports that once**, in `link_shared` —
+it permits `chat.unfurl` only for a URL whose event the app acknowledged, and
+offers no way to re-enumerate past events. `slack_unfurled_links` records those
+triples as each card is posted. Rows exist only from the moment recording
+shipped; anything shared earlier is permanently frozen and cannot be backfilled.
+
+Only cards that showed a summary are recorded. An anonymous card has nothing to
+keep current, and a work stream that resolved outside the connection's workspace
+must never give the sweep a row it would act on.
+
+The rewrite runs from the five-minute maintenance sweep
+(`refreshSlackWorkstreamUnfurls`, wired into `scheduled` in `apps/api/src/index.ts`)
+rather than from the status writes. `harness_status` is written from seven
+places across the runtime, the scheduler, and the tool layer; hooking each would
+be seven chances to miss a transition and no cheaper. A sweep is one place, it
+coalesces a burst of transitions into a single rewrite, and a failed refresh is
+retried next pass instead of lost. The cost is up to five minutes of staleness.
+
+Its bounds, all deliberate:
+
+| Bound | Value | Why |
+| --- | --- | --- |
+| Trigger | `harness_status` differs from `rendered_status` | Comparing last activity would mark nearly every row stale every pass, since any message bumps it |
+| Age | Links shared in the last 30 days | Nobody is rereading an older message |
+| Per sweep | 100 rows | Bounds the work; the overflow is logged, never silently dropped |
+| Per workspace | 20 rows | `chat.unfurl` is Tier 3 (50+/min per method per workspace) and live `link_shared` unfurls, which someone is waiting on, spend the same budget |
+
+The audience is re-checked once per channel per sweep, which is also the
+redaction path: a channel that became externally shared after its card was
+posted is rewritten back to the anonymous form. A refresh that fails with a
+terminal Slack reason — the message or channel is gone — deletes the row rather
+than retrying forever; anything else leaves `rendered_status` untouched so the
+next sweep tries again.
 
 ## Where it is implemented
 
