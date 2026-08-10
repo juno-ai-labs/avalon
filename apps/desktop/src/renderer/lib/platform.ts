@@ -260,6 +260,9 @@ const browserBridge: AvalonDesktopBridge = {
     if (!browserSession || !browserRefreshToken) throw new Error('No session is available to refresh');
     return browserSessionRequest(browserSession.apiBaseUrl, '/auth/refresh', { refreshToken: browserRefreshToken });
   },
+  async hasStoredCredential() {
+    return browserRefreshToken !== null;
+  },
   async logout() {
     browserSession = null;
     browserRefreshToken = null;
@@ -301,6 +304,40 @@ const browserBridge: AvalonDesktopBridge = {
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;
+  },
+  async openMeetingNotes(noteId) {
+    const target = new URL(window.location.href);
+    target.search = new URLSearchParams({
+      surface: 'meeting',
+      noteId: noteId ?? crypto.randomUUID(),
+    }).toString();
+    target.hash = '/meeting';
+    window.open(target.toString(), '_blank', 'noopener,noreferrer,width=1120,height=820');
+  },
+  async closeMeetingNotes() {
+    window.close();
+  },
+  async getMeetingAudioPermissions() {
+    return { microphone: 'unknown', systemAudio: 'unknown' };
+  },
+  async prepareMeetingAudioPermissions() {
+    return { microphone: 'unknown', systemAudio: 'unknown' };
+  },
+  async startMeetingSystemAudioCapture() {
+    throw new Error('Native computer audio capture is available only in the Avalon desktop app.');
+  },
+  async stopMeetingSystemAudioCapture() {
+    // No native capture exists in a browser tab.
+  },
+  onMeetingSystemAudioData() {
+    return () => undefined;
+  },
+  async openMeetingAudioSettings() {
+    // Browser permission recovery is owned by the browser chrome rather than
+    // an operating-system settings pane Avalon can open directly.
+  },
+  onMeetingCloseRequested() {
+    return () => undefined;
   },
   onSettingsSectionRequested() {
     return () => undefined;

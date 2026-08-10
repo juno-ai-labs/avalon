@@ -1,4 +1,9 @@
-import { ServerSocketEventSchema, type ServerSocketEvent } from '@avalon/contracts';
+import {
+  PersonalSocketEventSchema,
+  ServerSocketEventSchema,
+  type PersonalSocketEvent,
+  type ServerSocketEvent,
+} from '@avalon/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -23,7 +28,7 @@ import {
   removeTranscriptMessage,
   upsertTranscriptMessage,
 } from './transcript';
-import type { Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -334,7 +339,11 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   };
 }
 
-export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string, enabled: boolean): SocketState {
+export function useWorkstreamSocket(
+  api: AvalonApi | null,
+  workstreamId: string,
+  enabled: boolean,
+): SocketState {
   const queryClient = useQueryClient();
   const [state, setState] = useState<SocketState>('idle');
   const lastSequence = useRef(0);
@@ -360,11 +369,17 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
     const streamCursors = new Map<string, StreamCursor>();
     const isOffline = (): boolean => navigator.onLine === false;
 
+    const syncHyperSightQueries = (): Promise<unknown> => Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['hypersight', workstreamId], exact: true }),
+      queryClient.invalidateQueries({ queryKey: ['hypersight-preference', workstreamId], exact: true }),
+    ]);
+
     const syncCanonicalTranscriptAndList = (): void => {
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ['messages', workstreamId], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
         queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        syncHyperSightQueries(),
       ]);
     };
 
@@ -395,11 +410,23 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
         queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
-        void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
+        void Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
+          syncHyperSightQueries(),
+        ]);
         if (!mayStillEmitRealtime) streamCursors.clear();
       } catch {
         // The socket replay remains usable. A later terminal frame, reconnect,
         // or ordinary query refresh will retry the authoritative reconciliation.
+      }
+    };
+
+    const applyPersonalEvent = (event: PersonalSocketEvent): void => {
+      if (event.type === 'hypersight_preference_updated') {
+        queryClient.setQueryData<HyperSightPreference>(
+          ['hypersight-preference', workstreamId],
+          event.preference,
+        );
       }
     };
 
@@ -552,6 +579,24 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           createdAt: event.suggestion.createdAt,
           activitySuggestion: mapSuggestion(event.suggestion),
         }));
+      } else if (event.type === 'hypersight_configuration_updated') {
+        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], event.hypersight);
+      } else if (event.type === 'hypersight_block_run_updated') {
+        queryClient.setQueryData<HyperSight>(['hypersight', workstreamId], (current) => {
+          if (!current || current.versionId !== event.run.configurationVersionId) return current;
+          return {
+            ...current,
+            blocks: current.blocks.map((block) => {
+              if (block.id !== event.run.blockId) return block;
+              if (
+                block.latestRun
+                && block.latestRun.id !== event.run.id
+                && block.latestRun.triggerSequence > event.run.triggerSequence
+              ) return block;
+              return { ...block, latestRun: event.run };
+            }),
+          };
+        });
       }
     };
 
@@ -642,7 +687,10 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
               ? mergeCanonicalTranscript(current, canonicalMessages)
               : replaceWithCanonicalTranscript(current, canonicalMessages));
           queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
-          void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
+            syncHyperSightQueries(),
+          ]);
           streamCursors.clear();
           lastSequence.current = Math.max(lastSequence.current, targetSequence);
           if (canonicalResyncTarget === targetSequence) canonicalResyncTarget = null;
@@ -688,7 +736,12 @@ export function useWorkstreamSocket(api: AvalonApi | null, workstreamId: string,
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
             const event = ServerSocketEventSchema.safeParse(parsed);
-            if (event.success) applyEvent(event.data);
+            if (event.success) {
+              applyEvent(event.data);
+              return;
+            }
+            const personalEvent = PersonalSocketEventSchema.safeParse(parsed);
+            if (personalEvent.success) applyPersonalEvent(personalEvent.data);
           } catch {
             // Invalid frames are ignored; canonical REST state remains authoritative.
           }

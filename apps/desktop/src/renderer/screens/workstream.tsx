@@ -1,4 +1,5 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { IconAugmentedReality } from '@tabler/icons-react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
@@ -7,7 +8,6 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
-  Bot,
   CalendarClock,
   Copy,
   Ellipsis,
@@ -19,11 +19,9 @@ import {
   Menu,
   PanelRight,
   Plus,
-  Radio,
   RefreshCcw,
   Search,
   UserPlus,
-  Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -38,13 +36,14 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
+import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamConnection, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
+import { HyperSightPanel, HyperSightResizeHandle } from '../components/hypersight-panel';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
   if (!session?.workspace) return undefined;
@@ -229,14 +228,20 @@ export function AddResourceDialog({
   );
 }
 
-function WorkstreamHeader({
+export function WorkstreamHeader({
   workstream,
   socketState,
+  hypersightOpen,
+  hypersightPreferencePending,
   onAddParticipant,
+  onToggleHyperSight,
 }: {
   workstream: WorkstreamDetail;
   socketState: ReturnType<typeof useWorkstreamSocket>;
+  hypersightOpen: boolean;
+  hypersightPreferencePending: boolean;
   onAddParticipant: () => void;
+  onToggleHyperSight: () => void;
 }): React.JSX.Element {
   const openRail = useUiStore((state) => state.openRail);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
@@ -252,7 +257,6 @@ function WorkstreamHeader({
     <header className="workstream-header window-drag">
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
-        <span className="header-origin-icon" aria-hidden="true">{workstream.origin === 'automation' ? <Zap size={14} /> : <Bot size={14} />}</span>
         <div className="workstream-title-block">
           <div className="workstream-title-line">
             <h1>{workstream.title}</h1>
@@ -266,23 +270,32 @@ function WorkstreamHeader({
       </div>
       <div className="workstream-header-actions window-no-drag">
         <SocketStatusIndicator state={socketState} />
+        <IconButton
+          className={clsx('hypersight-toggle', hypersightOpen && 'is-active')}
+          aria-pressed={hypersightOpen}
+          disabled={hypersightPreferencePending}
+          label={hypersightOpen ? 'Hide HyperSight' : 'Show HyperSight'}
+          onClick={onToggleHyperSight}
+        >
+          <IconAugmentedReality size={16} stroke={1.7} />
+        </IconButton>
         <button className="participant-header-button" onClick={onAddParticipant} type="button">
           <AvatarStack members={workstream.participants} />
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>
-        <IconButton label="Background tasks" onClick={() => openRail('background')}>
+        <IconButton className="header-background-tasks" label="Background tasks" onClick={() => openRail('background')}>
           <Activity size={15} />
           {runningTasks > 0 && <span className="icon-count">{runningTasks}</span>}
         </IconButton>
-        {workstream.origin === 'automation' && (
-          <IconButton label="Automation runs" onClick={() => openRail('runs')}><Radio size={15} /></IconButton>
-        )}
         <IconButton label="Work-stream context" onClick={() => openRail('context')}><PanelRight size={15} /></IconButton>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+              {workstream.origin === 'automation' && (
+                <DropdownMenu.Item className="menu-item" onSelect={() => openRail('runs')}>Automation runs</DropdownMenu.Item>
+              )}
               <DropdownMenu.Item className="menu-item" onSelect={copyLink}><Copy size={14} /> Copy work-stream link</DropdownMenu.Item>
               {workstream.emailAddress && (
                 <DropdownMenu.Item className="menu-item" onSelect={copyEmailAddress}><Mail size={14} /> Copy work-stream email address</DropdownMenu.Item>
@@ -376,6 +389,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
+  const [hypersightHeight, setHyperSightHeight] = useState(280);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
@@ -485,6 +499,19 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
     staleTime: 5_000,
   });
+  const hypersightPreference = useQuery({
+    queryKey: ['hypersight-preference', id],
+    queryFn: ({ signal }) => api!.getHyperSightPreference(id, signal),
+    enabled: Boolean(api && id),
+    staleTime: 5_000,
+  });
+  const hypersightOpen = hypersightPreference.data?.visible ?? false;
+  const hypersight = useQuery({
+    queryKey: ['hypersight', id],
+    queryFn: ({ signal }) => api!.getHyperSight(id, signal),
+    enabled: Boolean(api && id && hypersightOpen),
+    staleTime: 5_000,
+  });
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
@@ -504,7 +531,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && resourceDialogOpen),
     staleTime: 15_000,
   });
-  const socketState = useWorkstreamSocket(api, id, workstream.isSuccess && messages.isSuccess);
+  const socketState = useWorkstreamSocket(
+    api,
+    id,
+    workstream.isSuccess && messages.isSuccess,
+  );
   const transcript = messages.data ?? [];
   const transcriptVirtualizer = useVirtualizer({
     count: transcript.length,
@@ -603,6 +634,42 @@ export function WorkstreamScreen(): React.JSX.Element {
       queryClient.setQueryData(['workstream', id], updated);
       setResourceDialogOpen(false);
       setResourceSearch('');
+    },
+  });
+
+  const updateHyperSight = useMutation({
+    mutationFn: (blocks: Array<{ id: string; prompt: string }>) => {
+      const current = queryClient.getQueryData<HyperSight>(['hypersight', id]) ?? hypersight.data;
+      if (!current) throw new Error('HyperSight is not ready yet.');
+      return api!.updateHyperSight(id, {
+        expectedVersionNumber: current.versionNumber,
+        blocks,
+      });
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['hypersight', id], updated);
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ['hypersight', id], exact: true });
+    },
+  });
+
+  const updateHyperSightPreference = useMutation({
+    mutationFn: (visible: boolean) => api!.updateHyperSightPreference(id, visible),
+    onMutate: async (visible) => {
+      await queryClient.cancelQueries({ queryKey: ['hypersight-preference', id], exact: true });
+      const previous = queryClient.getQueryData<HyperSightPreference>(['hypersight-preference', id]);
+      queryClient.setQueryData<HyperSightPreference>(['hypersight-preference', id], {
+        visible,
+        updatedAt: previous?.updatedAt ?? null,
+      });
+      return { previous };
+    },
+    onError: (_error, _visible, context) => {
+      queryClient.setQueryData(['hypersight-preference', id], context?.previous);
+    },
+    onSuccess: (preference) => {
+      queryClient.setQueryData(['hypersight-preference', id], preference);
     },
   });
 
@@ -952,12 +1019,37 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
 
   return (
-    <div className="workstream-screen">
+    <div className={clsx('workstream-screen', hypersightOpen && 'has-hypersight')}>
       <WorkstreamHeader
+        hypersightOpen={hypersightOpen}
+        hypersightPreferencePending={hypersightPreference.isPending || updateHyperSightPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
+        onToggleHyperSight={() => updateHyperSightPreference.mutate(!hypersightOpen)}
         socketState={socketState}
         workstream={displayedDetail}
       />
+      {hypersightOpen ? (
+        <div className="hypersight-shell" style={{ height: `${hypersightHeight}px` }}>
+          {hypersight.data ? (
+            <HyperSightPanel
+              error={updateHyperSight.error?.message ?? hypersight.error?.message}
+              hypersight={hypersight.data}
+              onChange={(blocks) => updateHyperSight.mutateAsync(blocks).then(() => undefined)}
+              pending={updateHyperSight.isPending}
+            />
+          ) : hypersight.error ? (
+            <div className="hypersight-load-state">
+              <InlineError>{hypersight.error.message}</InlineError>
+              <Button onClick={() => void hypersight.refetch()}><RefreshCcw size={14} /> Try again</Button>
+            </div>
+          ) : (
+            <div className="hypersight-load-state">
+              <LoadingState label="Opening HyperSight…" />
+            </div>
+          )}
+          <HyperSightResizeHandle onResize={setHyperSightHeight} />
+        </div>
+      ) : null}
       <div
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
         onDragEnter={transcriptDrop.onDragEnter}

@@ -253,12 +253,16 @@ describe("API security utilities", () => {
   it("requires Linear to grant both resource and native-agent permissions", () => {
     expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
       ["linear.read", "linear.agent"],
-      { providerScopes: ["read", "app:assignable", "app:mentionable"] },
+      { providerScopes: ["read", "app:assignable", "app:mentionable", "write"] },
     )).not.toThrow();
     expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
       ["linear.read", "linear.agent"],
       { providerScopes: ["read", "app:assignable"] },
     )).toThrow(/app:mentionable/u);
+    expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
+      ["linear.read", "linear.agent"],
+      { providerScopes: ["read", "app:assignable", "app:mentionable"] },
+    )).toThrow(/write/u);
     expect(() => __connectionServiceTesting.assertLinearCapabilitiesGranted(
       ["linear.issue.create"],
       { providerScopes: ["read"] },
@@ -540,6 +544,29 @@ describe("environment guardrails", () => {
     expect(allowedHeaders).toContain("x-avalon-draft-id");
   });
 
+  it("allows HyperSight PUT requests in CORS preflights", async () => {
+    const response = await createApp().request(
+      "https://api.example.com/workstreams/00000000-0000-7000-8000-000000000001/hypersight/preference",
+      {
+        method: "OPTIONS",
+        headers: {
+          origin: "app://avalon",
+          "access-control-request-method": "PUT",
+          "access-control-request-headers": "authorization,content-type",
+        },
+      },
+      {
+        ALLOWED_ORIGINS: "app://avalon",
+        AVALON_REGION: "global",
+        LOG_LEVEL: "error",
+      } as Env,
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("app://avalon");
+    expect(response.headers.get("access-control-allow-methods")?.split(",")).toContain("PUT");
+  });
+
   it("uses a safe fallback for invalid positive numeric limits", () => {
     const env = { HARNESS_MAX_TOOL_CALLS: "not-a-number" } as Env;
     expect(numericEnv(env, "HARNESS_MAX_TOOL_CALLS", 24)).toBe(24);
@@ -657,9 +684,10 @@ describe("environment guardrails", () => {
     expect(__realtimeTranscriptionTesting.sendableCloseCode(4_001)).toBe(4_001);
     expect(__realtimeTranscriptionTesting.limits).toMatchObject({
       maxClientFramesPerSecond: 30,
-      maxConnectionMs: 300_000,
       maxConcurrentUserSessions: 2,
       maxConcurrentWorkspaceSessions: 20,
+      sessionLeaseRefreshMs: 60_000,
+      sessionLeaseSeconds: 120,
     });
   });
 

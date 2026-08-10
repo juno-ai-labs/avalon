@@ -8,6 +8,8 @@ import type {
   CreateWorkstreamRequestSchema,
   ExecutionPrincipal,
   Message,
+  SlackOriginContext,
+  SlackSearchAuthorization,
   UpdateWorkstreamRequestSchema,
   Workstream,
   WorkstreamDetail,
@@ -66,6 +68,13 @@ const WORKSTREAM_RESOURCES_SQL = `SELECT r.*,
    AND rw.resource_id = wr.resource_id
    AND rw.enabled = 1
   WHERE wr.workstream_id = ?
+    AND (r.provider != 'avalon_note' OR EXISTS (
+      SELECT 1 FROM notes visible_note
+      WHERE visible_note.resource_id = r.id
+        AND visible_note.workspace_id = r.workspace_id
+        AND visible_note.archived_at IS NULL
+        AND (visible_note.scope = 'workspace' OR visible_note.owner_user_id = ?)
+    ))
   ORDER BY wr.attached_at DESC`;
 
 const WORKSTREAM_ARTIFACTS_SQL = `SELECT * FROM artifacts
@@ -81,6 +90,7 @@ const WORKSTREAM_HARNESS_TASKS_SQL = `SELECT hr.*,
     ON m.workstream_id = hr.workstream_id
    AND m.client_message_id = ('harness:' || hr.id)
   WHERE hr.workspace_id = ? AND hr.workstream_id = ?
+    AND hr.origin != 'hypersight_block'
   ORDER BY COALESCE(hr.started_at, hr.created_at) DESC
   LIMIT 250`;
 
@@ -88,6 +98,7 @@ const WORKSTREAM_TOOL_TASKS_SQL = `SELECT ti.*, hr.created_at AS harness_created
   FROM tool_invocations ti
   JOIN harness_runs hr ON hr.id = ti.harness_run_id
   WHERE ti.workspace_id = ? AND ti.workstream_id = ?
+    AND hr.origin != 'hypersight_block'
   ORDER BY COALESCE(ti.started_at, hr.created_at) DESC
   LIMIT 500`;
 
@@ -115,12 +126,24 @@ export async function launchWorkstreamHarness(
     triggerMessageId: string | null;
     origin: string;
     executionPrincipal: ExecutionPrincipal;
+    slackOrigin?: SlackOriginContext;
+    slackSearchAuthorization?: SlackSearchAuthorization;
     parentHarnessRunId?: string;
+    supersedeActiveRun?: boolean;
   },
 ): Promise<string> {
   const id = newId();
   const at = nowIso();
   await env.DB.batch([
+    ...(input.supersedeActiveRun ? [env.DB.prepare(
+      `UPDATE harness_runs
+          SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
+              cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up')
+        WHERE workspace_id = ? AND workstream_id = ?
+          AND origin != 'hypersight_block'
+          AND parent_tool_call_id IS NULL
+          AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
+    ).bind(at, input.workspaceId, input.workstreamId)] : []),
     env.DB.prepare(
       `INSERT INTO harness_runs
        (id, workspace_id, workstream_id, origin, execution_principal_json, parent_harness_run_id,
@@ -151,6 +174,10 @@ export async function launchWorkstreamHarness(
     automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
+    ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
+    ...(input.slackSearchAuthorization
+      ? { slackSearchAuthorization: input.slackSearchAuthorization }
+      : {}),
     reason: input.origin,
   };
   try {
@@ -254,7 +281,11 @@ export class WorkstreamService {
     return { items, nextCursor: hasMore ? items.at(-1)?.lastActivityAt ?? null : null };
   }
 
-  async create(input: CreateWorkstreamInput) {
+  async create(
+    input: CreateWorkstreamInput,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+  ) {
     await this.assertMembersExist(input.participantUserIds);
     const attachmentIds = [...new Set(input.attachmentIds)];
     await this.assertDraftAttachments(attachmentIds);
@@ -286,7 +317,14 @@ export class WorkstreamService {
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
     if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
-    const harnessRunId = await this.launchHarness(created.workstream.id, created.messageId, "opening_message");
+    const harnessRunId = await this.launchHarness(
+      created.workstream.id,
+      created.messageId,
+      "opening_message",
+      undefined,
+      slackOrigin,
+      slackSearchAuthorization,
+    );
     return { ...created, harnessRunId };
   }
 
@@ -358,6 +396,7 @@ export class WorkstreamService {
          FROM harness_runs
          WHERE workspace_id = ? AND workstream_id = ?
            AND parent_tool_call_id IS NULL
+           AND origin != 'hypersight_block'
          ORDER BY created_at DESC LIMIT 1`,
       ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>(),
     ]);
@@ -530,7 +569,12 @@ export class WorkstreamService {
     return this.requireWorkstream(id);
   }
 
-  async createMessage(id: string, input: CreateMessageInput) {
+  async createMessage(
+    id: string,
+    input: CreateMessageInput,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+  ) {
     const workstream = await this.requireWorkstream(id);
     const replayed = await this.loadMessageByClientId(id, input.clientMessageId);
     if (replayed) {
@@ -618,7 +662,16 @@ export class WorkstreamService {
         classification.classification === "both" ||
         (classification.classification === "uncertain" && (workstream.harnessStatus === "running" || connectorMentions.length > 0));
     }
-    const harnessRunId = shouldInvoke ? await this.launchHarness(id, message.id, "human_message") : null;
+    const harnessRunId = shouldInvoke
+      ? await this.launchHarness(
+          id,
+          message.id,
+          "human_message",
+          undefined,
+          slackOrigin,
+          slackSearchAuthorization,
+        )
+      : null;
     return { message: messageWithMentions, agentInvoked: shouldInvoke, harnessRunId };
   }
 
@@ -674,8 +727,10 @@ export class WorkstreamService {
     // share it with another work stream.
     await new ResourceService(this.env, this.auth).get(resourceId);
     const resource = await this.env.DB.prepare(
-      `SELECT r.*, c.scope AS connection_scope, c.owner_user_id
+      `SELECT r.*, c.scope AS connection_scope, c.owner_user_id,
+          note.scope AS note_scope
        FROM resources r LEFT JOIN connector_connections c ON c.id = r.connection_id
+       LEFT JOIN notes note ON note.resource_id = r.id AND note.archived_at IS NULL
        WHERE r.id = ? AND r.workspace_id = ?`,
     ).bind(resourceId, this.auth.workspaceId).first<Record<string, unknown>>();
     if (!resource) throw new ApiError(404, "resource_not_found", "Resource not found");
@@ -686,7 +741,12 @@ export class WorkstreamService {
       ATTACH_RESOURCE_SQL,
     ).bind(id, resourceId, this.auth.userId, nowIso()).run();
     const attached = (await this.loadResources(id)).find((item) => item.id === resourceId);
-    if (attached) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
+    // A private note is only visible to its creator. The attaching request
+    // returns refreshed canonical state to that user, but broadcasting the
+    // resource would expose its title to every socket in a shared work stream.
+    if (attached && resource.note_scope !== "personal") {
+      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
+    }
     return attached;
   }
 
@@ -703,6 +763,8 @@ export class WorkstreamService {
     elicitationId: string,
     input: AnswerElicitationInput,
     clientMessageId = `elicitation-response:${elicitationId}`,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
     await this.requireWorkstream(id);
     const duplicate = await this.loadMessageByClientId(id, clientMessageId);
@@ -806,7 +868,14 @@ export class WorkstreamService {
     ).bind(id).first<{ count: number }>();
     let harnessRunId: string | null = null;
     if (Number(remaining?.count ?? 0) === 0) {
-      harnessRunId = await this.launchHarness(id, null, "elicitation_answer", String(elicitation.harness_run_id));
+      harnessRunId = await this.launchHarness(
+        id,
+        responseMessageId,
+        "elicitation_answer",
+        String(elicitation.harness_run_id),
+        slackOrigin,
+        slackSearchAuthorization,
+      );
     }
     const updated = (await this.loadElicitations(id, true)).find((item) => item.id === elicitationId);
     if (updated) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "elicitation_answered", elicitation: updated });
@@ -843,6 +912,7 @@ export class WorkstreamService {
           SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
               cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user')
         WHERE workstream_id = ? AND workspace_id = ?
+          AND origin != 'hypersight_block'
           AND status IN ('scheduled', 'running') AND terminalized_at IS NULL`,
     ).bind(at, id, this.auth.workspaceId).run();
   }
@@ -856,6 +926,7 @@ export class WorkstreamService {
       `SELECT status FROM harness_runs
        WHERE workspace_id = ? AND workstream_id = ?
          AND parent_tool_call_id IS NULL
+         AND origin != 'hypersight_block'
        ORDER BY created_at DESC LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<{ status: string }>();
     if (!latest || (latest.status !== "failed" && latest.status !== "stopped")) {
@@ -1033,13 +1104,23 @@ export class WorkstreamService {
     }
   }
 
-  private async launchHarness(workstreamId: string, triggerMessageId: string | null, origin: string, parentHarnessRunId?: string): Promise<string> {
+  private async launchHarness(
+    workstreamId: string,
+    triggerMessageId: string | null,
+    origin: string,
+    parentHarnessRunId?: string,
+    slackOrigin?: SlackOriginContext,
+    slackSearchAuthorization?: SlackSearchAuthorization,
+  ): Promise<string> {
     return launchWorkstreamHarness(this.env, {
       workspaceId: this.auth.workspaceId,
       workstreamId,
       triggerMessageId,
       origin,
       executionPrincipal: { type: "user", userId: this.auth.userId },
+      supersedeActiveRun: origin === "human_message",
+      ...(slackOrigin ? { slackOrigin } : {}),
+      ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
       ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
     });
   }
@@ -1189,7 +1270,7 @@ export class WorkstreamService {
   private async loadResources(id: string) {
     const result = await this.env.DB.prepare(
       WORKSTREAM_RESOURCES_SQL,
-    ).bind(id).all<Record<string, unknown>>();
+    ).bind(id, this.auth.userId).all<Record<string, unknown>>();
     return (result.results ?? []).map((row) => ({
       id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
       resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),

@@ -1,0 +1,94 @@
+name: Deploy Avalon site
+
+# The landing site also ships as the last step of a desktop release, which is
+# what publishes a new version's download. This workflow covers the other case:
+# a copy, layout, or page change that has no release to ride along with.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/site/**"
+      # The site compiles shared contracts in: auth-handoff validates OAuth
+      # callbacks against ConnectorOAuthProviders, so adding a provider must
+      # reach the site as well as the API, or production rejects the new
+      # provider's callback until an unrelated site change ships.
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A group of its own, not the desktop release's. Sharing that group would
+  # order the two, but `single` cancels the pending member when another queues,
+  # so a site deployment could discard a pending release — and never losing a
+  # release matters more than the narrow overlap this leaves.
+  #
+  # That overlap: a release deploys the site as its final step from the config
+  # it just rewrote, so a standalone deployment landing immediately afterwards
+  # could restore the superseded version. The guard is the release-config check
+  # in the step below, which runs against the live channel immediately before
+  # the publish, leaving only a seconds-wide window.
+  group: deploy-site
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: site-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out the revision being deployed
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require Cloudflare deployment credentials
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "CLOUDFLARE_API_TOKEN secret is not set"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "CLOUDFLARE_ACCOUNT_ID variable is not set"; exit 1; }
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      # ci.yml runs on the same push but cannot gate this workflow, so the
+      # deployment verifies the workspace itself rather than racing it.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test the site
+        run: pnpm --filter @avalon/site test
+
+      # The site advertises the version in apps/site/release.config.json. A
+      # release rewrites that file on its own runner, so a site deploy from an
+      # uncommitted release would advertise the superseded version.
+      - name: Check the advertised release against the live channel
+        run: node scripts/check-site-release-config.mjs
+
+      - name: Deploy the site
+        run: pnpm --filter @avalon/site run deploy

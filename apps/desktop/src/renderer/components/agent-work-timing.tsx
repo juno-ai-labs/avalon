@@ -46,6 +46,8 @@ export function AgentWorkTiming({
         className="agent-work-timing-orb"
         paused={!running}
         size={20}
+        // thinking-orbs@0.2.0 draws animation time zero when speed is zero.
+        speed={running ? 1 : 0}
         state="solving"
         theme="dark"
       />

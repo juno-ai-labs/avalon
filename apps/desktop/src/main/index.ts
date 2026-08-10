@@ -9,6 +9,7 @@ import {
 } from '@avalon/contracts';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -26,6 +27,7 @@ import {
   safeStorage,
   session as electronSession,
   shell,
+  systemPreferences,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
@@ -33,6 +35,7 @@ import type {
   DesktopApplicationSettings,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
+  MeetingAudioPermissionKind,
   RuntimeConfig,
 } from '../common/desktop';
 import {
@@ -45,7 +48,9 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import {
   definitivelyInvalidatesStoredCredential,
+  refreshFailureIsTerminal,
   responseError,
+  UnusableCredentialError,
 } from './api-response-error';
 import {
   applicationIconPath,
@@ -56,22 +61,36 @@ import {
 } from './application-icon';
 import { ApplicationIconController } from './application-icon-controller';
 import {
-  defaultStoredApplicationSettings,
   readStoredApplicationSettings,
   writeStoredApplicationSettings,
 } from './application-settings';
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
-import { allowsTrustedAudioCapture } from './media-permission';
+import { LockdownModeController } from './lockdown-mode';
+import {
+  allowsTrustedAudioCapture,
+} from './media-permission';
+import {
+  meetingAudioPermissions,
+  meetingAudioSettingsUrl,
+  prepareMeetingAudioPermissions,
+} from './meeting-audio-permission';
+import {
+  nativeSystemAudioAddonPath,
+  NativeSystemAudioController,
+  type NativeSystemAudioBinding,
+} from './native-system-audio';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
   readStoredAuthFile,
   readStoredProfileFile,
   readStoredSessionFile,
+  removeStoredCredentialFiles,
   removeStoredStateFiles,
   removeStoredSessionFiles,
   tombstoneStoredStateFiles,
+  tombstoneStoredCredentialFiles,
   writeStoredAuthFile,
   writeStoredProfileFile,
   writeStoredSessionFile,
@@ -101,8 +120,8 @@ import {
   legacyPackagedUserDataDirectory,
   userDataDirectoryForLaunch,
 } from './user-data-path';
-
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
+const requireNativeModule = createRequire(import.meta.url);
 const executeFile = promisify(execFile);
 // Never let inherited development environment variables choose the renderer
 // or API origins of an installed app. The preload bridge is privileged, so a
@@ -113,9 +132,16 @@ const customProtocol = 'avalon';
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function isUuid(value: string): boolean {
+  return UUID_PATTERN.test(value);
+}
 
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
+const meetingWindows = new Set<BrowserWindow>();
+const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
 let rendererReady = false;
 let inMemoryAuth: StoredAuth | null = null;
 let inMemorySession: WireSession | null = null;
@@ -127,10 +153,36 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
-let lockdownMode = defaultStoredApplicationSettings.lockdownMode;
 const pendingDeepLinks: string[] = [];
 const hardenedWebContents = new WeakSet<WebContents>();
 const desktopAuthAttempts = new DesktopAuthAttemptStore();
+const nativeSystemAudioController = new NativeSystemAudioController(() => {
+  if (process.platform !== 'darwin') {
+    throw new Error('Native computer audio capture is available only on macOS.');
+  }
+  const addonPath = nativeSystemAudioAddonPath({
+    currentDirectory,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+  });
+  return requireNativeModule(addonPath) as NativeSystemAudioBinding;
+});
+
+function avalonWindows(): BrowserWindow[] {
+  return [mainWindow, settingsWindow, ...meetingWindows]
+    .filter((window): window is BrowserWindow => Boolean(window && !window.isDestroyed()));
+}
+
+function isMeetingWindowContents(contents: WebContents | null): boolean {
+  if (!contents) return false;
+  return [...meetingWindows].some((window) => !window.isDestroyed() && window.webContents === contents);
+}
+
+function forceCloseMeetingWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) return;
+  meetingWindowsAllowedToClose.add(window);
+  window.close();
+}
 
 protocol.registerSchemesAsPrivileged([{
   scheme: rendererProtocol,
@@ -187,9 +239,7 @@ function publicSession(value: WireSession): DesktopSession {
 
 function broadcastSessionChanged(value: WireSession | null): void {
   const exposed = value ? publicSession(value) : null;
-  for (const window of [mainWindow, settingsWindow]) {
-    if (window && !window.isDestroyed()) window.webContents.send('session:changed', exposed);
-  }
+  for (const window of avalonWindows()) window.webContents.send('session:changed', exposed);
 }
 
 async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -223,7 +273,7 @@ function apiBaseForAuth(auth: StoredAuth): string {
 }
 
 function activeSessionEncryptionMode(): SessionEncryptionMode {
-  return lockdownMode ? 'lockdown' : 'global';
+  return lockdownModeController.encryptionMode();
 }
 
 function encryptStoredSessionValue(value: string): Buffer {
@@ -234,62 +284,111 @@ function decryptStoredSessionValue(value: Uint8Array): string {
   return decryptSessionValue(value, safeStorage).plaintext;
 }
 
-function desktopApplicationSettings(): DesktopApplicationSettings {
-  return {
-    lockdownMode,
-    lockdownAvailable: safeStorage.isEncryptionAvailable(),
-  };
-}
-
-function broadcastApplicationSettingsChanged(): void {
-  const settings = desktopApplicationSettings();
-  for (const window of [mainWindow, settingsWindow]) {
-    if (window && !window.isDestroyed()) {
-      window.webContents.send('application-settings:changed', settings);
-    }
-  }
+function broadcastApplicationSettingsChanged(settings: DesktopApplicationSettings): void {
+  for (const window of avalonWindows()) window.webContents.send('application-settings:changed', settings);
 }
 
 function storedSessionEncryptionValues() {
   const directory = userDataDirectory();
   return [
     {
+      credentialBearing: true,
       read: () => readStoredAuthFile(directory),
       write: (value: Uint8Array) => writeStoredAuthFile(directory, value),
     },
     {
+      credentialBearing: false,
       read: () => readStoredProfileFile(directory),
       write: (value: Uint8Array) => writeStoredProfileFile(directory, value),
     },
     {
+      credentialBearing: true,
       read: () => readStoredSessionFile(directory),
       write: (value: Uint8Array) => writeStoredSessionFile(directory, value),
     },
   ];
 }
 
-async function migrateSessionEncryption(mode: SessionEncryptionMode): Promise<void> {
-  await migrateStoredSessionEncryption(storedSessionEncryptionValues(), mode, safeStorage);
+async function migrateSessionEncryption(
+  mode: SessionEncryptionMode,
+  options?: { allowLockdownToGlobal?: boolean },
+): Promise<void> {
+  await migrateStoredSessionEncryption(
+    storedSessionEncryptionValues(),
+    mode,
+    safeStorage,
+    options,
+  );
 }
 
-async function setLockdownMode(rawEnabled: unknown): Promise<DesktopApplicationSettings> {
-  if (typeof rawEnabled !== 'boolean') throw new Error('Invalid Lockdown mode value');
-  if (rawEnabled && !safeStorage.isEncryptionAvailable()) {
-    throw new Error('Lockdown mode requires an available operating-system keystore');
+async function recoverGlobalSessionWithoutKeystore(): Promise<void> {
+  if (!inMemoryAuth) {
+    await clearCredentialsForLockdownRelogin();
+    return;
   }
-  return withSessionMutation(async () => {
-    if (rawEnabled === lockdownMode) return desktopApplicationSettings();
-    const targetMode: SessionEncryptionMode = rawEnabled ? 'lockdown' : 'global';
-    // Re-encrypt every durable session component before committing the
-    // preference. Envelopes identify their own key source, so an interrupted
-    // multi-file migration remains readable and can be retried safely.
-    await migrateSessionEncryption(targetMode);
-    await writeStoredApplicationSettings(userDataDirectory(), { lockdownMode: rawEnabled });
-    lockdownMode = rawEnabled;
-    broadcastApplicationSettingsChanged();
-    return desktopApplicationSettings();
-  });
+  await writeStoredAuthFile(
+    userDataDirectory(),
+    encryptSessionValue(JSON.stringify(inMemoryAuth), 'global', safeStorage),
+  );
+  if (inMemorySession) {
+    await writeStoredProfileFile(
+      userDataDirectory(),
+      encryptSessionValue(
+        JSON.stringify(storedProfileFromSession(inMemorySession)),
+        'global',
+        safeStorage,
+      ),
+    );
+  }
+  try {
+    await removeStoredSessionFiles(userDataDirectory());
+  } catch {
+    // The recovered split credential is authoritative. A later logout still
+    // removes every obsolete full-session credential location.
+  }
 }
+
+async function clearCredentialsForLockdownRelogin(): Promise<void> {
+  sessionLifecycleEpoch += 1;
+  desktopAuthAttempts.clear();
+  inMemoryAuth = null;
+  inMemorySession = null;
+  let failure: unknown;
+  const directories = [
+    userDataDirectory(),
+    ...(app.isPackaged ? [legacyPackagedUserDataDirectory(appDataDirectory)] : []),
+  ];
+  for (const directory of directories) {
+    try {
+      await removeStoredCredentialFiles(directory);
+    } catch (error) {
+      let directoryFailure: unknown = error;
+      try {
+        await tombstoneStoredCredentialFiles(
+          directory,
+          encryptSessionValue('{}', 'global', safeStorage),
+        );
+        directoryFailure = undefined;
+      } catch {
+        // Preserve this directory's original deletion error for the caller.
+      }
+      if (directoryFailure !== undefined && failure === undefined) failure = directoryFailure;
+    }
+  }
+  broadcastSessionChanged(null);
+  if (failure) throw failure;
+}
+
+const lockdownModeController = new LockdownModeController({
+  safeStorage,
+  readSettings: () => readStoredApplicationSettings(userDataDirectory()),
+  writeSettings: (settings) => writeStoredApplicationSettings(userDataDirectory(), settings),
+  migrateSession: migrateSessionEncryption,
+  recoverGlobalSessionWithoutKeystore,
+  clearCredentialsForRelogin: clearCredentialsForLockdownRelogin,
+  runExclusive: withSessionMutation,
+  onChange: broadcastApplicationSettingsChanged,
+});
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
   const auth = storedAuthFromSession(value, regionForStoredSession(value));
@@ -479,10 +578,10 @@ async function requestSession(
   });
   if (!response.ok) throw await responseError(response);
   const parsed = SessionSchema.safeParse(await response.json());
-  if (!parsed.success) throw new Error('Avalon returned an invalid authentication session');
+  if (!parsed.success) throw new UnusableCredentialError('Avalon returned an invalid authentication session');
   const returnedApiBaseUrl = new URL(parsed.data.apiBaseUrl).toString().replace(/\/$/u, '');
   if (returnedApiBaseUrl !== apiBaseUrl) {
-    throw new Error('The regional service returned a mismatched endpoint');
+    throw new UnusableCredentialError('The regional service returned a mismatched endpoint');
   }
   return { ...parsed.data, apiBaseUrl: returnedApiBaseUrl };
 }
@@ -752,14 +851,42 @@ async function refreshWireSession(): Promise<WireSession> {
     throw new Error('Avalon was signed out while the session was refreshing');
   }
   const apiBaseUrl = apiBaseForAuth(previousAuth);
-  const session = await requestSession(
-    apiBaseUrl,
-    '/auth/refresh',
-    { refreshToken: previousAuth.refreshToken },
-    previousAuth.accessToken,
-  );
-  if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
-    throw new Error('The refreshed session did not match the stored credential binding');
+  let session: WireSession;
+  try {
+    session = await requestSession(
+      apiBaseUrl,
+      '/auth/refresh',
+      { refreshToken: previousAuth.refreshToken },
+      previousAuth.accessToken,
+    );
+    // A binding the service will never agree with cannot be retried into
+    // working. Joining the organization from another device rebinds the
+    // server session while this device's stored binding stays unbound, so
+    // this must surrender the credential rather than loop on it forever.
+    if (!sessionsShareBinding(session, previousAuth) || session.apiBaseUrl !== apiBaseUrl) {
+      throw new UnusableCredentialError('The refreshed session did not match the stored credential binding');
+    }
+  } catch (error) {
+    // Only a terminal failure may delete anything, and only the credential
+    // this attempt actually presented. A sign-out/sign-in, an organization
+    // activation, or a lockdown relogin can persist a newer credential while
+    // this request is in flight, so the generation is rechecked under the same
+    // lock the success path takes. Everything else stays on disk so renderers
+    // can keep retrying instead of treating a network blip as an expired
+    // session.
+    if (refreshFailureIsTerminal(error)) {
+      try {
+        await withSessionMutation(async () => {
+          if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) return;
+          const currentAuth = await loadStoredAuth();
+          if (!currentAuth || !storedAuthMatches(currentAuth, previousAuth)) return;
+          await clearStoredSessionUnlocked();
+        });
+      } catch (cleanupError) {
+        console.warn('[avalon] could not clear a rejected desktop credential', cleanupError);
+      }
+    }
+    throw error;
   }
   return withSessionMutation(async () => {
     if (loggingOut || expectedLifecycleEpoch !== sessionLifecycleEpoch) {
@@ -812,6 +939,7 @@ async function logout(): Promise<void> {
       failures.push(error);
     }
     settingsWindow?.close();
+    for (const window of meetingWindows) forceCloseMeetingWindow(window);
     if (stored) {
       try {
         const apiBaseUrl = apiBaseForAuth(stored);
@@ -961,10 +1089,26 @@ function emitDeepLink(rawUrl: string): void {
 
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
-  const belongsToAvalonWindow = sender === mainWindow?.webContents || sender === settingsWindow?.webContents;
+  const belongsToAvalonWindow = sender === mainWindow?.webContents
+    || sender === settingsWindow?.webContents
+    || isMeetingWindowContents(sender);
   if (!belongsToAvalonWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
     throw new Error('Blocked IPC request from untrusted content');
   }
+}
+
+function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!isMeetingWindowContents(event.sender)) {
+    throw new Error('Only a meeting-notes window can request recording permissions');
+  }
+}
+
+function meetingAudioPermissionDependencies() {
+  return {
+    askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
+    getMicrophoneAccessStatus: () => systemPreferences.getMediaAccessStatus('microphone'),
+  };
 }
 
 function registerIpc(): void {
@@ -974,11 +1118,11 @@ function registerIpc(): void {
   });
   ipcMain.handle('application-settings:get', (event) => {
     assertTrustedIpcSender(event);
-    return desktopApplicationSettings();
+    return lockdownModeController.settings();
   });
   ipcMain.handle('application-settings:set-lockdown-mode', (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
-    return setLockdownMode(rawEnabled);
+    return lockdownModeController.set(rawEnabled);
   });
   ipcMain.handle('application-icon:get', (event) => {
     assertTrustedIpcSender(event);
@@ -1063,6 +1207,13 @@ function registerIpc(): void {
     assertTrustedIpcSender(event);
     return coalescedRefreshSession();
   });
+  ipcMain.handle('auth:has-stored-credential', async (event) => {
+    assertTrustedIpcSender(event);
+    // Deliberately not `session:get`: that rebuilds a missing profile cache by
+    // refreshing, so a network blip would answer "no credential" and strand
+    // renderers on a false expiry. `loadStoredAuth` only touches disk.
+    return Boolean(await loadStoredAuth());
+  });
   ipcMain.handle('auth:logout', (event) => {
     assertTrustedIpcSender(event);
     return logout();
@@ -1094,6 +1245,44 @@ function registerIpc(): void {
     const section = rawSection === undefined ? undefined : parseDesktopSettingsSection(rawSection);
     if (rawSection !== undefined && !section) throw new Error('Invalid settings section');
     await createSettingsWindow(section ?? undefined);
+  });
+  ipcMain.handle('system:open-meeting-notes', async (event, rawNoteId: unknown) => {
+    assertTrustedIpcSender(event);
+    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
+      throw new Error('Invalid note ID');
+    }
+    await createMeetingWindow(rawNoteId as string | undefined);
+  });
+  ipcMain.handle('meeting-audio:get-permissions', (event) => {
+    assertMeetingIpcSender(event);
+    return meetingAudioPermissions(meetingAudioPermissionDependencies());
+  });
+  ipcMain.handle('meeting-audio:prepare-permissions', (event) => {
+    assertMeetingIpcSender(event);
+    return prepareMeetingAudioPermissions(meetingAudioPermissionDependencies());
+  });
+  ipcMain.handle('meeting-audio:start-system-capture', (event) => {
+    assertMeetingIpcSender(event);
+    return nativeSystemAudioController.start(event.sender);
+  });
+  ipcMain.handle('meeting-audio:stop-system-capture', (event) => {
+    assertMeetingIpcSender(event);
+    return nativeSystemAudioController.stop(event.sender);
+  });
+  ipcMain.handle('meeting-audio:open-settings', async (event, rawPermission: unknown) => {
+    assertMeetingIpcSender(event);
+    if (rawPermission !== 'microphone' && rawPermission !== 'system-audio') {
+      throw new Error('Invalid meeting audio permission');
+    }
+    const url = meetingAudioSettingsUrl(rawPermission as MeetingAudioPermissionKind, process.platform);
+    if (!url) throw new Error('Open this platform’s privacy settings to change recording access.');
+    await shell.openExternal(url);
+  });
+  ipcMain.handle('system:close-meeting-notes', (event) => {
+    assertTrustedIpcSender(event);
+    const meetingWindow = [...meetingWindows].find((window) => window.webContents === event.sender);
+    if (!meetingWindow) throw new Error('Only a meeting-notes window can close itself');
+    forceCloseMeetingWindow(meetingWindow);
   });
 }
 
@@ -1189,9 +1378,7 @@ function desktopApplicationIconState(): DesktopApplicationIconState {
 
 function broadcastApplicationIconChanged(): void {
   const state = desktopApplicationIconState();
-  for (const window of [mainWindow, settingsWindow]) {
-    if (window && !window.isDestroyed()) window.webContents.send('application-icon:changed', state);
-  }
+  for (const window of avalonWindows()) window.webContents.send('application-icon:changed', state);
 }
 
 function loadDevelopmentApplicationIcon(iconId: ApplicationIconId): Electron.NativeImage {
@@ -1288,7 +1475,7 @@ function preloadPath(): string {
   return path;
 }
 
-function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings'): void {
+function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'settings' | 'meeting'): void {
   window.webContents.on(
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
@@ -1319,7 +1506,7 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
   }
 }
 
-async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' | 'settings'): Promise<void> {
+async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' | 'settings' | 'meeting'): Promise<void> {
   try {
     await window.loadURL(url);
   } catch (error) {
@@ -1329,13 +1516,17 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
   }
 }
 
-function rendererUrl(surface?: 'settings', settingsSection?: DesktopSettingsSection): string {
+function rendererUrl(surface?: 'settings' | 'meeting', settingsSection?: DesktopSettingsSection, noteId?: string): string {
   const target = rendererDevelopmentUrl
     ? new URL(rendererDevelopmentUrl)
     : new URL(`${rendererProtocol}://${rendererHost}/index.html`);
   if (surface) target.searchParams.set('surface', surface);
   if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
+  if (surface === 'meeting') {
+    if (noteId) target.searchParams.set('noteId', noteId);
+    target.hash = '/meeting';
+  }
   return target.toString();
 }
 
@@ -1384,6 +1575,60 @@ async function createSettingsWindow(section?: DesktopSettingsSection): Promise<v
     settingsWindow = null;
   });
   await loadRenderer(settingsWindow, rendererUrl('settings', section), 'settings');
+}
+
+async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promise<void> {
+  const meetingWindow = new BrowserWindow({
+    width: 720,
+    height: 860,
+    minWidth: 540,
+    minHeight: 640,
+    show: false,
+    backgroundColor: '#1d1e1b',
+    title: 'Meeting notes — Avalon',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 17 },
+    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
+    webPreferences: {
+      preload: preloadPath(),
+      contextIsolation: true,
+      devTools: !app.isPackaged,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+    },
+  });
+  // BrowserWindow.webContents throws after Electron emits `closed`. Retain the
+  // WebContents object while the window is alive so native audio cleanup can
+  // still identify its owner during teardown.
+  const meetingContents = meetingWindow.webContents;
+  meetingWindows.add(meetingWindow);
+  installWindowDiagnostics(meetingWindow, 'meeting');
+  meetingWindow.setMenuBarVisibility(false);
+  meetingWindow.once('ready-to-show', () => meetingWindow.show());
+  meetingWindow.on('close', (event) => {
+    if (meetingWindowsAllowedToClose.has(meetingWindow)) return;
+    event.preventDefault();
+    meetingContents.send('meeting:close-requested');
+  });
+  meetingWindow.on('closed', () => {
+    void nativeSystemAudioController.stop(meetingContents).catch((error) => {
+      console.warn('[meeting] Failed to stop native computer audio after window close', error);
+    });
+    meetingWindows.delete(meetingWindow);
+  });
+  try {
+    await loadRenderer(
+      meetingWindow,
+      rendererUrl('meeting', undefined, noteId),
+      'meeting',
+    );
+  } catch (error) {
+    forceCloseMeetingWindow(meetingWindow);
+    throw error;
+  }
 }
 
 function installApplicationMenu(): void {
@@ -1482,20 +1727,23 @@ function installContentSecurityPolicy(): void {
   });
 
   electronSession.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const trustedRenderer = rendererNavigationAllowed(details.requestingUrl);
     callback(allowsTrustedAudioCapture({
-      isMainWindow: webContents === mainWindow?.webContents,
+      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
-      trustedRenderer: rendererNavigationAllowed(details.requestingUrl),
+      trustedRenderer,
     }));
   });
-  electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
-    allowsTrustedAudioCapture({
-      isMainWindow: webContents === mainWindow?.webContents,
+  electronSession.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    const trustedRenderer = rendererNavigationAllowed(requestingOrigin);
+    return allowsTrustedAudioCapture({
+      isAudioCaptureWindow: webContents === mainWindow?.webContents || isMeetingWindowContents(webContents),
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
-      trustedRenderer: rendererNavigationAllowed(requestingOrigin),
-    }));
+      trustedRenderer,
+    });
+  });
 }
 
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -1520,7 +1768,6 @@ if (!singleInstanceLock) {
   void app.whenReady().then(async () => {
     app.setAppUserModelId('app.avalon.desktop');
     app.setAsDefaultProtocolClient(customProtocol);
-    lockdownMode = (await readStoredApplicationSettings(userDataDirectory())).lockdownMode;
     try {
       if (app.isPackaged) {
         await migrateLegacyUserDataStoredSessionFile(
@@ -1534,9 +1781,9 @@ if (!singleInstanceLock) {
       if (code !== 'ENOENT') console.warn('[avalon] could not migrate the legacy desktop session file', error);
     }
     try {
-      await migrateSessionEncryption(activeSessionEncryptionMode());
+      await lockdownModeController.initialize();
     } catch (error) {
-      console.warn('[avalon] could not migrate desktop session encryption', error);
+      console.warn('[avalon] could not initialize desktop session encryption', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.

@@ -67,6 +67,12 @@ class ManualRunDatabase {
   emailRoute: StoredEmailRoute | null = null;
   openingMessage: StoredOpeningMessage | null = null;
   attachedResourceId: string | null = null;
+  automationResource: {
+    id: string;
+    scope: "personal" | "workspace";
+    ownerUserId: string;
+    archived: boolean;
+  } | null = null;
   workstreamInsertCount = 0;
   automationRunInsertCount = 0;
 
@@ -213,6 +219,16 @@ class ManualRunStatement {
         textContent: String(this.values[4]),
         structuredContent: JSON.parse(String(this.values[5])) as Record<string, unknown>,
       };
+    } else if (normalized.startsWith("INSERT OR IGNORE INTO workstream_resources")) {
+      expect(normalized).toContain("JOIN notes n ON n.resource_id = ar.resource_id");
+      expect(normalized).toContain("n.archived_at IS NULL");
+      const resource = this.database.automationResource;
+      const principalUserId = this.values[4] == null ? null : String(this.values[4]);
+      if (resource && !resource.archived && (
+        resource.scope === "workspace" || resource.ownerUserId === principalUserId
+      )) {
+        this.database.attachedResourceId = resource.id;
+      }
     } else if (normalized.startsWith("INSERT INTO workstream_resources")) {
       this.database.attachedResourceId = String(this.values[1]);
     } else if (normalized.startsWith("INSERT INTO harness_runs")) {
@@ -260,6 +276,44 @@ class ManualRunStatement {
 }
 
 describe("manual automation run recovery", () => {
+  it("rechecks note visibility before copying resources into each automation run", async () => {
+    const runWithNote = async (scope: "personal" | "workspace", archived = false) => {
+      const database = new ManualRunDatabase();
+      Object.assign(database.subscription, {
+        scope: "workspace",
+        owner_user_id: null,
+        execution_principal_json: JSON.stringify({ type: "workspace", workspaceId: "workspace-1" }),
+      });
+      database.automationResource = {
+        id: "note-resource-1",
+        scope,
+        ownerUserId: "user-1",
+        archived,
+      };
+      const service = new AutomationService({
+        DB: database.binding,
+        WORKSTREAM_LOOP_WORKFLOW: { create: vi.fn().mockResolvedValue({}) },
+        AVALON_REGION: "global",
+        OPENROUTER_PRIMARY_MODEL: "test-model",
+        WORKSTREAM_EMAIL_ADDRESS_KEY: `note-visibility-${scope}-address-key-v1`,
+        WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
+      } as unknown as Env, {
+        sessionId: "session-1",
+        userId: "user-1",
+        workspaceId: "workspace-1",
+        region: "global",
+        role: "member",
+      });
+
+      await service.runNow("subscription-1", `note-${scope}-run`);
+      return database.attachedResourceId;
+    };
+
+    await expect(runWithNote("workspace")).resolves.toBe("note-resource-1");
+    await expect(runWithNote("personal")).resolves.toBeNull();
+    await expect(runWithNote("workspace", true)).resolves.toBeNull();
+  });
+
   it("retries a launch-pending idempotent run after a transient workflow failure", async () => {
     const database = new ManualRunDatabase();
     const createWorkflow = vi.fn()

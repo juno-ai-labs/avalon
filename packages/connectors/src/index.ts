@@ -15,6 +15,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "./types";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
+import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
 import { createNotionConnector, type NotionConnectorConfig } from "./notion";
 import { createSlackConnector, type SlackConnectorConfig } from "./slack";
@@ -22,10 +23,13 @@ import { createXConnector, type XConnectorConfig } from "./x";
 
 export {
   assertPrincipalAccess,
+  acknowledgeConnectorAgentActivation,
   connectorRetryAfterMs,
   connectorCapabilitySupportsScope,
   ConnectorError,
   defineConnectorAgentPlugin,
+  type ConnectorAgentAdapter,
+  type ConnectorAgentExecutionContext,
   type ConnectorAgentPluginDescriptor,
   type ConnectorAdapter,
   type ConnectorAuthorizationCallbackInput,
@@ -47,13 +51,19 @@ export {
   parseSlackAgentInvocation,
   parseSlackEventEnvelope,
   slackApi,
+  slackAgentActivationAcknowledgement,
   verifySlackRequest,
   SlackAgentPluginDescriptor,
+  SLACK_AGENT_ACKNOWLEDGEMENT_REACTION,
+  SlackAgentAcknowledgementCommandSchema,
   SlackCapabilities,
   SlackCapabilityScopes,
   SlackWorkspaceBotScopes,
+  SlackWorkspaceCapabilities,
   slackTools,
   type SlackAgentInvocation,
+  type SlackAgentAcknowledgementCommand,
+  type SlackAgentAcknowledgementResult,
   type SlackApiRequest,
   type SlackApiResponse,
   type SlackConnectorConfig,
@@ -63,6 +73,20 @@ export {
   type SlackPublicChannelSyncResult,
   type SlackWebApiMethod,
 } from "./slack";
+export {
+  callGranolaMcp,
+  createGranolaConnector,
+  createGranolaWebhookEndpoint,
+  deleteGranolaWebhookEndpoint,
+  verifyGranolaWebhook,
+  GranolaAgentPluginDescriptor,
+  GranolaCapabilities,
+  granolaTools,
+  type GranolaConnectorConfig,
+  type GranolaMcpTool,
+  type GranolaWebhookEndpoint,
+  type VerifiedGranolaWebhook,
+} from "./granola";
 export {
   createGitHubConnector,
   createGitHubAppJwt,
@@ -104,10 +128,14 @@ export {
 export {
   createLinearNativeAgentProtocol,
   createLinearAgentActivity,
+  createLinearAgentAcknowledgement,
   executeLinearAgentGraphql,
   isLinearAgentStopRequest,
   linearAgentActivity,
+  linearAgentActivationAcknowledgement,
   linearAgentInvocation,
+  LINEAR_AGENT_ACKNOWLEDGEMENT_EMOJI,
+  LinearAgentAcknowledgementSchema,
   LinearAgentActivityContentSchema,
   LinearAgentActivityCreateInputSchema,
   LinearAgentActionContentSchema,
@@ -126,6 +154,8 @@ export {
   type LinearAgentActivityContent,
   type LinearAgentActivityCreateInput,
   type LinearAgentActivityResult,
+  type LinearAgentAcknowledgement,
+  type LinearAgentAcknowledgementResult,
   type LinearAgentExternalUrl,
   type LinearAgentGraphqlExecutor,
   type LinearAgentInvocation,
@@ -3036,6 +3066,7 @@ export function connectorSupportsSurface(
 }
 
 export function createConnectorRegistry(input: {
+  granola?: GranolaConnectorConfig;
   google?: GoogleConnectorConfig;
   github?: GitHubConnectorConfig;
   linear?: LinearConnectorConfig;
@@ -3044,6 +3075,7 @@ export function createConnectorRegistry(input: {
   x?: XConnectorConfig;
 } = {}): ConnectorRegistry {
   const adapters: ConnectorAdapter[] = [createGenericWebhookConnector()];
+  if (input.granola) adapters.push(createGranolaConnector(input.granola));
   if (input.google) adapters.push(createGoogleConnector(input.google));
   if (input.github) adapters.push(createGitHubConnector(input.github));
   if (input.linear) adapters.push(createLinearConnector(input.linear));

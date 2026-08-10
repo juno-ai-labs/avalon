@@ -17,6 +17,8 @@ const LINEAR_AGENT_BODY_CHARS = 40_000;
 const LINEAR_AGENT_ID_CHARS = 200;
 const LINEAR_AGENT_URL_CHARS = 2_048;
 
+export const LINEAR_AGENT_ACKNOWLEDGEMENT_EMOJI = "👀" as const;
+
 const idSchema = z.string().min(1).max(LINEAR_AGENT_ID_CHARS);
 const dateTimeSchema = z.string().min(1).max(100);
 const markdownSchema = z.string().min(1).max(LINEAR_AGENT_BODY_CHARS);
@@ -186,6 +188,7 @@ export type LinearAgentInvocation =
       prompt: string;
       issueId: string | null;
       commentId: string | null;
+      acknowledgement: LinearAgentAcknowledgement | null;
       event: LinearAgentSessionEvent;
     }
   | {
@@ -196,8 +199,16 @@ export type LinearAgentInvocation =
       prompt: string;
       promptActivityId: string;
       stopRequested: boolean;
+      acknowledgement: LinearAgentAcknowledgement | null;
       event: LinearAgentSessionEvent;
     };
+
+export const LinearAgentAcknowledgementSchema = z.object({
+  commentId: idSchema,
+  emoji: z.literal(LINEAR_AGENT_ACKNOWLEDGEMENT_EMOJI),
+}).strict();
+
+export type LinearAgentAcknowledgement = z.infer<typeof LinearAgentAcknowledgementSchema>;
 
 /** Converts a provider webhook into the two commands Avalon's run coordinator handles. */
 export function linearAgentInvocation(eventInput: unknown): LinearAgentInvocation {
@@ -211,6 +222,9 @@ export function linearAgentInvocation(eventInput: unknown): LinearAgentInvocatio
       prompt: event.promptContext!.trim(),
       issueId: event.agentSession.issueId ?? null,
       commentId: event.agentSession.commentId ?? null,
+      acknowledgement: acknowledgementForComment(
+        event.agentSession.sourceCommentId ?? event.agentSession.commentId,
+      ),
       event,
     };
   }
@@ -224,8 +238,25 @@ export function linearAgentInvocation(eventInput: unknown): LinearAgentInvocatio
     prompt: content.body,
     promptActivityId: activity.id,
     stopRequested: activity.signal === "stop",
+    acknowledgement: activity.signal === "stop"
+      ? null
+      : acknowledgementForComment(activity.sourceCommentId),
     event,
   };
+}
+
+function acknowledgementForComment(commentId: string | null | undefined): LinearAgentAcknowledgement | null {
+  return commentId
+    ? { commentId, emoji: LINEAR_AGENT_ACKNOWLEDGEMENT_EMOJI }
+    : null;
+}
+
+export function linearAgentActivationAcknowledgement(
+  invocation: LinearAgentInvocation,
+): LinearAgentProtocolCommand | null {
+  return invocation.acknowledgement
+    ? { kind: "acknowledge", acknowledgement: invocation.acknowledgement }
+    : null;
 }
 
 export function isLinearAgentStopRequest(eventInput: unknown): boolean {
@@ -325,6 +356,7 @@ export type LinearAgentExternalUrl = z.infer<typeof LinearAgentExternalUrlSchema
 export type LinearAgentPlanStep = z.infer<typeof LinearAgentPlanStepSchema>;
 
 export type LinearAgentProtocolCommand =
+  | { kind: "acknowledge"; acknowledgement: LinearAgentAcknowledgement }
   | { kind: "publish_activity"; activity: LinearAgentActivityCreateInput }
   | { kind: "replace_external_urls"; agentSessionId: string; externalUrls: LinearAgentExternalUrl[] }
   | { kind: "patch_external_urls"; agentSessionId: string; addedExternalUrls: LinearAgentExternalUrl[]; removedExternalUrls: string[] }
@@ -337,13 +369,21 @@ export interface LinearAgentActivityResult {
   agentActivityId: string;
 }
 
+export interface LinearAgentAcknowledgementResult {
+  success: true;
+  reactionId: string;
+}
+
 export interface LinearAgentSessionResult {
   success: true;
   agentSessionId: string;
   status: string;
 }
 
-export type LinearAgentProtocolResult = LinearAgentActivityResult | LinearAgentSessionResult;
+export type LinearAgentProtocolResult =
+  | LinearAgentAcknowledgementResult
+  | LinearAgentActivityResult
+  | LinearAgentSessionResult;
 
 export type LinearAgentGraphqlExecutor = (
   document: string,
@@ -362,12 +402,13 @@ export const LinearNativeAgentProtocolDescriptor = {
   maturity: "preview",
   runtimeStatus: "protocol_only" as ConnectorSurfaceRuntimeStatus,
   sessionOwnership: "single_connection_per_provider_account",
-  oauthScopes: ["app:assignable", "app:mentionable"],
+  oauthScopes: ["app:assignable", "app:mentionable", "write"],
   webhookResourceTypes: ["AgentSessionEvent"],
   inboundActions: ["created", "prompted"],
   outboundActivityTypes: ["thought", "action", "elicitation", "response", "error"],
   inboundSignals: ["stop"],
   outboundSignals: ["auth", "select"],
+  acknowledgementEmoji: LINEAR_AGENT_ACKNOWLEDGEMENT_EMOJI,
   supportsProactiveSessions: true,
   webhookResponseDeadlineMs: 5_000,
   sessionAcknowledgementDeadlineMs: 10_000,
@@ -386,6 +427,9 @@ export function createLinearNativeAgentProtocol(executeGraphql: LinearAgentGraph
     parseEvent: parseLinearAgentSessionEvent,
     toInvocation: linearAgentInvocation,
     async execute(command, signal) {
+      if (command.kind === "acknowledge") {
+        return createLinearAgentAcknowledgement(executeGraphql, command.acknowledgement, signal);
+      }
       if (command.kind === "publish_activity") {
         return createLinearAgentActivity(executeGraphql, command.activity, signal);
       }
@@ -456,6 +500,32 @@ export async function createLinearAgentActivity(
   const payload = successfulMutation(data, "agentActivityCreate", "agent activity");
   const activity = requiredRecord(payload, "agentActivity", "Linear did not return the created agent activity");
   return { success: true, agentActivityId: requiredString(activity, "id", "Linear did not return the agent activity ID") };
+}
+
+/**
+ * Host-owned activation acknowledgement. The coordinating runtime dispatches
+ * this before model or tool work so recognition never depends on agent output.
+ */
+export async function createLinearAgentAcknowledgement(
+  executeGraphql: LinearAgentGraphqlExecutor,
+  rawInput: LinearAgentAcknowledgement,
+  signal?: AbortSignal,
+): Promise<LinearAgentAcknowledgementResult> {
+  const input = LinearAgentAcknowledgementSchema.parse(rawInput);
+  const data = await executeGraphql(`
+    mutation AvalonLinearAgentAcknowledge($input: ReactionCreateInput!) {
+      reactionCreate(input: $input) {
+        success
+        reaction { id }
+      }
+    }
+  `, { input }, signal);
+  const payload = successfulMutation(data, "reactionCreate", "agent acknowledgement");
+  const reaction = requiredRecord(payload, "reaction", "Linear did not return the created reaction");
+  return {
+    success: true,
+    reactionId: requiredString(reaction, "id", "Linear did not return the reaction ID"),
+  };
 }
 
 export async function updateLinearAgentSession(

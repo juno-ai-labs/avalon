@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { createXConnector, XCapabilities } from "./x";
 import type { FetchLike } from "./provider-utils";
-import type { ConnectorConnectionContext } from "./types";
+import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
 
 describe("X connector", () => {
+  it("supports workspace connections only", () => {
+    const adapter = xAdapter(async () => jsonResponse({}));
+    expect(adapter.manifest.supportedScopes).toEqual(["workspace"]);
+    expect(connectorCapabilitySupportsScope(adapter, XCapabilities.read, "workspace")).toBe(true);
+    expect(connectorCapabilitySupportsScope(adapter, XCapabilities.read, "personal")).toBe(false);
+  });
+
   it("reads user, reply, and List timelines with documented query parameters", async () => {
     const requested: URL[] = [];
     const fetcher: FetchLike = async (input, init) => {
@@ -201,25 +208,31 @@ describe("X connector", () => {
     const adapter = xAdapter(async () => jsonResponse({ tweets: [] }));
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
       connection: xConnection([]),
-      principal: { type: "user", userId: "avalon-user" },
+      principal: { type: "workspace", workspaceId: "avalon-workspace" },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/has not granted/u);
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
       connection: xConnection([XCapabilities.read]),
-      principal: { type: "user", userId: "another-user" },
+      principal: { type: "workspace", workspaceId: "another-workspace" },
       signal: AbortSignal.timeout(1_000),
-    })).rejects.toThrow(/another principal/u);
+    })).rejects.toThrow(/not available/u);
 
     await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
-      connection: xConnection([XCapabilities.read], "workspace"),
+      connection: xConnection([XCapabilities.read]),
       principal: { type: "workspace", workspaceId: "avalon-workspace" },
       signal: AbortSignal.timeout(1_000),
     })).resolves.toMatchObject({ summary: "Read the X timeline for user 600" });
     await expect(adapter.executeTool("unknown_tool", {}, {
       connection: xConnection([XCapabilities.read]),
-      principal: { type: "user", userId: "avalon-user" },
+      principal: { type: "workspace", workspaceId: "avalon-workspace" },
       signal: AbortSignal.timeout(1_000),
     })).rejects.toThrow(/has not granted unknown_tool/u);
+
+    await expect(adapter.executeTool("get_user_timeline", { userId: "600" }, {
+      connection: personalXConnection([XCapabilities.read]),
+      principal: { type: "user", userId: "avalon-user" },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toThrow(/must belong to a workspace/u);
   });
 
   it("rejects unsafe API origins", () => {
@@ -239,24 +252,31 @@ async function execute(
 ) {
   return adapter.executeTool(name, args, {
     connection: xConnection([XCapabilities.read]),
-    principal: { type: "user", userId: "avalon-user" },
+    principal: { type: "workspace", workspaceId: "avalon-workspace" },
     signal: AbortSignal.timeout(1_000),
   });
 }
 
 function xConnection(
   grantedScopes: string[],
-  scope: "personal" | "workspace" = "personal",
 ): ConnectorConnectionContext {
   return {
     id: "x-connection",
     workspaceId: "avalon-workspace",
-    scope,
-    ownerUserId: scope === "personal" ? "avalon-user" : null,
+    scope: "workspace",
+    ownerUserId: null,
     grantedScopes,
     credentials: {},
     cursor: {},
     config: {},
+  };
+}
+
+function personalXConnection(grantedScopes: string[]): ConnectorConnectionContext {
+  return {
+    ...xConnection(grantedScopes),
+    scope: "personal",
+    ownerUserId: "avalon-user",
   };
 }
 

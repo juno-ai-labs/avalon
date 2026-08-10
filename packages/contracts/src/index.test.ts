@@ -2,21 +2,31 @@ import { describe, expect, it } from "vitest";
 import {
   ActivityQueueMessageSchema,
   AnswerElicitationRequestSchema,
+  AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
   ClientSocketEventSchema,
   CompileAutomationRequestSchema,
+  ConnectorOAuthProviderSchema,
+  ConnectorOAuthProviders,
   CreateAutomationRequestSchema,
   CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
+  GenerateNoteNotesRequestSchema,
+  GenerateMeetingNotesRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
   HarnessFailureCodeSchema,
   HarnessRunMetadataSchema,
+  HyperSightPreferenceSchema,
   MessageSchema,
   MentionSchema,
+  NoteDetailSchema,
   RefreshRequestSchema,
+  PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  UpdateHyperSightPreferenceRequestSchema,
+  UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkstreamArtifactSchema,
@@ -26,6 +36,77 @@ import {
 const id = "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0";
 
 describe("boundary contracts", () => {
+  it("uses one connector OAuth provider catalog across protocol consumers", () => {
+    expect(ConnectorOAuthProviderSchema.options).toEqual(ConnectorOAuthProviders);
+    expect(ConnectorOAuthProviders).toContain("granola");
+  });
+
+  it("keeps timestamped transcript segments separate from editable note text", () => {
+    const segment = AppendNoteTranscriptSegmentRequestSchema.parse({
+      clientSegmentId: id,
+      startOffsetMs: 1_250,
+      endOffsetMs: 4_750,
+      capturedAt: "2026-08-07T18:00:04.750Z",
+      text: "  A finalized transcript segment.  ",
+    });
+    expect(segment).toMatchObject({
+      startOffsetMs: 1_250,
+      endOffsetMs: 4_750,
+      speakerLabel: null,
+      text: "A finalized transcript segment.",
+    });
+    expect(AppendNoteTranscriptSegmentRequestSchema.safeParse({
+      ...segment,
+      startOffsetMs: 5_000,
+      endOffsetMs: 4_000,
+    }).success).toBe(false);
+    expect(NoteDetailSchema.parse({
+      id,
+      workspaceId: id,
+      resourceId: id,
+      ownerUserId: id,
+      scope: "personal",
+      title: "Typed notes",
+      recordingStatus: "idle",
+      manualNotes: "Pasted text",
+      liveNotes: "",
+      notesThroughSequence: 0,
+      segments: [],
+      recordedMs: 0,
+      startedAt: null,
+      endedAt: null,
+      generatedAt: null,
+      lastActivityAt: "2026-08-07T18:00:00.000Z",
+      createdAt: "2026-08-07T18:00:00.000Z",
+      updatedAt: "2026-08-07T18:00:00.000Z",
+      archivedAt: null,
+    }).manualNotes).toBe("Pasted text");
+  });
+
+  it("bounds and normalizes live meeting-note refreshes", () => {
+    expect(GenerateMeetingNotesRequestSchema.parse({ transcript: "  New decision  " })).toEqual({
+      mode: "live",
+      meetingTitle: "Meeting notes",
+      transcript: "New decision",
+      recentTranscript: "",
+      previousNotes: "",
+      userNotes: "",
+      startedAt: null,
+      endedAt: null,
+      transcriptStatus: "partial",
+    });
+    expect(GenerateNoteNotesRequestSchema.parse({})).toEqual({ mode: "live", transcriptStatus: "partial" });
+    expect(GenerateNoteNotesRequestSchema.parse({ mode: "final", transcriptStatus: "complete" })).toEqual({
+      mode: "final",
+      transcriptStatus: "complete",
+    });
+    expect(GenerateMeetingNotesRequestSchema.safeParse({ transcript: "   " }).success).toBe(false);
+    expect(GenerateMeetingNotesRequestSchema.safeParse({
+      transcript: "valid",
+      previousNotes: "x".repeat(50_001),
+    }).success).toBe(false);
+  });
+
   it("represents provider members as external actors without manufacturing Avalon users", () => {
     const message = MessageSchema.parse({
       id,
@@ -198,11 +279,13 @@ describe("boundary contracts", () => {
     });
 
     expect(draft.recommendedPlugins).toHaveLength(25);
-    expect(CreateAutomationRequestSchema.parse({
+    const request = CreateAutomationRequestSchema.parse({
       draft,
       scope: "workspace",
       defaultPluginIds: recommendations.map((plugin) => plugin.pluginId),
-    }).defaultPluginIds).toHaveLength(25);
+    });
+    expect(request.defaultPluginIds).toHaveLength(25);
+    expect(request.resourceIds).toEqual([]);
     const activity = AutomationDraftStreamEventSchema.parse({
       type: "tool",
       toolCallId: "tool-1",
@@ -271,6 +354,47 @@ describe("boundary contracts", () => {
     ).toEqual({ type: "subscribe", afterSequence: 42 });
   });
 
+  it("bounds HyperSight configuration and preserves unique block identities", () => {
+    expect(UpdateHyperSightRequestSchema.parse({
+      expectedVersionNumber: 3,
+      blocks: [{ id, prompt: "Give me the last five to-do items" }],
+    })).toEqual({
+      expectedVersionNumber: 3,
+      blocks: [{ id, prompt: "Give me the last five to-do items" }],
+    });
+    expect(UpdateHyperSightRequestSchema.safeParse({
+      expectedVersionNumber: 3,
+      blocks: [{ id, prompt: "First" }, { id, prompt: "Duplicate" }],
+    }).success).toBe(false);
+    expect(UpdateHyperSightRequestSchema.safeParse({
+      expectedVersionNumber: 3,
+      blocks: Array.from({ length: 25 }, (_, index) => ({
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        prompt: "Too many",
+      })),
+    }).success).toBe(false);
+  });
+
+  it("validates personal HyperSight visibility preferences and their realtime updates", () => {
+    expect(UpdateHyperSightPreferenceRequestSchema.parse({ visible: true })).toEqual({ visible: true });
+    expect(UpdateHyperSightPreferenceRequestSchema.safeParse({ visible: true, shared: true }).success).toBe(false);
+    const preference = HyperSightPreferenceSchema.parse({
+      visible: true,
+      updatedAt: "2026-08-07T20:00:00.000Z",
+    });
+    expect(PersonalSocketEventSchema.parse({
+      type: "hypersight_preference_updated",
+      occurredAt: "2026-08-07T20:00:00.000Z",
+      preference,
+    })).toMatchObject({ type: "hypersight_preference_updated", preference });
+    expect(ServerSocketEventSchema.safeParse({
+      type: "hypersight_preference_updated",
+      sequence: 44,
+      occurredAt: "2026-08-07T20:00:00.000Z",
+      preference,
+    }).success).toBe(false);
+  });
+
   it("keeps room replay sequence separate from Bind stream epochs", () => {
     expect(ServerSocketEventSchema.parse({
       type: "stream_delta",
@@ -308,6 +432,62 @@ describe("boundary contracts", () => {
       reason: "message"
     });
     expect(result.success).toBe(false);
+  });
+
+  it("bounds Slack-origin context carried into a work-stream run", () => {
+    const parsed = WorkstreamWorkflowInputSchema.parse({
+      region: "global",
+      workspaceId: id,
+      workstreamId: id,
+      harnessRunId: id,
+      triggerMessageId: id,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "workspace", workspaceId: id },
+      slackOrigin: {
+        teamId: "TACME",
+        channelId: "CIDEAS",
+        channelName: "thinking-outloud",
+        threadTs: "1786130000.000100",
+        invocationType: "app_mention",
+        channelType: "public",
+        matchedAvalonUserId: id,
+        nearbyMessagesStatus: "available",
+        nearbyMessages: [{
+          timestamp: "1786129999.000100",
+          userId: "UALEX",
+          text: "Latest business idea",
+          attachments: [],
+        }],
+        attachments: [],
+      },
+      slackSearchAuthorization: {
+        actionToken: "1786130000.abcdef.event-token",
+      },
+      reason: "slack_workspace_opening_message",
+    });
+
+    expect(parsed.slackOrigin).toMatchObject({
+      teamId: "TACME",
+      channelId: "CIDEAS",
+      invocationType: "app_mention",
+      matchedAvalonUserId: id,
+    });
+    expect(parsed.slackSearchAuthorization).toEqual({
+      actionToken: "1786130000.abcdef.event-token",
+    });
+    expect(WorkstreamWorkflowInputSchema.safeParse({
+      ...parsed,
+      slackOrigin: {
+        ...parsed.slackOrigin,
+        nearbyMessages: Array.from({ length: 9 }, (_, index) => ({
+          timestamp: String(index),
+          userId: null,
+          text: "message",
+          attachments: [],
+        })),
+      },
+    }).success).toBe(false);
   });
 
   it("exposes bounded harness-run metadata for the contextual rail", () => {

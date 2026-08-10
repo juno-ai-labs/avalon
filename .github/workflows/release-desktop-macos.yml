@@ -1,32 +1,85 @@
 name: Release Avalon for macOS
 
 on:
+  # A tag is an artifact of a release, not an input to one: nothing triggers on
+  # `v*`, and the planner never reads tags. The workspace version measured
+  # against the published record decides, so pushing a tag by hand records
+  # nothing and starts nothing.
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    # Unfiltered by path: the planner is cheap, and the version gate is the
+    # real filter.
   workflow_dispatch:
     inputs:
       tag:
         description: Existing v<semver> tag to release
         required: true
         type: string
+      skip_health_gate:
+        description: Publish even if a regional API health check fails (emergency use only)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
-concurrency:
-  group: desktop-macos-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-  cancel-in-progress: false
+# Concurrency lives on the release job, not here. At workflow level it would
+# also cover the planner, so a push that plans a skip would still occupy the
+# single pending slot and could displace a queued release that had work to do.
+# Keeping the planner outside the queue means only runs that actually release
+# contend for it, and a plan is never delayed behind a 90-minute release.
 
 jobs:
+  # Decides the release on a cheap runner so ordinary merges never occupy a
+  # macOS runner just to discover they have nothing to ship.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_release: ${{ steps.plan.outputs.should_release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      ref: ${{ steps.plan.outputs.ref }}
+      create_tag: ${{ steps.plan.outputs.create_tag }}
+    steps:
+      - name: Check out the full history and tags
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Plan the release
+        id: plan
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          RELEASE_INPUT_TAG: ${{ inputs.tag }}
+        run: node apps/desktop/scripts/plan-release.mjs
+
   release:
-    # Standard macos-15 is an Apple Silicon runner. Native arm64 execution is
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    concurrency:
+      # Signing, mutable channel promotion, and the landing-site deployment
+      # form one release transaction, so a running release is never cancelled.
+      # Newer releases supersede older *pending* ones: intermediate versions do
+      # not need to ship, and the newest pending run carries the newest work.
+      #
+      # This group holds releases only. The site deployment deliberately keeps
+      # its own, because a queued site job sharing this one would satisfy
+      # `single` by cancelling a pending release.
+      group: desktop-macos-release
+      cancel-in-progress: false
+      queue: single
+    # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 90
     environment: desktop-release
+    # Publishing the release tag after a verified release needs write access.
+    permissions:
+      contents: write
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ needs.plan.outputs.tag }}
       # The certificate is imported into an explicit keychain below. Keeping
       # CSC_LINK out of the packaging environment prevents electron-builder
       # from hiding the identity in a transient keychain that the final DMG
@@ -44,14 +97,34 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     steps:
-      - name: Check out the exact release tag
+      - name: Check out the exact release commit
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ needs.plan.outputs.ref }}
+
+      # The tag is created locally so every downstream guard sees it, but it is
+      # not pushed until the release has actually published. A failed run
+      # therefore leaves no tag behind and the next attempt can retry the same
+      # version.
+      - name: Create the release tag locally
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        # Annotated, to match every tag released by hand before this.
+        run: |
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              tag -a "$RELEASE_TAG" -m "Avalon ${RELEASE_TAG#v}" HEAD
 
       - name: Require native Apple Silicon
         run: test "$(uname -m)" = arm64
+
+      - name: Select Xcode with Icon Composer support
+        shell: bash
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version | grep -F "Xcode 26.3"
+          test "$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)" -ge 26
 
       - name: Set deterministic release date
         shell: bash
@@ -76,6 +149,18 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      # ci.yml runs on the same push but cannot gate this workflow: both start
+      # together, so a release could publish from a commit whose CI ultimately
+      # failed. Verify here, before the build is spent.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Run release invariants
         run: pnpm --filter @avalon/desktop test:release
@@ -161,9 +246,83 @@ jobs:
             apps/desktop/release/release/latest-mac.yml
             apps/desktop/release/release/SHA256SUMS
 
+      # A failed regional health check blocks desktop distribution for that
+      # region, so the gate runs after the verified build and before anything
+      # reaches the update channel.
+      - name: Verify regional API health before distributing
+        if: ${{ !inputs.skip_health_gate }}
+        run: node scripts/check-regional-health.mjs eu global
+
       - name: Publish immutable payloads and promote the release manifest
         shell: bash
         run: AVALON_RELEASE_PUBLISH_CONFIRM="${RELEASE_TAG#v}" pnpm --filter @avalon/desktop release:publish:r2
+
+      # Immediately after promotion, and before the site deploy: from here the
+      # release is live to updaters, so anything that fails later must stay
+      # recoverable. An untagged live release is not — it cannot be re-run
+      # (the immutable-bytes guard rejects a fresh build) and cannot be
+      # dispatched (there is no tag). Pushing with GITHUB_TOKEN does not start
+      # another workflow run, so this cannot re-enter the release.
+      - name: Publish the release tag
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        run: git push origin "refs/tags/$RELEASE_TAG"
+
+      # The publisher rewrote apps/site/release.config.json on this runner, and
+      # the runner is about to be reclaimed. main must learn the new version:
+      # publish-r2-release.mjs reads the committed copy through
+      # assertNextReleaseVersion, so a stale one rejects the *next* release
+      # outright, and check-site-release-config.mjs fails every later site
+      # deploy against the live channel.
+      - name: Record the published release config on the default branch
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          config=apps/site/release.config.json
+          cp "$config" "$RUNNER_TEMP/release.config.json"
+
+          # Committed from a separate worktree so this job's checkout is never
+          # moved off the release commit. Switching the main working tree to
+          # origin/main would leave the site deployed from newer sources than
+          # the dependencies installed for this release.
+          sync="$RUNNER_TEMP/main-sync"
+          rm -rf "$sync"
+          cleanup() { git -C "$GITHUB_WORKSPACE" worktree remove --force "$sync" 2>/dev/null || true; }
+          trap cleanup EXIT
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git worktree remove --force "$sync" 2>/dev/null || true
+            git worktree add --detach "$sync" origin/main
+            cd "$sync"
+            # Never move the recorded release backwards: a dispatch replaying an
+            # older tag must not overwrite a newer published config.
+            recorded="$(node -p "require('./$config').version")"
+            if ! node -e '
+              const [recorded, released] = process.argv.slice(1);
+              const part = (value) => value.replace(/^v/u, "").split(".").map(Number);
+              const [a, b] = [part(recorded), part(released)];
+              const older = a[0] !== b[0] ? a[0] < b[0] : a[1] !== b[1] ? a[1] < b[1] : a[2] < b[2];
+              process.exit(older ? 0 : 1);
+            ' "$recorded" "$RELEASE_VERSION"; then
+              echo "main already records ${recorded}; leaving it alone"
+              exit 0
+            fi
+
+            cp "$RUNNER_TEMP/release.config.json" "$config"
+            git add "$config"
+            git -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m "Record Avalon ${RELEASE_VERSION#v} release config"
+            if git push origin HEAD:main; then
+              echo "recorded ${RELEASE_VERSION#v} on main"
+              exit 0
+            fi
+            echo "main moved during attempt ${attempt}; retrying"
+          done
+          echo "Could not record the release config on main after 3 attempts" >&2
+          exit 1
 
       - name: Deploy the landing site with the verified release
         run: pnpm --filter @avalon/site run deploy

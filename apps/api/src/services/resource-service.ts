@@ -73,6 +73,14 @@ const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
 
+const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note' OR EXISTS (
+  SELECT 1 FROM notes note_visibility
+  WHERE note_visibility.resource_id = r.id
+    AND note_visibility.workspace_id = r.workspace_id
+    AND note_visibility.archived_at IS NULL
+    AND (note_visibility.scope = 'workspace' OR note_visibility.owner_user_id = ?)
+))`;
+
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     COALESCE(MAX(CASE WHEN rw.enabled = 1 THEN 1 ELSE 0 END), 0) AS watch_enabled
   FROM resources r
@@ -85,6 +93,7 @@ const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
     AND (c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)
     AND ${INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL}
     AND ${UPLOAD_RESOURCE_VISIBILITY_SQL}
+    AND ${NOTE_RESOURCE_VISIBILITY_SQL}
   GROUP BY r.id`;
 
 export class ResourceService {
@@ -99,9 +108,11 @@ export class ResourceService {
       "(c.id IS NULL OR c.scope = 'workspace' OR c.owner_user_id = ?)",
       INBOUND_EMAIL_RESOURCE_VISIBILITY_SQL,
       "(r.provider != 'avalon_upload' OR r.attachment_status = 'attached')",
+      NOTE_RESOURCE_VISIBILITY_SQL,
     ];
     const bindings: unknown[] = [
       this.auth.workspaceId,
+      this.auth.userId,
       this.auth.userId,
       this.auth.userId,
       this.auth.userId,
@@ -343,6 +354,7 @@ export class ResourceService {
     ).bind(
       id,
       this.auth.workspaceId,
+      this.auth.userId,
       this.auth.userId,
       this.auth.userId,
       this.auth.userId,
