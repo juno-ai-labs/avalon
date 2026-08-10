@@ -180,7 +180,15 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
 - Avalon links: privacy-safe unfurls that require the viewer's normal Avalon authorization for details.
 
-Every web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history.
+Every work-stream link Avalon posts is the canonical
+`https://with-avalon.com/app/workstreams/<uuid>` — see
+[`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md). Slack delivers `link_shared` only
+for the registered unfurl domain, so a link must be on that domain, with the id
+in its path, to be unfurled at all; `avalon://` links pasted by a member never
+produce an event and cannot be previewed. The unfurl handler also still accepts
+the legacy `/open#target=` handoff already sitting in channel history.
+
+Every other web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history.
 
 Modal submissions are validated server-side. Modals never request Avalon or provider passwords.
 
