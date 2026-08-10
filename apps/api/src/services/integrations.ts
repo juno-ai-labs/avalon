@@ -5159,7 +5159,9 @@ function toolInvocationOwningPlugin(row: Record<string, unknown>): AutomationPlu
   if (row.connection_id == null) return null;
   const pluginId = ModelPluginIdSchema.safeParse(row.owner_model_plugin_id);
   if (!pluginId.success) return null;
-  const displayName = String(row.owner_display_name ?? "");
+  // A blank name would render an icon whose tooltip, label, and aria text are
+  // all empty, which is worse than leaving the row unattributed.
+  const displayName = String(row.owner_display_name ?? "").trim();
   if (!displayName) return null;
   return {
     pluginId: pluginId.data,
@@ -5189,7 +5191,12 @@ async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: st
     toolName: String(row.tool_name),
     activityName: toolActivityName({
       toolName: String(row.tool_name),
-      status: status === "pending" || status === "started" ? "started" : "completed",
+      // `ambiguous` keeps settled wording on purpose: the write may well have
+      // landed, and the row carries its own "could not confirm" warning. Only a
+      // definite failure gets failure prose.
+      status: status === "pending" || status === "started"
+        ? "started"
+        : status === "failed" ? "failed" : "completed",
       pluginDisplayName: plugin?.displayName ?? null,
     }),
     connectionId: row.connection_id == null ? null : String(row.connection_id),

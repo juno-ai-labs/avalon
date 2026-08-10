@@ -221,3 +221,52 @@ describe("tool invocation attribution", () => {
     expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.plugin).toBeNull();
   });
 });
+
+describe("tool invocation failure wording", () => {
+  it("words a failed connector row as a failure, not a success", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      status: "failed",
+      output_summary: null,
+      error_json: JSON.stringify({ code: "provider_error", message: "Drive rejected the request" }),
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "Google Drive · Work",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
+      .toBe("Could not reach Google Drive · Work");
+  });
+
+  it("keeps settled wording on an ambiguous write, which may still have landed", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      status: "ambiguous",
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "Google Drive · Work",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
+      .toBe("Reviewed Google Drive · Work");
+  });
+
+  it("leaves a row unattributed when the connector name is blank", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "   ",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
+    expect(loaded?.plugin).toBeNull();
+    expect(loaded?.activityName).toBe("Google 2 drive search");
+  });
+});

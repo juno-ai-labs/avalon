@@ -497,6 +497,7 @@ describe("agent harness", () => {
       searchAliases: [displayName.toLowerCase()],
       systemMessage: `Use ${displayName} through its authorized tools.`,
       tools: [],
+      activityTriggers: [],
     });
 
     await expect(compileAutomation({
