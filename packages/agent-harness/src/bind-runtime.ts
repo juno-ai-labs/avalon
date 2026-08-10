@@ -337,12 +337,16 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         replaceSystemMessage(state.messages, runtime.renderSystemPrompt().content);
       },
       activateSkills: async (refs) => {
+        // Snapshot first and persist the difference. Testing membership after
+        // the call cannot tell "just activated" from "was already active", so a
+        // repeated load would re-persist a ref the host already has. Persisting
+        // after rather than before is what keeps a durable hint from being
+        // recorded for a skill that never resolved — which would be restored on
+        // the next attempt and dropped again.
+        const before = new Set(runtime.skills.activeRefs);
         await runtime.skills.activation.activateSkills(refs);
-        // Persist after activation so a hint is only ever recorded for a ref
-        // that actually resolved — a durable hint for a skill this run cannot
-        // read would be restored on the next attempt and dropped again.
-        for (const ref of refs) {
-          if (!runtime.skills.activeRefs.has(ref)) continue;
+        for (const ref of runtime.skills.activeRefs) {
+          if (before.has(ref)) continue;
           await requiredPort("Skill activation persistence failed", () =>
             input.persistSkillActivation?.(ref));
         }
@@ -1107,8 +1111,22 @@ async function createPluginRuntime(
   }, true);
   // Skills are frozen with the run scope, so the runtime is built once, here,
   // from what the host already authorized — nothing below reads a store.
+  //
+  // `eligiblePluginIds` is computed before the registry exists because the skill
+  // runtime needs it: a plugin-owned skill is offered only to a run whose scope
+  // already carries that plugin, and Bind applies that filter only when it is
+  // handed the set. The same ids are re-derived into `eligibleIds` below as each
+  // plugin registers.
+  const eligiblePluginIds = new Set(
+    [
+      ...(input.pluginDiscovery === false ? [] : [AVALON_DISCOVERY_PLUGIN_ID]),
+      ...(input.corePlugins ?? []).map((plugin) => plugin.canonicalId),
+      ...(input.plugins ?? []).map((plugin) => plugin.canonicalId),
+    ],
+  );
   const skills = await createSkillRuntime({
     skills: input.skills ?? [],
+    eligiblePlugins: eligiblePluginIds,
     ...(input.skillActivationHints ? { activationHints: input.skillActivationHints } : {}),
     ...(input.config.maxActiveSkills === undefined
       ? {}
@@ -1116,6 +1134,13 @@ async function createPluginRuntime(
     ...(input.config.maxActiveSkillBodyTokens === undefined
       ? {}
       : { maxActiveSkillBodyTokens: input.config.maxActiveSkillBodyTokens }),
+    ...(input.config.maxSkillResourceBytes === undefined
+      ? {}
+      : { maxResourceBytes: input.config.maxSkillResourceBytes }),
+    // Bind's skill warnings — a name collision losing a skill, a restored hint
+    // refused by a narrowed scope, a drifted pin — reach the host through this
+    // port. Without it they are computed and discarded.
+    ...(input.onSkillWarning ? { onWarn: input.onSkillWarning } : {}),
   });
 
   // `load_skill` is always active when the run has any skills at all: a

@@ -2010,9 +2010,16 @@ export interface RunHarnessInput {
     toolTimeoutMs: number;
     maxWebResults: number;
     maxCostCents?: number;
+    /**
+     * Budget for one catalog, applied **per catalog** rather than across them:
+     * the plugin directory and the skill directory each get this much, so a run
+     * with a large surface of both can carry up to twice it in catalog text.
+     */
     maxCatalogTokens?: number;
     /** Cap on how many skills one run may hold loaded. Defaults to Bind's. */
     maxActiveSkills?: number;
+    /** Cap on the bytes one `read_skill_resource` returns. Defaults to 64 KiB. */
+    maxSkillResourceBytes?: number;
     /** Cap on the total tokens of loaded skill bodies. Defaults to Bind's. */
     maxActiveSkillBodyTokens?: number;
     maxStreamResets?: number;
@@ -2053,6 +2060,13 @@ export interface RunHarnessInput {
   skillActivationHints?: string[];
   /** Called when the model loads a skill, so a resumed attempt can restore it. */
   persistSkillActivation?: (ref: string) => void | Promise<void>;
+  /**
+   * Observe a skill warning from Bind: a name collision that lost a skill
+   * (the registry is keyed by name, last write wins), a restored hint refused
+   * by a narrowed scope, a pinned body that drifted. Unwired, all three are
+   * computed and discarded.
+   */
+  onSkillWarning?: (message: string, fields: Record<string, unknown>) => void;
   includeWebSearch?: boolean;
   onEvent(event: HarnessEvent): void | Promise<void>;
   onBestEffortEventDropped?: (event: {
