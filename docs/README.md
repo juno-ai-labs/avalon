@@ -27,7 +27,7 @@ update it in the same change.
 
 | Document | Scope — read and update when changing… |
 | --- | --- |
-| [`prds.md`](prds.md) | How a product requirement document under `docs/PRDs/` is named, which sections it must contain, how its `state.md` records progress, and when it freezes. Read before writing one. The PRD folders themselves are not listed in this index; this row is the tree's entry, and it links the standing product contract. |
+| [`prds.md`](prds.md) | How a product requirement document under `docs/PRDs/` is named, which sections it must contain, how its `state.md` records progress, and when it freezes. Read before writing one. The PRD folders themselves are not listed in this index; this row is the tree's entry, and [the Avalon implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) is the standing product contract it defers to. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The monorepo's three deployment surfaces, the Electron main/renderer split, the Hono Worker and its runtime components, and how the packages depend on each other. |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | Identity, tenancy, and the D1 schema — the checked-in migrations are authoritative. Read before adding a table, column, or migration. |
 | [`REGIONALIZATION.md`](REGIONALIZATION.md) | The Global/EU boundary: single identity endpoint, the Global control plane's membership and invitation discovery, immutable workspace region. Read before touching anything cross-region. |

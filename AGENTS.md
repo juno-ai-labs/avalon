@@ -61,9 +61,12 @@ it indexes every document and says which one owns which area. Find the ones whos
 scope matches what you are touching, read them first, and update them in the same
 change. When a change introduces a subsystem no existing document covers, add
 `docs/<NAME>.md` and register it in that index — the index is the one registry
-that has to stay complete. The Documentation list in [`README.md`](README.md) is
-a curated reading path rather than a second registry; add an entry there only
-when the new document belongs in front of a first-time reader.
+that has to stay complete. Product requirement documents are the exception: they
+live in dated folders under `docs/PRDs/` and are not registered, per
+[`docs/prds.md`](docs/prds.md). The Documentation list in
+[`README.md`](README.md) is a curated reading path rather than a second
+registry; add an entry there only when the new document belongs in front of a
+first-time reader.
 
 ## Pull requests
 
