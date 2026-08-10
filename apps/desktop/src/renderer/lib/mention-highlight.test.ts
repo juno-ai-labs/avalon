@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeMentionLabels, splitMentionHighlights } from './mention-highlight';
 
-const labels = ['Bob Builder', 'Bob', 'Cara Chen', 'Google Drive'];
+const labels = normalizeMentionLabels(['Bob Builder', 'Bob', 'Cara Chen', 'Google Drive']);
 
 function mentions(value: string): string[] {
   return splitMentionHighlights(value, labels)

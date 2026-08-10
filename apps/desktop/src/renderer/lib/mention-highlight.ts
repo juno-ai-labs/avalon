@@ -25,7 +25,7 @@ function isClosingBoundary(value: string, index: number): boolean {
   return CLOSING_BOUNDARY.test(value.charAt(index));
 }
 
-function matchLabelAt(value: string, index: number, labels: string[]): string | null {
+function matchLabelAt(value: string, index: number, labels: readonly string[]): string | null {
   for (const label of labels) {
     // Sliced by the label's own length, never a case-folded one: lowercasing can
     // change length (`İ` folds to two code units), and slicing by the folded
@@ -55,8 +55,13 @@ export function normalizeMentionLabels(labels: readonly string[]): string[] {
   return unique.sort((left, right) => right.length - left.length);
 }
 
-export function splitMentionHighlights(value: string, labels: readonly string[]): MentionHighlightSegment[] {
-  const normalized = normalizeMentionLabels(labels);
+/**
+ * Splits `value` against labels already put through `normalizeMentionLabels`.
+ * Normalizing is the caller's job so it happens once per label set rather than
+ * once per keystroke; passing a raw list still works but resolves overlapping
+ * labels by list order instead of longest-first.
+ */
+export function splitMentionHighlights(value: string, normalized: readonly string[]): MentionHighlightSegment[] {
   if (value.length === 0 || normalized.length === 0) {
     return value.length > 0 ? [{ kind: 'text', text: value }] : [];
   }
