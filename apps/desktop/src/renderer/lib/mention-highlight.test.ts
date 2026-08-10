@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitMentionHighlights } from './mention-highlight';
+import { normalizeMentionLabels, splitMentionHighlights } from './mention-highlight';
 
 const labels = ['Bob Builder', 'Bob', 'Cara Chen', 'Google Drive'];
 
@@ -31,6 +31,19 @@ describe('splitMentionHighlights', () => {
 
   it('matches labels case-insensitively but keeps what was typed', () => {
     expect(mentions('ping @cara chen please')).toEqual(['@cara chen']);
+  });
+
+  it('matches a label whose case folding changes its length', () => {
+    // 'İ' lowercases to two code units, so a folded length would slice past the label.
+    expect(splitMentionHighlights('ping @İstanbul Ops today', ['İstanbul Ops'])).toEqual([
+      { kind: 'text', text: 'ping ' },
+      { kind: 'mention', text: '@İstanbul Ops' },
+      { kind: 'text', text: ' today' },
+    ]);
+  });
+
+  it('deduplicates labels that differ only by case', () => {
+    expect(normalizeMentionLabels(['Bob', 'bob', ' Cara Chen ', ''])).toEqual(['Cara Chen', 'Bob']);
   });
 
   it('highlights several resources in one draft', () => {
