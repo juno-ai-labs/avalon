@@ -56,11 +56,19 @@ browser driver to the repository.
 
 ## Documentation
 
-Engineering and product documentation lives in `docs/` and is linked from the
-Documentation section of [`README.md`](README.md). When a change alters something
-a doc describes, update that doc in the same change. When it introduces a
-subsystem no existing doc covers, add `docs/<NAME>.md` and register it in the
-README list.
+**Before planning or making a change, read [`docs/README.md`](docs/README.md)** —
+it indexes every document and says which one owns which area. Find the ones whose
+scope matches what you are touching, read them first, and update them in the same
+change. When a change introduces a subsystem no existing document covers, add
+`docs/<NAME>.md`, register it in the index, and add it to the Documentation list
+in [`README.md`](README.md).
+
+## Pull requests
+
+**Before opening a pull request, read
+[`docs/pull-requests.md`](docs/pull-requests.md)** — it defines the required
+description sections and the repository's merge style. Do not open a PR unless
+you were asked to.
 
 ## Security
 
