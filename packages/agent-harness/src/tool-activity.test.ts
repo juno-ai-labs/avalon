@@ -35,6 +35,20 @@ describe("tool activity names", () => {
     })).toBe("Searched the public web");
   });
 
+  it("never words a failed row as success", () => {
+    expect(toolActivityName({ toolName: "web_search", status: "failed" }))
+      .toBe("Could not search the public web");
+    expect(toolActivityName({ toolName: "workstream_create_artifact", status: "failed" }))
+      .toBe("Could not create an artifact");
+    expect(toolActivityName({
+      toolName: "google_2_drive_search",
+      status: "failed",
+      pluginDisplayName: "Google Drive · Work",
+    })).toBe("Could not reach Google Drive · Work");
+    expect(toolActivityName({ toolName: "memory_prune", status: "failed" }))
+      .toBe("Memory prune failed");
+  });
+
   it("reads an unrecognized unattributed tool as a phrase rather than a symbol", () => {
     expect(toolActivityName({ toolName: "memory_prune", status: "completed" }))
       .toBe("Memory prune");
