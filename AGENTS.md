@@ -69,7 +69,8 @@ when the new document belongs in front of a first-time reader.
 
 **Before opening a pull request, read
 [`docs/pull-requests.md`](docs/pull-requests.md)** — it defines the required
-description sections and the repository's merge style. Do not open a PR unless
+description sections, the repository's merge style, and its rule that pull
+requests are opened ready for review, never as drafts. Do not open a PR unless
 you were asked to.
 
 ## Security
