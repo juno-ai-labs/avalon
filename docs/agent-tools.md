@@ -301,5 +301,7 @@ must be a particular identifier, validate the family and hint on mismatch.
   per-provider tool surfaces.
 - [`writing-skills.md`](writing-skills.md) — when the right answer is a
   *procedure*, not a capability.
+- [`writing-prompts.md`](writing-prompts.md) — the standing policy and plugin
+  system messages that tell the model when to reach for a tool.
 - [`SECURITY.md`](SECURITY.md) — trust boundaries and what is treated as
   untrusted.
