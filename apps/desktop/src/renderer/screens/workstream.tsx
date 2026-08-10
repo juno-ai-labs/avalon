@@ -901,6 +901,14 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
     await api!.resolveActivitySuggestion(id, suggestionId, action);
+    // The transcript's suggestion cards are rebuilt from the detail's pending
+    // suggestions every time the message page is fetched, and that fetch reads
+    // the detail through the cache. Dropping the resolved suggestion here keeps
+    // a refetch racing this one from restoring the card to its pending state,
+    // which would offer buttons whose request can only fail.
+    queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
+      ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
+      : current);
     await Promise.all([messages.refetch(), workstream.refetch()]);
   };
 
