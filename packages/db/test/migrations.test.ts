@@ -1493,4 +1493,128 @@ describe("database migrations", () => {
     )).toBeUndefined();
     database.close();
   });
+
+  it("credits the assigned Slack member as the creator of work streams stored as ownerless", () => {
+    const database = migrateDatabaseThrough("0052_automation_connector_bindings.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01'),
+        ('user-jordan', 'google-jordan', 'jordan@example.com', 'Jordan', '2026-01-01', '2026-01-01'),
+        ('user-former', 'google-former', 'former@example.com', 'Former', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-slack', 'Slack', 'slack-workspace', 'global', 'user-owner',
+              '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES
+        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-jordan', 'member', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-former', 'member', 'suspended', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, granted_scopes_json, status, cursor_json, config_json,
+         created_at, updated_at, model_plugin_id)
+      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+              'Slack workspace', '[]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+              'plugin_slack_workspace');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES
+        ('workstream-assigned', 'workspace-slack', 'Assigned', 'Slack task', 'ad_hoc', NULL,
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-unassigned', 'workspace-slack', 'Unassigned', 'Slack task', 'ad_hoc', NULL,
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-suspended', 'workspace-slack', 'Suspended', 'Slack task', 'ad_hoc', NULL,
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-owned', 'workspace-slack', 'Owned', 'Slack task', 'ad_hoc', 'user-jordan',
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-claimed-by-other', 'workspace-slack', 'Claimed', 'Slack task', 'ad_hoc', NULL,
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01'),
+        ('workstream-claimed-by-author', 'workspace-slack', 'Claimed', 'Slack task', 'ad_hoc', NULL,
+         'completed', 2, '2026-02-01', '2026-02-01', '2026-02-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         assigned_user_id, assigned_at, assignment_method, context_json, created_at, updated_at)
+      VALUES
+        ('session-assigned', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '1.0', 'event:assigned', 'workstream-assigned',
+         'app_mention', 'public', 'user-taylor', '2026-02-02', 'verified_email', '{}',
+         '2026-02-01', '2026-02-02'),
+        ('session-unassigned', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U789', 'C123', '2.0', 'event:unassigned', 'workstream-unassigned',
+         'app_mention', 'public', NULL, NULL, NULL, '{}', '2026-02-01', '2026-02-01'),
+        ('session-suspended', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U999', 'C123', '3.0', 'event:suspended', 'workstream-suspended',
+         'app_mention', 'public', 'user-former', '2026-02-02', 'verified_email', '{}',
+         '2026-02-01', '2026-02-02'),
+        ('session-claimed-by-other', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '5.0', 'event:claimed-other', 'workstream-claimed-by-other',
+         'app_mention', 'public', 'user-taylor', '2026-02-03', 'verified_email', '{}',
+         '2026-02-01', '2026-02-03'),
+        ('session-claimed-by-author', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '6.0', 'event:claimed-author', 'workstream-claimed-by-author',
+         'app_mention', 'public', 'user-taylor', '2026-02-03', 'verified_email', '{}',
+         '2026-02-01', '2026-02-03'),
+        ('session-owned', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '4.0', 'event:owned', 'workstream-owned',
+         'app_mention', 'public', 'user-taylor', '2026-02-02', 'verified_email', '{}',
+         '2026-02-01', '2026-02-02');
+      -- An earlier assignment already added the member with the reason that
+      -- assignment used; crediting them as creator has to update it.
+      INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+      VALUES ('workstream-claimed-by-author', 'user-taylor', 'user-taylor', 'explicit',
+              '2026-02-03');
+      -- A claim writes assigned_user_id too, so it must be told apart from a
+      -- verified-email or account-link assignment by who did the claiming.
+      UPDATE slack_agent_sessions SET
+        claimed_by_slack_user_id = 'UOTHER', claimed_at = '2026-02-03',
+        assignment_method = 'explicit_link', execution_scope = 'user',
+        linked_user_id = 'user-taylor'
+      WHERE id = 'session-claimed-by-other';
+      UPDATE slack_agent_sessions SET
+        claimed_by_slack_user_id = 'U456', claimed_at = '2026-02-03',
+        assignment_method = 'explicit_link', execution_scope = 'user',
+        linked_user_id = 'user-taylor'
+      WHERE id = 'session-claimed-by-author';
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0053_slack_workstream_creator_backfill.sql", import.meta.url),
+      "utf8",
+    ));
+
+    expect(database.prepare(
+      "SELECT id, created_by_user_id FROM workstreams ORDER BY id",
+    ).all()).toEqual([
+      { id: "workstream-assigned", created_by_user_id: "user-taylor" },
+      { id: "workstream-claimed-by-author", created_by_user_id: "user-taylor" },
+      { id: "workstream-claimed-by-other", created_by_user_id: null },
+      { id: "workstream-owned", created_by_user_id: "user-jordan" },
+      { id: "workstream-suspended", created_by_user_id: null },
+      { id: "workstream-unassigned", created_by_user_id: null },
+    ]);
+    expect(database.prepare(
+      `SELECT workstream_id, user_id, participation_reason FROM workstream_participants
+       ORDER BY workstream_id`,
+    ).all()).toEqual([
+      {
+        workstream_id: "workstream-assigned",
+        user_id: "user-taylor",
+        participation_reason: "creator",
+      },
+      {
+        workstream_id: "workstream-claimed-by-author",
+        user_id: "user-taylor",
+        participation_reason: "creator",
+      },
+    ]);
+    database.close();
+  });
 });
