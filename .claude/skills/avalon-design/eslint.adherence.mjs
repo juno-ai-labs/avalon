@@ -20,6 +20,14 @@ const adherenceRules = JSON.parse(
   readFileSync(new URL("./_adherence.oxlintrc.json", import.meta.url))
 ).rules;
 
+// Flat-config `files`/`ignores` patterns below resolve against ESLint's
+// basePath, which defaults to `cwd` whenever a config is loaded via
+// `--config` (see eslint/lib/eslint/eslint.js) — there is no supported way
+// to override that from inside the config file or via a CLI flag when
+// `--config` is explicit. The `lint:design-system` script in package.json
+// `cd`s into this directory before invoking ESLint so `cwd` — and therefore
+// basePath — is this directory, matching what these patterns assume.
+
 export default [
   {
     ignores: ["ui_kits/**/index.html", "assets/**", "guidelines/**"],
