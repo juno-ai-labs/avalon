@@ -28,10 +28,19 @@ export function assertMinorReleaseVersion(version) {
   return version;
 }
 
-export function assertReleaseTag(tag, rootVersion, desktopVersion) {
+// The shape half of assertReleaseTag: everything that can be judged from the
+// tag alone, with no checkout to compare against. The planner uses this to
+// reject a malformed dispatch before a macOS runner is claimed; assertReleaseTag
+// then adds the checks that need the working tree.
+export function parseReleaseTag(tag) {
   if (!tag?.startsWith('v')) throw new Error(`Release tag must have the form v<semver>; received ${tag || '(empty)'}`);
   const taggedVersion = tag.slice(1);
   assertMinorReleaseVersion(taggedVersion);
+  return taggedVersion;
+}
+
+export function assertReleaseTag(tag, rootVersion, desktopVersion) {
+  const taggedVersion = parseReleaseTag(tag);
   if (rootVersion !== taggedVersion) {
     throw new Error(`Root package version ${rootVersion} does not match tag ${tag}`);
   }
@@ -65,6 +74,15 @@ export function compareVersions(left, right) {
     return aPart < bPart ? -1 : 1;
   }
   return 0;
+}
+
+// The version the pipeline cuts on its own. Every release advances exactly one
+// minor, so this is the only successor automation ever picks: the one-time
+// 0.x -> 1.0.0 stable promotion that assertNextReleaseVersion also accepts is a
+// deliberate human decision and is made by hand.
+export function nextReleaseVersion(currentVersion) {
+  const current = parseVersion(currentVersion);
+  return `${current.major}.${current.minor + 1}.0`;
 }
 
 export function assertNextReleaseVersion(currentVersion, nextVersion) {

@@ -9,26 +9,28 @@ const workflowPath = join(repositoryDirectory, '.github/workflows/release-deskto
 
 test('a new release supersedes pending ones without cancelling a running one', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const concurrency = workflow.match(/^ {4}concurrency:\n(?<body>(?:^(?: {6}|$).*\n)+)/mu)?.groups?.body;
+  const concurrency = workflow.match(/^concurrency:\n(?<body>(?:^(?: {2}|$).*\n)+)/mu)?.groups?.body;
 
-  assert.ok(concurrency, 'Release workflow must define job-level concurrency');
-  assert.match(concurrency, /^ {6}group: desktop-macos-release$/mu);
-  assert.match(concurrency, /^ {6}cancel-in-progress: false$/mu);
+  assert.ok(concurrency, 'Release workflow must define workflow-level concurrency');
+  assert.match(concurrency, /^ {2}group: desktop-macos-release$/mu);
+  assert.match(concurrency, /^ {2}cancel-in-progress: false$/mu);
   // Newest pending wins, so intermediate versions are dropped rather than
   // queued; cancel-in-progress stays false so a running release survives.
-  assert.match(concurrency, /^ {6}queue: single$/mu);
+  assert.match(concurrency, /^ {2}queue: single$/mu);
   assert.doesNotMatch(concurrency, /github\.|inputs\.|ref_name/u);
 });
 
-test('the planner stays outside the release queue', async () => {
+test('the plan is made inside the release queue, not before it', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const planJob = workflow.slice(workflow.indexOf('\n  plan:'), workflow.indexOf('\n  release:'));
+  const jobs = workflow.slice(workflow.indexOf('\njobs:'));
 
-  // At workflow level the group would also cover the planner, so a push that
-  // plans a skip would occupy the single pending slot and could displace a
-  // queued release that had work to do.
-  assert.doesNotMatch(workflow, /^concurrency:$/mu, 'Concurrency must not be workflow-level');
-  assert.doesNotMatch(planJob, /concurrency:/u, 'The planning job must not join the release queue');
+  // A plan made while another release is in flight reads a release record that
+  // run has not finished writing. It would pick a version that release is about
+  // to take, and could not tell a genuine resume of a failed release from a
+  // version that had just shipped — which is exactly what the bump step's
+  // short-circuit relies on being able to distinguish.
+  assert.match(workflow, /^concurrency:$/mu, 'Concurrency must cover the planning job');
+  assert.doesNotMatch(jobs, /^ {4}concurrency:$/mu, 'No job may hold a narrower release queue');
 });
 
 test('the site deployment never shares the release queue', async () => {
@@ -58,14 +60,89 @@ test('the app is health-gated against the regional APIs before it is distributed
   assert.ok(healthGate < published, 'Regional health must be checked before anything is published');
 });
 
-test('tag pushes are never filtered by path', async () => {
+// The `paths:` filter is the release trigger, so it is also the only place the
+// "what ships in the app" decision is written down. These tests are what stops
+// it drifting: a wrong entry here is invisible until a merge silently fails to
+// release, which is exactly the outage this pipeline was rebuilt to prevent.
+async function triggerPaths() {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const block = workflow.match(/^ {4}paths:\n(?<body>(?:^ {6}- .*\n)+)/mu)?.groups?.body;
+  assert.ok(block, 'Release workflow must filter pushes by path');
+  return block.split('\n').filter(Boolean).map((line) => line.replace(/^ {6}- /u, '').replace(/^'|'$/gu, ''));
+}
+
+// GitHub path filters are globs; these are the only two shapes the list uses.
+function matchesFilter(patterns, path) {
+  return patterns.some((pattern) => (pattern.endsWith('/**')
+    ? path.startsWith(pattern.slice(0, -2))
+    : path === pattern));
+}
+
+test('the release trigger covers everything the installed app is built from', async () => {
+  const patterns = await triggerPaths();
+
+  for (const path of [
+    'apps/desktop/src/main/index.ts',
+    'apps/desktop/package.json',
+    'apps/desktop/electron-builder.yml',
+    'apps/desktop/resources/icon.icns',
+    'packages/contracts/src/index.ts',
+    'packages/agent-harness/src/index.ts',
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+    'tsconfig.base.json',
+    '.github/workflows/release-desktop-macos.yml',
+  ]) {
+    assert.equal(matchesFilter(patterns, path), true, `${path} ships in the desktop app and must release`);
+  }
+});
+
+test('the release trigger excludes what a user could never install', async () => {
+  const patterns = await triggerPaths();
+
+  for (const path of [
+    'docs/RUNBOOK.md',
+    'README.md',
+    'apps/api/src/index.ts',
+    'apps/site/src/pages/index.astro',
+    'apps/release-retention/src/index.ts',
+    'scripts/check-regional-health.mjs',
+    'assets/brand/logo.svg',
+    'config/provider-apps/github.json',
+    'eslint.config.mjs',
+    '.github/workflows/ci.yml',
+    '.github/workflows/deploy-api.yml',
+  ]) {
+    assert.equal(matchesFilter(patterns, path), false, `${path} must not spend a 90-minute signed build`);
+  }
+});
+
+test("the release's own recorded config cannot re-trigger the release", async () => {
+  const patterns = await triggerPaths();
+
+  // The last thing a release does is commit apps/site/release.config.json back
+  // to main. If the trigger matched it, every release would queue another one.
+  assert.equal(matchesFilter(patterns, 'apps/site/release.config.json'), false);
+});
+
+test('a glob never matches a sibling directory that merely shares its prefix', async () => {
+  const patterns = await triggerPaths();
+
+  assert.equal(matchesFilter(patterns, 'apps/desktop-notes/README.md'), false);
+  assert.equal(matchesFilter(patterns, 'packages-archive/old/index.ts'), false);
+});
+
+test('a tag push cannot reach the release, filter or no filter', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const trigger = workflow.match(/^on:\n(?<body>(?:^(?: {2}|$).*\n)+)/mu)?.groups?.body;
 
   // GitHub leaves it undefined whether a paths filter also applies to tag
-  // pushes, so a manual `v*` tag must not depend on that behavior.
+  // pushes. It cannot matter here: the push trigger is branch-scoped, so a
+  // `v*` tag matches nothing regardless of how the filter is evaluated.
   assert.ok(trigger, 'Release workflow must define triggers');
-  assert.doesNotMatch(trigger, /^\s*paths:/mu);
+  assert.match(trigger, /^ {2}push:\n {4}branches:\n {6}- main$/mu);
+  assert.doesNotMatch(trigger, /^\s*tags:/mu);
 });
 
 test('the release tag is pushed after publication and before anything that can still fail', async () => {
@@ -100,11 +177,66 @@ test('the release records its site config back on the default branch', async () 
   const recordStep = workflow.slice(workflow.indexOf('- name: Record the published release config'));
 
   // publish-r2-release.mjs reads the committed config through
-  // assertNextReleaseVersion, so leaving main stale breaks the next release.
+  // assertNextReleaseVersion, so leaving main stale breaks the next release,
+  // and plan-release.mjs reads the commit it names as its watermark.
   assert.match(recordStep, /git push origin HEAD:main/u);
   assert.match(recordStep, /apps\/site\/release\.config\.json/u);
   // A dispatch replaying an older tag must not move the record backwards.
   assert.match(recordStep, /leaving it alone/u);
+});
+
+test('the pipeline bumps the version itself, before the commit it tags', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const stepIndex = (name) => workflow.indexOf(`- name: ${name}`);
+
+  const bumped = stepIndex('Bump the workspace version and record it on the default branch');
+  const resolved = stepIndex('Resolve the release commit');
+  const createdLocally = stepIndex('Create the release tag locally');
+  const guarded = stepIndex('Guard tag, commit, and package versions');
+
+  assert.notEqual(bumped, -1, 'The release must stamp the planned version onto the manifests');
+  // The bump has to be in the tree before the tag is cut and before
+  // validate-release-tag.mjs compares the manifests against it, or every
+  // release would fail its own guard.
+  assert.ok(bumped < createdLocally, 'The version must be bumped before the tag is created');
+  assert.ok(createdLocally < guarded, 'The tag must exist before the guard checks it');
+  // The recorded watermark must name the bumped commit, not the one that
+  // triggered the run.
+  assert.ok(bumped < resolved, 'The release commit must be resolved after the bump');
+  assert.match(workflow.slice(resolved), /AVALON_RELEASE_COMMIT=\$\(git rev-parse HEAD\)/u);
+});
+
+test('the bump is skipped on a dispatch, which replays an already-tagged version', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const bumpStep = workflow.slice(
+    workflow.indexOf('- name: Bump the workspace version'),
+    workflow.indexOf('- name: Resolve the release commit'),
+  );
+
+  // A replayed tag already carries its own version; re-bumping would move the
+  // manifests off the tag and fail the guard.
+  assert.match(bumpStep, /^ {8}if: needs\.plan\.outputs\.create_tag == 'true'$/mu);
+  // main can move between the plan and the bump; the newer tip carries strictly
+  // more work, so the release follows it rather than failing.
+  assert.match(bumpStep, /git reset --hard origin\/main/u);
+  assert.match(bumpStep, /retrying/u);
+});
+
+test('a no-op bump is treated as resuming a release, never as one already shipped', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const bumpStep = workflow.slice(
+    workflow.indexOf('- name: Bump the workspace version'),
+    workflow.indexOf('- name: Resolve the release commit'),
+  );
+
+  // Finding main already at the planned version is only unambiguous because the
+  // plan was made inside the queue: a release that had shipped this version
+  // would have advanced the record, and the plan would have chosen the next
+  // minor. Without that ordering this branch also catches a merge that raced an
+  // in-flight release, which then dies at the tag or at publish and strands its
+  // work — the silent stranding this pipeline exists to remove.
+  assert.match(bumpStep, /git diff --quiet/u);
+  assert.match(bumpStep, /resuming a release that did not publish it/u);
 });
 
 test('the release job can write the tag it publishes', async () => {
