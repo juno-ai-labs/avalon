@@ -58,14 +58,89 @@ test('the app is health-gated against the regional APIs before it is distributed
   assert.ok(healthGate < published, 'Regional health must be checked before anything is published');
 });
 
-test('tag pushes are never filtered by path', async () => {
+// The `paths:` filter is the release trigger, so it is also the only place the
+// "what ships in the app" decision is written down. These tests are what stops
+// it drifting: a wrong entry here is invisible until a merge silently fails to
+// release, which is exactly the outage this pipeline was rebuilt to prevent.
+async function triggerPaths() {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const block = workflow.match(/^ {4}paths:\n(?<body>(?:^ {6}- .*\n)+)/mu)?.groups?.body;
+  assert.ok(block, 'Release workflow must filter pushes by path');
+  return block.split('\n').filter(Boolean).map((line) => line.replace(/^ {6}- /u, '').replace(/^'|'$/gu, ''));
+}
+
+// GitHub path filters are globs; these are the only two shapes the list uses.
+function matchesFilter(patterns, path) {
+  return patterns.some((pattern) => (pattern.endsWith('/**')
+    ? path.startsWith(pattern.slice(0, -2))
+    : path === pattern));
+}
+
+test('the release trigger covers everything the installed app is built from', async () => {
+  const patterns = await triggerPaths();
+
+  for (const path of [
+    'apps/desktop/src/main/index.ts',
+    'apps/desktop/package.json',
+    'apps/desktop/electron-builder.yml',
+    'apps/desktop/resources/icon.icns',
+    'packages/contracts/src/index.ts',
+    'packages/agent-harness/src/index.ts',
+    'package.json',
+    'pnpm-lock.yaml',
+    'pnpm-workspace.yaml',
+    'tsconfig.base.json',
+    '.github/workflows/release-desktop-macos.yml',
+  ]) {
+    assert.equal(matchesFilter(patterns, path), true, `${path} ships in the desktop app and must release`);
+  }
+});
+
+test('the release trigger excludes what a user could never install', async () => {
+  const patterns = await triggerPaths();
+
+  for (const path of [
+    'docs/RUNBOOK.md',
+    'README.md',
+    'apps/api/src/index.ts',
+    'apps/site/src/pages/index.astro',
+    'apps/release-retention/src/index.ts',
+    'scripts/check-regional-health.mjs',
+    'assets/brand/logo.svg',
+    'config/provider-apps/github.json',
+    'eslint.config.mjs',
+    '.github/workflows/ci.yml',
+    '.github/workflows/deploy-api.yml',
+  ]) {
+    assert.equal(matchesFilter(patterns, path), false, `${path} must not spend a 90-minute signed build`);
+  }
+});
+
+test("the release's own recorded config cannot re-trigger the release", async () => {
+  const patterns = await triggerPaths();
+
+  // The last thing a release does is commit apps/site/release.config.json back
+  // to main. If the trigger matched it, every release would queue another one.
+  assert.equal(matchesFilter(patterns, 'apps/site/release.config.json'), false);
+});
+
+test('a glob never matches a sibling directory that merely shares its prefix', async () => {
+  const patterns = await triggerPaths();
+
+  assert.equal(matchesFilter(patterns, 'apps/desktop-notes/README.md'), false);
+  assert.equal(matchesFilter(patterns, 'packages-archive/old/index.ts'), false);
+});
+
+test('a tag push cannot reach the release, filter or no filter', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
   const trigger = workflow.match(/^on:\n(?<body>(?:^(?: {2}|$).*\n)+)/mu)?.groups?.body;
 
   // GitHub leaves it undefined whether a paths filter also applies to tag
-  // pushes, so a manual `v*` tag must not depend on that behavior.
+  // pushes. It cannot matter here: the push trigger is branch-scoped, so a
+  // `v*` tag matches nothing regardless of how the filter is evaluated.
   assert.ok(trigger, 'Release workflow must define triggers');
-  assert.doesNotMatch(trigger, /^\s*paths:/mu);
+  assert.match(trigger, /^ {2}push:\n {4}branches:\n {6}- main$/mu);
+  assert.doesNotMatch(trigger, /^\s*tags:/mu);
 });
 
 test('the release tag is pushed after publication and before anything that can still fail', async () => {
