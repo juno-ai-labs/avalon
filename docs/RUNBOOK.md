@@ -33,9 +33,12 @@ Create independent resource sets for `global` and `eu`:
 - A D1 database
 - An R2 payload bucket
 - An activity Queue and dead-letter Queue
+- A Flagship app holding that region's agent model-routing flags
 - The Worker, Durable Object namespaces, and Workflows declared in the regional Wrangler file
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
+
+Create the Flagship app and its per-agent flags with the commands in [the feature-flag document](FEATURE_FLAGS.md#provisioning); the `flagship` binding also provisions an app automatically on the first deploy, writing the `app_id` back into the regional Wrangler file for committing. Seed each flag with the model ids already in that region's `OPENROUTER_*` variables so provisioning is a no-op, and keep the two in step afterwards — an agent whose flag is missing or unreadable falls back to the variables. Changing which OpenRouter model an agent runs on is a flag change, not a deploy.
 
 Set these shared Worker secrets separately in each regional deployment:
 

@@ -31,6 +31,7 @@ import {
   startWorkstreamWorkflow,
 } from "./integrations";
 import { logStructuredEvent } from "../observability/logger";
+import { scheduledWorkstreamModel } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
@@ -135,6 +136,10 @@ export async function launchWorkstreamHarness(
 ): Promise<string> {
   const id = newId();
   const at = nowIso();
+  const model = await scheduledWorkstreamModel(env, {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+  });
   await env.DB.batch([
     ...(input.supersedeActiveRun ? [env.DB.prepare(
       `UPDATE harness_runs
@@ -158,7 +163,7 @@ export async function launchWorkstreamHarness(
       JSON.stringify(input.executionPrincipal),
       input.parentHarnessRunId ?? null,
       at,
-      env.OPENROUTER_PRIMARY_MODEL,
+      model,
       at,
     ),
     env.DB.prepare(
@@ -653,6 +658,8 @@ export class WorkstreamService {
     if (!shouldInvoke) {
       const recentMessages = await this.recentAddressingMessages(id, message.sequenceNumber);
       const classification = await classifyWorkstreamMessage(this.env, {
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
         message: input.text,
         activeTask: workstream.harnessStatus === "running" || workstream.harnessStatus === "needs_input",
         connectorMentions,
