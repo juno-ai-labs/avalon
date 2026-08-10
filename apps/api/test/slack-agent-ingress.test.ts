@@ -624,3 +624,30 @@ describe("work-stream link unfurl card", () => {
     }
   });
 });
+
+describe("App Home task rows", () => {
+  it("skips a row it cannot link instead of failing the whole App Home", () => {
+    const webBase = "https://with-avalon.com";
+    const good = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+
+    // Minting a link throws on a non-UUID by design. In a list that must stay
+    // a per-row cost: the throw would otherwise escape views.publish and take
+    // account linking down with it.
+    const blocks = __slackAgentTesting.linkedHome(
+      "Ada",
+      [
+        { id: "workstream-ownerless", title: "Unlinkable", harness_status: "running" },
+        { id: good, title: "Quarterly planning", harness_status: "needs_input" },
+      ],
+      [],
+      webBase,
+      null,
+      null,
+    );
+
+    const rendered = JSON.stringify(blocks);
+    expect(rendered).toContain(`${webBase}/app/workstreams/${good}`);
+    expect(rendered).toContain("Quarterly planning");
+    expect(rendered).not.toContain("Unlinkable");
+  });
+});

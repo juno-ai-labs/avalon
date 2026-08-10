@@ -18,6 +18,7 @@ import {
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
+  isWorkstreamId,
   parseWorkstreamLink,
   workstreamCanonicalUrl,
   type ExternalActor,
@@ -2914,12 +2915,22 @@ function linkedHome(name: string, tasks: Record<string, unknown>[], automations:
   ];
   if (!tasks.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nothing needs your attention right now._" } });
   for (const task of tasks) {
+    const workstreamId = String(task.id);
+    // Minting a link is strict on purpose, but this is a list: one row that
+    // cannot produce a link must cost that row, not the whole App Home. The
+    // throw would otherwise escape `views.publish` and fail account linking.
+    if (!isWorkstreamId(workstreamId)) {
+      console.warn("Skipped an App Home task row with an unlinkable work-stream id", {
+        workstream_id: workstreamId,
+      });
+      continue;
+    }
     const status = task.harness_status === "needs_input"
       ? ":warning: Needs your input"
       : task.harness_status === "running"
         ? ":large_green_circle: Running"
         : `Recent · ${escapeMrkdwn(String(task.harness_status).replaceAll("_", " "))}`;
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, String(task.id))}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, workstreamId)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
   blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
   if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Avalon DM." } });
@@ -3192,6 +3203,7 @@ export const __slackAgentTesting = {
   slackEventActorUserIds,
   slackChannelResolutionDenial,
   slackChannelType,
+  linkedHome,
   slackIngressRetryable,
   slackReconnectRequired,
 };
