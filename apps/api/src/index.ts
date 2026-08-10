@@ -4,6 +4,7 @@ import { consumeActivityQueue } from "./queues/activity-consumer";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
 import { processMemoryIndexOutbox } from "./services/memory-service";
 import { SlackAgentService } from "./services/slack-agent-service";
+import { processDueOpportunityWindows } from "./services/work-opportunity-service";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -57,6 +58,7 @@ export default {
       reapExpiredDraftAttachments(env),
       processMemoryIndexOutbox(env),
       new SlackAgentService(env).maintainIngress(),
+      processDueOpportunityWindows(env),
     ]));
   },
 } satisfies ExportedHandler<Env>;

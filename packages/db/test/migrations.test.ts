@@ -22,6 +22,37 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("scopes verified external identities by provider tenant", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
+        ('identity-user-one', 'identity-subject-one', 'identity-one@example.com', 'Identity One', '2026-08-07', '2026-08-07'),
+        ('identity-user-two', 'identity-subject-two', 'identity-two@example.com', 'Identity Two', '2026-08-07', '2026-08-07');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('identity-workspace', 'Identity Workspace', 'identity-workspace', 'global', 'identity-user-one', '2026-08-07', '2026-08-07');
+      INSERT INTO external_user_identities
+        (id, workspace_id, user_id, provider, provider_tenant_id, provider_user_id,
+         handle, verification_source, created_at, updated_at)
+        VALUES
+        ('identity-one', 'identity-workspace', 'identity-user-one', 'github', 'tenant-one', '42', 'same-handle', 'oauth', '2026-08-07', '2026-08-07'),
+        ('identity-two', 'identity-workspace', 'identity-user-two', 'github', 'tenant-two', '42', 'same-handle', 'oauth', '2026-08-07', '2026-08-07');
+    `);
+    expect(database.prepare(
+      "SELECT provider_tenant_id, user_id FROM external_user_identities ORDER BY provider_tenant_id",
+    ).all()).toEqual([
+      { provider_tenant_id: "tenant-one", user_id: "identity-user-one" },
+      { provider_tenant_id: "tenant-two", user_id: "identity-user-two" },
+    ]);
+    expect(() => database.exec(`
+      INSERT INTO external_user_identities
+        (id, workspace_id, user_id, provider, provider_tenant_id, provider_user_id,
+         verification_source, created_at, updated_at)
+        VALUES ('identity-duplicate', 'identity-workspace', 'identity-user-two', 'github', 'tenant-one', '42', 'oauth', '2026-08-07', '2026-08-07');
+    `)).toThrow(/UNIQUE constraint failed/);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("accepts X connections after the connector constraint migration", () => {
     const database = migrateDatabaseThrough("0040_realtime_transcription_admission.sql");
     database.exec(`

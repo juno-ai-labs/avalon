@@ -668,13 +668,13 @@ export class ProviderWebhookService {
         connection_owner_user_id, provider, provider_event_id, event_type,
         resource_type, provider_resource_id, actor_json, subject_json,
         occurred_at, received_at, title, summary, text_snippet, payload_ref,
-        visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
+        visibility_json, entity_keys_json, dedupe_key, raw_content_hash, external_people_json,
         processing_status, metadata_json)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              'pending', ?
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+              ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?27, 'pending', ?23
        WHERE EXISTS (
          SELECT 1 FROM provider_webhook_receipts
-         WHERE provider = ? AND delivery_id = ? AND payload_ref = ?
+         WHERE provider = ?24 AND delivery_id = ?25 AND payload_ref = ?26
            AND processed_at IS NULL
        )
        ON CONFLICT DO NOTHING`,
@@ -705,6 +705,7 @@ export class ProviderWebhookService {
       provider,
       deliveryId,
       payloadRef,
+      JSON.stringify(activity.externalPeople ?? []),
     );
   }
 
