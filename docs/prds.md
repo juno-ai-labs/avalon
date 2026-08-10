@@ -113,6 +113,11 @@ rather than about its content: adding or correcting the note in `state.md`
 (including links to whatever replaced it), and fixing a link that broke when
 another document moved.
 
+[The implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) is
+the exception to all of this. Its boxes are ticked because the product it
+describes was built, not because the document is finished: it is the standing
+contract, and it is edited whenever the contract itself changes.
+
 ## Files inside the folder
 
 | File | Purpose |
@@ -285,9 +290,8 @@ the question was asked and answered rather than skipped.
 - **PRDs are not registered individually in [the documentation
   index](README.md).** That index registers the durable documents that own an
   area, and it would churn beyond usefulness with one row per proposal. This
-  document is the `docs/PRDs/` tree's entry in it; the folder listing is the
-  tree's own index. The implementation brief is the single exception, because it
-  is the product contract rather than a proposal.
+  document is the `docs/PRDs/` tree's only entry in it, the implementation brief
+  included; the folder listing is the tree's own index.
 - **A PRD does not replace the subsystem document.** When a PRD ships, the
   behavior it introduced is described in the document that owns the area —
   [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md),
