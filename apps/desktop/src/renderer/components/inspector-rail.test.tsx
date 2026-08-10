@@ -1,14 +1,33 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { Message, WorkstreamDetail } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from './inspector-rail';
 
 const copyText = vi.hoisted(() => vi.fn());
+const applicationSettings = vi.hoisted(() => ({
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+  listeners: new Set<(settings: unknown) => void>(),
+}));
+
+function announceApplicationSettings(settings: DesktopApplicationSettings): void {
+  applicationSettings.current = settings;
+  act(() => {
+    for (const listener of applicationSettings.listeners) listener(settings);
+  });
+}
 
 vi.mock('../lib/platform', () => ({
-  desktopBridge: () => ({ copyText }),
+  desktopBridge: () => ({
+    copyText,
+    getApplicationSettings: () => Promise.resolve(applicationSettings.current),
+    onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
+      applicationSettings.listeners.add(listener);
+      return () => applicationSettings.listeners.delete(listener);
+    },
+  }),
 }));
 
 const workstream: WorkstreamDetail = {
@@ -60,6 +79,8 @@ describe('InspectorRail details', () => {
   beforeEach(() => {
     copyText.mockReset();
     copyText.mockResolvedValue(undefined);
+    applicationSettings.listeners.clear();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -73,20 +94,59 @@ describe('InspectorRail details', () => {
     });
   });
 
-  it('shows automation-subscription and bounded harness-run metadata', () => {
+  it('shows automation-subscription and bounded harness-run metadata while debugging is on', async () => {
     render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
       </Tooltip.Provider>,
     );
 
+    expect(await screen.findByText('Every Monday at 9:00 AM')).toBeVisible();
     expect(screen.getAllByText('Weekly invoice monitor')).toHaveLength(2);
-    expect(screen.getByText('Every Monday at 9:00 AM')).toBeVisible();
     expect(screen.getByText('subscription-1')).toBeVisible();
     expect(screen.getByText('automation-run-1')).toBeVisible();
     expect(screen.getByText('google/gemini-2.5-flash-lite')).toBeVisible();
     expect(screen.getByText('automation schedule')).toBeVisible();
     expect(screen.getByText('harness-run-1')).toBeVisible();
+    expect(screen.getByText('workstream-1')).toBeVisible();
+  });
+
+  it('collapses Details to the four human-facing rows when debugging is turned off', async () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} />
+      </Tooltip.Provider>,
+    );
+
+    const details = screen.getByText('Email').closest('dl') as HTMLElement;
+    const labels = (): string[] => [...details.querySelectorAll('dt')].map((term) => term.textContent ?? '');
+
+    // The stored preference is on, so the wiring rows have to arrive before the
+    // collapse below can mean anything.
+    await waitFor(() => expect(labels()).toContain('Harness run'));
+
+    // The Settings window owns the preference, so the rail learns about a
+    // change through the application-settings broadcast.
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
+
+    expect(labels()).toEqual(['Email', 'Created by', 'Created', 'Last activity']);
+    expect(within(details).queryByText('harness-run-1')).not.toBeInTheDocument();
+  });
+
+  it('clips the address to one line in both states so the row reads the same way', async () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} />
+      </Tooltip.Provider>,
+    );
+
+    const address = (): HTMLElement => screen.getByText(workstream.emailAddress ?? '');
+    await waitFor(() => expect(screen.getByText('Origin')).toBeVisible());
+    expect(address()).toHaveAttribute('title', workstream.emailAddress);
+
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
+
+    expect(address()).toHaveAttribute('title', workstream.emailAddress);
   });
 
   it('shows the complete work-stream email address in Details and copies it with feedback', async () => {
