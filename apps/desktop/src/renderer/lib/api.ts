@@ -347,7 +347,7 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
   const completed = invocation.completedAt ? Date.parse(invocation.completedAt) : Number.NaN;
   return {
     id: invocation.id,
-    name: invocation.toolName,
+    name: invocation.activityName ?? invocation.toolName,
     summary: invocation.outputSummary ?? invocation.inputSummary,
     status: invocation.status === 'pending' ? 'started' : invocation.status,
     ...(invocation.plugin ? { plugin: invocation.plugin } : {}),

@@ -415,6 +415,11 @@ export const ToolInvocationSchema = z.object({
   harnessRunId: IdSchema,
   toolCallId: z.string().min(1).max(160),
   toolName: z.string().min(1).max(160),
+  /**
+   * Harness-generated prose naming what this row did. Null on rows persisted
+   * before rows carried prose; those fall back to the raw tool name.
+   */
+  activityName: z.string().min(1).max(200).nullable().default(null),
   connectionId: IdSchema.nullable(),
   /**
    * The connector plugin that owns this tool, resolved from `connectionId`, or

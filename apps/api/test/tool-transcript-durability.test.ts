@@ -85,6 +85,7 @@ function invocation(status: "started" | "completed"): ToolInvocation {
     harnessRunId,
     toolCallId: "tool-call-1",
     toolName: "Search evidence",
+    activityName: "Search evidence",
     connectionId: null,
     plugin: null,
     status,
@@ -186,6 +187,7 @@ describe("tool invocation attribution", () => {
       displayName: "Google Drive · Work",
       icon: "brand-google-drive",
     });
+    expect(loaded?.activityName).toBe("Reviewed Google Drive · Work");
   });
 
   it("leaves an Avalon-owned tool unattributed", async () => {
@@ -203,6 +205,7 @@ describe("tool invocation attribution", () => {
 
     expect(loaded?.connectionId).toBeNull();
     expect(loaded?.plugin).toBeNull();
+    expect(loaded?.activityName).toBe("Searched the public web");
   });
 
   it("refuses to attribute a connection whose model plugin id is unusable", async () => {

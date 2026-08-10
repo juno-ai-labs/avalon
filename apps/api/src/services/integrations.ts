@@ -33,6 +33,7 @@ import {
   type HarnessTool,
   type ModelMessage,
   type StructuredModelDiagnostic,
+  toolActivityName,
 } from "@avalon/agent-harness";
 import {
   ElicitationSchema,
@@ -5179,14 +5180,21 @@ async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: st
   ).bind(harnessRunId, toolCallId).first<Record<string, unknown>>();
   if (!row) return null;
   const error = parseJson<{ code: string; message: string } | null>(row.error_json, null);
+  const status = String(row.status) as ToolInvocation["status"];
+  const plugin = toolInvocationOwningPlugin(row);
   return {
     id: String(row.id),
     harnessRunId: String(row.harness_run_id),
     toolCallId: String(row.tool_call_id),
     toolName: String(row.tool_name),
+    activityName: toolActivityName({
+      toolName: String(row.tool_name),
+      status: status === "pending" || status === "started" ? "started" : "completed",
+      pluginDisplayName: plugin?.displayName ?? null,
+    }),
     connectionId: row.connection_id == null ? null : String(row.connection_id),
-    plugin: toolInvocationOwningPlugin(row),
-    status: String(row.status) as ToolInvocation["status"],
+    plugin,
+    status,
     inputSummary: summarize(parseJson(row.input_json, {}), 1_000),
     outputSummary: row.output_summary == null ? null : summarize(String(row.output_summary), 4_000),
     startedAt: row.started_at == null ? null : String(row.started_at),

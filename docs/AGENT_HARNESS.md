@@ -115,6 +115,32 @@ OpenRouter SSE comments are ignored and function-call fragments are combined by 
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The desktop retains per-message stream cursors across reconnects, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. D1 stores the complete final assistant message; REST resynchronization remains canonical.
 
+## Transcript row attribution
+
+Every chat surface renders one row component, so a tool row must mean the same
+thing wherever it appears. Two rules keep the work stream and the automation
+composer from wording or attributing the same call differently.
+
+A row's icon is the plugin that **owns** the tool being called, and nothing
+else. In the compiler, that owner comes from the `automation:` prefix on the
+Bind plugin id; in a work stream, it is resolved from
+`tool_invocations.connection_id`, which already records the connector that ran
+the tool. Tools Avalon owns — web research, plugin discovery, memory, tables,
+work-stream reads — have no connector behind them and carry no plugin icon.
+Both the contract's `ToolInvocation.plugin` and the compiler's `tool` stream
+event hold a single nullable plugin, so a row with several icons cannot be
+represented. A discovery row may still *name* several plugins in its label
+without claiming any of them ran the tool.
+
+A row's label is prose from `toolActivityName` in
+[`packages/agent-harness/src/tool-activity.ts`](../packages/agent-harness/src/tool-activity.ts),
+never a raw wire name. Tools Avalon owns have their own phrasing per lifecycle
+state; a connector tool is named after the connector that owns it, matching the
+icon beside it; an unrecognized tool degrades to a humanized wire name rather
+than a snake_case symbol. Adding an Avalon tool means adding its prose there.
+`ToolInvocation.activityName` carries the result to the desktop, which falls
+back to the raw tool name only for rows persisted before the field existed.
+
 ## Durable inline subagents
 
 The root harness exposes `workstream_run_subagent` through the default-loaded `avalon:workstream` plugin for several independent, substantial read-only investigations. Avalon follows Monad's useful delegation shape while preserving Avalon-specific durable authority:
