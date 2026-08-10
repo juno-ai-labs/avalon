@@ -39,10 +39,13 @@ jobs:
     timeout-minutes: 5
     outputs:
       should_release: ${{ steps.plan.outputs.should_release }}
+      version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
       ref: ${{ steps.plan.outputs.ref }}
       create_tag: ${{ steps.plan.outputs.create_tag }}
     steps:
+      # The planner diffs the working tree against the commit the last release
+      # was built from, so the whole history has to be present.
       - name: Check out the full history and tags
         uses: actions/checkout@v5
         with:
@@ -51,7 +54,6 @@ jobs:
       - name: Plan the release
         id: plan
         env:
-          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           RELEASE_INPUT_TAG: ${{ inputs.tag }}
         run: node apps/desktop/scripts/plan-release.mjs
 
@@ -102,6 +104,59 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.plan.outputs.ref }}
+          # The bump below pushes to main, which the job's own GITHUB_TOKEN can
+          # do. Persisting it is what makes that push possible at all — and it
+          # deliberately does not start another run of this workflow.
+          persist-credentials: true
+
+      # Nobody bumps a version by hand any more: the planner chose the next
+      # minor and this step stamps it onto the workspace manifests and commits
+      # that bump to main, so the tag, the manifests, and the artifacts all
+      # agree without anyone remembering to edit a file.
+      #
+      # The bump lands on main *before* the build, which is what keeps the
+      # released commit an ancestor of main and therefore usable as the
+      # planner's watermark. A release that fails after this point leaves main
+      # bumped and unpublished; that is resumable rather than broken, because
+      # the record still names the old version, so the next plan picks the same
+      # next minor, finds the manifests already stamped, and rebuilds it.
+      - name: Bump the workspace version and record it on the default branch
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            git fetch origin main
+            # main may have moved since the plan ran. Building its tip is
+            # correct: the newer commit carries strictly more work, and the
+            # version being cut does not depend on which push triggered the run.
+            git reset --hard origin/main
+            node apps/desktop/scripts/apply-release-version.mjs "$RELEASE_VERSION"
+            if git diff --quiet; then
+              echo "main already declares ${RELEASE_VERSION}; releasing its current tip"
+              exit 0
+            fi
+            git add package.json apps/desktop/package.json
+            git -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m "Bump Avalon to ${RELEASE_VERSION} for release"
+            if git push origin HEAD:main; then
+              echo "bumped main to ${RELEASE_VERSION}"
+              exit 0
+            fi
+            echo "main moved during attempt ${attempt}; retrying"
+          done
+          echo "Could not record the version bump on main after 3 attempts" >&2
+          exit 1
+
+      # Everything downstream records or verifies this exact commit: the tag
+      # points at it, and the published release config names it as the
+      # watermark the next plan measures new desktop work against.
+      - name: Resolve the release commit
+        shell: bash
+        run: echo "AVALON_RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The tag is created locally so every downstream guard sees it, but it is
       # not pushed until the release has actually published. A failed run
@@ -269,11 +324,12 @@ jobs:
         run: git push origin "refs/tags/$RELEASE_TAG"
 
       # The publisher rewrote apps/site/release.config.json on this runner, and
-      # the runner is about to be reclaimed. main must learn the new version:
-      # publish-r2-release.mjs reads the committed copy through
-      # assertNextReleaseVersion, so a stale one rejects the *next* release
-      # outright, and check-site-release-config.mjs fails every later site
-      # deploy against the live channel.
+      # the runner is about to be reclaimed. main must learn the new version and
+      # the commit it shipped from: plan-release.mjs treats that commit as the
+      # watermark for unreleased desktop work, publish-r2-release.mjs reads the
+      # committed copy through assertNextReleaseVersion, so a stale one rejects
+      # the *next* release outright, and check-site-release-config.mjs fails
+      # every later site deploy against the live channel.
       - name: Record the published release config on the default branch
         shell: bash
         env:
