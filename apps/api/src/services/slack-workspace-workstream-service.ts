@@ -47,7 +47,17 @@ export class SlackWorkspaceWorkstreamService {
     this.database = createDatabase(env.DB);
   }
 
-  async create(input: SlackExternalMessageInput & { title?: string; objective: string }) {
+  /**
+   * `creatorUserId` is the Avalon member the Slack identity resolves to, when
+   * the installation can make that mapping. It is attribution only: the run
+   * still uses the workspace principal, and the opening message keeps its
+   * external Slack authorship.
+   */
+  async create(input: SlackExternalMessageInput & {
+    title?: string;
+    objective: string;
+    creatorUserId?: string | null;
+  }) {
     const actor = ExternalActorSchema.parse(input.actor);
     const title = input.title
       ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180)
@@ -66,7 +76,7 @@ export class SlackWorkspaceWorkstreamService {
       title,
       objective: input.objective,
       emailAddress: emailRoute.emailAddress,
-      creatorUserId: null,
+      creatorUserId: input.creatorUserId ?? null,
       openingAuthor: { type: "external", actor },
       openingMessage: input.text,
       clientMessageId: input.clientMessageId,
