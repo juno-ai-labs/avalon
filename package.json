@@ -26,6 +26,7 @@
     "health:regions": "node scripts/check-regional-health.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:model": "node scripts/smoke-model.mjs",
+    "eval:models": "tsx packages/agent-harness/src/evals/run.ts",
     "test": "pnpm -r --if-present test",
     "test:observability": "node --test scripts/configure-cloudflare-observability.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",

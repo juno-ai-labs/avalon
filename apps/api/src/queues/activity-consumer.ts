@@ -1,7 +1,9 @@
 import {
   OpenRouterClient,
+  activityRoutingJsonSchema,
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
+  semanticTriggerJsonSchema,
 } from "@avalon/agent-harness";
 import { connectorRetryAfterMs } from "@avalon/connectors";
 import {
@@ -68,27 +70,6 @@ interface WorkstreamCandidate {
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
 
 const SemanticTriggerResultSchema = z.object({ matches: z.boolean(), confidence: z.number().min(0).max(1) });
-const semanticTriggerJsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    matches: { type: "boolean" },
-    confidence: { type: "number", minimum: 0, maximum: 1 }
-  },
-  required: ["matches", "confidence"]
-};
-const routingJsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    candidateWorkstreamId: { type: ["string", "null"], format: "uuid" },
-    confidence: { type: "number", minimum: 0, maximum: 1 },
-    reason: { type: "string" },
-    matchedEntities: { type: "array", items: { type: "string" } },
-    suggest: { type: "boolean" }
-  },
-  required: ["candidateWorkstreamId", "confidence", "reason", "matchedEntities", "suggest"]
-};
 
 function parseRecord(value: string): Record<string, unknown> {
   try {
@@ -685,7 +666,7 @@ async function routeContextually(
       })),
     }),
     schemaName: "activity_workstream_route",
-    jsonSchema: routingJsonSchema,
+    jsonSchema: activityRoutingJsonSchema,
     parse: (value) => ActivityRoutingResultSchema.parse(value)
   });
 

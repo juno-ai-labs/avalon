@@ -651,7 +651,7 @@ async function readJsonResponse<T>(response: Response): Promise<T | null> {
   }
 }
 
-const addressingJsonSchema = {
+export const addressingJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {

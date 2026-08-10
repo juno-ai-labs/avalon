@@ -89,6 +89,20 @@ OpenRouter routing is deterministic and versioned. Empty completions and truncat
 
 Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger.
 
+## Comparing candidate models
+
+`pnpm eval:models` compares two or more models on the three structured decisions Avalon delegates to one: message addressing, semantic activity triggers, and activity routing. Cases live in `packages/agent-harness/src/evals/cases.ts` and run through the same `OpenRouterClient.structured` path, prompts, and JSON schemas as the Workers, so a result describes behavior inside Avalon rather than on a synthetic benchmark.
+
+Each response is graded on the decision the product derives from it, not on its raw fields: a trigger or routing suggestion counts only above the 0.8 confidence floor, and a work-stream identifier that was never offered as a candidate is reported as an ungrounded answer rather than silently folded into an abstention. Cases deliberately include abstention and untrusted-instruction cases, so a model that always matches or always suggests scores poorly.
+
+```bash
+OPENROUTER_API_KEY=... pnpm eval:models
+OPENROUTER_API_KEY=... pnpm eval:models --models x-ai/grok-4.3,google/gemini-3.6-flash --repeat 5
+OPENROUTER_API_KEY=... pnpm eval:models --suite activity_routing --json
+```
+
+Runs default to three repeats per case because these decisions are stochastic; the report lists any case that failed on even one run, along with median latency and how often the model needed a schema repair. The exit status is non-zero when any run failed. This covers the classifier and structured slots; the primary model's tool-calling loop is not yet exercised here.
+
 ## Streaming stability
 
 OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`. A route restart increments `epoch`; `streamSeq` orders frames within the turn epoch; `reset: true` replaces text from the abandoned attempt. These fields are independent of the WorkstreamRoom event `sequence` used for socket replay.
