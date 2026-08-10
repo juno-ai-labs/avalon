@@ -78,6 +78,61 @@ This is not a latency win either. `gemini-3.6-flash` is faster per request
 (3.2s versus 5.3s median on the structured suites) but *slower per agentic run*
 (7.6s versus 6.7s median), because it spends the difference on extra turns.
 
+#### The two models run different strategies
+
+Reading the emitted trajectories rather than the pass rates, the difference is
+strategic rather than a matter of capability:
+
+| | `gemini-3.6-flash` | `grok-4.3` | `gemini-2.5-flash-lite` |
+| --- | --- | --- | --- |
+| median trajectory | 3 calls | 2 calls | 1 call |
+| mean trajectory | 5.3 | 2.6 | 1.7 |
+| longest trajectory | 16 (the ceiling) | 8 | 6 |
+| runs containing a repeated call | 44/80 | 17/80 | — |
+| redundant calls in total | 138 | 37 | 18 |
+| catalog discovery calls | 95 | 46 | 38 |
+| runs with no tool call at all | 0 | 1 | 12 |
+
+`grok-4.3` takes the shortest path to the tool that satisfies the request and
+stops. `gemini-3.6-flash` front-loads a survey — work stream, memory, tables,
+catalog, then whatever connector it has just loaded — before acting. Where
+surveying is the task the two converge and both pass: `agentic/drive_search` is
+`load_plugin → google_drive_search` for one and the same with a redundant
+repeat for the other. Where the task is short, the survey consumes the budget.
+
+`agentic/durable_artifact` asks only for an artifact to be written. `grok-4.3`
+passes 4/5 with `memory_search → workstream_create_artifact`.
+`gemini-3.6-flash` fails 5/5, every run the same shape:
+
+```
+workstream_read → memory_search → memory_search → table_search → table_query →
+list_plugins → memory_search → memory_search → load_plugin → load_plugin →
+google_drive_search → google_drive_search → google_gmail_search
+```
+
+It searches memory four times and loads a connector to search Drive and Gmail
+for a task containing no external data, then reaches `maxToolCalls` without
+ever calling `workstream_create_artifact`.
+
+All seventeen of `gemini-3.6-flash`'s failed runs have trajectories of eight to
+sixteen calls; not one is short. The failure is uniformly budget exhaustion
+mid-survey, and production runs against the same ceiling
+(`HARNESS_MAX_MODEL_ITERATIONS: 8`).
+
+`grok-4.3`'s three failed runs are not a milder version of this. All three are
+the same case with three calls and the correct trajectory
+(`load_plugin → linear_list_teams → linear_create_issue`), and a fourth run
+passed with a byte-identical trajectory. Identical tool sequences with
+different terminal statuses is nondeterminism the recorded data cannot explain,
+not a behavioural pathology — so the behavioural comparison is seventeen
+failures against none.
+
+`gemini-2.5-flash-lite` fails a third way: it fabricates tool names. Six calls
+used a namespaced convention that does not exist — `avalon_workstream.read`,
+`avalon_memory.memory_add`, `default_api.load_plugin`,
+`avalon_tables.table_search` — which is why the report records it never calling
+`memory_search`. Neither larger model emitted a single malformed name.
+
 Tool coverage: `grok-4.3` reached 19/19 stand-in tools, `gemini-3.6-flash`
 18/19 (never `linear_create_issue`), `gemini-2.5-flash-lite` 17/19 (never
 `github_repositories_list` or `memory_search`).
@@ -143,6 +198,10 @@ addressing figures describe the residual hard cases, not all traffic.
 - **`x-ai/grok-4.5` on the automation slot was not tested,** and has zero rows
   in the 420-attempt inference ledger. That slot has never executed with its
   configured model. Worth investigating independently of this comparison.
+- **`grok-4.3`'s three `failed` runs are unexplained.** Identical trajectories
+  produced different terminal statuses, and the run JSON does not retain the
+  outcome error. They are excluded from the behavioural comparison rather than
+  counted as thrash.
 - **Five repeats per case** is enough to separate 84% from 48%, and enough to
   call a 0/5 or 5/5 result stable. It is not enough to rank two models three
   points apart.
