@@ -62,6 +62,12 @@
     }
   ],
   "ai": { "binding": "AI" },
+  // Agent model routing. `app_id` is written back by `wrangler flagship apps
+  // create --update-config` or by automatic provisioning on first deploy. The
+  // EU Worker binds its own app, so a rollout can be staged per region.
+  "flagship": [
+    { "binding": "FLAGS", "remote": true }
+  ],
   "vectorize": [
     { "binding": "MEMORY_INDEX", "index_name": "avalon-eu-memory" }
   ],

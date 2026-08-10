@@ -103,6 +103,8 @@ Completed receipts replay without another provider call. Incomplete safe reads m
 
 ## Model routing and inference ledger
 
+Each agent's default model and its fallback stages are one Cloudflare Flagship flag, resolved once per run and evaluated against the region, environment, and workspace; the regional Worker variables remain the checked-in default that an absent flag, an unbound binding, and a failed evaluation all resolve to. [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md) owns the flag keys, the value shape, and how a model change is rolled out.
+
 OpenRouter routing is deterministic and versioned. Empty completions and truncated tool calls receive a bounded same-endpoint defect retry. Other fallback-eligible failures traverse configured model stages under Bind's classified failure policy and a workspace-scoped circuit breaker; cancellation and host failures do not route onward. Because Avalon's stream is retractable, a later attempt explicitly resets partial text instead of concatenating two answers.
 
 Every classified provider attempt appends an immutable inference-ledger row with its turn/route cursor, provider and model, routing decision, outcome, latency, available token/cache/cost counters, and hashed credential/workspace identities. Harness-run usage also stores turn/tool timings and counts. Provider error bodies and credentials are not retained in the ledger.

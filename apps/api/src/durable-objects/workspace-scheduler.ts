@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
@@ -578,6 +579,7 @@ export class WorkspaceScheduler {
     if (existing) return existing.id;
 
     const id = crypto.randomUUID();
+    const model = await scheduledWorkstreamModel(this.env, { workspaceId, workstreamId });
     await this.env.DB.prepare(
       `INSERT INTO harness_runs (
        id, workspace_id, workstream_id, origin, execution_principal_json,
@@ -592,7 +594,7 @@ export class WorkspaceScheduler {
         workstreamId,
         JSON.stringify(executionPrincipal),
         now.toISOString(),
-        this.env.OPENROUTER_PRIMARY_MODEL
+        model
       )
       .run();
     return id;

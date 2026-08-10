@@ -11,6 +11,7 @@ import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { resolveAgentModelRouting } from "./agent-model-flags";
 
 type HarnessRunner = (input: RunHarnessInput) => ReturnType<typeof runHarness>;
 
@@ -221,14 +222,15 @@ export class MeetingNotesService {
       requestId,
       source: "meeting_notes",
     });
+    const routing = await resolveAgentModelRouting(this.env, "meeting_notes", {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+    });
     const outcome = await this.runner({
       config: {
         apiKey: this.env.OPENROUTER_API_KEY,
-        primaryModel: this.env.OPENROUTER_PRIMARY_MODEL,
-        fallbackModels: this.env.OPENROUTER_FALLBACK_MODELS
-          .split(",")
-          .map((model) => model.trim())
-          .filter(Boolean),
+        primaryModel: routing.model,
+        fallbackModels: routing.fallbackModels,
         appUrl: this.env.PUBLIC_API_BASE_URL,
         appName: "Avalon",
         maxIterations: 1,
