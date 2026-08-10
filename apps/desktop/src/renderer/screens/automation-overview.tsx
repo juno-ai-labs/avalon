@@ -36,6 +36,17 @@ import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal,
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
 
+function eligibleActivitySourceConnections(
+  connections: WorkstreamConnection[],
+  connectorType: string,
+  scope: 'You' | 'Workspace',
+): WorkstreamConnection[] {
+  return connections.filter((connection) =>
+    connection.status === 'healthy'
+    && connection.connectorType === connectorType
+    && (scope === 'You' || connection.scope === 'workspace'));
+}
+
 function ActivitySourceSelectList({
   sources,
   connections,
@@ -53,10 +64,7 @@ function ActivitySourceSelectList({
   return (
     <div className="automation-source-fields">
       {sources.map((source) => {
-        const candidates = connections.filter((connection) =>
-          connection.status === 'healthy'
-          && connection.connectorType === source.connectorType
-          && (scope === 'You' || connection.scope === 'workspace'));
+        const candidates = eligibleActivitySourceConnections(connections, source.connectorType, scope);
         return (
           <label className="form-field" key={source.bindingKey}>
             <span>{source.bindingKey.replaceAll('_', ' ')}</span>
@@ -148,8 +156,11 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     if (!detail?.templateUpdate || !connections.data) return;
     const next: Record<string, string> = {};
     for (const source of detail.templateUpdate.activitySources) {
-      const candidates = connections.data.filter((connection) =>
-        connection.status === 'healthy' && connection.connectorType === source.connectorType);
+      const candidates = eligibleActivitySourceConnections(
+        connections.data,
+        source.connectorType,
+        detail.executionScope,
+      );
       const currentPluginId = detail.activitySourcePluginIds[source.bindingKey];
       const current = candidates.find((connection) => connection.modelPluginId === currentPluginId);
       const suggested = candidates.find((connection) => connection.modelPluginId === source.suggestedPluginId);

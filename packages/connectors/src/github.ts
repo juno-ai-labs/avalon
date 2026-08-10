@@ -812,7 +812,12 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
             { key: "mergedAt", label: "Merged at", description: "ISO timestamp at which the pull request merged.", valueType: "string" },
           ],
         },
-      }),
+      }, [
+        { key: "repository", label: "Repository", description: "Repository in owner/name form.", valueType: "string" },
+        { key: "action", label: "Action", description: "GitHub webhook action normalized to lowercase.", valueType: "string" },
+        { key: "installationId", label: "Installation", description: "GitHub App installation identifier.", valueType: "string" },
+        { key: "url", label: "URL", description: "Canonical GitHub URL for the activity subject.", valueType: "string" },
+      ]),
       resourceTypes: [
         "github_repository", "github_issue", "github_issue_comment", "github_pull_request", "github_pull_request_comment",
         "github_pull_request_review", "github_pull_request_review_comment", "github_file",
@@ -1921,7 +1926,7 @@ export function normalizeGitHubWebhook(
   if (!normalized) return null;
   const subject = normalized.subject;
   const actor = boundRecord(sender);
-  const occurredAt = webhookOccurredAt(delivery.event, payload, subject) ?? delivery.receivedAt;
+  const occurredAt = webhookOccurredAt(normalized.eventType, payload, subject) ?? delivery.receivedAt;
   const label = stringValue(subject, "title")
     ?? stringValue(subject, "name")
     ?? stringValue(subject, "message")
@@ -2640,12 +2645,13 @@ function pullRequestWebhookSubject(
 }
 
 function webhookOccurredAt(
-  event: string,
+  eventType: string,
   payload: Record<string, unknown>,
   subject: Record<string, unknown>,
 ): string | null {
+  const isMergedPullRequest = eventType === "github.pull_request.merged";
   for (const candidate of [
-    stringValue(subject, "merged_at"),
+    isMergedPullRequest ? stringValue(subject, "merged_at") : null,
     stringValue(subject, "updated_at"),
     stringValue(subject, "submitted_at"),
     stringValue(subject, "published_at"),
@@ -2658,7 +2664,7 @@ function webhookOccurredAt(
     const normalized = validIso(candidate);
     if (normalized) return normalized;
   }
-  if (event === "push") {
+  if (eventType === "github.push") {
     const pushedAt = numberValue(recordValue(payload, "repository") ?? {}, "pushed_at");
     if (pushedAt != null && pushedAt > 0) return new Date(pushedAt * 1_000).toISOString();
   }

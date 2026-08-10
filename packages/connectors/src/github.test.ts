@@ -404,6 +404,23 @@ describe("GitHub connector", () => {
     });
     expect(closed?.eventType).toBe("github.pull_request.closed");
 
+    const laterLabel = normalizeGitHubWebhook(workspaceConnection([]), {
+      event: "pull_request",
+      action: "labeled",
+      deliveryId: "github-pr-labeled-after-merge-1",
+      installationId: "42",
+      payload: {
+        ...basePayload,
+        pull_request: { ...pullRequest, updated_at: "2026-08-02T09:30:00.000Z" },
+      },
+      rawContentHash: "e".repeat(64),
+      receivedAt: "2026-08-02T09:30:01.000Z",
+    });
+    expect(laterLabel).toMatchObject({
+      eventType: "github.pull_request.labeled",
+      occurredAt: "2026-08-02T09:30:00.000Z",
+    });
+
     const adapter = githubAdapter(async () => jsonResponse({}));
     expect(adapter.manifest.activityTriggers).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -411,6 +428,12 @@ describe("GitHub connector", () => {
         filterFields: expect.arrayContaining([
           expect.objectContaining({ key: "repository", valueType: "string" }),
           expect.objectContaining({ key: "baseRef", valueType: "string" }),
+        ]),
+      }),
+      expect.objectContaining({
+        eventType: "github.issue.opened",
+        filterFields: expect.arrayContaining([
+          expect.objectContaining({ key: "repository", valueType: "string" }),
         ]),
       }),
     ]));

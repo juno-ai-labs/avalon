@@ -130,13 +130,23 @@ export class AutomationService {
         },
       });
       if (draft.ready) {
-        const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
-        const connectorSelection = await this.validateConnectorSelections(
-          draft.suggestedScope,
-          [],
-          activitySourcePluginIds,
-        );
-        this.assertActivityTriggerBindings(draft.triggers, activitySourcePluginIds, connectorSelection);
+        try {
+          const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
+          const connectorSelection = await this.validateConnectorSelections(
+            draft.suggestedScope,
+            [],
+            activitySourcePluginIds,
+          );
+          this.assertActivityTriggerBindings(draft.triggers, activitySourcePluginIds, connectorSelection);
+        } catch (error) {
+          if (!(error instanceof ApiError)) throw error;
+          return {
+            ...draft,
+            ready: false,
+            followUpQuestion: `I couldn't use that activity source: ${error.message}. Please choose an available connector or revise the trigger.`,
+            elicitation: null,
+          };
+        }
       }
       return draft;
     } catch (error) {
@@ -336,7 +346,14 @@ export class AutomationService {
     if ((input.name != null || input.description != null) && row.template_owner_user_id !== this.auth.userId) {
       throw new ApiError(403, "template_owner_required", "Only the template owner can change its name or description");
     }
-    const connectorSelection = input.defaultPluginIds || input.activitySourcePluginIds
+    const triggers = parseJson<TriggerDefinition[]>(row.trigger_definitions_json, []);
+    const hasActivitySourceSlots = triggers.some((trigger) =>
+      (trigger.type === "connector_activity" || trigger.type === "semantic_activity" || trigger.type === "webhook")
+      && Boolean(trigger.sourceBindingKey));
+    const shouldValidateConnectorSelection = input.defaultPluginIds !== undefined
+      || (input.activitySourcePluginIds !== undefined
+        && (hasActivitySourceSlots || Object.keys(input.activitySourcePluginIds).length > 0));
+    const connectorSelection = shouldValidateConnectorSelection
       ? await this.validateConnectorSelections(
           String(row.scope) as Scope,
           input.defaultPluginIds ?? parseJson(row.default_plugins_json, []),
@@ -345,7 +362,7 @@ export class AutomationService {
       : null;
     if (connectorSelection) {
       this.assertActivityTriggerBindings(
-        parseJson(row.trigger_definitions_json, []),
+        triggers,
         input.activitySourcePluginIds ?? parseJson(row.activity_trigger_bindings_json, {}),
         connectorSelection,
       );
@@ -1038,7 +1055,6 @@ export class AutomationService {
           `Select a ${requiredConnectorType} connector for this activity-triggered automation`,
         );
       }
-      this.assertDeclaredActivityTrigger(trigger, requiredConnectorType);
     }
     for (const sourceBindingKey of Object.keys(activitySourcePluginIds)) {
       if (!usedSourceKeys.has(sourceBindingKey)) {
@@ -1062,6 +1078,14 @@ export class AutomationService {
       : typeof trigger.deterministicPrefilter.eventType === "string"
         ? [trigger.deterministicPrefilter.eventType]
         : [];
+    if (trigger.type === "semantic_activity" && eventTypes.length === 0) {
+      throw new ApiError(
+        422,
+        "activity_trigger_event_required",
+        `Semantic ${connectorType} activity triggers require one declared event type`,
+        { connectorType },
+      );
+    }
     for (const eventType of eventTypes) {
       if (!descriptorByType.has(eventType)) {
         throw new ApiError(

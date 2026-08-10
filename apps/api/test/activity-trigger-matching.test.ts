@@ -62,4 +62,28 @@ describe("activity automation trigger matching", () => {
       {},
     )).resolves.toBe(true);
   });
+
+  it("fails closed for restricted workspace activity and personal activity without an owner", () => {
+    expect(__testing.restrictedActivityUserIds({
+      ...activity,
+      connection_scope: "workspace",
+      connection_owner_user_id: null,
+      target_user_ids_json: "[]",
+      visibility_json: JSON.stringify({ workspaceAutomationAllowed: false }),
+    } as never)).toEqual([]);
+    expect(__testing.restrictedActivityUserIds({
+      ...activity,
+      connection_scope: "workspace",
+      connection_owner_user_id: null,
+      target_user_ids_json: "[]",
+      visibility_json: JSON.stringify({ allowedUserIds: ["user-adam"] }),
+    } as never)).toEqual(["user-adam"]);
+    expect(__testing.restrictedActivityUserIds({
+      ...activity,
+      connection_scope: "personal",
+      connection_owner_user_id: null,
+      target_user_ids_json: "[]",
+      visibility_json: "{}",
+    } as never)).toEqual([]);
+  });
 });
