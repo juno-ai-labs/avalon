@@ -95,6 +95,23 @@ they do not.
   [the development environment guide](dev-environment.md#driving-and-screenshotting-it).
   Call out pre-existing failures as pre-existing.
 
+## Never open a draft pull request
+
+Every pull request is opened **ready for review** — never as a draft. Do not
+pass `--draft` to `gh pr create`, do not set `draft: true` through the API, and
+do not use GitHub's "Create draft pull request" button. If a change is not ready
+for a reviewer to read, leave it on the branch and open the PR when it is.
+
+A draft suppresses review requests and reads as "not my turn" to everyone
+looking at the queue, so a PR that is in fact finished sits untouched until
+someone notices it was never marked ready. Opening ready keeps the queue honest:
+if a PR is open, it wants a review. Use the description — **Reviewer notes** for
+deferred work, **Validation** for a known-failing check — to say what is still
+in flight, rather than the draft state.
+
+If you inherit a draft PR, mark it ready (`gh pr ready <n>`) rather than leaving
+it in that state.
+
 ## Branch style and merge style
 
 These are two different rules that point in opposite directions, and both are
