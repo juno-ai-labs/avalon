@@ -280,7 +280,7 @@ describe("shared GitHub App routing", () => {
     expect(bucket.deleted).toEqual([payloadRef]);
   });
 
-  it("retains an early lifecycle delivery and replays its exact bytes after setup", async () => {
+  it("rejects an early lifecycle delivery without retaining opaque bytes before setup", async () => {
     const database = new FakeDatabase();
     const bucket = new FakeBucket();
     const dispatches: Array<{ region: Region; bytes: Uint8Array }> = [];
@@ -301,12 +301,12 @@ describe("shared GitHub App routing", () => {
       installation: { id: 42 },
     });
 
-    await expect(service.ingestGitHub(created.bytes, created.headers)).resolves.toEqual({
-      accepted: true,
-      duplicate: false,
-      activityCount: 0,
+    await expect(service.ingestGitHub(created.bytes, created.headers)).rejects.toMatchObject({
+      status: 503,
+      code: "github_route_pending",
     });
-    expect(database.pending).toHaveLength(1);
+    expect(database.pending).toHaveLength(0);
+    expect(bucket.values.size).toBe(0);
     expect(dispatches).toHaveLength(0);
 
     await expect(service.setupGitHub("42", `eu.${"x".repeat(32)}`)).resolves.toContain("github.com");
@@ -317,10 +317,7 @@ describe("shared GitHub App routing", () => {
       workspaceId: "workspace-eu",
       status: "active",
     }]);
-    expect(dispatches).toHaveLength(1);
-    expect(dispatches[0]).toMatchObject({ region: "eu" });
-    expect(dispatches[0]?.bytes).toEqual(created.bytes);
-    expect(database.pending[0]?.dispatched_at).not.toBeNull();
+    expect(dispatches).toHaveLength(0);
     expect(bucket.values.size).toBe(0);
   });
 

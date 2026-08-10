@@ -7,7 +7,6 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
-  Clock3,
   Ellipsis,
   Info,
   LoaderCircle,
@@ -24,6 +23,7 @@ import { type AttachmentPreview, AttachmentLightbox } from '../components/attach
 import { ComposerInput } from '../components/composer-input';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
 import { AvalonMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
+import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
 import {
@@ -131,6 +131,13 @@ const examples = [
   'Every Friday, prepare a changelog from merged work.',
   'When this error appears in the logs, open an investigation.',
 ];
+
+const AutomationSuggestedPrompts = withSuggestedPrompts<{
+  onSelect: (example: string) => void;
+}>(({ onSelect }) => ({
+  items: examples.map((example) => ({ id: example, text: example, icon: 'clock' as const })),
+  onSelect: (item) => onSelect(item.text),
+}));
 
 function TemplateBrowser({ onSelect, onBack }: { onSelect: (template: WorkspaceTemplate) => void; onBack: () => void }): React.JSX.Element {
   const { api } = useAppSession();
@@ -676,9 +683,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                 <p className="eyebrow">Create an automation</p>
                 <h1 id="automation-builder-heading">What should happen automatically?</h1>
                 <p>Describe the outcome. Avalon can research your plugins and will ask for the details it needs.</p>
-                <div className="automation-examples">
-                  {examples.map((example) => <button key={example} onClick={() => submit(example)} type="button"><Clock3 size={13} /><span>{example}</span><ChevronRight size={13} /></button>)}
-                </div>
+                <AutomationSuggestedPrompts onSelect={submit} />
                 <button className="template-path" onClick={() => setTemplatesOpen(true)} type="button">Use a workspace template <ChevronRight size={13} /></button>
               </section>
             ) : (

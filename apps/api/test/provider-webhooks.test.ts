@@ -350,10 +350,23 @@ class FakeDatabase {
     }
     if (sql.includes("UPDATE provider_webhook_challenges")) {
       if (!this.challenge) return result(0);
+      if (sql.includes("SET encrypted_token = ?")) {
+        this.challenge.encrypted_token = String(values[0]);
+        this.challenge.token_iv = String(values[1]);
+        this.challenge.consumed_at = null;
+        return result(1);
+      }
       this.challenge.consumed_at ??= String(values[0]);
       return result(1);
     }
     if (sql.includes("UPDATE connector_connections")) {
+      if (sql.includes("SET status = 'needs_reconnect'")) {
+        const [errorJson, , connectionId] = values;
+        const connection = this.connections.find((candidate) => candidate.id === connectionId);
+        if (!connection || connection.status !== "healthy") return result(0);
+        connection.status = "needs_reconnect";
+        connection.error_json = String(errorJson);
+      }
       return result(1);
     }
     throw new Error(`Unexpected run query: ${sql}`);
@@ -675,7 +688,7 @@ describe("provider-wide webhook ingestion", () => {
     });
 
     await expect(service.ingestGitHub(
-      "01234567890",
+      "0".repeat(25 * 1024 * 1024 + 1),
       new Headers(),
     )).rejects.toMatchObject({
       name: "ConnectorError",
@@ -818,6 +831,122 @@ describe("provider-wide webhook ingestion", () => {
     });
     expect(database.connections[0]).toMatchObject({ status: "healthy", error_json: null });
     expect(database.activities[0]?.eventType).toBe("linear.permission_change.team_access_changed");
+  });
+
+  it("fans Linear activity to a personal connection only after its token proves resource access", async () => {
+    const database = new FakeDatabase();
+    database.connections.push(
+      await connection({
+        id: CONNECTION_ONE,
+        workspaceId: WORKSPACE_ONE,
+        provider: "linear",
+        providerAccountId: "linear-org-1",
+        scope: "workspace",
+        credentials: { organizationId: "linear-org-1" },
+      }),
+      await connection({
+        id: CONNECTION_TWO,
+        workspaceId: WORKSPACE_ONE,
+        provider: "linear",
+        providerAccountId: "linear-org-1",
+        scope: "personal",
+        ownerUserId: USER_ONE,
+        credentials: {
+          organizationId: "linear-org-1",
+          oauthActor: "user",
+          authorizedUserId: "linear-user-1",
+          accessToken: "personal-linear-token",
+        },
+      }),
+    );
+    const linearFetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(
+      JSON.stringify({ data: { resource: { id: "issue-1" } } }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const service = serviceFor(database, new FakeBucket(), new FakeQueue(), {
+      LINEAR_OAUTH_CLIENT_ID: "linear-client",
+      LINEAR_OAUTH_CLIENT_SECRET: "linear-client-secret",
+    }, { fetch: linearFetch });
+    const deliveryId = "00000000-0000-4000-8000-000000000033";
+    const rawBody = JSON.stringify({
+      action: "update",
+      type: "Issue",
+      organizationId: "linear-org-1",
+      webhookId: "linear-webhook-issue",
+      webhookTimestamp: NOW,
+      createdAt: new Date(NOW).toISOString(),
+      data: { id: "issue-1", identifier: "AVA-1", title: "Fix activity fan-out" },
+      actor: { id: "linear-user-1", name: "Adam", email: "adam@example.com" },
+    });
+    const headers = new Headers({
+      "linear-delivery": deliveryId,
+      "linear-event": "Issue",
+      "linear-signature": await hmacHex(LINEAR_SECRET, rawBody),
+      "linear-timestamp": String(NOW),
+    });
+
+    await expect(service.ingestLinear(rawBody, headers)).resolves.toMatchObject({
+      accepted: true,
+      duplicate: false,
+      activityCount: 2,
+    });
+    expect(linearFetch).toHaveBeenCalledTimes(1);
+    expect(database.activities.map((activity) => activity.connectionScope).sort()).toEqual(["personal", "workspace"]);
+  });
+
+  it("marks a personal Linear connection for reconnect when access proof loses authorization", async () => {
+    const database = new FakeDatabase();
+    database.connections.push(
+      await connection({
+        id: CONNECTION_ONE,
+        workspaceId: WORKSPACE_ONE,
+        provider: "linear",
+        providerAccountId: "linear-org-1",
+        scope: "workspace",
+        credentials: { organizationId: "linear-org-1" },
+      }),
+      await connection({
+        id: CONNECTION_TWO,
+        workspaceId: WORKSPACE_ONE,
+        provider: "linear",
+        providerAccountId: "linear-org-1",
+        scope: "personal",
+        ownerUserId: USER_ONE,
+        credentials: {
+          organizationId: "linear-org-1",
+          oauthActor: "user",
+          authorizedUserId: "linear-user-1",
+        },
+      }),
+    );
+    const service = serviceFor(database, new FakeBucket(), new FakeQueue(), {
+      LINEAR_OAUTH_CLIENT_ID: "linear-client",
+      LINEAR_OAUTH_CLIENT_SECRET: "linear-client-secret",
+    });
+    const rawBody = JSON.stringify({
+      action: "update",
+      type: "Issue",
+      organizationId: "linear-org-1",
+      webhookId: "linear-webhook-issue",
+      webhookTimestamp: NOW,
+      createdAt: new Date(NOW).toISOString(),
+      data: { id: "issue-1", identifier: "AVA-1", title: "Refresh connector authorization" },
+    });
+    const headers = new Headers({
+      "linear-delivery": "00000000-0000-4000-8000-000000000035",
+      "linear-event": "Issue",
+      "linear-signature": await hmacHex(LINEAR_SECRET, rawBody),
+      "linear-timestamp": String(NOW),
+    });
+
+    await expect(service.ingestLinear(rawBody, headers)).resolves.toMatchObject({
+      accepted: true,
+      activityCount: 1,
+    });
+    expect(database.connections[1]).toMatchObject({ status: "needs_reconnect" });
+    expect(JSON.parse(database.connections[1]!.error_json!)).toMatchObject({
+      code: "linear_user_authorization_expired",
+    });
   });
 
   it("routes native Linear sessions only to the matching app identity and capability", () => {
@@ -1026,16 +1155,13 @@ describe("provider-wide webhook ingestion", () => {
       JSON.stringify({ verification_token: "replacement-secret" }),
       new Headers(),
       NOTION_SETUP_TOKEN,
-    )).rejects.toMatchObject({
-      name: "ConnectorError",
-      code: "unauthorized",
-    } satisfies Partial<ConnectorError>);
+    )).resolves.toEqual({ accepted: true, duplicate: false, activityCount: 0 });
     await expect(decryptString(
       database.challenge!.encrypted_token,
       database.challenge!.token_iv,
       ENCRYPTION_KEY,
       "provider-webhook:notion:global",
-    )).resolves.toBe(NOTION_SECRET);
+    )).resolves.toBe("replacement-secret");
   });
 
   it("verifies Notion events and fans out only to matching accessible bots", async () => {

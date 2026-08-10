@@ -222,11 +222,19 @@ export interface CreateWorkstreamInput {
   creatorUserId: string | null;
   openingAuthor:
     | { type: "human"; userId: string }
-    | { type: "external"; actor: ExternalActor };
+    | { type: "external"; actor: ExternalActor }
+    | { type: "agent" };
   openingMessage: string;
+  openingStructuredContent?: Record<string, unknown> | null;
   clientMessageId: string;
   participantUserIds: string[];
   attachmentIds?: string[];
+  opportunitySnapshot?: {
+    opportunityId: string;
+    version: number;
+    displayPromptHash: string;
+    executionPromptHash: string;
+  };
 }
 
 export interface CreateMessageInput {
@@ -310,8 +318,9 @@ export function createDatabase(db: D1DatabaseLike) {
           .prepare(
             `INSERT INTO workstreams
              (id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
-              next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?)`
+              next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at,
+              created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash)
+             VALUES (?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             workstreamId,
@@ -322,23 +331,30 @@ export function createDatabase(db: D1DatabaseLike) {
             input.creatorUserId,
             at,
             at,
-            at
+            at,
+            input.opportunitySnapshot?.opportunityId ?? null,
+            input.opportunitySnapshot?.version ?? null,
+            input.opportunitySnapshot?.displayPromptHash ?? null,
+            input.opportunitySnapshot?.executionPromptHash ?? null,
           ),
         db
           .prepare(
             `INSERT INTO messages
              (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-              message_type, text_content, sequence_number, created_at, external_actor_json)
-             VALUES (?, ?, ?, ?, ?, ?, 'text', ?, 1, ?, ?)`
+              message_type, text_content, structured_content_json, sequence_number, created_at, external_actor_json)
+             VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, 1, ?, ?)`
           )
           .bind(
             messageId,
             input.clientMessageId,
             input.workspaceId,
             workstreamId,
-            input.openingAuthor.type === "human" ? "human" : "system",
+            input.openingAuthor.type === "human"
+              ? "human"
+              : input.openingAuthor.type === "agent" ? "agent" : "system",
             openingAuthorUserId,
             input.openingMessage,
+            input.openingStructuredContent == null ? null : JSON.stringify(input.openingStructuredContent),
             at,
             externalActorJson,
           ),

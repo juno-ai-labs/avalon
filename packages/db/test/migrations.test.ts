@@ -22,6 +22,150 @@ function migrateFreshDatabase(): DatabaseSync {
 }
 
 describe("database migrations", () => {
+  it("persists normalized activity targets independently from provider visibility metadata", () => {
+    const database = migrateFreshDatabase();
+    const columns = database.prepare("PRAGMA table_info(activities)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("target_user_ids_json");
+    database.close();
+  });
+
+  it("freezes legacy activity-automation visibility into exact connector bindings", () => {
+    const database = migrateDatabaseThrough("0051_generic_webhook_idempotency.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
+        ('binding-owner', 'binding-owner-subject', 'owner@example.com', 'Binding Owner', '2026-08-10', '2026-08-10'),
+        ('binding-other', 'binding-other-subject', 'other@example.com', 'Binding Other', '2026-08-10', '2026-08-10');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('binding-workspace', 'Binding Workspace', 'binding-workspace', 'global', 'binding-owner', '2026-08-10', '2026-08-10');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, created_at, updated_at)
+      VALUES
+        ('binding-github', 'binding-workspace', 'github', 'workspace', NULL, 'GitHub',
+         '[]', 'plugin_binding_github', 'healthy', '2026-08-10', '2026-08-10'),
+        ('binding-google-owner', 'binding-workspace', 'google', 'personal', 'binding-owner', 'Owner Google',
+         '[]', 'plugin_binding_google_owner', 'error', '2026-08-10', '2026-08-10'),
+        ('binding-notion-other', 'binding-workspace', 'notion', 'personal', 'binding-other', 'Other Notion',
+         '[]', 'plugin_binding_notion_other', 'healthy', '2026-08-10', '2026-08-10'),
+        ('binding-linear-disabled', 'binding-workspace', 'linear', 'workspace', NULL, 'Disabled Linear',
+         '[]', 'plugin_binding_linear_disabled', 'disabled', '2026-08-10', '2026-08-10');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state,
+         latest_version_number, created_at, updated_at)
+      VALUES
+        ('binding-template-activity', 'binding-workspace', 'binding-owner', 'Activity', 'Activity trigger', 'private', 1, '2026-08-10', '2026-08-10'),
+        ('binding-template-schedule', 'binding-workspace', 'binding-owner', 'Schedule', 'Schedule trigger', 'private', 1, '2026-08-10', '2026-08-10');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json,
+         created_by_user_id, created_at)
+      VALUES
+        ('binding-version-activity', 'binding-template-activity', 1, 'Handle activity',
+         '[{"type":"connector_activity","connectorType":"github","eventTypes":["changed"],"deterministicFilters":{}}]',
+         'binding-owner', '2026-08-10'),
+        ('binding-version-schedule', 'binding-template-schedule', 1, 'Run hourly',
+         '[{"type":"interval","intervalSeconds":3600,"summary":"Hourly"}]',
+         'binding-owner', '2026-08-10');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, connector_bindings_json, status, created_at, updated_at)
+      VALUES
+        ('binding-subscription-personal', 'binding-workspace', 'binding-template-activity', 'binding-version-activity',
+         'personal', 'binding-owner', '{"type":"user","userId":"binding-owner"}', '{}', 'active', '2026-08-10', '2026-08-10'),
+        ('binding-subscription-workspace', 'binding-workspace', 'binding-template-activity', 'binding-version-activity',
+         'workspace', NULL, '{"type":"workspace","workspaceId":"binding-workspace"}', '{}', 'active', '2026-08-10', '2026-08-10'),
+        ('binding-subscription-schedule', 'binding-workspace', 'binding-template-schedule', 'binding-version-schedule',
+         'personal', 'binding-owner', '{"type":"user","userId":"binding-owner"}', '{}', 'active', '2026-08-10', '2026-08-10');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0052_automation_connector_bindings.sql", import.meta.url),
+      "utf8",
+    ));
+
+    const personal = database.prepare(
+      "SELECT connector_bindings_json FROM automation_subscriptions WHERE id = 'binding-subscription-personal'",
+    ).get() as { connector_bindings_json: string };
+    const workspace = database.prepare(
+      "SELECT connector_bindings_json FROM automation_subscriptions WHERE id = 'binding-subscription-workspace'",
+    ).get() as { connector_bindings_json: string };
+    expect(JSON.parse(personal.connector_bindings_json)).toEqual({
+      plugin_binding_github: "binding-github",
+      plugin_binding_google_owner: "binding-google-owner",
+    });
+    expect(JSON.parse(workspace.connector_bindings_json)).toEqual({
+      plugin_binding_github: "binding-github",
+    });
+    expect(database.prepare(
+      "SELECT connector_bindings_json FROM automation_subscriptions WHERE id = 'binding-subscription-schedule'",
+    ).get()).toEqual({ connector_bindings_json: "{}" });
+    database.close();
+  });
+
+  it("deduplicates active generic-webhook creation requests", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('webhook-owner', 'webhook-subject', 'webhook@example.com', 'Webhook Owner', '2026-08-10', '2026-08-10');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('webhook-workspace', 'Webhook Workspace', 'webhook-workspace', 'global', 'webhook-owner', '2026-08-10', '2026-08-10');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, config_json, created_at, updated_at)
+      VALUES
+        ('webhook-one', 'webhook-workspace', 'generic_webhook', 'workspace', NULL, 'Webhook one',
+         '[]', 'plugin_generic_webhook', '{"creationIdempotencyKey":"request-one"}', '2026-08-10', '2026-08-10');
+    `);
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, config_json, created_at, updated_at)
+      VALUES
+        ('webhook-two', 'webhook-workspace', 'generic_webhook', 'workspace', NULL, 'Webhook two',
+         '[]', 'plugin_generic_webhook_2', '{"creationIdempotencyKey":"request-one"}', '2026-08-10', '2026-08-10');
+    `)).toThrow(/UNIQUE constraint failed/iu);
+    database.exec("UPDATE connector_connections SET status = 'disabled' WHERE id = 'webhook-one'");
+    expect(() => database.exec(`
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, config_json, created_at, updated_at)
+      VALUES
+        ('webhook-two', 'webhook-workspace', 'generic_webhook', 'workspace', NULL, 'Webhook two',
+         '[]', 'plugin_generic_webhook_2', '{"creationIdempotencyKey":"request-one"}', '2026-08-10', '2026-08-10');
+    `)).not.toThrow();
+    database.close();
+  });
+
+  it("scopes verified external identities by provider tenant", () => {
+    const database = migrateFreshDatabase();
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
+        ('identity-user-one', 'identity-subject-one', 'identity-one@example.com', 'Identity One', '2026-08-07', '2026-08-07'),
+        ('identity-user-two', 'identity-subject-two', 'identity-two@example.com', 'Identity Two', '2026-08-07', '2026-08-07');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+        VALUES ('identity-workspace', 'Identity Workspace', 'identity-workspace', 'global', 'identity-user-one', '2026-08-07', '2026-08-07');
+      INSERT INTO external_user_identities
+        (id, workspace_id, user_id, provider, provider_tenant_id, provider_user_id,
+         handle, verification_source, created_at, updated_at)
+        VALUES
+        ('identity-one', 'identity-workspace', 'identity-user-one', 'github', 'tenant-one', '42', 'same-handle', 'oauth', '2026-08-07', '2026-08-07'),
+        ('identity-two', 'identity-workspace', 'identity-user-two', 'github', 'tenant-two', '42', 'same-handle', 'oauth', '2026-08-07', '2026-08-07');
+    `);
+    expect(database.prepare(
+      "SELECT provider_tenant_id, user_id FROM external_user_identities ORDER BY provider_tenant_id",
+    ).all()).toEqual([
+      { provider_tenant_id: "tenant-one", user_id: "identity-user-one" },
+      { provider_tenant_id: "tenant-two", user_id: "identity-user-two" },
+    ]);
+    expect(() => database.exec(`
+      INSERT INTO external_user_identities
+        (id, workspace_id, user_id, provider, provider_tenant_id, provider_user_id,
+         verification_source, created_at, updated_at)
+        VALUES ('identity-duplicate', 'identity-workspace', 'identity-user-two', 'github', 'tenant-one', '42', 'oauth', '2026-08-07', '2026-08-07');
+    `)).toThrow(/UNIQUE constraint failed/);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.close();
+  });
+
   it("stores HyperSight configuration as immutable append-only versions", () => {
     const database = migrateFreshDatabase();
     database.exec(`

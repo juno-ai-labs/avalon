@@ -113,6 +113,9 @@ const slackLink = z.object({ token: z.string().min(20).max(500) });
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
 connectionRoutes.get("/", async (c) => c.json({ items: await new ConnectionService(c.env, getAuth(c)).list() }));
+connectionRoutes.get("/catalog", async (c) => c.json({
+  availableConnectorTypes: new ConnectionService(c.env, getAuth(c)).availableConnectorTypes(),
+}));
 connectionRoutes.post("/google/start", zValidator("json", googleStart), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).beginGoogle(c.req.valid("json"))),
 );
@@ -158,6 +161,9 @@ connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
 });
 connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequestSchema), async (c) =>
   c.json(await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json")), 201),
+);
+connectionRoutes.post("/:id/webhook-secret/rotate", zValidator("param", idParam), async (c) =>
+  c.json(await new ConnectionService(c.env, getAuth(c)).rotateWebhookSecret(c.req.valid("param").id)),
 );
 
 export const connectionCallbackRoutes = new Hono<HonoAppEnv>();
@@ -288,7 +294,10 @@ webhookIngestionRoutes.post("/notion", async (c) => {
     c.req.raw.headers,
     c.req.query("setup") ?? null,
   );
-  return c.json(result, result.duplicate ? 200 : 202);
+  // Notion requires a successful 2xx response; acknowledge verified durable
+  // deliveries consistently with 200 so setup and normal delivery semantics
+  // do not depend on whether a receipt was already present.
+  return c.json(result, 200);
 });
 webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestGranolaWebhook(
@@ -305,7 +314,7 @@ webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async 
 webhookIngestionRoutes.post("/webhook/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestWebhook(
     c.req.valid("param").id,
-    await c.req.text(),
+    new Uint8Array(await c.req.arrayBuffer()),
     c.req.header("x-avalon-signature") ?? null,
   );
   return c.json(result, result.duplicate ? 200 : 202);
