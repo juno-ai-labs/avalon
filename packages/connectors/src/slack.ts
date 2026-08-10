@@ -530,6 +530,10 @@ const SlackConversationSchema = SlackChannelSchema.extend({
   is_private: z.boolean(),
   is_im: z.boolean().optional(),
   is_mpim: z.boolean().optional(),
+  // Slack Connect. Set on externally shared channels and on external DMs
+  // alike, so a reader in the conversation may work for another company.
+  is_ext_shared: z.boolean().optional(),
+  is_pending_ext_shared: z.boolean().optional(),
 });
 const SlackListedPublicChannelSchema = SlackChannelSchema.extend({
   name: z.string().optional(),
