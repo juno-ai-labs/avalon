@@ -12,7 +12,7 @@ import type {
   SlackRegionalBridgeRpcBinding,
 } from "./services/slack-routing-service";
 
-export const HYPERSIGHT_MODEL = "x-ai/grok-4.3";
+export const HYPERSIGHT_MODEL = "google/gemini-3.6-flash";
 
 export interface Env {
   DB: D1Database;

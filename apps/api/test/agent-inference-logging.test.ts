@@ -50,8 +50,8 @@ function fixture(enabled: boolean) {
 const request = {
   inferenceRequestId: "00000000-0000-7000-8000-000000000090",
   turnId: "run-1:turn:1",
-  model: "x-ai/grok-4.3",
-  providerInvocationModel: "x-ai/grok-4.3",
+  model: "google/gemini-3.6-flash",
+  providerInvocationModel: "google/gemini-3.6-flash",
   provider: "openrouter",
   cursor: {
     structuredOutputAttempt: 0,
@@ -60,7 +60,7 @@ const request = {
     endpointAttempt: 0,
   },
   payload: {
-    model: "x-ai/grok-4.3",
+    model: "google/gemini-3.6-flash",
     messages: [{ role: "user" as const, content: "Inspect the latest deployment" }],
     stream: true as const,
     stream_options: { include_usage: true as const },

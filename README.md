@@ -40,7 +40,7 @@ Prerequisites are Node.js 22 or newer and pnpm 11.
 
 `pnpm env:sync` copies only the server allowlist from `.env.local` into an ignored, owner-readable Worker file. Missing development signing and encryption values are generated once and then retained across restarts.
 
-The default primary model is `x-ai/grok-4.3` through OpenRouter. Classifier and structured-output work remains on `google/gemini-2.5-flash-lite`. Override the three `OPENROUTER_*_MODEL` values in `.env.local` when testing other models; the API key remains server-only.
+The default primary model is `google/gemini-3.6-flash` through OpenRouter, with `x-ai/grok-4.3` as the deployed fallback. Classifier and structured-output work remains on `google/gemini-2.5-flash-lite`. Override the three `OPENROUTER_*_MODEL` values in `.env.local` when testing other models; the API key remains server-only.
 
 ## Desktop identity and settings
 

@@ -1,5 +1,5 @@
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
-const expectedModel = "x-ai/grok-4.3";
+const expectedModel = "google/gemini-3.6-flash";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

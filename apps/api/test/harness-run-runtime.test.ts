@@ -339,7 +339,7 @@ describe("durable harness attempt runtime", () => {
     sqlite.database.exec(`
       DELETE FROM harness_runs WHERE id = '${RUN_TWO}';
       UPDATE harness_runs
-         SET origin = 'hypersight_block', status = 'scheduled', model = 'x-ai/grok-4.3'
+         SET origin = 'hypersight_block', status = 'scheduled', model = 'google/gemini-3.6-flash'
        WHERE id = '${RUN_ONE}';
       UPDATE workstreams SET harness_status = 'completed' WHERE id = '${WORKSTREAM_ID}';
       INSERT INTO hypersight_configuration_versions

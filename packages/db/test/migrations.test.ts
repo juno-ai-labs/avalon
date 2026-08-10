@@ -60,7 +60,7 @@ describe("database migrations", () => {
          status, model, created_at)
       VALUES ('hypersight-harness-1', 'workspace-hypersight', 'workstream-hypersight',
               'hypersight_block', '{"type":"workspace","workspaceId":"workspace-hypersight"}',
-              'scheduled', 'x-ai/grok-4.3', '2026-01-02');
+              'scheduled', 'google/gemini-3.6-flash', '2026-01-02');
       INSERT INTO hypersight_block_runs
         (id, workspace_id, workstream_id, configuration_version_id, block_id, prompt,
          trigger_sequence, harness_run_id, status, created_at)
