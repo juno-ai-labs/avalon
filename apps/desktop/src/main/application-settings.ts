@@ -6,6 +6,7 @@ const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 
 export interface StoredApplicationSettings {
   lockdownMode: boolean;
+  debugEnabled: boolean;
 }
 
 interface StoredApplicationSettingsFile extends StoredApplicationSettings {
@@ -14,17 +15,20 @@ interface StoredApplicationSettingsFile extends StoredApplicationSettings {
 
 export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   lockdownMode: false,
+  debugEnabled: false,
 };
 
 export function parseStoredApplicationSettings(value: unknown): StoredApplicationSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return defaultStoredApplicationSettings;
   }
-  const candidate = value as { version?: unknown; lockdownMode?: unknown };
+  const candidate = value as { version?: unknown; lockdownMode?: unknown; debugEnabled?: unknown };
   if (candidate.version !== 1 || typeof candidate.lockdownMode !== 'boolean') {
     return defaultStoredApplicationSettings;
   }
-  return { lockdownMode: candidate.lockdownMode };
+  // Preferences written before the Developer section carry no debug field. An
+  // unreadable value falls back to off rather than discarding Lockdown mode.
+  return { lockdownMode: candidate.lockdownMode, debugEnabled: candidate.debugEnabled === true };
 }
 
 export function applicationSettingsFilePath(userDataDirectory: string): string {
@@ -64,4 +68,15 @@ export async function writeStoredApplicationSettings(
   } finally {
     await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
+}
+
+/** Rewrites one preference without disturbing the others. Lockdown mode and
+ * the Developer preference share a file but not an owner, so neither may write
+ * the whole document from its own state. */
+export async function updateStoredApplicationSettings(
+  userDataDirectory: string,
+  patch: Partial<StoredApplicationSettings>,
+): Promise<void> {
+  const current = await readStoredApplicationSettings(userDataDirectory);
+  await writeStoredApplicationSettings(userDataDirectory, { ...current, ...patch });
 }
