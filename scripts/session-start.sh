@@ -43,8 +43,27 @@ run_step "pnpm install" pnpm install --frozen-lockfile || exit 0
 # .env.local. The API does not need the file — sync-dev-env.mjs defaults
 # APP_ENV and AVALON_DEV_AUTH and generates its own signing material — but
 # seeding it from the example costs nothing and makes the desktop path work.
+#
+# Every blank assignment in the example is filled from the environment when the
+# sandbox supplies that variable. Copying the example verbatim would otherwise
+# strand a configured OPENROUTER_API_KEY or FIRECRAWL_API_KEY: sync-dev-env.mjs
+# reads .env.local and never process.env, and its merge lets a blank value in
+# .env.local override a real one already written to apps/api/.dev.vars.*.
 if [ ! -f .env.local ] && [ -f .env.example ]; then
-  cp .env.example .env.local && log "seeded .env.local from .env.example"
+  filled=$(node -e '
+const { readFileSync, writeFileSync } = require("node:fs");
+let filled = 0;
+const lines = readFileSync(".env.example", "utf8").split(/\r?\n/u).map((line) => {
+  const match = /^([A-Z0-9_]+)=[ \t]*$/u.exec(line);
+  if (!match) return line;
+  const supplied = process.env[match[1]];
+  if (typeof supplied !== "string" || supplied.length === 0) return line;
+  filled += 1;
+  return `${match[1]}=${JSON.stringify(supplied)}`;
+});
+writeFileSync(".env.local", lines.join("\n"), { mode: 0o600 });
+process.stdout.write(String(filled));
+' 2>/dev/null) && log "seeded .env.local from .env.example (${filled:-0} value(s) taken from the environment)"
 fi
 
 run_step "pnpm env:sync" pnpm env:sync
