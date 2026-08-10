@@ -27,7 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
+import { ApiError, backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -867,7 +867,37 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
 
   const resolveSuggestion = async (suggestionId: string, action: 'accept' | 'dismiss'): Promise<void> => {
-    await api!.resolveActivitySuggestion(id, suggestionId, action);
+    // The transcript's suggestion cards are rebuilt from the detail's pending
+    // suggestions every time the message page is fetched, and that fetch reads
+    // the detail through the cache. Dropping the suggestion before the request
+    // rather than after also covers a rebuild that lands while the request is
+    // still in flight, which would otherwise restore the card to its pending
+    // state and offer buttons whose request can only fail.
+    const pending = queryClient.getQueryData<WorkstreamDetail>(['workstream', id])
+      ?.suggestions?.find((suggestion) => suggestion.id === suggestionId);
+    queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
+      ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
+      : current);
+    try {
+      await api!.resolveActivitySuggestion(id, suggestionId, action);
+    } catch (error) {
+      // 404 and 409 both mean the server no longer holds this suggestion open,
+      // so its card must not return offering buttons over a decision already
+      // made — the very thing this is here to stop. Every other failure left
+      // the suggestion pending, and its card has to come back to carry the
+      // error. Restore only this suggestion, so a detail update that landed
+      // while the request was in flight survives.
+      const status = error instanceof ApiError ? error.status : 0;
+      if (pending && status !== 404 && status !== 409) {
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
+          && !(current.suggestions ?? []).some((suggestion) => suggestion.id === suggestionId)
+          ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
+          : current);
+      } else {
+        void workstream.refetch();
+      }
+      throw error;
+    }
     await Promise.all([messages.refetch(), workstream.refetch()]);
   };
 
