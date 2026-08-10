@@ -309,6 +309,37 @@ export function WorkstreamHeader({
   );
 }
 
+export function WorkstreamErrorState({
+  description,
+  onRetry,
+  workstreamId,
+}: {
+  description: string;
+  onRetry: () => void;
+  workstreamId: string;
+}): React.JSX.Element {
+  return (
+    <div className="screen-error-state screen-with-titlebar">
+      <div className="screen-drag-strip window-drag" />
+      <div className="screen-state-actions window-no-drag">
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+              <DropdownMenu.Item className="menu-item" onSelect={() => void desktopBridge().copyText(workstreamId)}><Info size={14} /> Copy work-stream ID</DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      </div>
+      <EmptyState
+        action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
+        description={description}
+        title="Work stream could not be opened"
+      />
+    </div>
+  );
+}
+
 export function JumpToLatestButton({ onJump }: { onJump: () => void }): React.JSX.Element {
   return (
     <IconButton className="jump-bottom" label="Jump to latest" onClick={onJump} tooltipSide="top">
@@ -964,14 +995,11 @@ export function WorkstreamScreen(): React.JSX.Element {
   }
   if (workstream.error || messages.error || !workstream.data) {
     return (
-      <div className="screen-error-state screen-with-titlebar">
-        <div className="screen-drag-strip window-drag" />
-        <EmptyState
-          action={<Button onClick={() => void Promise.all([workstream.refetch(), messages.refetch()])}><RefreshCcw size={14} /> Try again</Button>}
-          description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
-          title="Work stream could not be opened"
-        />
-      </div>
+      <WorkstreamErrorState
+        description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
+        onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
+        workstreamId={id}
+      />
     );
   }
 
