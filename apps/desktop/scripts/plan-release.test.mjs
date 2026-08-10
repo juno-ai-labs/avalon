@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { planRelease } from './plan-release.mjs';
+import { RELEASE_RECORD_PATH, planRelease } from './plan-release.mjs';
 
 const RELEASED = '1111111111111111111111111111111111111111';
 
@@ -31,16 +31,28 @@ test('nobody has to bump a version for the change to ship', () => {
   assert.equal(plan.version, '1.34.0');
 });
 
-test('a merge with nothing at all since the release skips', () => {
-  const plan = planRelease(branchPush({ changedPaths: [] }));
+test('the state a completed release actually leaves behind skips', () => {
+  // This is the case the wiring produces, and the one an earlier version of
+  // this test got wrong by hand-feeding []. The watermark is the *bump* commit,
+  // and the release then pushes the record as a later commit, so the diff from
+  // the watermark always contains apps/site/release.config.json. Feeding []
+  // tested a state that cannot occur and left the skip below dead — a re-plan
+  // of a finished release cut an empty minor.
+  const plan = planRelease(branchPush({ changedPaths: [RELEASE_RECORD_PATH] }));
   assert.equal(plan.shouldRelease, false);
-  assert.match(plan.reason, /nothing has landed/u);
+  assert.match(plan.reason, /nothing but the release record/u);
 });
 
-test("the release's own version bump cannot trigger another release", () => {
-  // The bump commit matches the workflow's paths filter — it edits
-  // package.json — so this skip is the guard that stops a release loop, and it
-  // works because the bump becomes the watermark rather than part of the diff.
+test('the record is excluded by name, not by being the only path', () => {
+  // Real work landing alongside the record still releases.
+  const plan = planRelease(branchPush({
+    changedPaths: [RELEASE_RECORD_PATH, 'apps/desktop/src/main/index.ts'],
+  }));
+  assert.equal(plan.shouldRelease, true);
+  assert.match(plan.reason, /1 path\(s\) changed/u);
+});
+
+test('a merge with nothing at all since the release skips', () => {
   const plan = planRelease(branchPush({ changedPaths: [] }));
   assert.equal(plan.shouldRelease, false);
 });
