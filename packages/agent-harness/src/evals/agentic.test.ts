@@ -137,7 +137,12 @@ describe("stand-in tool surface", () => {
     const surface = createStandInSurface();
     expect(surface.corePlugins.every((plugin) => plugin.preload)).toBe(true);
     expect(surface.deferredPlugins.every((plugin) => !plugin.preload)).toBe(true);
-    expect(surface.deferredPlugins.map((plugin) => plugin.modelId)).toEqual(["plugin_github", "plugin_linear"]);
+    expect(surface.deferredPlugins.map((plugin) => plugin.modelId)).toEqual([
+      "plugin_google",
+      "plugin_github",
+      "plugin_linear",
+      "plugin_slack",
+    ]);
   });
 
   it("records invocations and surfaces the failing write", async () => {
@@ -148,7 +153,7 @@ describe("stand-in tool surface", () => {
     expect(surface.invocations.map((invocation) => invocation.wireName)).toEqual(["core_current_time"]);
 
     const github = surface.deferredPlugins.find((plugin) => plugin.shortWireName === "github");
-    const create = github?.tools.find((tool) => tool.definition.name === "create_issue");
+    const create = github?.tools.find((tool) => tool.definition.name === "issues_create");
     await expect(create?.execute({ repository: "a/b", title: "t" }, {} as never)).rejects.toThrow(/rejected the write/);
   });
 

@@ -95,6 +95,14 @@ Every classified provider attempt appends an immutable inference-ledger row with
 
 Each response is graded on the decision the product derives from it, not on its raw fields: a trigger or routing suggestion counts only above the 0.8 confidence floor, and a work-stream identifier that was never offered as a candidate is reported as an ungrounded answer rather than silently folded into an abstention. Cases deliberately include abstention and untrusted-instruction cases, so a model that always matches or always suggests scores poorly.
 
+The cases are derived from the Global production database, not written from the repository, so the class balance and the field shapes match what the Workers actually classify. Three properties of that distribution shape the suites, and each is worth knowing before reading a result:
+
+- **Addressing only ever sees the hard cases.** `classifyAddressing` returns the heuristic whenever `classifyAddressingHeuristically` reaches 0.9, so connector mentions, Avalon references, leading imperatives, and exact social acknowledgements are settled without inference. The suite therefore sits in the band below that floor, where the heuristic's own guesses — `both` at 0.72 for anything ending in a question mark, `human_only` at 0.58 for a low-signal statement — are what the model has to overturn.
+- **Routing abstains almost always.** Production produced 40 suggestions across 7,814 processed activities, and the two largest activity classes, CI check runs and calendar changes, produced none at all. The abstention cases are modelled on the two mistakes users actually dismissed: routing on a weak topical association, and routing on nothing but a shared repository name.
+- **Semantic triggers have no production instances.** Both live automations fire on calendar or interval triggers, so the conditions in that suite are derived from what those automations do rather than copied from saved semantic conditions.
+
+Customer content is never reproduced in fixtures. Each case is a paraphrase built from the distribution and the decision, with invented people, repositories, files, identifiers, and addresses; length, register, and ambiguity are preserved because those are the properties that make the eval predictive.
+
 ```bash
 OPENROUTER_API_KEY=... pnpm eval:models
 OPENROUTER_API_KEY=... pnpm eval:models --models x-ai/grok-4.3,google/gemini-3.6-flash --repeat 5
@@ -109,9 +117,14 @@ Runs default to three repeats per case because these decisions are stochastic; t
 
 `--suite agentic` covers what the primary slot actually does. Each case drives the real `runHarness` loop with the rendered work-stream system prompt and a stand-in plugin surface that mirrors how `createWorkstreamCorePlugins` and the connector plugins are assembled: the same wire names, modes, idempotency, and input schemas, backed by deterministic canned results. Runs are hermetic — no provider credentials and no external writes — while still exercising every branch the harness takes around a tool call.
 
+The surface and the case weighting come from the 305 tool invocations recorded in production. Google Drive search alone is 173 of them, with Gmail search and read next, so the Google connector carries the heaviest weight here. Production runs also call `table_query`, `table_search`, `workstream_read`, `web_search`, and `web_fetch` from preloaded plugins, so `avalon:tables` and `avalon:web` are part of the stand-in surface rather than absent from it. Tool names track the product: durable memory is written with `memory_add`, and the connectors expose `github_issues_create`, `github_repositories_list`, and `linear_create_issue`.
+
 Grading reads the emitted `HarnessEvent` stream rather than the final prose, so a case asserts on the trajectory the model actually took:
 
 - a deferred connector tool is reached only after a catalog discovery or load call;
+- private workspace data comes from the authorized connector rather than `web_search`;
+- a message identifier is obtained from a search before `google_gmail_read_message` uses it;
+- a durable seen-item table is consulted before an automation treats anything as new;
 - `core_current_time` is consulted instead of inferring the date from transcript timestamps;
 - durable memory is searched before it is written;
 - a missing required identifier produces `core_request_elicitation` and a `needs_input` run rather than an invented argument;
