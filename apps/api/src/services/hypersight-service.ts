@@ -257,6 +257,7 @@ export async function launchHyperSightRefresh(
   const configuration = await latestConfiguration(env, workspaceId, workstreamId);
   if (!configuration) return [];
   const blocks = parseBlocks(configuration.blocks_json).filter((block) => block.prompt.trim().length > 0);
+  if (blocks.length === 0) return [];
   const launched: HyperSightBlockRun[] = [];
   const { model } = await resolveAgentModelRouting(env, "hypersight", { workspaceId, workstreamId });
   for (const block of blocks) {

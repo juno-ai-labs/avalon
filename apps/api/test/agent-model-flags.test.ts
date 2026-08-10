@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { HYPERSIGHT_MODEL, type Env } from "../src/env";
+import type { AgentModelRouting } from "../src/services/agent-model-flags";
 import {
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_ROLES,
@@ -8,6 +10,8 @@ import {
   scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
 
+// APP_ENV production so the unreachable-binding path warns rather than staying
+// quiet the way it does in development.
 const baseEnv = {
   AVALON_REGION: "global",
   APP_ENV: "production",
@@ -19,8 +23,20 @@ const baseEnv = {
   OPENROUTER_AUTOMATION_MODEL: "x-ai/grok-4.5",
 } as unknown as Env;
 
-function envWithFlags(getObjectValue: Flagship["getObjectValue"]): Env {
-  return { ...baseEnv, FLAGS: { getObjectValue } as unknown as Flagship };
+type DetailsStub = (
+  flagKey: string,
+  defaultValue: AgentModelRouting,
+  context?: FlagshipEvaluationContext,
+) => Promise<Partial<FlagshipEvaluationDetails<unknown>>>;
+
+/** Binds a `getObjectDetails` stub, the only Flagship method the resolver calls. */
+function envWithFlags(getObjectDetails: DetailsStub): Env {
+  return { ...baseEnv, FLAGS: { getObjectDetails } as unknown as Flagship };
+}
+
+/** A stub that serves `value` the way a provisioned, matching flag would. */
+function serving(value: unknown, variant = "current"): DetailsStub {
+  return async (flagKey) => ({ flagKey, value, variant, reason: "STATIC" });
 }
 
 describe("agent model flags", () => {
@@ -53,8 +69,12 @@ describe("agent model flags", () => {
   });
 
   it("evaluates each agent's own flag with the default as the evaluation fallback", async () => {
-    const getObjectValue = vi.fn(async (_key: string, defaultValue: object) => defaultValue);
-    const env = envWithFlags(getObjectValue as unknown as Flagship["getObjectValue"]);
+    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "DEFAULT",
+    }));
+    const env = envWithFlags(getObjectDetails);
 
     await resolveAgentModelRouting(env, "automation_compiler", {
       workspaceId: "ws-1",
@@ -62,7 +82,7 @@ describe("agent model flags", () => {
       userId: "usr-1",
     });
 
-    expect(getObjectValue).toHaveBeenCalledWith(
+    expect(getObjectDetails).toHaveBeenCalledWith(
       "agent-model-automation-compiler",
       { model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash", "anthropic/claude-sonnet-4.5"] },
       {
@@ -77,10 +97,10 @@ describe("agent model flags", () => {
   });
 
   it("uses the flag's OpenRouter model ids when the flag is served", async () => {
-    const env = envWithFlags((async () => ({
+    const env = envWithFlags(serving({
       model: "anthropic/claude-opus-4.6",
       fallbackModels: ["x-ai/grok-4.3"],
-    })) as unknown as Flagship["getObjectValue"]);
+    }));
 
     await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" })).resolves.toEqual({
       model: "anthropic/claude-opus-4.6",
@@ -88,10 +108,24 @@ describe("agent model flags", () => {
     });
   });
 
+  // Deliberately a role whose default fallbacks are non-empty: on `hypersight`
+  // this would pass even if the default's fallbacks were merged over the served
+  // value, which is the half-applied plan the whole design exists to prevent.
   it("treats an omitted fallback list as no fallbacks rather than the variable's list", async () => {
-    const env = envWithFlags((async () => ({
+    const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6" }));
+
+    await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual({
       model: "anthropic/claude-opus-4.6",
-    })) as unknown as Flagship["getObjectValue"]);
+      fallbackModels: [],
+    });
+    expect(defaultAgentModelRouting(env, "workstream").fallbackModels).not.toHaveLength(0);
+  });
+
+  it("drops fallbacks a flag tries to give HyperSight, keeping the retargeted model", async () => {
+    const env = envWithFlags(serving({
+      model: "anthropic/claude-opus-4.6",
+      fallbackModels: ["x-ai/grok-4.3"],
+    }));
 
     await expect(resolveAgentModelRouting(env, "hypersight")).resolves.toEqual({
       model: "anthropic/claude-opus-4.6",
@@ -99,11 +133,47 @@ describe("agent model flags", () => {
     });
   });
 
-  it("rejects a malformed flag value whole instead of applying half of it", async () => {
-    const env = envWithFlags((async () => ({
-      model: "",
+  it("keeps the flag's fallbacks for every role that is allowed to route onward", async () => {
+    const env = envWithFlags(serving({
+      model: "anthropic/claude-opus-4.6",
       fallbackModels: ["x-ai/grok-4.3"],
-    })) as unknown as Flagship["getObjectValue"]);
+    }));
+
+    for (const role of AGENT_MODEL_ROLES.filter((candidate) => candidate !== "hypersight")) {
+      await expect(resolveAgentModelRouting(env, role)).resolves.toEqual({
+        model: "anthropic/claude-opus-4.6",
+        fallbackModels: ["x-ai/grok-4.3"],
+      });
+    }
+  });
+
+  // A missing or mistyped key resolves the default rather than throwing, so
+  // without reading `errorCode` a typo in AGENT_MODEL_FLAG_KEYS is
+  // indistinguishable from a correctly provisioned flag.
+  it("falls back and reports an error code rather than resolving a missing flag silently", async () => {
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((entry: unknown) => {
+      warnings.push(JSON.stringify(entry));
+    });
+    // The shared fixture pins LOG_LEVEL to error to keep other cases silent.
+    const env = { ...envWithFlags(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "ERROR",
+      errorCode: "FLAG_NOT_FOUND",
+      errorMessage: `flag ${flagKey} does not exist`,
+    })), LOG_LEVEL: "warn" } as Env;
+
+    await expect(resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" })).resolves.toEqual(
+      defaultAgentModelRouting(baseEnv, "workstream"),
+    );
+    expect(warnings.join()).toContain("agent_model_flag_unresolved");
+    expect(warnings.join()).toContain("FLAG_NOT_FOUND");
+    warn.mockRestore();
+  });
+
+  it("rejects a malformed flag value whole instead of applying half of it", async () => {
+    const env = envWithFlags(serving({ model: "", fallbackModels: ["x-ai/grok-4.3"] }));
 
     await expect(resolveAgentModelRouting(env, "workstream")).resolves.toEqual(
       defaultAgentModelRouting(baseEnv, "workstream"),
@@ -111,20 +181,34 @@ describe("agent model flags", () => {
   });
 
   it("keeps the agent running on its Worker variables when evaluation throws", async () => {
-    const env = envWithFlags((async () => {
-      throw new Error("flagship unavailable");
-    }) as unknown as Flagship["getObjectValue"]);
+    const env = envWithFlags(async () => {
+      throw new Error("Binding FLAGS needs to be run remotely");
+    });
 
     await expect(resolveAgentModelRouting(env, "meeting_notes")).resolves.toEqual(
       defaultAgentModelRouting(baseEnv, "meeting_notes"),
     );
   });
 
+  // `wrangler deploy` rejects a flagship binding with no `app_id`, but a
+  // dry-run build substitutes an inherit placeholder and passes — so neither CI
+  // gate catches the omission and the failure would land mid-release, after the
+  // remote D1 migrations have already applied.
+  it.each(["wrangler.global.jsonc", "wrangler.eu.jsonc"])(
+    "%s binds FLAGS to a Flagship app id",
+    (fileName) => {
+      const raw = readFileSync(new URL(`../${fileName}`, import.meta.url), "utf8");
+      const config = JSON.parse(raw.replace(/^\s*\/\/.*$/gmu, "")) as {
+        flagship?: Array<{ binding: string; app_id?: string }>;
+      };
+      const binding = config.flagship?.find((entry) => entry.binding === "FLAGS");
+      expect(binding).toBeDefined();
+      expect(binding?.app_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+    },
+  );
+
   it("records the work-stream agent's flagged model on scheduled runs", async () => {
-    const env = envWithFlags((async () => ({
-      model: "anthropic/claude-opus-4.6",
-      fallbackModels: [],
-    })) as unknown as Flagship["getObjectValue"]);
+    const env = envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] }));
 
     await expect(scheduledWorkstreamModel(env, { workspaceId: "ws-1" })).resolves.toBe(
       "anthropic/claude-opus-4.6",
