@@ -37,6 +37,24 @@ describe("work-stream suggestions with oversized source fields", () => {
     expect(suggestion?.title).toBe(oversizedTitle.slice(0, 300));
   });
 
+  it("truncates a title with an emoji straddling the boundary without leaving a lone surrogate", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    // Commit messages routinely carry emoji. Place a surrogate pair (😀,
+    // two UTF-16 code units) exactly across the 300-character cut so a
+    // naive `.slice(0, 300)` would split it and leave a lone surrogate.
+    const oversizedTitle = `${"x".repeat(299)}\u{1F600}${"y".repeat(200)}`;
+    seedSuggestion(database, { activityTitle: oversizedTitle });
+    const service = new WorkstreamService(environment(database), auth());
+
+    const detail = await service.get(workstreamId);
+
+    const [suggestion] = detail.suggestions;
+    expect(suggestion?.title.length).toBeLessThanOrEqual(300);
+    const lastCode = suggestion?.title.charCodeAt((suggestion.title.length) - 1) ?? 0;
+    expect(lastCode >= 0xd800 && lastCode <= 0xdbff).toBe(false);
+  });
+
   it("truncates a suggestion summary that exceeds the schema before returning it", async () => {
     const database = migratedDatabase();
     seed(database);
