@@ -155,7 +155,6 @@ function ContextContent({
                 <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
                   <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
                   <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
-                  <ChevronRight aria-hidden="true" size={14} />
                 </button>
                 <label className="watch-toggle">
                   <input
@@ -164,9 +163,10 @@ function ContextContent({
                     onChange={(event) => onToggleWatch?.(resource, event.target.checked)}
                     type="checkbox"
                   />
-                  <span aria-hidden="true" />
                   <small>{resource.watchStatus === 'unsupported' ? 'Watch unavailable' : resource.watchStatus === 'error' ? 'Watch needs attention' : resource.watchEnabled ? 'Watching' : 'Watch'}</small>
+                  <span aria-hidden="true" />
                 </label>
+                <ChevronRight aria-hidden="true" className="resource-row-chevron" size={14} />
               </li>
             ))}
           </ul>
