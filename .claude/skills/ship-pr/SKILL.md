@@ -73,6 +73,15 @@ it to a file, then:
 gh pr create --title "..." --body-file <path> --base main --head <branch>
 ```
 
+**Never open it as a draft** (`docs/pull-requests.md`, "Never open a draft pull
+request") — no `--draft` flag, no `draft: true` through the API. An open PR in
+this repo means "this wants a review", and a draft silently opts out of the
+review queue this skill exists to move the change through. If the change isn't
+ready for a reviewer, stay on the branch and open the PR when it is — the swarm
+in step 4 runs against an open PR, and its fixes land on it as further commits
+(step 5), so an unreviewed change is not a reason to hold step 3. If you inherit
+a draft, run `gh pr ready <n>` before continuing.
+
 ## 4. Run a review swarm before waiting on CI
 
 Don't wait for CI first and review second — the swarm often finds things worth
