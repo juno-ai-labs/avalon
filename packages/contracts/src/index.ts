@@ -1110,7 +1110,7 @@ export const AddressingClassificationSchema = z.object({
 export const ActivityRoutingResultSchema = z.object({
   candidateWorkstreamId: IdSchema.nullable(),
   confidence: z.number().min(0).max(1),
-  reason: z.string().max(1000),
+  reason: z.string().min(1).max(1000),
   matchedEntities: z.array(z.string()),
   suggest: z.boolean()
 });

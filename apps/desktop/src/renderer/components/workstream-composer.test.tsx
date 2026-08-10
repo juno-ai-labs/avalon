@@ -275,4 +275,33 @@ describe('WorkstreamComposer mention confirmation', () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('@Adam looks good.', []));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('highlights mentioned resources behind the draft without altering it', () => {
+    renderComposer();
+    const textarea = screen.getByLabelText('Message the work stream');
+
+    fireEvent.change(textarea, { target: { value: 'ask @Bob Builder about @nobody' } });
+
+    const highlight = document.querySelector('.composer-highlight');
+    expect(highlight).not.toBeNull();
+    expect(highlight).toHaveTextContent('ask @Bob Builder about @nobody');
+    const marks = [...document.querySelectorAll('.composer-mention')].map((mark) => mark.textContent);
+    expect(marks).toEqual(['@Bob Builder']);
+    expect(textarea).toHaveValue('ask @Bob Builder about @nobody');
+    expect(highlight).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('hands the draft back to the textarea while an IME composition is open', () => {
+    renderComposer();
+    const textarea = screen.getByLabelText('Message the work stream');
+    const composer = document.querySelector('.workstream-composer');
+    expect(composer).toHaveClass('is-highlighting');
+    expect(composer).not.toHaveClass('is-composing');
+
+    fireEvent.compositionStart(textarea);
+    expect(composer).toHaveClass('is-composing');
+
+    fireEvent.compositionEnd(textarea);
+    expect(composer).not.toHaveClass('is-composing');
+  });
 });
