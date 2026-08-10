@@ -1141,6 +1141,12 @@ function registerIpc(): void {
   ipcMain.handle('application-settings:set-debug-enabled', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
     await debugSettingsController.set(rawEnabled);
+    // Deliberately `state()` rather than `settings()`: the latter can run the
+    // automatic keystore fallback, which clears credentials and forces a new
+    // sign-in. Writing a debugging preference must never carry that side
+    // effect. `state()` still probes keystore availability, so an unavailable
+    // keystore is reported as the recoverable state the Settings pane already
+    // models, and the fallback runs on the next read or Lockdown interaction.
     return desktopApplicationSettings();
   });
   ipcMain.handle('application-icon:get', (event) => {

@@ -29,7 +29,7 @@ import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
-import { useDebugEnabled } from '../lib/use-debug-mode';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
 
 interface SidebarProps {

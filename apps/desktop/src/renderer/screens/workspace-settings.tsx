@@ -26,6 +26,7 @@ import {
   Users,
   Wifi,
   Workflow,
+  Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -926,7 +927,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Developer</h2><p>Extra tooling for reporting and diagnosing problems.</p></div>
                 <div className="settings-list-card">
                   <label className="settings-preference-row">
-                    <span className="settings-row-icon"><Bug aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-icon"><Wrench aria-hidden="true" size={18} /></span>
                     <span className="settings-row-copy">
                       <strong>Debug enabled</strong>
                       <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu.</small>
@@ -935,7 +936,14 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       <input
                         aria-label="Debug enabled"
                         checked={applicationSettings?.debugEnabled ?? false}
-                        disabled={applicationSettings === null || updateDebugEnabled.isPending}
+                        /* A Lockdown transition re-encrypts every durable session
+                         * component, so it stays pending long enough to click this.
+                         * Both preferences write one file; keep one in flight. */
+                        disabled={
+                          applicationSettings === null
+                          || updateDebugEnabled.isPending
+                          || updateLockdownMode.isPending
+                        }
                         onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
                         role="switch"
                         type="checkbox"
