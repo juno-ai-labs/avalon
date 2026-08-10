@@ -380,17 +380,59 @@ describe('MessageBlock markdown', () => {
   it('escapes connection labels and ignores overlapping or malformed ranges', () => {
     expect(withConnectorMentionLinks('Ping @Ops [beta]', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 16 },
-    ])).toBe('Ping [@Ops \\[beta\\]](connector:ops)');
+    ]).text).toBe('Ping [@Ops \\[beta\\]](connector:ops)');
+
+    expect(withConnectorMentionLinks('Ping @Ops *now*', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 15 },
+    ]).text).toBe('Ping [@Ops \\*now\\*](connector:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
       { type: 'connector', connectorType: 'ops', startOffset: 6, endOffset: 9 },
-    ])).toBe('Ping [@Ops](connector:ops)');
+    ]).text).toBe('Ping [@Ops](connector:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 40 },
       { type: 'person', personId: 'user-1', startOffset: 0, endOffset: 4 },
-    ])).toBe('Ping @Ops');
+    ]).text).toBe('Ping @Ops');
+  });
+
+  it('reports only the labels it emitted, so a forged link cannot borrow one', () => {
+    const { labels } = withConnectorMentionLinks('Ping @Ops now', [
+      { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
+    ]);
+    expect([...labels.get('ops') ?? []]).toEqual(['@Ops']);
+    expect(withConnectorMentionLinks('Ping @Ops now', []).labels.size).toBe(0);
+  });
+
+  it('does not chip a hand-authored connector link that no mention backs', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-forged',
+      authorType: 'agent',
+      author: undefined,
+      text: 'Routed through [@Slack workspace](connector:slack) already.',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
+    expect(screen.getByText('@Slack workspace')).toHaveClass('mention-text-fallback');
+    expect(screen.queryByRole('link', { name: '@Slack workspace' })).not.toBeInTheDocument();
+  });
+
+  it('renders a message carrying a malformed connector escape without throwing', () => {
+    const message: Message = {
+      ...baseMessage,
+      id: 'message-connector-malformed',
+      authorType: 'agent',
+      author: undefined,
+      text: 'See [broken](connector:%) and carry on.',
+    };
+
+    expect(() => render(<MessageBlock {...actions} message={message} />)).not.toThrow();
+    expect(document.querySelector('.markdown-body')).toHaveTextContent('See broken and carry on.');
+    expect(document.querySelector('.mention-chip')).not.toBeInTheDocument();
   });
 
   it('does not treat legacy mention links as person chips', () => {

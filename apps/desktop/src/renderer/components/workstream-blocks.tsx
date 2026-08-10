@@ -26,7 +26,7 @@ import {
   TerminalSquare,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Children, useEffect, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -175,11 +175,34 @@ function personIdFromHref(href: string | undefined): string | undefined {
 
 function connectorTypeFromHref(href: string | undefined): string | undefined {
   const encoded = href?.match(CONNECTOR_LINK_PATTERN)?.[1];
-  return encoded === undefined ? undefined : decodeURIComponent(encoded);
+  if (encoded === undefined) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    // Message text is authored by people and models, so `[x](connector:%)` is a
+    // reachable input. A malformed escape is simply not a connector reference —
+    // it must not throw through the renderer and take the transcript with it.
+    return undefined;
+  }
 }
 
+/** Keeps a label literal: brackets would end the link, emphasis marks would style it. */
 function escapeMarkdownLabel(label: string): string {
-  return label.replace(/\\/gu, '\\\\').replace(/\[/gu, '\\[').replace(/\]/gu, '\\]');
+  return label.replace(/[\\[\]*_`~]/gu, (character) => `\\${character}`);
+}
+
+/** The rendered label of a link, when it is a single plain string. */
+function linkLabelText(children: React.ReactNode): string | undefined {
+  const parts = Children.toArray(children);
+  if (parts.length !== 1) return undefined;
+  return typeof parts[0] === 'string' ? parts[0] : undefined;
+}
+
+export interface ConnectorMentionMarkdown {
+  /** The message text with each stored connector range rewritten as a link. */
+  text: string;
+  /** Per connector type, the labels this rewrite emitted — the only ones a chip may use. */
+  labels: Map<string, Set<string>>;
 }
 
 /**
@@ -188,12 +211,17 @@ function escapeMarkdownLabel(label: string): string {
  * identity-bearing connector reference yet. Its stored offsets are still
  * authoritative, so this turns them into the same link shape at render time —
  * presentation only, leaving the message text models and Slack see untouched.
+ *
+ * The emitted labels are returned alongside the text: a `connector:` link that
+ * this rewrite did not produce is text someone wrote, not a mention, and the
+ * renderer must not dress it as one.
  */
-export function withConnectorMentionLinks(text: string, mentions: MessageMention[]): string {
+export function withConnectorMentionLinks(text: string, mentions: MessageMention[]): ConnectorMentionMarkdown {
+  const labels = new Map<string, Set<string>>();
   const connectors = mentions
     .filter((mention) => mention.type === 'connector' && mention.connectorType)
     .sort((left, right) => left.startOffset - right.startOffset);
-  if (connectors.length === 0) return text;
+  if (connectors.length === 0) return { text, labels };
 
   let cursor = 0;
   let output = '';
@@ -205,8 +233,11 @@ export function withConnectorMentionLinks(text: string, mentions: MessageMention
     output += text.slice(cursor, startOffset);
     output += `[${escapeMarkdownLabel(source)}](connector:${encodeURIComponent(connectorType)})`;
     cursor = endOffset;
+    const known = labels.get(connectorType) ?? new Set<string>();
+    known.add(source);
+    labels.set(connectorType, known);
   }
-  return output + text.slice(cursor);
+  return { text: output + text.slice(cursor), labels };
 }
 
 function mentionInitials(label: string): string {
@@ -250,6 +281,7 @@ function MentionChip({ fallbackLabel, mention, personId }: {
 }
 
 export function MarkdownBody({ children, mentions = [] }: { children: string; mentions?: MessageMention[] }): React.JSX.Element {
+  const connectorMentions = withConnectorMentionLinks(children, mentions);
   return (
     <div className="markdown-body">
       <ReactMarkdown
@@ -266,9 +298,15 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
             }
             const connectorType = connectorTypeFromHref(href);
             if (connectorType !== undefined) {
+              const label = linkLabelText(linkChildren);
+              // Only a label this render produced from a stored mention range earns
+              // a chip; a hand-authored `connector:` link is text, not a mention.
+              if (label === undefined || !connectorMentions.labels.get(connectorType)?.has(label)) {
+                return <span className="mention-text-fallback">{linkChildren}</span>;
+              }
               return (
                 <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
-                  <span className="mention-chip-label">{linkChildren}</span>
+                  <span className="mention-chip-label">{label}</span>
                 </span>
               );
             }
@@ -285,7 +323,7 @@ export function MarkdownBody({ children, mentions = [] }: { children: string; me
             : defaultUrlTransform(url)
         )}
       >
-        {withConnectorMentionLinks(children, mentions)}
+        {connectorMentions.text}
       </ReactMarkdown>
     </div>
   );
