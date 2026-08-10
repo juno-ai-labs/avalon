@@ -26,8 +26,9 @@ defined in [`docs/SANDBOX.md`](docs/SANDBOX.md).
 
 Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
 `pnpm test` green. CI additionally runs `pnpm test:scripts`, both Wrangler
-dry-run builds, the desktop release invariants, and a Gitleaks scan over the full
-history.
+dry-run builds, the desktop release invariants, a Gitleaks scan over the full
+history, and `pnpm check:migrations` — a new migration must not reuse a number
+already taken on `main`, even when the branch cannot see that file.
 
 ## Capturing command output
 

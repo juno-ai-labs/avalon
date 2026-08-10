@@ -63,6 +63,37 @@ jobs:
       - name: Check the desktop release invariants
         run: pnpm --filter @avalon/desktop test:release
 
+  # Two branches can each add a migration with the next free number without
+  # conflicting textually, so the collision is invisible on either one alone and
+  # only appears on main once both have merged — by which point both files are
+  # deployed and immutable. Its own job rather than a step in `verify`: it costs
+  # seconds, needs no dependency install, and the answer is most useful early,
+  # while renumbering the file is still free.
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the revision
+        uses: actions/checkout@v5
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The checkout is shallow and, on a pull request, does not carry the base
+      # branch at all — the half of the collision that lives on main has to be
+      # fetched before it can be compared against.
+      - name: Fetch the base branch
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}
+        run: git fetch --depth=1 origin "$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+      - name: Check for duplicate migration prefixes
+        env:
+          BASE_REF: ${{ github.base_ref || github.event.repository.default_branch }}
+        run: node scripts/check-migration-prefixes.mjs --ref "origin/$BASE_REF"
+
   secrets:
     runs-on: ubuntu-latest
     timeout-minutes: 15

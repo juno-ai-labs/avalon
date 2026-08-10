@@ -54,3 +54,5 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 ## Migration policy
 
 Migration files are immutable after deployment. New schema changes receive a monotonically numbered SQL file. Local and hosted databases are migrated with Wrangler before code that depends on the new schema is deployed. Runtime request handlers never attempt broad schema migration.
+
+A migration number belongs to exactly one file. Two branches opened from the same base both take the next free number without conflicting textually, so the duplicate only surfaces on `main` after the second merge, when both files are already deployed and immutable and Wrangler's ordering between them is incidental — prefixes 0039, 0041, and 0046 were each duplicated that way. `scripts/check-migration-prefixes.mjs` compares the union of the migration names on the base branch and in the checkout, so the collision fails the pull request instead, while renumbering the file is still free. It runs as the `migrations` job in CI and locally as `pnpm check:migrations`. The three historical pairs are recorded in the script as exceptions; nothing should be added to that list.

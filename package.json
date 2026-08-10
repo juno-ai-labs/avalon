@@ -23,6 +23,7 @@
     "db:migrate:remote:list": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote:list",
     "db:migrate:remote:list:eu": "dotenv -e .env.local -- pnpm --filter @avalon/api db:migrate:remote:list:eu",
     "db:seed": "pnpm env:sync && pnpm --filter @avalon/api db:seed && pnpm --filter @avalon/api db:seed:eu",
+    "check:migrations": "node scripts/check-migration-prefixes.mjs --ref origin/main",
     "health:regions": "node scripts/check-regional-health.mjs",
     "smoke:local": "node scripts/smoke-local.mjs",
     "smoke:model": "node scripts/smoke-model.mjs",
