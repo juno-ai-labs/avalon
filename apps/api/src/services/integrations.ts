@@ -784,8 +784,11 @@ export async function classifyWorkstreamMessage(
     activeTask: boolean;
     connectorMentions: string[];
     recentMessages: AddressingContextMessage[];
-    workspaceId?: string;
-    workstreamId?: string;
+    // Required, not optional: `workspaceId` is the rollout bucketing key, and
+    // omitting it would drop this classifier into the default bucket while the
+    // rest of its workspace ran on a rolled-out variant.
+    workspaceId: string;
+    workstreamId: string;
   },
 ): Promise<AddressingClassification> {
   const routing = await resolveAgentModelRouting(env, "addressing_classifier", {
