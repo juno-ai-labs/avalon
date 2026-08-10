@@ -2,14 +2,32 @@ name: Release Avalon for macOS
 
 on:
   # A tag is an artifact of a release, not an input to one: nothing triggers on
-  # `v*`, and the planner never reads tags. The workspace version measured
-  # against the published record decides, so pushing a tag by hand records
-  # nothing and starts nothing.
+  # `v*`, and the planner never reads tags. The recorded release decides, so
+  # pushing a tag by hand records nothing and starts nothing.
   push:
     branches:
       - main
-    # Unfiltered by path: the planner is cheap, and the version gate is the
-    # real filter.
+    # What the installed application is built from. A docs, Worker, or landing
+    # site merge changes nothing a user could install, so it must not spend a
+    # 90-minute signed and notarized build.
+    #
+    # This list is the release trigger, so it is the thing to check first when a
+    # merge does not release: a push that matches nothing here produces no run
+    # at all, not a run that explains itself. `docs/RUNBOOK.md` documents that
+    # diagnosis, and release-workflow.test.mjs pins the list.
+    #
+    # Keep in sync with the Documentation note in docs/RUNBOOK.md. A path filter
+    # is evaluated against the push's own diff, which GitHub does not guarantee
+    # to compute for very large pushes; when it cannot, the workflow runs, and
+    # the planner's check for work since the last release decides instead.
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/release-desktop-macos.yml'
   workflow_dispatch:
     inputs:
       tag:
@@ -25,11 +43,31 @@ on:
 permissions:
   contents: read
 
-# Concurrency lives on the release job, not here. At workflow level it would
-# also cover the planner, so a push that plans a skip would still occupy the
-# single pending slot and could displace a queued release that had work to do.
-# Keeping the planner outside the queue means only runs that actually release
-# contend for it, and a plan is never delayed behind a 90-minute release.
+# Concurrency covers the whole run, planner included, because *when* the plan is
+# made is part of the decision. Signing, mutable channel promotion, and the
+# landing-site deployment form one release transaction, so a running release is
+# never cancelled; newer releases supersede older *pending* ones, since the
+# newest pending run carries the newest work.
+#
+# Planning inside the queue is what makes the plan trustworthy. A plan made
+# while another release is in flight reads a release record that run has not
+# finished writing: it would compute a version that release is about to take,
+# and could not tell a genuine resume of a failed release from a version that
+# had just shipped. Waiting for the slot means the record is settled before it
+# is read, and nothing downstream has to reason about a stale plan.
+#
+# It costs what it used to buy: a plan now waits behind a 90-minute release
+# before it can even skip. That is affordable because the `paths:` filter above
+# already keeps non-desktop merges out of the workflow entirely, so the runs
+# that queue here are release candidates rather than ordinary merges.
+#
+# This group holds releases only. The site deployment deliberately keeps its
+# own, because a queued site job sharing this one would satisfy `single` by
+# cancelling a pending release.
+concurrency:
+  group: desktop-macos-release
+  cancel-in-progress: false
+  queue: single
 
 jobs:
   # Decides the release on a cheap runner so ordinary merges never occupy a
@@ -39,10 +77,13 @@ jobs:
     timeout-minutes: 5
     outputs:
       should_release: ${{ steps.plan.outputs.should_release }}
+      version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
       ref: ${{ steps.plan.outputs.ref }}
       create_tag: ${{ steps.plan.outputs.create_tag }}
     steps:
+      # The planner diffs the working tree against the commit the last release
+      # was built from, so the whole history has to be present.
       - name: Check out the full history and tags
         uses: actions/checkout@v5
         with:
@@ -51,25 +92,14 @@ jobs:
       - name: Plan the release
         id: plan
         env:
-          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
           RELEASE_INPUT_TAG: ${{ inputs.tag }}
         run: node apps/desktop/scripts/plan-release.mjs
 
   release:
     needs: plan
     if: needs.plan.outputs.should_release == 'true'
-    concurrency:
-      # Signing, mutable channel promotion, and the landing-site deployment
-      # form one release transaction, so a running release is never cancelled.
-      # Newer releases supersede older *pending* ones: intermediate versions do
-      # not need to ship, and the newest pending run carries the newest work.
-      #
-      # This group holds releases only. The site deployment deliberately keeps
-      # its own, because a queued site job sharing this one would satisfy
-      # `single` by cancelling a pending release.
-      group: desktop-macos-release
-      cancel-in-progress: false
-      queue: single
+    # Concurrency is declared at workflow level, above, so that the plan is made
+    # inside the queue rather than before it.
     # Standard macos-26 is an Apple Silicon runner. Native arm64 execution is
     # required for the clean-profile packaged launch smoke.
     runs-on: macos-26
@@ -102,6 +132,65 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.plan.outputs.ref }}
+          # The bump below pushes to main, which the job's own GITHUB_TOKEN can
+          # do. Persisting it is what makes that push possible at all — and it
+          # deliberately does not start another run of this workflow.
+          persist-credentials: true
+
+      # Nobody bumps a version by hand any more: the planner chose the next
+      # minor and this step stamps it onto the workspace manifests and commits
+      # that bump to main, so the tag, the manifests, and the artifacts all
+      # agree without anyone remembering to edit a file.
+      #
+      # The bump lands on main *before* the build, which is what keeps the
+      # released commit an ancestor of main and therefore usable as the
+      # planner's watermark. A release that fails after this point leaves main
+      # bumped and unpublished; that is resumable rather than broken, because
+      # the record still names the old version, so the next plan picks the same
+      # next minor, finds the manifests already stamped, and rebuilds it.
+      - name: Bump the workspace version and record it on the default branch
+        if: needs.plan.outputs.create_tag == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            git fetch origin main
+            # main may have moved since the plan ran. Building its tip is
+            # correct: the newer commit carries strictly more work, and the
+            # version being cut does not depend on which push triggered the run.
+            git reset --hard origin/main
+            node apps/desktop/scripts/apply-release-version.mjs "$RELEASE_VERSION"
+            if git diff --quiet; then
+              # main already carries this version. Because the plan was made
+              # inside the release queue, that can only mean an earlier attempt
+              # at *this* version pushed its bump and then failed before
+              # publishing — a release that had shipped it would have advanced
+              # the record, and the plan would have chosen the next minor. So
+              # this is a resume: build the current tip under the same version.
+              echo "main already declares ${RELEASE_VERSION}; resuming a release that did not publish it"
+              exit 0
+            fi
+            git add package.json apps/desktop/package.json
+            git -c user.name='github-actions[bot]' \
+                -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                commit -m "Bump Avalon to ${RELEASE_VERSION} for release"
+            if git push origin HEAD:main; then
+              echo "bumped main to ${RELEASE_VERSION}"
+              exit 0
+            fi
+            echo "main moved during attempt ${attempt}; retrying"
+          done
+          echo "Could not record the version bump on main after 3 attempts" >&2
+          exit 1
+
+      # Everything downstream records or verifies this exact commit: the tag
+      # points at it, and the published release config names it as the
+      # watermark the next plan measures new desktop work against.
+      - name: Resolve the release commit
+        shell: bash
+        run: echo "AVALON_RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The tag is created locally so every downstream guard sees it, but it is
       # not pushed until the release has actually published. A failed run
@@ -269,11 +358,12 @@ jobs:
         run: git push origin "refs/tags/$RELEASE_TAG"
 
       # The publisher rewrote apps/site/release.config.json on this runner, and
-      # the runner is about to be reclaimed. main must learn the new version:
-      # publish-r2-release.mjs reads the committed copy through
-      # assertNextReleaseVersion, so a stale one rejects the *next* release
-      # outright, and check-site-release-config.mjs fails every later site
-      # deploy against the live channel.
+      # the runner is about to be reclaimed. main must learn the new version and
+      # the commit it shipped from: plan-release.mjs treats that commit as the
+      # watermark for unreleased desktop work, publish-r2-release.mjs reads the
+      # committed copy through assertNextReleaseVersion, so a stale one rejects
+      # the *next* release outright, and check-site-release-config.mjs fails
+      # every later site deploy against the live channel.
       - name: Record the published release config on the default branch
         shell: bash
         env:
