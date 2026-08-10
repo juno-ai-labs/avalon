@@ -1,0 +1,43 @@
+<!-- @dsCard group="Components" viewport="700x980" name="Work stream" subtitle="Sidebar rows, transcript blocks, rail cards, composer, elicitation" -->
+<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<style>:root{--avalon-mark-src:url("../../assets/brand/avalon-mark.png")}html,body{margin:0}body{background:var(--surface);color:var(--ink);font-family:var(--font-sans);padding:16px}
+.row{align-items:center;display:flex;flex-wrap:wrap;gap:10px}.col{display:grid;gap:8px}.lbl{color:var(--muted-2);font-family:var(--font-mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase}</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script></head><body><div id="root"></div>
+<script type="text/babel">
+const NS = window.AvalonDesignSystem_5d1c5e;
+const MARK = "../../assets/brand/avalon-mark.png";
+
+const { SidebarRow, MessageBlock, ToolBlock, ArtifactBlock, SuggestionBlock, RailCard, Composer, ElicitationPanel } = NS;
+function Demo() {
+  const [choice, setChoice] = React.useState('enterprise');
+  return (
+    <div style={{ alignItems: 'start', display: 'grid', gap: 18, gridTemplateColumns: '250px minmax(0,1fr)' }}>
+      <div className="col" style={{ alignContent: 'start', gap: 14 }}>
+        <div className="col" style={{ background: 'var(--sidebar)', borderRadius: 8, gap: 1, padding: 8, alignContent: 'start' }}>
+          <span className="lbl" style={{ padding: '2px 7px' }}>Last hour</span>
+          <SidebarRow active hint="Needs input · 4m" title="Plan the August launch" />
+          <SidebarRow hint="Avalon is working" icon="circle-dot" title="Research onboarding gaps" unread />
+          <SidebarRow hint="Friday · 09:00" icon="repeat" scope="You" title="Weekly customer pulse" />
+        </div>
+        <ul style={{ display: 'grid', gap: 5, margin: 0, padding: 0 }}>
+          <RailCard icon="folder" meta="Google Drive · 12 files" onWatchChange={() => {}} title="Customer interviews" watchable watched />
+          <RailCard icon="github" meta="Connected · read only" title="juno-ai-labs/avalon" />
+        </ul>
+      </div>
+      <div className="col" style={{ gap: 12 }}>
+        <MessageBlock author="Adam Jarvis" time="9:02">Pull the three strongest launch narratives from the customer interviews.</MessageBlock>
+        <MessageBlock agent markSrc={MARK} streaming time="9:04">Reading 12 interviews, then comparing repeated objections…</MessageBlock>
+        <ToolBlock detail="12 customer interviews" duration="16s" icon="search" name="drive.search" state="completed" />
+        <ArtifactBlock description="Draft ready for review" kind="Document" title="Launch narrative.md" />
+        <SuggestionBlock reason="It mentions the August launch and two participants." title="Route this Linear issue into the launch stream" />
+        <ElicitationPanel onSelect={setChoice} options={[{ value: 'enterprise', title: 'Enterprise buyers', description: 'Leads with governance and audit' }, { value: 'teams', title: 'Fast-moving teams', description: 'Leads with speed and continuity' }]} question="Which audience should the launch narrative target?" selected={choice} />
+        <Composer hint="⌘↵ to send · @ to mention" />
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<Demo />);
+</script></body></html>
