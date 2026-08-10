@@ -41,6 +41,27 @@ describe("resolving an activity suggestion twice", () => {
     expect(detail.suggestions).toHaveLength(0);
   });
 
+  it("announces the resolution once, so a replay cannot move the card", async () => {
+    // The transcript upsert prefers the incoming copy of a suggestion message
+    // and orders it by the room sequence that copy arrives with, so a second
+    // broadcast of an unchanged resolution would shift the card.
+    const database = migratedDatabase();
+    seed(database);
+    seedSuggestion(database);
+    const published: unknown[] = [];
+    const service = new WorkstreamService(environment(database, published), auth());
+
+    await service.resolveSuggestion(workstreamId, suggestionId, "accepted");
+    const afterFirst = [...published];
+    await service.resolveSuggestion(workstreamId, suggestionId, "accepted");
+
+    expect(afterFirst).toContain("activity_suggestion_resolved");
+    // The replayed attachment is an upsert the client applies by resource ID,
+    // so re-announcing it changes nothing; the suggestion must not repeat.
+    expect(published.slice(afterFirst.length)).not.toContain("activity_suggestion_resolved");
+    expect(published.filter((event) => event === "activity_suggestion_resolved")).toHaveLength(1);
+  });
+
   it("replays a dismissal without reporting the suggestion as missing", async () => {
     const database = migratedDatabase();
     seed(database);
@@ -54,6 +75,53 @@ describe("resolving an activity suggestion twice", () => {
     expect(second.resourceId).toBeNull();
     const detail = await service.get(workstreamId);
     expect(detail.resources).toHaveLength(0);
+  });
+
+  it("leaves a detached resource detached when the accept is replayed", async () => {
+    // Detaching is a decision. `accepted` records that the attachment happened
+    // once, so a replayed click must not quietly put the resource back.
+    const database = migratedDatabase();
+    seed(database);
+    seedSuggestion(database);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const first = await service.resolveSuggestion(workstreamId, suggestionId, "accepted");
+    await service.detachResource(workstreamId, first.resourceId!);
+    const replay = await service.resolveSuggestion(workstreamId, suggestionId, "accepted");
+
+    expect(replay.resourceId).toBeNull();
+    const detail = await service.get(workstreamId);
+    expect(detail.resources).toHaveLength(0);
+  });
+
+  it("reports the attached resource when an accept is replayed without a detach", async () => {
+    const database = migratedDatabase();
+    seed(database);
+    seedSuggestion(database);
+    const service = new WorkstreamService(environment(database), auth());
+
+    const first = await service.resolveSuggestion(workstreamId, suggestionId, "accepted");
+    const replay = await service.resolveSuggestion(workstreamId, suggestionId, "accepted");
+
+    expect(replay.resourceId).toBe(first.resourceId);
+    const detail = await service.get(workstreamId);
+    expect(detail.resources).toHaveLength(1);
+  });
+
+  it("does not describe a still-pending suggestion as one somebody resolved", async () => {
+    // Unreachable on a serialized D1, but the status CHECK permits `pending`,
+    // and telling someone an open suggestion was dismissed is worse than the
+    // 404 this path replaces.
+    const database = migratedDatabase();
+    seed(database);
+    seedSuggestion(database);
+    const service = new WorkstreamService(environment(database), auth());
+    const replay = (service as unknown as {
+      resolvedSuggestionReplay: (id: string, suggestionId: string, action: "accepted" | "dismissed") => Promise<unknown>;
+    }).resolvedSuggestionReplay.bind(service);
+
+    await expect(replay(workstreamId, suggestionId, "dismissed"))
+      .rejects.toMatchObject({ status: 409, code: "suggestion_resolution_conflict" });
   });
 
   it("keeps the first resolution when the second one contradicts it", async () => {
@@ -97,12 +165,32 @@ function auth(): AuthContext {
   };
 }
 
-function environment(database: DatabaseSync): Env {
+function environment(database: DatabaseSync, published?: unknown[]): Env {
   return {
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
+    ...(published ? { WORKSTREAM_ROOMS: recordingRooms(published) } : {}),
   } as unknown as Env;
+}
+
+/** Records the `type` of every event the service broadcasts to the room. */
+function recordingRooms(published: unknown[]): DurableObjectNamespace {
+  return {
+    jurisdiction: () => recordingRooms(published),
+    idFromName: (name: string) => name,
+    get: () => ({
+      fetch: (_url: string, init: { body: string }) => {
+        const payload: unknown = JSON.parse(init.body);
+        published.push(
+          payload && typeof payload === "object" && "type" in payload
+            ? (payload as { type: unknown }).type
+            : null,
+        );
+        return Promise.resolve(new Response(null, { status: 204 }));
+      },
+    }),
+  } as unknown as DurableObjectNamespace;
 }
 
 function migratedDatabase(): DatabaseSync {
