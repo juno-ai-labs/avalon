@@ -68,4 +68,22 @@ describe('desktop application settings', () => {
     await expect(readStoredApplicationSettings(directory))
       .resolves.toEqual({ lockdownMode: false, debugEnabled: true });
   });
+
+  it('keeps concurrent patches from different preference owners', async () => {
+    const directory = await temporaryUserDataDirectory();
+    await writeStoredApplicationSettings(directory, { lockdownMode: false, debugEnabled: false });
+
+    // Lockdown mode and the Developer section serialize only against
+    // themselves, so a Debug toggle can land while a Lockdown transition is
+    // committing. Neither patch may be lost: an on-disk `lockdownMode: false`
+    // against a Lockdown envelope is read at the next launch as an external
+    // downgrade, which deletes the stored credentials.
+    await Promise.all([
+      updateStoredApplicationSettings(directory, { lockdownMode: true }),
+      updateStoredApplicationSettings(directory, { debugEnabled: true }),
+    ]);
+
+    await expect(readStoredApplicationSettings(directory))
+      .resolves.toEqual({ lockdownMode: true, debugEnabled: true });
+  });
 });

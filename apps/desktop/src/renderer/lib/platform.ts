@@ -182,6 +182,8 @@ const browserBridge: AvalonDesktopBridge = {
     return { ...browserApplicationSettings };
   },
   async setLockdownMode(enabled) {
+    // Nothing to announce: enabling throws here, and disabling is already the
+    // only state this bridge has. Debug enabled below is the mutable one.
     if (enabled) throw new Error('Lockdown mode is available only in the Avalon desktop app.');
     return { ...browserApplicationSettings };
   },
