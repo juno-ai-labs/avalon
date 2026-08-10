@@ -91,7 +91,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize developer debug identifiers version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
@@ -400,6 +400,10 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   });
   const updateLockdownMode = useMutation({
     mutationFn: (enabled: boolean) => bridge.setLockdownMode(enabled),
+    onSuccess: setApplicationSettings,
+  });
+  const updateDebugEnabled = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setDebugEnabled(enabled),
     onSuccess: setApplicationSettings,
   });
   const pendingInvitations = useMemo(
@@ -919,6 +923,28 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
                 <ApplicationIconPicker />
+                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Developer</h2><p>Extra tooling for reporting and diagnosing problems.</p></div>
+                <div className="settings-list-card">
+                  <label className="settings-preference-row">
+                    <span className="settings-row-icon"><Bug aria-hidden="true" size={18} /></span>
+                    <span className="settings-row-copy">
+                      <strong>Debug enabled</strong>
+                      <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu.</small>
+                    </span>
+                    <span className="settings-toggle">
+                      <input
+                        aria-label="Debug enabled"
+                        checked={applicationSettings?.debugEnabled ?? false}
+                        disabled={applicationSettings === null || updateDebugEnabled.isPending}
+                        onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
+                        role="switch"
+                        type="checkbox"
+                      />
+                      <span aria-hidden="true" />
+                    </span>
+                  </label>
+                </div>
+                {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
                   <div><dt>Version</dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>

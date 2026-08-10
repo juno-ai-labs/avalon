@@ -1,5 +1,6 @@
 import type {
   AvalonDesktopBridge,
+  DesktopApplicationSettings,
   DesktopAuthAttempt,
   DesktopSession,
   DesktopWorkspaceOnboardingState,
@@ -15,7 +16,12 @@ export type { DesktopWorkspaceOnboardingState } from '../../common/desktop';
 
 let browserSession: DesktopSession | null = null;
 let browserRefreshToken: string | null = null;
-const browserApplicationSettings = { lockdownMode: false, lockdownAvailable: false };
+const browserApplicationSettings: DesktopApplicationSettings = {
+  lockdownMode: false,
+  lockdownAvailable: false,
+  debugEnabled: false,
+};
+const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
 const browserAuthAttempts = new Map<string, {
   apiBaseUrl: string;
@@ -173,14 +179,24 @@ const browserBridge: AvalonDesktopBridge = {
     } as RuntimeConfig;
   },
   async getApplicationSettings() {
-    return browserApplicationSettings;
+    return { ...browserApplicationSettings };
   },
   async setLockdownMode(enabled) {
     if (enabled) throw new Error('Lockdown mode is available only in the Avalon desktop app.');
-    return browserApplicationSettings;
+    return { ...browserApplicationSettings };
   },
-  onApplicationSettingsChanged() {
-    return () => undefined;
+  async setDebugEnabled(enabled) {
+    browserApplicationSettings.debugEnabled = enabled;
+    // A browser tab has no second window to notify through the main process,
+    // but the settings pane and the sidebar still mount separate listeners.
+    for (const listener of browserApplicationSettingsListeners) {
+      listener({ ...browserApplicationSettings });
+    }
+    return { ...browserApplicationSettings };
+  },
+  onApplicationSettingsChanged(listener) {
+    browserApplicationSettingsListeners.add(listener);
+    return () => browserApplicationSettingsListeners.delete(listener);
   },
   async getApplicationIcon() {
     return {
