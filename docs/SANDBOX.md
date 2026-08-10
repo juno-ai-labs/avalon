@@ -52,6 +52,14 @@ FIRECRAWL_API_KEY=***
 so no secret is required to run the API, the database, or the desktop client
 locally.
 
+Keys set here reach the Workers through `scripts/session-start.sh`, which fills
+every blank assignment in `.env.example` from the environment when it seeds
+`.env.local`. `sync-dev-env.mjs` reads only `.env.local`, so a variable that is
+set in the environment but blank in that file never reaches
+`apps/api/.dev.vars.*` — and would overwrite a working value there on the next
+sync. Adding a provider key to this environment therefore needs no change to the
+hook, but it does need the variable to exist in `.env.example`.
+
 ### Setup script
 
 ```bash

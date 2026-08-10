@@ -103,6 +103,14 @@ xvfb-run -a --server-args="-screen 0 1440x900x24" \
   pnpm --filter @avalon/desktop exec electron-vite dev --noSandbox --remoteDebuggingPort=9222
 ```
 
+`--noSandbox` and `--remoteDebuggingPort` are **electron-vite's** CLI options,
+not Chromium's, which is why they are camelCase here. electron-vite turns them
+into `NO_SANDBOX` and `REMOTE_DEBUGGING_PORT` in the environment and appends
+Electron's own `--no-sandbox` and `--remote-debugging-port` when it spawns the
+app (`electron-vite/dist/cli.js`, `dist/chunks/lib-*.js`). Do not "correct" them
+to the Chromium spellings — electron-vite does not define those options, and the
+flags would stop reaching Electron.
+
 The renderer's Vite server comes up on `http://localhost:5173/` and the app
 window opens on the virtual display. `Failed to connect to the bus` errors from
 D-Bus are expected on a container with no session bus and are harmless.
