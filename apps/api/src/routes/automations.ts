@@ -4,6 +4,7 @@ import { zValidator } from "../middleware/validation";
 import {
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
+  ActivitySourcePluginIdsSchema,
   CompileAutomationRequestSchema,
   CreateAutomationRequestSchema,
   IdSchema,
@@ -18,7 +19,7 @@ import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
 const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
-const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).optional(), overrides: z.record(z.string(), z.unknown()).optional() });
+const updateBody = z.object({ name: z.string().min(1).max(140).optional(), description: z.string().min(1).max(1200).optional(), instructions: z.string().min(1).max(12_000).optional(), defaultPluginIds: z.array(ModelPluginIdSchema).optional(), activitySourcePluginIds: ActivitySourcePluginIdsSchema.optional(), overrides: z.record(z.string(), z.unknown()).optional() });
 
 export const automationRoutes = new Hono<HonoAppEnv>();
 automationRoutes.get("/", async (c) => c.json(await new AutomationService(c.env, getAuth(c)).list()));
@@ -88,9 +89,9 @@ automationRoutes.post("/:id/next-run/open", zValidator("param", idParam), async 
 
 const templateParam = z.object({ id: IdSchema });
 const versionBody = z.object({ draft: AutomationDraftSchema });
-const subscribeBody = z.object({ defaultPluginIds: z.array(ModelPluginIdSchema).default([]) });
+const subscribeBody = z.object({ defaultPluginIds: z.array(ModelPluginIdSchema).default([]), activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}) });
 const adoptParam = z.object({ id: IdSchema });
-const adoptBody = z.object({ versionId: IdSchema });
+const adoptBody = z.object({ versionId: IdSchema, activitySourcePluginIds: ActivitySourcePluginIdsSchema.optional() });
 
 export const templateRoutes = new Hono<HonoAppEnv>();
 templateRoutes.get("/", async (c) => c.json(await new AutomationService(c.env, getAuth(c)).listTemplates()));
@@ -111,4 +112,11 @@ templateRoutes.post("/:id/versions", zValidator("param", templateParam), zValida
 templateRoutes.post("/:id/subscribe", zValidator("param", templateParam), zValidator("json", subscribeBody), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).subscribe(c.req.valid("param").id, c.req.valid("json")), 201));
 
 export const subscriptionRoutes = new Hono<HonoAppEnv>();
-subscriptionRoutes.post("/:id/adopt-version", zValidator("param", adoptParam), zValidator("json", adoptBody), async (c) => c.json(await new AutomationService(c.env, getAuth(c)).adoptVersion(c.req.valid("param").id, c.req.valid("json").versionId)));
+subscriptionRoutes.post("/:id/adopt-version", zValidator("param", adoptParam), zValidator("json", adoptBody), async (c) => {
+  const body = c.req.valid("json");
+  return c.json(await new AutomationService(c.env, getAuth(c)).adoptVersion(
+    c.req.valid("param").id,
+    body.versionId,
+    body.activitySourcePluginIds,
+  ));
+});

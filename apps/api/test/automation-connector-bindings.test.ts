@@ -14,6 +14,7 @@ const auth: AuthContext = {
 function createInput(
   trigger: Parameters<AutomationService["create"]>[0]["draft"]["triggers"][number],
   defaultPluginIds: string[],
+  activitySourcePluginIds: Record<string, string> = {},
 ): Parameters<AutomationService["create"]>[0] {
   return {
     draft: {
@@ -34,6 +35,7 @@ function createInput(
     },
     scope: "personal",
     defaultPluginIds,
+    activitySourcePluginIds,
     resourceIds: [],
     deliveryTargets: [],
   };
@@ -78,5 +80,49 @@ describe("automation activity connector bindings", () => {
       code: "activity_trigger_connection_required",
     });
     expect(bind).toHaveBeenCalledWith("workspace-1", "plugin_github");
+  });
+
+  it("rejects invented events and undeclared filters for an exact source slot", async () => {
+    const first = vi.fn().mockResolvedValue({
+      id: "connection-google",
+      connector_type: "google",
+      scope: "workspace",
+      owner_user_id: null,
+      status: "healthy",
+    });
+    const bind = vi.fn(() => ({ first }));
+    const prepare = vi.fn(() => ({ bind }));
+    const env = {
+      DB: { prepare },
+      PUBLIC_API_BASE_URL: "https://api.example.com",
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_ID: "client",
+      GOOGLE_CONNECTOR_OAUTH_CLIENT_SECRET: "secret",
+    } as unknown as Env;
+    const service = new AutomationService(env, auth);
+    const baseTrigger = {
+      type: "connector_activity" as const,
+      connectorType: "google",
+      sourceBindingKey: "google_source",
+      suggestedSourcePluginId: "plugin_google",
+      deterministicFilters: {},
+    };
+
+    await expect(service.create(createInput({
+      ...baseTrigger,
+      eventTypes: ["drive.file_teleported"],
+    }, [], { google_source: "plugin_google" }))).rejects.toMatchObject({
+      status: 422,
+      code: "unknown_activity_event",
+    });
+
+    await expect(service.create(createInput({
+      ...baseTrigger,
+      eventTypes: ["drive.file_changed"],
+      deterministicFilters: { unsupported: true },
+    }, [], { google_source: "plugin_google" }))).rejects.toMatchObject({
+      status: 422,
+      code: "invalid_activity_filter",
+    });
+    expect(bind).toHaveBeenCalledWith("workspace-1", "plugin_google");
   });
 });

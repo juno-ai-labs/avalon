@@ -13,6 +13,7 @@ import {
 import {
   assertPrincipalAccess,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -189,7 +190,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       displayName: "X",
       supportedScopes: ["workspace"],
       oauthRequired: false,
-      activityTypes: [],
+      activityTriggers: defineConnectorActivityTriggers("X", []),
       resourceTypes: [],
       tools: xTools,
       supportsWatches: false,

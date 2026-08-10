@@ -1,4 +1,6 @@
 import type {
+  ConnectorActivityFilterField,
+  ConnectorActivityTriggerDescriptor,
   ConnectorManifest,
   ConnectorManifestInput,
   ExecutionPrincipal,
@@ -6,6 +8,29 @@ import type {
   Scope,
   ToolDefinition,
 } from "@avalon/contracts";
+
+function humanizeActivityEventType(eventType: string): string {
+  const parts = eventType.split(".");
+  if (parts.length > 2) parts.shift();
+  const text = parts.join(" ").replaceAll("_", " ").trim();
+  return text ? `${text[0]!.toUpperCase()}${text.slice(1)}` : eventType;
+}
+
+export function defineConnectorActivityTriggers(
+  connectorName: string,
+  eventTypes: readonly string[],
+  overrides: Readonly<Record<string, Partial<Omit<ConnectorActivityTriggerDescriptor, "eventType">>>> = {},
+): ConnectorActivityTriggerDescriptor[] {
+  return eventTypes.map((eventType) => {
+    const override = overrides[eventType] ?? {};
+    return {
+      eventType,
+      label: override.label ?? humanizeActivityEventType(eventType),
+      description: override.description ?? `${connectorName} activity normalized as ${eventType}.`,
+      filterFields: [...(override.filterFields ?? [])] as ConnectorActivityFilterField[],
+    };
+  });
+}
 
 export interface ConnectorConnectionContext {
   id: string;

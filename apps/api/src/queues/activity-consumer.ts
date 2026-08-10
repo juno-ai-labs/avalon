@@ -55,6 +55,7 @@ interface SubscriptionRow {
   owner_user_id: string | null;
   execution_principal_json: string;
   connector_bindings_json: string;
+  activity_trigger_bindings_json: string;
   trigger_definitions_json: string;
   template_name: string;
   template_description: string;
@@ -441,7 +442,7 @@ async function injectActivityMessage(
 async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<Set<string>> {
   const subscriptions = await env.DB.prepare(
     `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
-            s.connector_bindings_json,
+            s.connector_bindings_json, s.activity_trigger_bindings_json,
             tv.trigger_definitions_json, t.name AS template_name,
             t.description AS template_description
        FROM automation_subscriptions s
@@ -462,6 +463,12 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
       continue;
     }
     if (activity.connection_scope === "personal" && subscription.scope === "workspace") continue;
+    if (
+      subscription.scope === "workspace"
+      && parseRecord(activity.visibility_json).workspaceAutomationAllowed === false
+    ) {
+      continue;
+    }
 
     let triggerDefinitions: unknown;
     try {
@@ -472,10 +479,11 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
     const parsedTriggers = z.array(TriggerDefinitionSchema).safeParse(triggerDefinitions);
     if (!parsedTriggers.success) continue;
     const connectorBindings = parseRecord(subscription.connector_bindings_json);
+    const activityTriggerBindings = parseRecord(subscription.activity_trigger_bindings_json);
 
     let matched = false;
     for (const trigger of parsedTriggers.data) {
-      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings)) {
+      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings, activityTriggerBindings)) {
         matched = true;
         break;
       }
@@ -512,13 +520,18 @@ async function triggerMatches(
   activity: ActivityRow,
   trigger: TriggerDefinition,
   resourceIds: Set<string>,
-  connectorBindings: Record<string, unknown>
+  connectorBindings: Record<string, unknown>,
+  activityTriggerBindings: Record<string, unknown>,
 ): Promise<boolean> {
-  if (
-    (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") &&
-    !Object.values(connectorBindings).includes(activity.connection_id)
-  ) {
-    return false;
+  if (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") {
+    if (trigger.sourceBindingKey) {
+      const sourcePluginId = activityTriggerBindings[trigger.sourceBindingKey];
+      if (typeof sourcePluginId !== "string" || connectorBindings[sourcePluginId] !== activity.connection_id) {
+        return false;
+      }
+    } else if (!Object.values(connectorBindings).includes(activity.connection_id)) {
+      return false;
+    }
   }
   if (trigger.type === "connector_activity") {
     return (
@@ -776,3 +789,8 @@ async function isWorkstreamVisibleToUser(
     .first();
   return Boolean(visible);
 }
+
+export const __testing = {
+  matchesFilters,
+  triggerMatches,
+};
