@@ -226,6 +226,12 @@ export const automationDetailSchema = automationSummarySchema.extend({
     reason: z.string(),
   })).default([]),
   defaultPluginIds: z.array(z.string()).default([]),
+  activitySourcePluginIds: z.record(z.string(), z.string()).default({}),
+  activitySources: z.array(z.object({
+    bindingKey: z.string(),
+    connectorType: z.string(),
+    suggestedPluginId: z.string().optional(),
+  })).default([]),
   deliveryTargets: z.array(z.object({
     type: z.literal('slack_agent_dm'),
     connectionId: z.string(),
@@ -268,6 +274,11 @@ export const automationDraftResponseSchema = z
           recommendedTools: z.array(z.string()).default([]),
           reason: z.string(),
         })).default([]),
+        activitySources: z.array(z.object({
+          bindingKey: z.string(),
+          connectorType: z.string(),
+          suggestedPluginId: z.string().optional(),
+        })).default([]),
         scope: scopeSchema,
         triggerSummary: z.string(),
         capabilities: z.array(z.string()),
@@ -285,6 +296,11 @@ export const workspaceTemplateSchema = z
     usageCount: z.number(),
     capabilities: z.array(z.string()),
     latestVersion: z.number(),
+    activitySources: z.array(z.object({
+      bindingKey: z.string(),
+      connectorType: z.string(),
+      suggestedPluginId: z.string().optional(),
+    })).default([]),
   })
   .passthrough();
 

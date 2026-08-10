@@ -2051,6 +2051,10 @@ pre {
 .automation-plugin-defaults label { cursor: pointer; display: block; padding: 9px; }
 .automation-plugin-defaults input { height: 1px; opacity: 0; position: absolute; width: 1px; }
 .automation-plugin-defaults label { align-items: flex-start; display: flex; gap: 9px; }
+.automation-plugin-defaults .automation-activity-source { align-items: center; justify-content: space-between; }
+.automation-activity-source select,
+.automation-source-fields select { background: #181916; border: 1px solid #41423c; border-radius: 6px; color: var(--ink-soft); min-width: 190px; padding: 6px 28px 6px 8px; }
+.automation-source-fields { display: grid; gap: 10px; margin-top: 14px; }
 .automation-delivery-target { background: #1d1e1b; border-top: 1px solid var(--line); display: grid; gap: 7px; padding: 13px 17px; }
 .automation-delivery-target label { display: flex; flex-direction: column; gap: 2px; }
 .automation-delivery-target strong { color: var(--ink-soft); font-size: 10.5px; }
