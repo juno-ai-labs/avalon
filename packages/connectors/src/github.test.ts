@@ -344,6 +344,78 @@ describe("GitHub connector", () => {
     ]));
   });
 
+  it("normalizes merged pull requests as a distinct filterable activity", () => {
+    const basePayload = {
+      installation: { id: 42 },
+      repository: {
+        id: 1,
+        name: "widget",
+        full_name: "acme/widget",
+        html_url: "https://github.com/acme/widget",
+        owner: { login: "acme" },
+      },
+      sender: { id: 7, login: "grace" },
+      number: 12,
+    };
+    const pullRequest = {
+      id: 55,
+      number: 12,
+      title: "Ship activity triggers",
+      html_url: "https://github.com/acme/widget/pull/12",
+      updated_at: "2026-08-01T12:00:00.000Z",
+      merged_at: "2026-08-01T11:59:00.000Z",
+      merged: true,
+      base: { ref: "main" },
+      head: { ref: "activity-triggers" },
+      user: { login: "ada" },
+      merged_by: { login: "grace" },
+    };
+    const merged = normalizeGitHubWebhook(workspaceConnection([]), {
+      event: "pull_request",
+      action: "closed",
+      deliveryId: "github-pr-merged-1",
+      installationId: "42",
+      payload: { ...basePayload, pull_request: pullRequest },
+      rawContentHash: "c".repeat(64),
+      receivedAt: "2026-08-01T12:00:01.000Z",
+    });
+    expect(merged).toMatchObject({
+      eventType: "github.pull_request.merged",
+      occurredAt: "2026-08-01T11:59:00.000Z",
+      metadata: {
+        repository: "acme/widget",
+        pullRequestNumber: 12,
+        baseRef: "main",
+        headRef: "activity-triggers",
+        authorLogin: "ada",
+        mergerLogin: "grace",
+        merged: true,
+        mergedAt: "2026-08-01T11:59:00.000Z",
+      },
+    });
+    const closed = normalizeGitHubWebhook(workspaceConnection([]), {
+      event: "pull_request",
+      action: "closed",
+      deliveryId: "github-pr-closed-1",
+      installationId: "42",
+      payload: { ...basePayload, pull_request: { ...pullRequest, merged: false, merged_at: null, merged_by: null } },
+      rawContentHash: "d".repeat(64),
+      receivedAt: "2026-08-01T12:00:01.000Z",
+    });
+    expect(closed?.eventType).toBe("github.pull_request.closed");
+
+    const adapter = githubAdapter(async () => jsonResponse({}));
+    expect(adapter.manifest.activityTriggers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "github.pull_request.merged",
+        filterFields: expect.arrayContaining([
+          expect.objectContaining({ key: "repository", valueType: "string" }),
+          expect.objectContaining({ key: "baseRef", valueType: "string" }),
+        ]),
+      }),
+    ]));
+  });
+
   it("bounds push resource discovery independently from compact activity entity keys", () => {
     const commits = Array.from({ length: GitHubWebhookResourceLimits.pushCommits + 1 }, (_, index) => {
       const sha = (index + 1).toString(16).padStart(40, "0");
@@ -391,7 +463,7 @@ describe("GitHub connector", () => {
     const adapter = githubAdapter(async () => jsonResponse({}));
     const actions = ["created", "deleted", "edited", "prereleased", "published", "released", "unpublished"];
     expect(adapter.manifest.resourceTypes).toContain("github_release");
-    expect(adapter.manifest.activityTypes).toEqual(expect.arrayContaining(
+    expect(adapter.manifest.activityTriggers.map((trigger) => trigger.eventType)).toEqual(expect.arrayContaining(
       actions.map((action) => `github.release.${action}`),
     ));
     for (const action of actions) {

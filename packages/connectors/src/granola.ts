@@ -13,6 +13,7 @@ import {
 import {
   assertPrincipalAccess,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -575,7 +576,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         { id: GranolaCapabilities.workspaceRead, kind: "tool" },
         { id: GranolaCapabilities.personalRead, kind: "tool" },
       ],
-      activityTypes: ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+      activityTriggers: defineConnectorActivityTriggers("Granola", ["note.access_granted", "note.edited", "note.generated", "note.regenerated"]),
       resourceTypes: ["granola_note", "granola_folder"],
       tools: granolaTools,
       supportsWatches: true,

@@ -998,6 +998,7 @@ async function loadAutomationCreatorPluginCatalog(
       scope,
       searchAliases: presentation.searchAliases,
       systemMessage: presentation.systemMessage,
+      activityTriggers: adapter.manifest.activityTriggers,
       tools: adapter.agentPlugin.tools
         .filter((definition) => granted.has(definition.capability))
         .map((definition) => ({

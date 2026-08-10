@@ -9,6 +9,7 @@ import { AutomationOverviewScreen } from './automation-overview';
 const api = vi.hoisted(() => ({
   adoptAutomationUpdate: vi.fn(),
   getAutomation: vi.fn(),
+  getConnections: vi.fn(),
   runAutomation: vi.fn(),
   setAutomationStatus: vi.fn(),
   shareAutomation: vi.fn(),
@@ -46,6 +47,8 @@ const detail: AutomationDetail = {
   expectedOutputs: ['A short weekly brief'],
   recommendedPlugins: [],
   defaultPluginIds: [],
+  activitySourcePluginIds: {},
+  activitySources: [],
   executionScope: 'You',
   runs: [],
   templateUpdate: {
@@ -57,6 +60,7 @@ const detail: AutomationDetail = {
     capabilities: ['gmail.read'],
     expectedOutputs: ['A concise weekly brief'],
     recommendedPlugins: [],
+    activitySources: [],
   },
 };
 
@@ -88,6 +92,7 @@ describe('Automation template updates', () => {
       disconnect(): void {}
     });
     api.getAutomation.mockResolvedValue(detail);
+    api.getConnections.mockResolvedValue([]);
     api.adoptAutomationUpdate.mockResolvedValue({
       ...detail,
       statusMessage: undefined,
@@ -127,7 +132,7 @@ describe('Automation template updates', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Adopt version 2' }));
 
-    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(automationId, nextVersionId));
+    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(automationId, nextVersionId, {}));
     await waitFor(() => expect(screen.queryByText('Version 2 is available')).not.toBeInTheDocument());
     expect(screen.getByText('Summarize changes and decisions.')).toBeVisible();
   });

@@ -17,6 +17,7 @@ import {
 import {
   assertPrincipalAccess,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -417,7 +418,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       displayName: "Notion",
       supportedScopes: ["personal"],
       oauthRequired: true,
-      activityTypes: [
+      activityTriggers: defineConnectorActivityTriggers("Notion", [
         "notion.page.content_updated", "notion.page.created", "notion.page.deleted",
         "notion.page.locked", "notion.page.moved", "notion.page.properties_updated",
         "notion.page.transcription_block.transcript_deleted", "notion.page.undeleted", "notion.page.unlocked",
@@ -428,7 +429,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         "notion.comment.created", "notion.comment.deleted", "notion.comment.updated",
         "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
         "notion.view.created", "notion.view.deleted", "notion.view.updated",
-      ],
+      ]),
       resourceTypes: [
         "notion_page", "notion_block", "notion_database", "notion_data_source",
         "notion_comment", "notion_view", "notion_file_upload",

@@ -4,9 +4,12 @@ import {
   createSlackConnector,
   joinAllSlackPublicChannels,
   joinSlackPublicChannel,
+  normalizeSlackActivity,
   parseSlackAgentInvocation,
   slackApi,
+  slackActivityEventType,
   slackAgentActivationAcknowledgement,
+  SlackActivityEventTypes,
   SlackCapabilities,
   SlackWorkspaceCapabilities,
   SlackWorkspaceBotScopes,
@@ -21,6 +24,115 @@ import {
 } from "./types";
 
 describe("Slack connector", () => {
+  it("declares expressive activity triggers with typed Slack filters", () => {
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+    });
+    expect(adapter.manifest.activityTriggers.map((trigger) => trigger.eventType))
+      .toEqual(SlackActivityEventTypes);
+    expect(adapter.manifest.activityTriggers.find((trigger) => trigger.eventType === "slack.reaction.added"))
+      .toMatchObject({
+        filterFields: expect.arrayContaining([
+          expect.objectContaining({ key: "channelId", valueType: "string" }),
+          expect.objectContaining({ key: "reaction", valueType: "string" }),
+        ]),
+      });
+  });
+
+  it("normalizes messages, mentions, edits, and reactions without copying raw envelopes", () => {
+    const replyEnvelope = {
+      type: "event_callback",
+      team_id: "TACME",
+      event_id: "EvReply",
+      event_time: 1_786_032_000,
+      event: {
+        type: "message",
+        user: "UADA",
+        channel: "CENG",
+        channel_type: "channel",
+        ts: "1786032000.000200",
+        thread_ts: "1786031900.000100",
+        text: "<@UBEN> please investigate",
+      },
+    };
+    expect(slackActivityEventType(replyEnvelope)).toBe("slack.message.replied");
+    expect(normalizeSlackActivity(slackWorkspaceConnection(), replyEnvelope, null)).toMatchObject({
+      provider: "slack",
+      providerEventId: "EvReply",
+      eventType: "slack.message.replied",
+      providerResourceId: "CENG:1786032000.000200",
+      textSnippet: "<@UBEN> please investigate",
+      payloadRef: null,
+      metadata: {
+        teamId: "TACME",
+        channelId: "CENG",
+        userId: "UADA",
+        threadTs: "1786031900.000100",
+        isThread: true,
+      },
+      externalPeople: expect.arrayContaining([
+        expect.objectContaining({ providerUserId: "UADA", role: "actor" }),
+        expect.objectContaining({ providerUserId: "UBEN", role: "mentioned" }),
+      ]),
+    });
+
+    const editedEnvelope = {
+      type: "event_callback",
+      team_id: "TACME",
+      event_id: "EvEdit",
+      event: {
+        type: "message",
+        subtype: "message_changed",
+        channel: "CENG",
+        event_ts: "1786032001.000100",
+        message: { user: "UADA", ts: "1786032000.000200", text: "updated" },
+      },
+    };
+    expect(slackActivityEventType(editedEnvelope)).toBe("slack.message.edited");
+    expect(normalizeSlackActivity(slackWorkspaceConnection(), editedEnvelope, null)).toMatchObject({
+      eventType: "slack.message.edited",
+      textSnippet: "updated",
+      metadata: { messageTs: "1786032000.000200" },
+    });
+
+    const reactionEnvelope = {
+      type: "event_callback",
+      team_id: "TACME",
+      event_id: "EvReaction",
+      event: {
+        type: "reaction_added",
+        user: "UADA",
+        reaction: "white_check_mark",
+        item_user: "UBEN",
+        item: { type: "message", channel: "CENG", ts: "1786032000.000200", channel_type: "channel" },
+        event_ts: "1786032002.000100",
+      },
+    };
+    expect(normalizeSlackActivity(slackWorkspaceConnection(), reactionEnvelope, null)).toMatchObject({
+      eventType: "slack.reaction.added",
+      providerResourceId: "CENG:1786032000.000200",
+      metadata: { reaction: "white_check_mark", itemUserId: "UBEN", itemType: "message" },
+    });
+
+    const fileReactionEnvelope = {
+      ...reactionEnvelope,
+      event_id: "EvFileReaction",
+      event: {
+        ...reactionEnvelope.event,
+        item: { type: "file", file: "FREPORT" },
+      },
+    };
+    expect(normalizeSlackActivity(slackWorkspaceConnection(), fileReactionEnvelope, null)).toMatchObject({
+      eventType: "slack.reaction.added",
+      resourceType: "slack_file",
+      providerResourceId: "FREPORT",
+      metadata: { itemType: "file", fileId: "FREPORT" },
+    });
+  });
+
   it("verifies exact signed bytes and rejects replayed timestamps", async () => {
     const body = JSON.stringify({ type: "event_callback", team_id: "T1" });
     const timestamp = "1786032000";
@@ -127,6 +239,7 @@ describe("Slack connector", () => {
     expect(SlackWorkspaceBotScopes).toContain("groups:history");
     expect(SlackWorkspaceBotScopes).toContain("mpim:history");
     expect(SlackWorkspaceBotScopes).toContain("files:read");
+    expect(SlackWorkspaceBotScopes).toContain("reactions:read");
     expect(SlackWorkspaceBotScopes).toContain("reactions:write");
     expect(SlackWorkspaceBotScopes).toContain("channels:manage");
     expect(SlackWorkspaceBotScopes).toContain("search:read.public");

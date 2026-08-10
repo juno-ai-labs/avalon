@@ -21,6 +21,7 @@ class IngressStatement {
   constructor(private readonly database: IngressDatabase, private readonly sql: string) {}
   bind(...values: unknown[]) { this.values = values; return this; }
   first<T>() { return this.database.first(this.sql, this.values) as Promise<T | null>; }
+  all<T>() { return this.database.all(this.sql) as Promise<D1Result<T>>; }
   run<T>() { return this.database.run(this.sql, this.values) as Promise<D1Result<T>>; }
 }
 
@@ -28,6 +29,7 @@ class IngressDatabase {
   readonly jobs = new Map<string, Job>();
   readonly sessions = new Set<string>();
   readonly pendingPrompts = new Set<string>();
+  readonly activityEventTypes = new Set<string>();
   prepare(sql: string) { return new IngressStatement(this, sql); }
 
   async first(sql: string, values: unknown[]) {
@@ -53,6 +55,28 @@ class IngressDatabase {
         : null;
     }
     throw new Error(`Unexpected first query: ${sql}`);
+  }
+
+  async all(sql: string) {
+    if (sql.includes("FROM automation_subscriptions")) {
+      return {
+        success: true,
+        results: this.activityEventTypes.size === 0 ? [] : [{
+          connector_bindings_json: JSON.stringify({ plugin_slack: "11111111-1111-4111-8111-111111111111" }),
+          activity_trigger_bindings_json: JSON.stringify({ slack_source: "plugin_slack" }),
+          trigger_definitions_json: JSON.stringify([{
+            type: "connector_activity",
+            connectorType: "slack",
+            sourceBindingKey: "slack_source",
+            suggestedSourcePluginId: "plugin_slack",
+            eventTypes: [...this.activityEventTypes],
+            deterministicFilters: {},
+          }]),
+        }],
+        meta: {} as D1Meta & Record<string, unknown>,
+      };
+    }
+    throw new Error(`Unexpected all query: ${sql}`);
   }
 
   async run(sql: string, values: unknown[]) {
@@ -89,9 +113,14 @@ describe("Slack Agent durable ingress", () => {
 
     expect([...manifest.oauth_config.scopes.bot].sort()).toEqual([...SlackWorkspaceBotScopes].sort());
     expect(manifest.settings.event_subscriptions.bot_events).toEqual(expect.arrayContaining([
+      "file_shared",
+      "member_joined_channel",
+      "member_left_channel",
       "message.channels",
       "message.groups",
       "message.im",
+      "reaction_added",
+      "reaction_removed",
     ]));
   });
 
@@ -361,6 +390,48 @@ describe("Slack Agent durable ingress", () => {
       .resolves.toEqual({ ok: true });
     expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvRetry" }));
     expect(database.jobs.size).toBe(3);
+  });
+
+  it("queues an otherwise unrelated channel message when an exact Slack activity trigger is listening", async () => {
+    const database = new IngressDatabase();
+    database.activityEventTypes.add("slack.message.posted");
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+
+    await expect(service.processEvent(channelMessagePayload("EvAutomation", "customer escalation"), "activity-hash"))
+      .resolves.toEqual({ ok: true });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "event:EvAutomation" }));
+    expect(database.jobs.has("event:EvAutomation")).toBe(true);
+  });
+
+  it("admits reaction activity only while an exact Slack automation source is active", async () => {
+    const database = new IngressDatabase();
+    const send = vi.fn(async () => undefined);
+    const service = new SlackAgentService(environment(database, send));
+    const payload = {
+      type: "event_callback",
+      api_app_id: "A1",
+      team_id: "T1",
+      event_id: "EvReaction",
+      authorizations: [{ team_id: "T1", user_id: "UBOT", is_bot: true }],
+      event: {
+        type: "reaction_added",
+        user: "U1",
+        reaction: "white_check_mark",
+        item_user: "U2",
+        item: { type: "message", channel: "C1", ts: "1.0", channel_type: "channel" },
+        event_ts: "1.1",
+      },
+    };
+
+    await expect(service.processEvent(payload, "ignored-hash")).resolves.toEqual({ ok: true });
+    expect(database.jobs.size).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+
+    database.activityEventTypes.add("slack.reaction.added");
+    await expect(service.processEvent(payload, "activity-hash")).resolves.toEqual({ ok: true });
+    expect(database.jobs.has("event:EvReaction")).toBe(true);
+    expect(send).toHaveBeenCalledOnce();
   });
 });
 

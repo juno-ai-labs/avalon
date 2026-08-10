@@ -256,6 +256,44 @@ describe("boundary contracts", () => {
     expect(result.success).toBe(false);
   });
 
+  it("requires exact source slots on ready activity-triggered drafts", () => {
+    const base = {
+      name: "Merged PR follow-up",
+      description: "Respond when a pull request merges.",
+      overview: "Starts work from merged pull requests.",
+      instructions: "Review the merged pull request and prepare the follow-up.",
+      requiredCapabilities: [],
+      expectedOutputs: [],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "github",
+        eventTypes: ["github.pull_request.merged"],
+        deterministicFilters: {},
+      }],
+    }).success).toBe(false);
+    expect(AutomationDraftSchema.safeParse({
+      ...base,
+      triggers: [{
+        type: "connector_activity",
+        connectorType: "github",
+        sourceBindingKey: "github_source",
+        suggestedSourcePluginId: "plugin_github",
+        eventTypes: ["github.pull_request.merged"],
+        deterministicFilters: {},
+      }],
+    }).success).toBe(true);
+  });
+
   it("does not cap automation plugin recommendations, defaults, or activity", () => {
     const recommendations = Array.from({ length: 25 }, (_, index) => ({
       pluginId: `plugin_service${index}`,
@@ -562,7 +600,7 @@ describe("boundary contracts", () => {
       displayName: "Legacy connector",
       supportedScopes: ["workspace"],
       oauthRequired: false,
-      activityTypes: [],
+      activityTriggers: [],
       resourceTypes: ["legacy_resource"],
       tools: [],
       supportsWatches: false,
@@ -580,7 +618,7 @@ describe("boundary contracts", () => {
       displayName: "Agent provider",
       supportedScopes: ["workspace"] as const,
       oauthRequired: true,
-      activityTypes: [],
+      activityTriggers: [],
       resourceTypes: [],
       tools: [],
       supportsWatches: false,
@@ -658,7 +696,7 @@ describe("boundary contracts", () => {
       displayName: "Tool provider",
       supportedScopes: ["workspace"],
       oauthRequired: true,
-      activityTypes: [],
+      activityTriggers: [],
       resourceTypes: [],
       tools: [{
         name: "provider.search",

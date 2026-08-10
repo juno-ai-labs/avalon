@@ -2,6 +2,7 @@ import type { NormalizedActivity, ToolDefinition } from "@avalon/contracts";
 import { z } from "zod";
 import {
   base64,
+  booleanValue,
   isRecord,
   numberValue,
   providerJson,
@@ -16,6 +17,7 @@ import {
 import {
   assertPrincipalAccess,
   ConnectorError,
+  defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
@@ -763,7 +765,7 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       displayName: "GitHub",
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTypes: [
+      activityTriggers: defineConnectorActivityTriggers("GitHub", [
         "github.push",
         "github.release.created", "github.release.deleted", "github.release.edited",
         "github.release.prereleased", "github.release.published", "github.release.released", "github.release.unpublished",
@@ -780,7 +782,7 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
         "github.sub_issues.sub_issue_added", "github.sub_issues.sub_issue_removed",
         "github.pull_request_comment.created", "github.pull_request_comment.edited", "github.pull_request_comment.deleted",
         "github.pull_request_comment.pinned", "github.pull_request_comment.unpinned",
-        "github.pull_request.opened", "github.pull_request.edited", "github.pull_request.closed", "github.pull_request.reopened",
+        "github.pull_request.opened", "github.pull_request.edited", "github.pull_request.closed", "github.pull_request.merged", "github.pull_request.reopened",
         "github.pull_request.synchronize", "github.pull_request.ready_for_review", "github.pull_request.converted_to_draft",
         "github.pull_request.review_requested", "github.pull_request.review_request_removed",
         "github.pull_request.assigned", "github.pull_request.unassigned", "github.pull_request.labeled", "github.pull_request.unlabeled",
@@ -795,7 +797,22 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
         "github.repository.created", "github.repository.edited", "github.repository.renamed", "github.repository.transferred",
         "github.repository.archived", "github.repository.unarchived", "github.repository.publicized", "github.repository.privatized",
         "github.repository.deleted",
-      ],
+      ], {
+        "github.pull_request.merged": {
+          label: "Pull request merged",
+          description: "A pull request was merged into its base branch.",
+          filterFields: [
+            { key: "repository", label: "Repository", description: "Repository in owner/name form.", valueType: "string" },
+            { key: "pullRequestNumber", label: "Pull request number", description: "Repository-local pull request number.", valueType: "number" },
+            { key: "baseRef", label: "Base branch", description: "Branch the pull request merged into.", valueType: "string" },
+            { key: "headRef", label: "Head branch", description: "Source branch of the pull request.", valueType: "string" },
+            { key: "authorLogin", label: "Author", description: "GitHub login that opened the pull request.", valueType: "string" },
+            { key: "mergerLogin", label: "Merged by", description: "GitHub login that merged the pull request.", valueType: "string" },
+            { key: "merged", label: "Merged", description: "Whether GitHub reports the pull request as merged.", valueType: "boolean" },
+            { key: "mergedAt", label: "Merged at", description: "ISO timestamp at which the pull request merged.", valueType: "string" },
+          ],
+        },
+      }),
       resourceTypes: [
         "github_repository", "github_issue", "github_issue_comment", "github_pull_request", "github_pull_request_comment",
         "github_pull_request_review", "github_pull_request_review_comment", "github_file",
@@ -1924,6 +1941,14 @@ export function normalizeGitHubWebhook(
   const summary = truncateText(text || fallbackSummary, 1_000).text;
   const url = stringValue(subject, "html_url") ?? stringValue(repository, "html_url");
   const discovery = discoverGitHubWebhookResources(delivery);
+  const pullRequest = delivery.event === "pull_request" ? recordValue(payload, "pull_request") ?? {} : null;
+  const pullRequestNumber = pullRequest ? integerValue(pullRequest, "number") ?? integerValue(payload, "number") : null;
+  const baseRef = pullRequest ? stringValue(recordValue(pullRequest, "base") ?? {}, "ref") : null;
+  const headRef = pullRequest ? stringValue(recordValue(pullRequest, "head") ?? {}, "ref") : null;
+  const authorLogin = pullRequest ? stringValue(recordValue(pullRequest, "user") ?? {}, "login") : null;
+  const mergerLogin = pullRequest ? stringValue(recordValue(pullRequest, "merged_by") ?? {}, "login") : null;
+  const merged = pullRequest ? booleanValue(pullRequest, "merged") : null;
+  const mergedAt = pullRequest ? validIso(stringValue(pullRequest, "merged_at")) : null;
   const entityKeys = [
     repositoryName,
     normalized.providerResourceId,
@@ -1966,6 +1991,13 @@ export function normalizeGitHubWebhook(
       installationId: delivery.installationId,
       repository: repositoryName,
       url,
+      ...(pullRequestNumber == null ? {} : { pullRequestNumber }),
+      ...(baseRef ? { baseRef } : {}),
+      ...(headRef ? { headRef } : {}),
+      ...(authorLogin ? { authorLogin } : {}),
+      ...(mergerLogin ? { mergerLogin } : {}),
+      ...(merged == null ? {} : { merged }),
+      ...(mergedAt ? { mergedAt } : {}),
       discoveredResourceCount: discovery.resources.length,
       resourceDiscoveryTruncated: discovery.truncated,
     },
@@ -2508,7 +2540,8 @@ function webhookSubject(
   if (event === "pull_request") {
     const subject = recordValue(payload, "pull_request") ?? {};
     const number = integerValue(subject, "number") ?? integerValue(payload, "number");
-    return pullRequestWebhookSubject(`github.pull_request.${action}`, subject, repositoryName, number, `pull request ${action}`, `${action} a pull request`);
+    const canonicalAction = action === "closed" && booleanValue(subject, "merged") === true ? "merged" : action;
+    return pullRequestWebhookSubject(`github.pull_request.${canonicalAction}`, subject, repositoryName, number, `pull request ${canonicalAction}`, `${canonicalAction} a pull request`);
   }
   if (event === "pull_request_review") {
     const subject = recordValue(payload, "review") ?? {};
@@ -2612,6 +2645,7 @@ function webhookOccurredAt(
   subject: Record<string, unknown>,
 ): string | null {
   for (const candidate of [
+    stringValue(subject, "merged_at"),
     stringValue(subject, "updated_at"),
     stringValue(subject, "submitted_at"),
     stringValue(subject, "published_at"),

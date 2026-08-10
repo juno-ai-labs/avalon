@@ -328,7 +328,64 @@ describe('New automation composer', () => {
     expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear'], []));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear'], {}, []));
+  });
+
+  it('binds an activity source slot to the exact suggested connector', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-github-acme',
+        modelPluginId: 'plugin_github_acme',
+        connectorType: 'github',
+        displayName: 'GitHub · Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-github-other',
+        modelPluginId: 'plugin_github_other',
+        connectorType: 'github',
+        displayName: 'GitHub · Other',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-merged-pr',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Follow up on merged PRs',
+        description: 'Starts work when a PR merges.',
+        overview: 'Reviews the merged PR and prepares the follow-up.',
+        recommendedPlugins: [],
+        activitySources: [{
+          bindingKey: 'github_source',
+          connectorType: 'github',
+          suggestedPluginId: 'plugin_github_acme',
+        }],
+        scope: 'you',
+        triggerSummary: 'GitHub: pull request merged',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'When a PR merges, prepare the follow-up' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    const source = await screen.findByRole('combobox', { name: 'Connector for github_source' });
+    expect(source).toHaveValue('plugin_github_acme');
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
+      'draft-merged-pr',
+      [],
+      { github_source: 'plugin_github_acme' },
+      [],
+    ));
   });
 
   it('allows Avalon-only delivery when a draft recommends Slack', async () => {
@@ -378,7 +435,7 @@ describe('New automation composer', () => {
     expect(delivery).toHaveValue('');
     expect(createButton).toBeEnabled();
     fireEvent.click(createButton);
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-slack-digest', [], []));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-slack-digest', [], {}, []));
   });
 
   it('attaches selected note resources to the created automation', async () => {
@@ -426,6 +483,7 @@ describe('New automation composer', () => {
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
       'draft-with-note',
       [],
+      {},
       ['00000000-0000-4000-8000-000000000303'],
     ));
   });

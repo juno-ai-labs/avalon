@@ -4,6 +4,26 @@ Avalon uses one public GitHub App and one public Linear app with account-aware r
 
 The source manifests live in `config/provider-apps`. Provider client secrets, signing secrets, and GitHub private keys are never committed.
 
+## Zero-copy connector boundary
+
+In Avalon, **zero-copy means we do not recreate a connected product inside
+Avalon**. A connector must not turn the provider into a parallel inbox,
+channel browser, document store, source-of-truth database, or generally
+searchable replica.
+
+Zero-copy does not mean that no provider data may cross the boundary, that
+Avalon cannot subscribe to activity, or that every byte must remain transient.
+Avalon may receive webhooks, poll incremental changes, retain bounded normalized
+trigger evidence and provenance, fetch authorized task-specific context on
+demand, and persist the prompts, work history, outputs, receipts, and artifacts
+needed to perform user-requested work. Those copies must serve an Avalon task,
+automation, audit, or reliability function; they must not accumulate into a
+replacement for the connected product.
+
+Connector reviews should therefore ask whether each ingestion, read, and
+retention path is purpose-bound, authorization-preserving, and bounded—not
+whether the implementation literally stores zero copies.
+
 ## Google OAuth clients and APIs
 
 Google platform identity and Google connector consent use two separate Google Cloud OAuth 2.0 **Web application** clients in the same Google Cloud project:
