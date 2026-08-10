@@ -9,26 +9,28 @@ const workflowPath = join(repositoryDirectory, '.github/workflows/release-deskto
 
 test('a new release supersedes pending ones without cancelling a running one', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const concurrency = workflow.match(/^ {4}concurrency:\n(?<body>(?:^(?: {6}|$).*\n)+)/mu)?.groups?.body;
+  const concurrency = workflow.match(/^concurrency:\n(?<body>(?:^(?: {2}|$).*\n)+)/mu)?.groups?.body;
 
-  assert.ok(concurrency, 'Release workflow must define job-level concurrency');
-  assert.match(concurrency, /^ {6}group: desktop-macos-release$/mu);
-  assert.match(concurrency, /^ {6}cancel-in-progress: false$/mu);
+  assert.ok(concurrency, 'Release workflow must define workflow-level concurrency');
+  assert.match(concurrency, /^ {2}group: desktop-macos-release$/mu);
+  assert.match(concurrency, /^ {2}cancel-in-progress: false$/mu);
   // Newest pending wins, so intermediate versions are dropped rather than
   // queued; cancel-in-progress stays false so a running release survives.
-  assert.match(concurrency, /^ {6}queue: single$/mu);
+  assert.match(concurrency, /^ {2}queue: single$/mu);
   assert.doesNotMatch(concurrency, /github\.|inputs\.|ref_name/u);
 });
 
-test('the planner stays outside the release queue', async () => {
+test('the plan is made inside the release queue, not before it', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const planJob = workflow.slice(workflow.indexOf('\n  plan:'), workflow.indexOf('\n  release:'));
+  const jobs = workflow.slice(workflow.indexOf('\njobs:'));
 
-  // At workflow level the group would also cover the planner, so a push that
-  // plans a skip would occupy the single pending slot and could displace a
-  // queued release that had work to do.
-  assert.doesNotMatch(workflow, /^concurrency:$/mu, 'Concurrency must not be workflow-level');
-  assert.doesNotMatch(planJob, /concurrency:/u, 'The planning job must not join the release queue');
+  // A plan made while another release is in flight reads a release record that
+  // run has not finished writing. It would pick a version that release is about
+  // to take, and could not tell a genuine resume of a failed release from a
+  // version that had just shipped — which is exactly what the bump step's
+  // short-circuit relies on being able to distinguish.
+  assert.match(workflow, /^concurrency:$/mu, 'Concurrency must cover the planning job');
+  assert.doesNotMatch(jobs, /^ {4}concurrency:$/mu, 'No job may hold a narrower release queue');
 });
 
 test('the site deployment never shares the release queue', async () => {
@@ -218,6 +220,23 @@ test('the bump is skipped on a dispatch, which replays an already-tagged version
   // more work, so the release follows it rather than failing.
   assert.match(bumpStep, /git reset --hard origin\/main/u);
   assert.match(bumpStep, /retrying/u);
+});
+
+test('a no-op bump is treated as resuming a release, never as one already shipped', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const bumpStep = workflow.slice(
+    workflow.indexOf('- name: Bump the workspace version'),
+    workflow.indexOf('- name: Resolve the release commit'),
+  );
+
+  // Finding main already at the planned version is only unambiguous because the
+  // plan was made inside the queue: a release that had shipped this version
+  // would have advanced the record, and the plan would have chosen the next
+  // minor. Without that ordering this branch also catches a merge that raced an
+  // in-flight release, which then dies at the tag or at publish and strands its
+  // work — the silent stranding this pipeline exists to remove.
+  assert.match(bumpStep, /git diff --quiet/u);
+  assert.match(bumpStep, /resuming a release that did not publish it/u);
 });
 
 test('the release job can write the tag it publishes', async () => {
