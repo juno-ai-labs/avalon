@@ -48,11 +48,11 @@ Fresh installs first sign in to the single Avalon platform. Google authenticatio
 
 Open **Avalon → Settings…** or press **Command-,** on macOS. The native Settings window exposes account/session controls, application and regional diagnostics, the locked organization region, members, and role-gated invitation sending, copy, history, and revocation. Production invitations are sent through Resend from `invites@with-avalon.com`; the fragment-protected one-time link remains available as a copyable fallback.
 
-Settings also offers **Google Mail + Calendar** and **Google Drive + Docs + Sheets** as separate consent presets. They use one Google adapter and can be connected independently for personal or workspace use. The second preset provides native Google Docs and Sheets read/write tools; Docs and Sheets change activity is derived from Drive change-token polling. Google push webhooks are not implemented. See [Connectors](docs/CONNECTORS.md) for the exact capabilities and tools.
+Settings also offers **Google Mail + Calendar** and **Google Drive + Docs + Sheets** as separate consent presets. They use one Google adapter and can be connected independently for personal or workspace use. The second preset provides native Google Docs and Sheets read/write tools; Docs and Sheets change activity is derived from Drive change-token polling. Google push webhooks are not implemented. The connector documentation carries the exact capabilities and tools.
 
 ## Brand
 
-The canonical woven Avalon mark is generated into `assets/brand/avalon-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. See [Desktop application icons](docs/DESKTOP_ICONS.md) before changing the artwork. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
+The canonical woven Avalon mark is generated into `assets/brand/avalon-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. Read the desktop application icon documentation before changing the artwork. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
 
 ## Quality commands
 
@@ -77,26 +77,10 @@ Version policy: every new Avalon release advances the minor version by exactly o
 
 ## Documentation
 
-[The documentation index](docs/README.md) lists every document with its scope. The selection below is a reading path, not the full set.
-
-- [Writing a product requirement document](docs/prds.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Desktop application icons](docs/DESKTOP_ICONS.md)
-- [Data model](docs/DATA_MODEL.md)
-- [Security model](docs/SECURITY.md)
-- [Regionalization](docs/REGIONALIZATION.md)
-- [Agent harness](docs/AGENT_HARNESS.md)
-- [Connectors](docs/CONNECTORS.md)
-- [End-to-end verification](docs/E2E.md)
-- [Operations runbook](docs/RUNBOOK.md)
-- [Development environment](docs/dev-environment.md)
-- [Claude Code remote sandbox](docs/SANDBOX.md)
-- [Outbound HTTPS through the sandbox proxy](docs/sandbox-proxy.md)
-- [Creating a pull request](docs/pull-requests.md)
-- [Assumptions](docs/ASSUMPTIONS.md)
+[The documentation index](docs/README.md) is the single registry: it lists every product, architecture, agent, connector, development, and operations document with the scope each one owns, and which to read before touching an area. Start there rather than looking for a reading list here.
 
 ## Hosted deployment
 
-`with-avalon.com`, `api.with-avalon.com`, and `eu.api.with-avalon.com` are deployed. The Global and EU D1 migrations are current, both regional infrastructure health checks pass, and Firecrawl, Resend invitation delivery, and inbound work-stream and automation email are configured. Base Google OAuth credentials and callbacks are configured; the expanded Google APIs, consent-screen review, and both preset acceptance flows remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are deployed with their regional secrets, callbacks, and signed ingress. A user-started GitHub installation/OAuth acceptance run and the regional Notion registrations remain provider-acceptance gates. Follow [the provider-app runbook](docs/PROVIDER_APPS.md) before end-user acceptance.
+`with-avalon.com`, `api.with-avalon.com`, and `eu.api.with-avalon.com` are deployed. The Global and EU D1 migrations are current, both regional infrastructure health checks pass, and Firecrawl, Resend invitation delivery, and inbound work-stream and automation email are configured. Base Google OAuth credentials and callbacks are configured; the expanded Google APIs, consent-screen review, and both preset acceptance flows remain release gates. The public `Avalon Workstreams` GitHub App and public Linear app are deployed with their regional secrets, callbacks, and signed ingress. A user-started GitHub installation/OAuth acceptance run and the regional Notion registrations remain provider-acceptance gates. Follow the provider-app runbook before end-user acceptance.
 
-Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Google provider credentials are stored only as encrypted Worker secrets. Follow [the runbook](docs/RUNBOOK.md) for regional secret management, migrations, health verification, deployment, and provider acceptance.
+Cloudflare deployment credentials remain local-only in `.env.local`; they are never uploaded as Worker variables. Google provider credentials are stored only as encrypted Worker secrets. Follow the operations runbook for regional secret management, migrations, health verification, deployment, and provider acceptance.
