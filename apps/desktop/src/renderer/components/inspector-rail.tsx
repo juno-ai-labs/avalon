@@ -34,6 +34,7 @@ import type {
   WorkstreamResource,
 } from '../lib/types';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
 import '../styles/inspector-rail.css';
 
@@ -86,6 +87,7 @@ function ContextContent({
   onToggleWatch,
 }: Pick<InspectorRailProps, 'workstream' | 'onAddParticipant' | 'onAddResource' | 'onToggleWatch'>): React.JSX.Element {
   const inspect = useUiStore((state) => state.inspect);
+  const debugEnabled = useDebugEnabled();
   const [emailCopyState, setEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => {
@@ -208,8 +210,11 @@ function ContextContent({
           {workstream.emailAddress && (
             <div>
               <dt>Email</dt>
-              <dd className="copy-detail email-detail">
-                <span>{workstream.emailAddress}</span>
+              {/* Without the debugging rows below, the address is the only long
+                  value here, so it stays on one line and the copy control — not
+                  a wrapped reading — is how it leaves the rail. */}
+              <dd className={clsx('copy-detail', debugEnabled && 'email-detail')}>
+                <span title={debugEnabled ? undefined : workstream.emailAddress}>{workstream.emailAddress}</span>
                 <IconButton
                   label={emailCopyState === 'copied'
                     ? 'Work-stream email address copied'
@@ -242,38 +247,45 @@ function ContextContent({
           <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Automation'}</dd></div>
           <div><dt>Created</dt><dd>{formatDateTime(workstream.createdAt)}</dd></div>
           <div><dt>Last activity</dt><dd>{formatRelative(workstream.lastActivityAt)}</dd></div>
-          <div><dt>Origin</dt><dd>{workstream.origin === 'automation' ? workstream.automationName ?? 'Automation' : 'Ad hoc'}</dd></div>
-          {workstream.automationSubscription && (
+          {/* Everything past this point describes how the work stream is wired
+              rather than what it is, so it belongs to Application → Developer →
+              Debug enabled. */}
+          {debugEnabled && (
             <>
-              <div><dt>Automation</dt><dd>{workstream.automationSubscription.name}</dd></div>
-              <div><dt>Subscription scope</dt><dd>{workstream.automationSubscription.scope === 'you' ? 'You' : 'Workspace'}</dd></div>
-              <div><dt>Subscription status</dt><dd>{workstream.automationSubscription.status}</dd></div>
-              <div><dt>Trigger</dt><dd>{workstream.automationSubscription.triggerSummary}</dd></div>
-              <div><dt>Execution</dt><dd>{workstream.automationSubscription.executionScope}</dd></div>
-              <div><dt>Subscription ID</dt><dd className="mono">{workstream.automationSubscription.id}</dd></div>
+              <div><dt>Origin</dt><dd>{workstream.origin === 'automation' ? workstream.automationName ?? 'Automation' : 'Ad hoc'}</dd></div>
+              {workstream.automationSubscription && (
+                <>
+                  <div><dt>Automation</dt><dd>{workstream.automationSubscription.name}</dd></div>
+                  <div><dt>Subscription scope</dt><dd>{workstream.automationSubscription.scope === 'you' ? 'You' : 'Workspace'}</dd></div>
+                  <div><dt>Subscription status</dt><dd>{workstream.automationSubscription.status}</dd></div>
+                  <div><dt>Trigger</dt><dd>{workstream.automationSubscription.triggerSummary}</dd></div>
+                  <div><dt>Execution</dt><dd>{workstream.automationSubscription.executionScope}</dd></div>
+                  <div><dt>Subscription ID</dt><dd className="mono">{workstream.automationSubscription.id}</dd></div>
+                </>
+              )}
+              {!workstream.automationSubscription && workstream.automationSubscriptionId && <div><dt>Automation subscription</dt><dd className="mono">{workstream.automationSubscriptionId}</dd></div>}
+              {workstream.plannedFor && <div><dt>Planned for</dt><dd>{formatDateTime(workstream.plannedFor)}</dd></div>}
+              {workstream.automationRunId && <div><dt>Automation run</dt><dd className="mono">{workstream.automationRunId}</dd></div>}
+              {workstream.latestHarnessRun && (
+                <>
+                  <div><dt>Harness status</dt><dd>{workstream.latestHarnessRun.status.replace('_', ' ')}</dd></div>
+                  <div><dt>Harness origin</dt><dd>{workstream.latestHarnessRun.origin.replaceAll('_', ' ')}</dd></div>
+                  {workstream.latestHarnessRun.model && <div><dt>Model</dt><dd>{workstream.latestHarnessRun.model}</dd></div>}
+                  <div><dt>Harness started</dt><dd>{formatDateTime(workstream.latestHarnessRun.startedAt ?? workstream.latestHarnessRun.createdAt)}</dd></div>
+                  {workstream.latestHarnessRun.completedAt && <div><dt>Harness completed</dt><dd>{formatDateTime(workstream.latestHarnessRun.completedAt)}</dd></div>}
+                  <div><dt>Harness run</dt><dd className="mono">{workstream.latestHarnessRun.id}</dd></div>
+                </>
+              )}
+              {!workstream.latestHarnessRun && workstream.latestHarnessRunId && <div><dt>Harness run</dt><dd className="mono">{workstream.latestHarnessRunId}</dd></div>}
+              <div>
+                <dt>Work-stream ID</dt>
+                <dd className="copy-detail">
+                  <span className="mono">{workstream.id}</span>
+                  <IconButton label="Copy work-stream ID" onClick={() => void desktopBridge().copyText(workstream.id)}><Copy size={12} /></IconButton>
+                </dd>
+              </div>
             </>
           )}
-          {!workstream.automationSubscription && workstream.automationSubscriptionId && <div><dt>Automation subscription</dt><dd className="mono">{workstream.automationSubscriptionId}</dd></div>}
-          {workstream.plannedFor && <div><dt>Planned for</dt><dd>{formatDateTime(workstream.plannedFor)}</dd></div>}
-          {workstream.automationRunId && <div><dt>Automation run</dt><dd className="mono">{workstream.automationRunId}</dd></div>}
-          {workstream.latestHarnessRun && (
-            <>
-              <div><dt>Harness status</dt><dd>{workstream.latestHarnessRun.status.replace('_', ' ')}</dd></div>
-              <div><dt>Harness origin</dt><dd>{workstream.latestHarnessRun.origin.replaceAll('_', ' ')}</dd></div>
-              {workstream.latestHarnessRun.model && <div><dt>Model</dt><dd>{workstream.latestHarnessRun.model}</dd></div>}
-              <div><dt>Harness started</dt><dd>{formatDateTime(workstream.latestHarnessRun.startedAt ?? workstream.latestHarnessRun.createdAt)}</dd></div>
-              {workstream.latestHarnessRun.completedAt && <div><dt>Harness completed</dt><dd>{formatDateTime(workstream.latestHarnessRun.completedAt)}</dd></div>}
-              <div><dt>Harness run</dt><dd className="mono">{workstream.latestHarnessRun.id}</dd></div>
-            </>
-          )}
-          {!workstream.latestHarnessRun && workstream.latestHarnessRunId && <div><dt>Harness run</dt><dd className="mono">{workstream.latestHarnessRunId}</dd></div>}
-          <div>
-            <dt>Work-stream ID</dt>
-            <dd className="copy-detail">
-              <span className="mono">{workstream.id}</span>
-              <IconButton label="Copy work-stream ID" onClick={() => void desktopBridge().copyText(workstream.id)}><Copy size={12} /></IconButton>
-            </dd>
-          </div>
         </dl>
       </Section>
     </div>
