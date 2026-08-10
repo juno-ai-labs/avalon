@@ -35,7 +35,10 @@ describe("Notion connector", () => {
         bot_id: BOT_ID,
         workspace_id: NOTION_WORKSPACE_ID,
         workspace_name: "Acme Notes",
-        owner: { type: "user", user: { id: "notion-user-1" } },
+        owner: {
+          type: "user",
+          user: { id: "notion-user-1", name: "Ada Lovelace", person: { email: "ada@example.com" } },
+        },
       });
     };
     const adapter = notionAdapter(fetcher);
@@ -59,6 +62,8 @@ describe("Notion connector", () => {
       botId: BOT_ID,
       notionWorkspaceId: NOTION_WORKSPACE_ID,
       notionOwnerUserId: "notion-user-1",
+      notionOwnerUserName: "Ada Lovelace",
+      notionOwnerUserEmail: "ada@example.com",
       integrationId: INTEGRATION_ID,
       providerAccountId: BOT_ID,
       providerAccountName: "Acme Notes",
@@ -139,7 +144,7 @@ describe("Notion connector", () => {
         rich_text: [{ type: "text", plain_text: "x".repeat(90_000) }],
       });
     };
-    const hydrated = await notionAdapter(fetcher).hydrateResource!(notionConnection([]), {
+    const hydrated = await notionAdapter(fetcher).hydrateResource!(notionConnection([NotionCapabilities.commentRead]), {
       resource_type: "notion_comment",
       provider_resource_id: "comment-1",
     }, AbortSignal.timeout(1_000));

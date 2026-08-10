@@ -36,6 +36,7 @@ import { WorkstreamEmailRoutingService } from "./workstream-email-routing-servic
 import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
+import { enqueueMentionOpportunities } from "./work-opportunity-batching";
 
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -328,6 +329,61 @@ export class WorkstreamService {
     return { ...created, harnessRunId };
   }
 
+  async createFromOpportunity(input: {
+    opportunityId: string;
+    version: number;
+    displayPrompt: string;
+    executionPrompt: string;
+    displayPromptHash: string;
+    executionPromptHash: string;
+    idempotencyKey: string;
+  }) {
+    const workstreamId = newId();
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    const routeInput = {
+      region: this.env.AVALON_REGION,
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+    } as const;
+    const emailRoute = await emailRouting.reserve(routeInput);
+    const created = await this.database.workstreams.create({
+      id: workstreamId,
+      workspaceId: this.auth.workspaceId,
+      title: input.displayPrompt,
+      objective: input.displayPrompt,
+      emailAddress: emailRoute.emailAddress,
+      creatorUserId: this.auth.userId,
+      openingAuthor: { type: "agent" },
+      openingMessage: input.executionPrompt,
+      openingStructuredContent: {
+        kind: "suggested_work_expansion",
+        label: "Expanded by Avalon from suggested work",
+        opportunityId: input.opportunityId,
+        opportunityVersion: input.version,
+      },
+      clientMessageId: `opportunity:${input.opportunityId}:v${input.version}`,
+      participantUserIds: [],
+      attachmentIds: [],
+      opportunitySnapshot: {
+        opportunityId: input.opportunityId,
+        version: input.version,
+        displayPromptHash: input.displayPromptHash,
+        executionPromptHash: input.executionPromptHash,
+      },
+    });
+    await emailRouting.activateWorkstreamRoute(routeInput);
+    const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
+    const message = messages[0];
+    if (message) {
+      await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, {
+        type: "message_created",
+        message,
+      });
+    }
+    const harnessRunId = await this.launchHarness(created.workstream.id, created.messageId, "suggested_work");
+    return { ...created, harnessRunId };
+  }
+
   async get(id: string): Promise<WorkstreamDetail> {
     const workstream = await this.requireWorkstream(id);
     const [participants, resources, connections, openElicitations, suggestions, latestHarness] = await Promise.all([
@@ -572,6 +628,22 @@ export class WorkstreamService {
     }
     const messageWithMentions = { ...message, mentions: preparedInput.mentions };
     await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
+    const mentionedOtherUsers = personIds.filter((userId) => userId !== this.auth.userId);
+    if (mentionedOtherUsers.length > 0) {
+      await enqueueMentionOpportunities(
+        this.env,
+        this.auth.workspaceId,
+        message.id,
+        mentionedOtherUsers,
+      ).catch((error: unknown) => {
+        console.warn("Could not enqueue mentioned-user work opportunities", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: id,
+          message_id: message.id,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      });
+    }
     this.scheduleMentionNotifications(messageWithMentions, workstream);
     const connectorMentions = preparedInput.mentions
       .filter((mention) => mention.type === "connector" && mention.connectorType)

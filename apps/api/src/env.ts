@@ -1,6 +1,6 @@
 import type { Region } from "@avalon/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
-import type { GitHubRegionalBridgeRpcBinding } from "./services/github-routing-service";
+import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
 import type { GlobalWorkstreamEmailRouterRpcBinding } from "./services/workstream-email-routing-service";
 import type { InboundEmailRegionalRpcBinding } from "./services/resend-inbound-email-service";
 import type {
@@ -31,6 +31,7 @@ export interface Env {
   EU_LINEAR_BRIDGE?: LinearRegionalBridgeRpcBinding;
   EU_SLACK_BRIDGE?: SlackRegionalBridgeRpcBinding;
   GLOBAL_EMAIL_ROUTER?: GlobalWorkstreamEmailRouterRpcBinding;
+  GLOBAL_GITHUB_ROUTER?: GlobalGitHubRouterRpcBinding;
   GLOBAL_LINEAR_ROUTER?: GlobalLinearRouterRpcBinding;
   GLOBAL_SLACK_ROUTER?: GlobalSlackRouterRpcBinding;
 
@@ -94,6 +95,7 @@ export interface Env {
   OAUTH_STATE_ENCRYPTION_KEY: string;
   CONNECTOR_CREDENTIALS_KEY: string;
   CONNECTOR_CREDENTIALS_KEY_VERSION: string;
+  CONNECTOR_CREDENTIALS_KEYS_JSON?: string;
 
   HARNESS_MAX_MODEL_ITERATIONS: string;
   HARNESS_MAX_TOOL_CALLS: string;

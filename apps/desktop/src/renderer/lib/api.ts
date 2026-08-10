@@ -27,6 +27,7 @@ import {
   WorkspaceSchema as WireWorkspaceSchema,
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
   WorkstreamSchema as WireWorkstreamSchema,
+  WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
   type AutomationDraft as WireAutomationDraft,
   type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
@@ -81,6 +82,7 @@ import type {
   WorkstreamDetail,
   WorkstreamResource,
   WorkstreamSummary,
+  WorkOpportunity,
 } from './types';
 
 export class ApiError extends Error {
@@ -404,6 +406,9 @@ export function mapMessage(message: WireMessage): Message {
     ...(message.author.type === 'external' ? { externalActor: { ...message.author.actor } } : {}),
     messageType,
     text: message.textContent,
+    ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
+      ? { contextLabel: structured['label'] }
+      : {}),
     mentions: message.mentions.map((mention) => ({
       type: mention.type,
       ...(mention.userId ? { personId: mention.userId } : {}),
@@ -892,6 +897,39 @@ export class AvalonApi {
   async getWorkstreams(signal?: AbortSignal): Promise<WorkstreamSummary[]> {
     const page = await this.request('/workstreams?limit=250', { schema: wireWorkstreamPageSchema, signal });
     return page.items.map(mapWorkstreamSummary);
+  }
+
+  async getWorkOpportunities(signal?: AbortSignal): Promise<WorkOpportunity[]> {
+    const page = await this.request('/work-opportunities?limit=4', {
+      schema: WireWorkOpportunityPageSchema,
+      signal,
+    });
+    return page.items;
+  }
+
+  async recordWorkOpportunityImpressions(opportunityIds: string[]): Promise<void> {
+    await this.requestVoid('/work-opportunities/impressions', {
+      method: 'POST',
+      body: { opportunityIds },
+    });
+  }
+
+  async dismissWorkOpportunity(id: string): Promise<void> {
+    await this.requestVoid(`/work-opportunities/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async startWorkOpportunity(id: string, version: number, idempotencyKey: string): Promise<CreatedWorkstream> {
+    const response = await this.request(`/work-opportunities/${encodeURIComponent(id)}/start`, {
+      method: 'POST',
+      body: { version, idempotencyKey },
+      schema: createWorkstreamResponseSchema,
+    });
+    return {
+      workstream: mapWorkstreamSummary(response.workstream),
+      messageId: response.messageId,
+      clientMessageId: `opportunity:${id}:v${version}`,
+      createdAt: response.workstream.createdAt,
+    };
   }
 
   async getNotes(signal?: AbortSignal): Promise<NoteSummary[]> {
@@ -1521,6 +1559,14 @@ export class AvalonApi {
     return page.items.map(mapConnection);
   }
 
+  async getAvailableConnectorTypes(signal?: AbortSignal): Promise<string[]> {
+    const result = await this.request('/connections/catalog', {
+      schema: z.object({ availableConnectorTypes: z.array(z.string().min(1)) }),
+      signal,
+    });
+    return result.availableConnectorTypes;
+  }
+
   async startGoogleConnection(scope: 'you' | 'workspace', capabilities: string[]): Promise<ConnectorOAuthStart> {
     return this.startProviderConnection('google', scope, capabilities);
   }
@@ -1555,6 +1601,50 @@ export class AvalonApi {
       schema: z.object({ connection: WireConnectionSchema }),
     });
     return mapConnection(response.connection);
+  }
+
+  async createWebhookConnection(
+    displayName: string,
+    scope: 'you' | 'workspace',
+    eventTypes: string[],
+    idempotencyKey: string,
+  ): Promise<{
+    connection: WorkstreamConnection;
+    endpoint: string;
+    signingSecret: string;
+    signatureFormat: string;
+  }> {
+    const response = await this.request('/connections/webhook', {
+      method: 'POST',
+      body: {
+        displayName,
+        scope: scope === 'you' ? 'personal' : 'workspace',
+        eventTypes,
+        idempotencyKey,
+      },
+      schema: z.object({
+        connection: WireConnectionSchema,
+        endpoint: z.string().url(),
+        signingSecret: z.string().min(1),
+        signatureFormat: z.string().min(1),
+      }),
+    });
+    return { ...response, connection: mapConnection(response.connection) };
+  }
+
+  async rotateWebhookSecret(id: string): Promise<{
+    endpoint: string;
+    signingSecret: string;
+    signatureFormat: string;
+  }> {
+    return this.request(`/connections/${encodeURIComponent(id)}/webhook-secret/rotate`, {
+      method: 'POST',
+      schema: z.object({
+        endpoint: z.string().url(),
+        signingSecret: z.string().min(1),
+        signatureFormat: z.string().min(1),
+      }),
+    });
   }
 
   async reconnectConnection(id: string): Promise<ConnectorOAuthStart> {

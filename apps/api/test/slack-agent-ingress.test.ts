@@ -67,6 +67,17 @@ class IngressDatabase {
 }
 
 describe("Slack Agent durable ingress", () => {
+  it("bounds and normalizes Slack Agent active-view context", () => {
+    expect(__slackAgentTesting.slackAppContext({
+      entities: [
+        { type: "slack#/types/channel_id", value: "C123", team_id: "T1", ignored: true },
+        { type: "", value: "invalid" },
+      ],
+    })).toEqual({
+      entities: [{ type: "slack#/types/channel_id", value: "C123", teamId: "T1" }],
+    });
+  });
+
   it("keeps the Slack manifest aligned with thread-follow-up scopes and events", () => {
     const manifest = JSON.parse(readFileSync(
       new URL("../../../config/provider-apps/slack.json", import.meta.url),

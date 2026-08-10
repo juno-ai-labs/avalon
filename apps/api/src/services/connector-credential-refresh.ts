@@ -6,15 +6,17 @@ import {
 import { nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { Env } from "../env";
-import { decryptString, encryptString } from "../lib/crypto";
+import { encryptString } from "../lib/crypto";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 
 const CredentialRowSchema = z.object({
   encrypted_credentials: z.string().min(1),
   credential_iv: z.string().min(1),
+  credential_key_version: z.coerce.number().int().positive(),
 });
 
 type CredentialEnv = Pick<Env,
-  "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION"
+  "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
 >;
 
 export async function ensureFreshConnectorCredentials(
@@ -34,7 +36,7 @@ export async function ensureFreshConnectorCredentials(
          credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?
        WHERE id = ? AND workspace_id = ? AND status = 'healthy'
          AND (credential_refresh_lease_id IS NULL OR credential_refresh_lease_expires_at < ?)
-       RETURNING encrypted_credentials, credential_iv`,
+       RETURNING encrypted_credentials, credential_iv, credential_key_version`,
     ).bind(
       leaseId,
       new Date(Date.now() + 2 * 60_000).toISOString(),
@@ -122,7 +124,7 @@ async function loadCredentials(
   connection: ConnectorConnectionContext,
 ): Promise<Record<string, unknown>> {
   const row = await env.DB.prepare(
-    `SELECT encrypted_credentials, credential_iv
+    `SELECT encrypted_credentials, credential_iv, credential_key_version
      FROM connector_connections
      WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
   ).bind(connection.id, connection.workspaceId).first<Record<string, unknown>>();
@@ -135,12 +137,12 @@ async function decryptCredentials(
   connectionId: string,
   row: z.infer<typeof CredentialRowSchema>,
 ): Promise<Record<string, unknown>> {
-  const plaintext = await decryptString(
-    row.encrypted_credentials,
-    row.credential_iv,
-    env.CONNECTOR_CREDENTIALS_KEY,
-    connectionId,
-  );
+  const plaintext = await decryptVersionedConnectorCredentials(env, {
+    id: connectionId,
+    encrypted_credentials: row.encrypted_credentials,
+    credential_iv: row.credential_iv,
+    credential_key_version: row.credential_key_version,
+  });
   return z.record(z.string(), z.unknown()).parse(JSON.parse(plaintext));
 }
 

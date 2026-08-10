@@ -244,6 +244,8 @@ function fixture() {
       entity_keys_json TEXT NOT NULL,
       dedupe_key TEXT NOT NULL,
       raw_content_hash TEXT,
+      target_user_ids_json TEXT NOT NULL DEFAULT '[]',
+      external_people_json TEXT NOT NULL DEFAULT '[]',
       processing_status TEXT NOT NULL,
       metadata_json TEXT NOT NULL,
       UNIQUE (connection_id, provider_event_id, event_type),

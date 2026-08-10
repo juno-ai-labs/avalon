@@ -32,6 +32,11 @@ interface CompiledSchedule {
   nextRunAt: string;
 }
 
+interface ValidatedConnectorBindings {
+  bindings: Record<string, string>;
+  connectorTypes: Set<string>;
+}
+
 interface IdempotentAutomationRun {
   runId: string;
   workstreamId: string;
@@ -153,7 +158,8 @@ export class AutomationService {
   async create(input: CreateAutomationInput) {
     if (!input.draft.ready) throw new ApiError(422, "automation_not_ready", "Finish the automation conversation before creating it");
     this.assertScopeAllowed(input.scope);
-    await this.validateDefaultPluginIds(input.scope, input.defaultPluginIds);
+    const connectorSelection = await this.validateDefaultPluginIds(input.scope, input.defaultPluginIds);
+    this.assertActivityTriggerBindings(input.draft.triggers, connectorSelection.connectorTypes);
     const resourceIds = await this.validateAutomationResources(input.scope, input.resourceIds);
     const deliveryTargets = await this.resolveSlackDeliveryTargets(input.scope, input.deliveryTargets);
     const templateId = newId();
@@ -195,8 +201,8 @@ export class AutomationService {
           execution_principal_json, connector_bindings_json, default_plugins_json, overrides_json, status,
           email_address, email_route_status,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
       ...memoryTables.statements,
       ...deliveryTargets.map((target) => this.env.DB.prepare(
         `INSERT INTO automation_delivery_targets
@@ -306,8 +312,14 @@ export class AutomationService {
     if ((input.name != null || input.description != null) && row.template_owner_user_id !== this.auth.userId) {
       throw new ApiError(403, "template_owner_required", "Only the template owner can change its name or description");
     }
-    if (input.defaultPluginIds) {
-      await this.validateDefaultPluginIds(String(row.scope) as Scope, input.defaultPluginIds);
+    const connectorSelection = input.defaultPluginIds
+      ? await this.validateDefaultPluginIds(String(row.scope) as Scope, input.defaultPluginIds)
+      : null;
+    if (connectorSelection) {
+      this.assertActivityTriggerBindings(
+        parseJson(row.trigger_definitions_json, []),
+        connectorSelection.connectorTypes,
+      );
     }
     const at = nowIso();
     const statements = [
@@ -317,8 +329,9 @@ export class AutomationService {
       ).bind(input.name ?? null, input.description ?? null, at, row.template_id, this.auth.workspaceId),
       this.env.DB.prepare(
         `UPDATE automation_subscriptions SET default_plugins_json = COALESCE(?, default_plugins_json),
+         connector_bindings_json = COALESCE(?, connector_bindings_json),
          overrides_json = COALESCE(?, overrides_json), updated_at = ? WHERE id = ? AND workspace_id = ?`,
-      ).bind(input.defaultPluginIds ? JSON.stringify(input.defaultPluginIds) : null, input.overrides ? JSON.stringify(input.overrides) : null, at, id, this.auth.workspaceId),
+      ).bind(input.defaultPluginIds ? JSON.stringify(input.defaultPluginIds) : null, connectorSelection ? JSON.stringify(connectorSelection.bindings) : null, input.overrides ? JSON.stringify(input.overrides) : null, at, id, this.auth.workspaceId),
     ];
     if (input.instructions != null && input.instructions !== row.instructions) {
       if (row.template_owner_user_id !== this.auth.userId) {
@@ -513,7 +526,8 @@ export class AutomationService {
       memoryTables: parseJson(template.memory_tables_json, []),
       suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
     };
-    await this.validateDefaultPluginIds("personal", input.defaultPluginIds);
+    const connectorSelection = await this.validateDefaultPluginIds("personal", input.defaultPluginIds);
+    this.assertActivityTriggerBindings(draft.triggers, connectorSelection.connectorTypes);
     const subscriptionId = newId();
     const at = nowIso();
     const schedules = draft.triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
@@ -535,8 +549,8 @@ export class AutomationService {
           execution_principal_json, connector_bindings_json, default_plugins_json, overrides_json, status,
           email_address, email_route_status,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'personal', ?, ?, '{}', ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, 'personal', ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, template.version_id, this.auth.userId, JSON.stringify({ type: "user", userId: this.auth.userId }), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
       ...memoryTables.statements,
       ...schedules.map((schedule) => this.env.DB.prepare(
         `INSERT INTO schedules
@@ -563,9 +577,10 @@ export class AutomationService {
       `SELECT * FROM automation_template_versions WHERE id = ? AND template_id = ?`,
     ).bind(versionId, subscription.template_id).first<Record<string, unknown>>();
     if (!version) throw new ApiError(404, "template_version_not_found", "Template version not found");
-    await this.validateDefaultPluginIds(String(subscription.scope) as Scope, parseJson(subscription.default_plugins_json, []));
+    const connectorSelection = await this.validateDefaultPluginIds(String(subscription.scope) as Scope, parseJson(subscription.default_plugins_json, []));
     const at = nowIso();
     const triggers = parseJson<TriggerDefinition[]>(version.trigger_definitions_json, []);
+    this.assertActivityTriggerBindings(triggers, connectorSelection.connectorTypes);
     const schedules = triggers.flatMap((trigger) => this.scheduleForTrigger(trigger, subscriptionId, at));
     const nextRunAt = schedules.map((schedule) => schedule.nextRunAt).sort()[0] ?? null;
     const enabled = subscription.status === "paused" ? 0 : 1;
@@ -578,9 +593,9 @@ export class AutomationService {
     await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE automation_subscriptions
-         SET template_version_id = ?, next_run_at = ?, updated_at = ?
+         SET template_version_id = ?, connector_bindings_json = ?, next_run_at = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ?`,
-      ).bind(versionId, nextRunAt, at, subscriptionId, this.auth.workspaceId),
+      ).bind(versionId, JSON.stringify(connectorSelection.bindings), nextRunAt, at, subscriptionId, this.auth.workspaceId),
       this.env.DB.prepare(
         "DELETE FROM schedules WHERE automation_subscription_id = ? AND workspace_id = ?",
       ).bind(subscriptionId, this.auth.workspaceId),
@@ -854,13 +869,15 @@ export class AutomationService {
     return [];
   }
 
-  private async validateDefaultPluginIds(scope: Scope, pluginIds: string[]): Promise<void> {
+  private async validateDefaultPluginIds(scope: Scope, pluginIds: string[]): Promise<ValidatedConnectorBindings> {
     if (new Set(pluginIds).size !== pluginIds.length) {
       throw new ApiError(422, "duplicate_default_plugin", "Default automation plugins must be unique");
     }
+    const bindings: Record<string, string> = {};
+    const connectorTypes = new Set<string>();
     for (const pluginId of pluginIds) {
       const row = await this.env.DB.prepare(
-        `SELECT scope, owner_user_id, status FROM connector_connections
+        `SELECT id, connector_type, scope, owner_user_id, status FROM connector_connections
          WHERE workspace_id = ? AND model_plugin_id = ?`,
       ).bind(this.auth.workspaceId, pluginId).first<Record<string, unknown>>();
       if (!row || row.status !== "healthy") {
@@ -871,6 +888,33 @@ export class AutomationService {
       }
       if (scope === "workspace" && row.scope !== "workspace") {
         throw new ApiError(422, "workspace_connection_required", "Workspace automations may only preload workspace connections");
+      }
+      bindings[pluginId] = String(row.id);
+      connectorTypes.add(String(row.connector_type));
+    }
+    return { bindings, connectorTypes };
+  }
+
+  private assertActivityTriggerBindings(triggers: TriggerDefinition[], connectorTypes: Set<string>): void {
+    for (const trigger of triggers) {
+      if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook") {
+        continue;
+      }
+      const requiredConnectorType = trigger.type === "webhook" ? "generic_webhook" : trigger.connectorType;
+      if (requiredConnectorType == null) {
+        if (connectorTypes.size > 0) continue;
+        throw new ApiError(
+          422,
+          "activity_trigger_connection_required",
+          "Select at least one connector for this activity-triggered automation",
+        );
+      }
+      if (!connectorTypes.has(requiredConnectorType)) {
+        throw new ApiError(
+          422,
+          "activity_trigger_connection_required",
+          `Select a ${requiredConnectorType} connector for this activity-triggered automation`,
+        );
       }
     }
   }

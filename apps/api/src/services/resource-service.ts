@@ -5,7 +5,8 @@ import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { decryptString, encryptString } from "../lib/crypto";
+import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { encryptString } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 
 export interface ResolveResourceInput {
@@ -376,12 +377,12 @@ export class ResourceService {
   private async connectionContext(row: Record<string, unknown>): Promise<ConnectorConnectionContext> {
     let credentials: Record<string, unknown> = {};
     if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
-      credentials = JSON.parse(await decryptString(
-        row.encrypted_credentials,
-        row.credential_iv,
-        this.env.CONNECTOR_CREDENTIALS_KEY,
-        String(row.id),
-      )) as Record<string, unknown>;
+      credentials = JSON.parse(await decryptVersionedConnectorCredentials(this.env, {
+        id: String(row.id),
+        encrypted_credentials: row.encrypted_credentials,
+        credential_iv: row.credential_iv,
+        credential_key_version: Number(row.credential_key_version || 1),
+      })) as Record<string, unknown>;
     }
     return {
       id: String(row.id), workspaceId: String(row.workspace_id), scope: row.scope === "workspace" ? "workspace" : "personal",
