@@ -758,6 +758,7 @@ export function normalizeNotionWebhook(
 function normalizeToken(payload: Record<string, unknown>, previous: Record<string, unknown> = {}): Record<string, unknown> {
   const owner = recordValue(payload, "owner");
   const ownerUser = owner ? recordValue(owner, "user") : null;
+  const ownerPerson = ownerUser ? recordValue(ownerUser, "person") : null;
   return {
     ...previous,
     accessToken: requiredString(payload, "access_token", "Notion did not return an access token"),
@@ -768,6 +769,8 @@ function normalizeToken(payload: Record<string, unknown>, previous: Record<strin
     ...(stringValue(payload, "workspace_name") ? { notionWorkspaceName: stringValue(payload, "workspace_name") } : {}),
     ...(stringValue(payload, "workspace_icon") ? { notionWorkspaceIcon: stringValue(payload, "workspace_icon") } : {}),
     ...(ownerUser && stringValue(ownerUser, "id") ? { notionOwnerUserId: stringValue(ownerUser, "id") } : {}),
+    ...(ownerUser && stringValue(ownerUser, "name") ? { notionOwnerUserName: stringValue(ownerUser, "name") } : {}),
+    ...(ownerPerson && stringValue(ownerPerson, "email") ? { notionOwnerUserEmail: stringValue(ownerPerson, "email") } : {}),
     ...(stringValue(payload, "duplicated_template_id") ? { duplicatedTemplateId: stringValue(payload, "duplicated_template_id") } : {}),
   };
 }
