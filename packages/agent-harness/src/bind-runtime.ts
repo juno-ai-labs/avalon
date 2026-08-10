@@ -56,6 +56,13 @@ import {
   type RunHarnessInput,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
+import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
+import {
+  AVALON_SKILLS_PLUGIN_ID,
+  AVALON_SKILLS_SYSTEM_MESSAGE,
+  createSkillRuntime,
+  type SkillRuntime,
+} from "./skills";
 
 const OPENROUTER_PROVIDER = providerIdSchema.parse("openrouter");
 const DEFAULT_CATALOG_TOKENS = 2_500;
@@ -327,6 +334,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       buildTools: runtime.buildWireTools,
       activatePlugins: (ids) => {
         runtime.activate(ids);
+        replaceSystemMessage(state.messages, runtime.renderSystemPrompt().content);
+      },
+      activateSkills: async (refs) => {
+        await runtime.skills.activation.activateSkills(refs);
+        // Persist after activation so a hint is only ever recorded for a ref
+        // that actually resolved — a durable hint for a skill this run cannot
+        // read would be restored on the next attempt and dropped again.
+        for (const ref of refs) {
+          if (!runtime.skills.activeRefs.has(ref)) continue;
+          await requiredPort("Skill activation persistence failed", () =>
+            input.persistSkillActivation?.(ref));
+        }
         replaceSystemMessage(state.messages, runtime.renderSystemPrompt().content);
       },
       runsSerially: (toolCall) => toolCall.type === "function" && runtime.runsSerially(toolCall.function.name),
@@ -1019,6 +1038,7 @@ async function createPluginRuntime(
   reauthorizeActive: () => Promise<void>;
   runsSerially: (wireName: string) => boolean;
   resolveTool: (wireName: string) => { pluginId: string; tool: HarnessTool } | null;
+  skills: SkillRuntime;
 }> {
   let registry: ToolRegistry<BindPlugin> | null = null;
   const eligibleIds = new Set<string>();
@@ -1085,8 +1105,41 @@ async function createPluginRuntime(
       },
     })),
   }, true);
+  // Skills are frozen with the run scope, so the runtime is built once, here,
+  // from what the host already authorized — nothing below reads a store.
+  const skills = await createSkillRuntime({
+    skills: input.skills ?? [],
+    ...(input.skillActivationHints ? { activationHints: input.skillActivationHints } : {}),
+    ...(input.config.maxActiveSkills === undefined
+      ? {}
+      : { maxActiveSkills: input.config.maxActiveSkills }),
+    ...(input.config.maxActiveSkillBodyTokens === undefined
+      ? {}
+      : { maxActiveSkillBodyTokens: input.config.maxActiveSkillBodyTokens }),
+  });
+
+  // `load_skill` is always active when the run has any skills at all: a
+  // catalog the model can see but not act on is worse than no catalog.
+  const skillsPlugin = skills.enabled
+    ? buildPlugin(
+        {
+          canonicalId: AVALON_SKILLS_PLUGIN_ID,
+          modelId: "avalon_skills",
+          // Globally unique public names, like the discovery controls.
+          shortWireName: "",
+          description: "Load procedures and reference knowledge authorized for this run.",
+          systemMessage: AVALON_SKILLS_SYSTEM_MESSAGE,
+          preload: true,
+          explicit: true,
+          tools: skills.tools,
+        },
+        true,
+      )
+    : null;
+
   const corePlugins = [
     ...(input.pluginDiscovery === false ? [] : [discovery]),
+    ...(skillsPlugin ? [skillsPlugin] : []),
     ...(input.corePlugins ?? []).map((plugin) => buildPlugin(plugin, true)),
   ];
   const plugins = [...corePlugins, ...(input.plugins ?? []).map(toBindPlugin)];
@@ -1194,7 +1247,8 @@ async function createPluginRuntime(
 
   return {
     active,
-    renderSystemPrompt: () => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS),
+    skills,
+    renderSystemPrompt: () => renderStableSystemPrompt(input.systemPrompt, active, registry, input.config.maxCatalogTokens ?? DEFAULT_CATALOG_TOKENS, skills),
     buildWireTools: () => {
       const definitions: OpenAI.ChatCompletionTool[] = [];
       for (const id of [...active].sort()) {
@@ -1326,6 +1380,7 @@ function renderStableSystemPrompt(
   active: ReadonlySet<string>,
   registry: ToolRegistry<BindPlugin>,
   catalogTokens: number,
+  skills: SkillRuntime,
 ): RenderedSystemPrompt {
   const activeSections = [...active]
     .sort()
@@ -1360,8 +1415,24 @@ function renderStableSystemPrompt(
   const activeInstructions = activeSections.length
     ? `# Active Plugin Instructions\n${activeSections.join("\n\n")}`
     : "";
+  const skillCatalog = renderPromptSkillCatalog({
+    activeSkillRefs: skills.activeRefs,
+    skills: skills.summaries,
+    maxCatalogTokens: catalogTokens,
+  });
+  const skillSection = skillCatalog
+    ? `# Skills\nSkills are reusable procedures and reference knowledge. To load one, call load_skill with its exact name; its instructions then apply for the rest of the run. Loading a skill never expands this run's original authority.\n\n${skillCatalog}`
+    : "";
+  // A pure render of run state: the loaded bodies are rebuilt from the active
+  // set on every call rather than spliced into the previous prompt, so a
+  // resumed attempt produces the same bytes as a fresh one.
+  const skillInstructions = skills.instructions.length
+    ? `# Active Skill Instructions\n${skills.instructions.join("\n\n")}`
+    : "";
   return {
-    content: [base, pluginSection, activeInstructions].filter(Boolean).join("\n\n"),
+    content: [base, pluginSection, skillSection, activeInstructions, skillInstructions]
+      .filter(Boolean)
+      .join("\n\n"),
   };
 }
 
@@ -1537,6 +1608,7 @@ function harnessResultOutcome(
     ...((result as HarnessToolResult & { loadedPluginName?: string }).loadedPluginName
       ? { loadedPluginName: (result as HarnessToolResult & { loadedPluginName: string }).loadedPluginName }
       : {}),
+    ...(result.loadedSkillRef ? { loadedSkillRef: result.loadedSkillRef } : {}),
   };
 }
 

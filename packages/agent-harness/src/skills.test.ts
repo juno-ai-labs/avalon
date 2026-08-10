@@ -1,0 +1,347 @@
+import { describe, expect, it, vi } from "vitest";
+import { runHarness, type HarnessPlugin, type HarnessSkill } from "./index";
+import { renderPromptSkillCatalog } from "./prompts/skill-catalog";
+
+const triage: HarnessSkill = {
+  name: "triaging-inbound-work",
+  description: "How this workspace triages inbound requests.",
+  whenToUse: "When asked to sort, rank, or route a queue of incoming work.",
+  body: "Sort by blast radius, then by reversibility.",
+};
+
+const handover: HarnessSkill = {
+  name: "writing-a-handover",
+  description: "The fields a handover note must carry.",
+  whenToUse: "When ending a shift or passing work to someone else.",
+  body: "State what changed, what is unfinished, and who to ask.",
+  resources: [{ path: "references/template.md", body: "## What changed\n## Unfinished\n" }],
+};
+
+describe("skill catalog rendering", () => {
+  it("splits active from loadable and renders the activation hint", () => {
+    const rendered = renderPromptSkillCatalog({
+      activeSkillRefs: new Set(["platform:triaging-inbound-work"]),
+      skills: [
+        {
+          ref: "platform:triaging-inbound-work",
+          name: triage.name,
+          description: triage.description,
+          whenToUse: triage.whenToUse,
+          ownerPlugin: null,
+          origin: "platform",
+        },
+        {
+          ref: "platform:writing-a-handover",
+          name: handover.name,
+          description: handover.description,
+          whenToUse: handover.whenToUse,
+          ownerPlugin: null,
+          origin: "platform",
+        },
+      ],
+    });
+    expect(rendered).toBe(
+      [
+        "Currently active:",
+        `- ${triage.name}: ${triage.description} — ${triage.whenToUse}`,
+        "",
+        "Available to load:",
+        `- ${handover.name}: ${handover.description} — ${handover.whenToUse}`,
+      ].join("\n"),
+    );
+  });
+
+  it("demotes the overflow to names only rather than dropping it", () => {
+    const skills = Array.from({ length: 30 }, (_, index) => ({
+      ref: `platform:skill-${String.fromCharCode(97 + index % 26)}${index}`,
+      name: `skill-${String.fromCharCode(97 + index % 26)}${index}`,
+      description: "d".repeat(400),
+      whenToUse: null,
+      ownerPlugin: null,
+      origin: "platform" as const,
+    }));
+    const rendered = renderPromptSkillCatalog({
+      activeSkillRefs: new Set(),
+      skills,
+      maxCatalogTokens: 200,
+    });
+    for (const skill of skills) expect(rendered).toContain(skill.name);
+    expect(rendered).toContain("shown by name only");
+  });
+
+  it("renders nothing when the run has no skills", () => {
+    expect(renderPromptSkillCatalog({ activeSkillRefs: new Set(), skills: [] })).toBe("");
+  });
+});
+
+describe("skills in a run", () => {
+  it("advertises the catalog, loads a body on demand, and keeps it for the run", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: triage.name }),
+      textResponse("Sorted by blast radius."),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(
+      runHarness({ ...runInput(fetcher), skills: [triage, handover] }),
+    ).resolves.toMatchObject({ status: "completed", content: "Sorted by blast radius." });
+
+    const first = systemPrompt(bodies[0]!);
+    expect(first).toContain("# Skills");
+    expect(first).toContain(`- ${triage.name}: ${triage.description} — ${triage.whenToUse}`);
+    // The body is what the catalog exists to withhold until it is asked for.
+    expect(first).not.toContain(triage.body);
+    expect(toolNames(bodies[0]!)).toEqual(expect.arrayContaining(["load_skill", "read_skill_resource"]));
+
+    const second = systemPrompt(bodies[1]!);
+    expect(second).toContain("# Active Skill Instructions");
+    expect(second).toContain(triage.body);
+    expect(second).toContain(`<skill_content name="${triage.name}">`);
+  });
+
+  it("records the loaded ref for a resumed attempt and restores it from the hint", async () => {
+    const persisted: string[] = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: triage.name }),
+      textResponse("done"),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    await runHarness({
+      ...runInput(fetcher),
+      skills: [triage],
+      persistSkillActivation: (ref) => {
+        persisted.push(ref);
+      },
+    });
+    expect(persisted).toEqual(["platform:triaging-inbound-work"]);
+
+    // A resumed attempt starts with the body already in the prompt.
+    const resumedBodies: Array<Record<string, unknown>> = [];
+    const resumedFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      resumedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return textResponse("resumed");
+    }) as typeof fetch;
+    await runHarness({
+      ...runInput(resumedFetch),
+      skills: [triage],
+      skillActivationHints: persisted,
+    });
+    expect(systemPrompt(resumedBodies[0]!)).toContain(triage.body);
+  });
+
+  it("drops a hint whose skill is no longer in the run's scope", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return textResponse("ok");
+    }) as typeof fetch;
+    await expect(
+      runHarness({
+        ...runInput(fetcher),
+        skills: [triage],
+        skillActivationHints: ["platform:revoked-since-last-attempt"],
+      }),
+    ).resolves.toMatchObject({ status: "completed" });
+    expect(systemPrompt(bodies[0]!)).not.toContain("# Active Skill Instructions");
+  });
+
+  it("refuses a skill outside the frozen run scope without naming it as real", async () => {
+    const responses = [
+      toolCallResponse("load_skill", { name: "someone-elses-skill" }),
+      textResponse("could not"),
+    ];
+    const observed: unknown[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+    await expect(
+      runHarness({ ...runInput(fetcher), skills: [triage] }),
+    ).resolves.toMatchObject({ status: "completed" });
+    const toolMessage = messagesOf(observed[1]).find((message) => message.role === "tool");
+    expect(String(toolMessage?.content)).toContain("skill_not_available");
+    expect(systemPrompt(observed[1] as Record<string, unknown>)).not.toContain("# Active Skill Instructions");
+  });
+
+  it("gates a Tier-3 resource on the skill having been loaded", async () => {
+    const responses = [
+      toolCallResponse("read_skill_resource", {
+        name: handover.name,
+        path: "references/template.md",
+      }),
+      toolCallResponse("load_skill", { name: handover.name }),
+      toolCallResponse("read_skill_resource", {
+        name: handover.name,
+        path: "references/template.md",
+      }),
+      textResponse("read it"),
+    ];
+    const observed: unknown[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(
+      runHarness({
+        ...runInput(fetcher),
+        config: { ...runInput(fetcher).config, maxIterations: 6 },
+        skills: [handover],
+      }),
+    ).resolves.toMatchObject({ status: "completed" });
+
+    const refused = messagesOf(observed[1]).find((message) => message.role === "tool");
+    expect(String(refused?.content)).toContain("skill_not_loaded");
+    const allowed = messagesOf(observed[3]).filter((message) => message.role === "tool").pop();
+    expect(String(allowed?.content)).toContain("## What changed");
+  });
+
+  it("names a skill's owner plugin instead of activating it", async () => {
+    const owned: HarnessSkill = {
+      ...triage,
+      name: "drafting-with-web",
+      ownerPlugin: "avalon:web",
+    };
+    const responses = [
+      toolCallResponse("load_skill", { name: owned.name }),
+      textResponse("done"),
+    ];
+    const observed: unknown[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await runHarness({ ...runInput(fetcher), skills: [owned], plugins: [webPlugin()] });
+
+    const toolMessage = messagesOf(observed[1]).find((message) => message.role === "tool");
+    expect(String(toolMessage?.content)).toContain("load that plugin separately");
+    // Knowledge is not authority: the owner's tools stay off the wire.
+    expect(toolNames(observed[1] as Record<string, unknown>)).not.toContain("web_search");
+  });
+
+  it("refuses a load that would blow the loaded-instruction budget", async () => {
+    const huge: HarnessSkill = { ...handover, name: "oversized", body: "x".repeat(200_000) };
+    const responses = [
+      toolCallResponse("load_skill", { name: huge.name }),
+      textResponse("worked from what I had"),
+    ];
+    const observed: unknown[] = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      observed.push(JSON.parse(String(init?.body)));
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await runHarness({ ...runInput(fetcher), skills: [huge] });
+
+    const toolMessage = messagesOf(observed[1]).find((message) => message.role === "tool");
+    expect(String(toolMessage?.content)).toContain("skill_limit_reached");
+    expect(systemPrompt(observed[1] as Record<string, unknown>)).not.toContain(huge.body);
+  });
+
+  it("adds no skill surface at all to a run without skills", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return textResponse("no skills here");
+    }) as typeof fetch;
+
+    await expect(runHarness(runInput(fetcher))).resolves.toMatchObject({ status: "completed" });
+    expect(systemPrompt(bodies[0]!)).not.toContain("# Skills");
+    expect(toolNames(bodies[0]!)).not.toContain("load_skill");
+  });
+});
+
+function webPlugin(): HarnessPlugin {
+  return {
+    canonicalId: "avalon:web",
+    modelId: "avalon_web",
+    shortWireName: "web",
+    description: "Search and read current public-web sources.",
+    preload: false,
+    explicit: false,
+    tools: [
+      {
+        definition: {
+          name: "search",
+          description: "Search the public web.",
+          capability: "web.search",
+          mode: "read",
+          idempotency: "safe",
+          inputSchema: { type: "object", additionalProperties: false },
+        },
+        execute: async () => ({ output: { results: [] }, summary: "Searched" }),
+      },
+    ],
+  };
+}
+
+function streamResponse(events: unknown[]): Response {
+  const body = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+function textResponse(content: string): Response {
+  return streamResponse([{ choices: [{ delta: { content }, finish_reason: "stop" }] }]);
+}
+
+function toolCallResponse(name: string, input: unknown): Response {
+  return streamResponse([
+    {
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: `call-${name}-${JSON.stringify(input).length}`,
+                type: "function" as const,
+                function: { name, arguments: JSON.stringify(input) },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    },
+  ]);
+}
+
+function systemPrompt(body: Record<string, unknown>): string {
+  return String((body.messages as Array<{ content: string }>)[0]!.content);
+}
+
+function messagesOf(body: unknown): Array<{ role: string; content: unknown }> {
+  return ((body as Record<string, unknown>).messages ?? []) as Array<{ role: string; content: unknown }>;
+}
+
+function toolNames(body: Record<string, unknown>): string[] {
+  return ((body.tools ?? []) as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
+}
+
+function runInput(fetcher: typeof fetch) {
+  return {
+    config: {
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      fetch: fetcher,
+      maxIterations: 4,
+      maxToolCalls: 10,
+      maxWallClockMs: 5_000,
+      toolTimeoutMs: 500,
+      maxWebResults: 4,
+    },
+    workspaceId: "workspace-1",
+    workstreamId: "workstream-1",
+    harnessRunId: "run-1",
+    executionPrincipal: { type: "user" as const, userId: "user-1" },
+    systemPrompt: "Be useful.",
+    messages: [{ role: "user" as const, content: "Do the work" }],
+    corePlugins: [] as HarnessPlugin[],
+    onEvent: () => {},
+  };
+}
