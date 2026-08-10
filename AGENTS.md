@@ -60,8 +60,10 @@ browser driver to the repository.
 it indexes every document and says which one owns which area. Find the ones whose
 scope matches what you are touching, read them first, and update them in the same
 change. When a change introduces a subsystem no existing document covers, add
-`docs/<NAME>.md`, register it in the index, and add it to the Documentation list
-in [`README.md`](README.md).
+`docs/<NAME>.md` and register it in that index — the index is the one registry
+that has to stay complete. The Documentation list in [`README.md`](README.md) is
+a curated reading path rather than a second registry; add an entry there only
+when the new document belongs in front of a first-time reader.
 
 ## Pull requests
 
