@@ -2886,7 +2886,7 @@ function desktopHandoffUrl(webBase: string, target: string): string {
   return url.toString();
 }
 
-function shouldSuppressAutomationResult(text: string): boolean {
+export function shouldSuppressAutomationResult(text: string): boolean {
   const normalized = text.trim();
   return !normalized || /\b(?:no|zero)\s+(?:qualifying|actionable|matching)\s+(?:emails?|messages?)\b/iu.test(normalized);
 }
