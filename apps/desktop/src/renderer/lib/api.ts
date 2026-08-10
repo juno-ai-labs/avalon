@@ -350,6 +350,7 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
     name: invocation.toolName,
     summary: invocation.outputSummary ?? invocation.inputSummary,
     status: invocation.status === 'pending' ? 'started' : invocation.status,
+    ...(invocation.plugin ? { plugin: invocation.plugin } : {}),
     ...(Number.isFinite(started) && Number.isFinite(completed) ? { durationMs: completed - started } : {}),
     input: invocation.inputSummary,
     ...(invocation.outputSummary ? { output: invocation.outputSummary } : {}),

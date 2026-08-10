@@ -367,7 +367,7 @@ export function AssistantMessageContent({
 function ToolBlock({ message }: { message: Message }): React.JSX.Element | null {
   const tool = message.toolEvent;
   if (!tool) return null;
-  const owningPlugin = tool.plugins?.[0];
+  const owningPlugin = tool.plugin;
   return (
     <details className={clsx('tool-block', `tool-${tool.status}`, owningPlugin && 'plugin-activity')}>
       <summary>

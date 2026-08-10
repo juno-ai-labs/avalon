@@ -621,7 +621,7 @@ export function NewAutomationScreen(): React.JSX.Element {
                 name: event.name,
                 summary: event.summary,
                 status: event.status,
-                plugins: event.plugins,
+                ...(event.plugin ? { plugin: event.plugin } : {}),
                 ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
               },
             });

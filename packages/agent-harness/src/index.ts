@@ -947,7 +947,8 @@ export type AutomationCompilerStreamEvent =
       name: string;
       summary: string;
       status: "started" | "completed" | "failed";
-      plugins: AutomationPluginActivity[];
+      /** The single plugin that owns this tool, or null for Avalon-owned tools. */
+      plugin: AutomationPluginActivity | null;
       durationMs?: number;
     }
   | { type: "completed" };
@@ -1013,12 +1014,13 @@ function automationPluginActivities(
  * research and plugin discovery — have no connector behind them, so their rows
  * carry no plugin icon rather than standing in for the whole catalog.
  */
-function automationOwningPlugins(
+function automationOwningPlugin(
   pluginId: string,
   catalog: AutomationCreatorPluginCatalogEntry[],
-): AutomationPluginActivity[] {
-  if (!pluginId.startsWith("automation:")) return [];
-  return automationPluginActivities(catalog, new Set([pluginId.slice("automation:".length)]));
+): AutomationPluginActivity | null {
+  if (!pluginId.startsWith("automation:")) return null;
+  const owner = automationPluginActivities(catalog, new Set([pluginId.slice("automation:".length)]));
+  return owner[0] ?? null;
 }
 
 /**
@@ -1400,15 +1402,15 @@ export async function compileAutomation(input: {
       if (event.type === "stream_started") {
         await input.onStreamEvent?.({ type: "started" });
       } else if (event.type === "tool_started") {
-        const plugins = automationOwningPlugins(event.pluginId, catalog);
+        const plugin = automationOwningPlugin(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (plugins.length ? {
+          ?? (plugin ? {
               started: "Using an authorized connector…",
               completed: "Connector operation completed",
             } : undefined);
         if (!presentation) return;
-        const labelPlugins = plugins.length
-          ? plugins
+        const labelPlugins = plugin
+          ? [plugin]
           : automationSubjectPlugins(event.toolName, event.input, catalog);
         toolStartedAt.set(event.toolCallId, Date.now());
         toolLabelPlugins.set(event.toolCallId, labelPlugins);
@@ -1418,23 +1420,23 @@ export async function compileAutomation(input: {
           name: automationDiscoveryActivityName(event.toolName, "started", labelPlugins),
           summary: presentation.started,
           status: "started",
-          plugins,
+          plugin,
         });
       } else if (event.type === "tool_completed") {
         if (event.toolName === "load_plugin") {
           const loaded = String(asRecord(event.result.output).loaded ?? "");
           if (loaded) loadedAutomationPluginIds.add(loaded);
         }
-        const plugins = automationOwningPlugins(event.pluginId, catalog);
+        const plugin = automationOwningPlugin(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (plugins.length ? {
+          ?? (plugin ? {
               started: "Using an authorized connector…",
               completed: event.result.summary,
             } : undefined);
         if (!presentation) return;
         const startedAt = toolStartedAt.get(event.toolCallId);
-        const labelPlugins = plugins.length
-          ? plugins
+        const labelPlugins = plugin
+          ? [plugin]
           : automationSubjectPluginsFromResult(
               event.toolName,
               event.result.output,
@@ -1449,19 +1451,19 @@ export async function compileAutomation(input: {
           name: automationDiscoveryActivityName(event.toolName, "completed", labelPlugins),
           summary: presentation.completed,
           status: "completed",
-          plugins,
+          plugin,
           ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
         });
       } else if (event.type === "tool_failed") {
-        const plugins = automationOwningPlugins(event.pluginId, catalog);
+        const plugin = automationOwningPlugin(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
-          ?? (plugins.length ? {
+          ?? (plugin ? {
               started: "Using an authorized connector…",
               completed: "Connector operation failed",
             } : undefined);
         if (!presentation) return;
         const startedAt = toolStartedAt.get(event.toolCallId);
-        const labelPlugins = plugins.length ? plugins : toolLabelPlugins.get(event.toolCallId) ?? [];
+        const labelPlugins = plugin ? [plugin] : toolLabelPlugins.get(event.toolCallId) ?? [];
         toolStartedAt.delete(event.toolCallId);
         toolLabelPlugins.delete(event.toolCallId);
         await input.onStreamEvent?.({
@@ -1470,7 +1472,7 @@ export async function compileAutomation(input: {
           name: automationDiscoveryActivityName(event.toolName, "failed", labelPlugins),
           summary: "This research step failed; Avalon will adjust the plan.",
           status: "failed",
-          plugins,
+          plugin,
           ...(startedAt === undefined ? {} : { durationMs: Math.max(0, Date.now() - startedAt) }),
         });
       }
