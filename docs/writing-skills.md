@@ -321,6 +321,8 @@ provider's cached prefix survives. Two authoring rules follow:
   scope, disclosure tiers, the two controls, caps, activation hints, warnings.
 - [`agent-tools.md`](agent-tools.md) — when the right answer is a *tool*, not a
   skill, and how to design one for a medium model.
+- [`writing-prompts.md`](writing-prompts.md) — when it belongs in standing
+  *policy* rather than a loaded skill, and how that text is written.
 - [`built-in-skills.ts`](../packages/agent-harness/src/built-in-skills.ts) — the
   live exemplar.
 - [`SECURITY.md`](SECURITY.md) — the trust boundaries a skill body must respect.
