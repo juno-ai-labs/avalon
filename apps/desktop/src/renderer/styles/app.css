@@ -1960,7 +1960,6 @@ pre {
 .copy-detail { align-items: flex-start; display: flex; gap: 3px; min-width: 0; }
 .copy-detail > span { display: block; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .copy-detail .icon-button { height: 20px; width: 20px; }
-.email-detail > span { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
 .rail-variant-body { padding: 10px 11px 20px; }
 .rail-toolbar,
 .run-filter { align-items: center; background: #292a26; border-radius: 6px; display: inline-flex; gap: 1px; margin-bottom: 9px; padding: 2px; }
