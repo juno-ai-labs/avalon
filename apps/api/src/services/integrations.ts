@@ -60,7 +60,7 @@ import {
 } from "@avalon/connectors";
 import { z } from "zod";
 import type { Env } from "../env";
-import { HYPERSIGHT_MODEL, numericEnv } from "../env";
+import { numericEnv } from "../env";
 import { encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -72,6 +72,7 @@ import {
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
+import { resolveAgentModelRouting } from "./agent-model-flags";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
@@ -783,12 +784,21 @@ export async function classifyWorkstreamMessage(
     activeTask: boolean;
     connectorMentions: string[];
     recentMessages: AddressingContextMessage[];
+    // Required, not optional: `workspaceId` is the rollout bucketing key, and
+    // omitting it would drop this classifier into the default bucket while the
+    // rest of its workspace ran on a rolled-out variant.
+    workspaceId: string;
+    workstreamId: string;
   },
 ): Promise<AddressingClassification> {
+  const routing = await resolveAgentModelRouting(env, "addressing_classifier", {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+  });
   return classifyAddressing({
     apiKey: env.OPENROUTER_API_KEY,
-    model: env.OPENROUTER_CLASSIFIER_MODEL,
-    fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
+    model: routing.model,
+    fallbackModels: routing.fallbackModels,
     message: input.message,
     activeTask: input.activeTask,
     connectorMentions: input.connectorMentions,
@@ -861,6 +871,10 @@ export async function compileAutomationDraft(
     input.attachmentIds ?? [],
   );
   const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
+  const routing = await resolveAgentModelRouting(env, "automation_compiler", {
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+  });
   const inferenceLogger = createAgentInferenceLogger(env, {
     workspaceId: input.workspaceId,
     requestId: input.requestId,
@@ -870,10 +884,10 @@ export async function compileAutomationDraft(
   try {
     return await compileAutomation({
       apiKey: env.OPENROUTER_API_KEY,
-      model: env.OPENROUTER_AUTOMATION_MODEL,
+      model: routing.model,
       workspaceId: input.workspaceId,
       userId: input.userId,
-      fallbackModels: splitModels(env.OPENROUTER_FALLBACK_MODELS),
+      fallbackModels: routing.fallbackModels,
       messages: input.messages,
       ...(latestUserAttachmentParts.length > 0 ? { latestUserAttachmentParts } : {}),
       currentDraft: input.currentDraft ?? null,
@@ -923,7 +937,7 @@ export async function compileAutomationDraft(
       stage: "failed",
       schema_name: "automation_draft",
       provider: "openrouter",
-      model: env.OPENROUTER_AUTOMATION_MODEL,
+      model: routing.model,
       error_name: error instanceof Error ? error.name : "UnknownError",
       failure_code: compilerFailure?.code ?? (providerFailure ? "provider_failure" : error instanceof z.ZodError ? "validation_failure" : "unknown_failure"),
       failure_kind: compilerFailure?.kind ?? (providerFailure ? "provider" : error instanceof z.ZodError ? "validation" : "unknown"),
@@ -1518,6 +1532,11 @@ export async function runWorkstreamHarness(
     await publishEvent(event);
   };
 
+  const modelRouting = await resolveAgentModelRouting(env, hyperSightRun ? "hypersight" : "workstream", {
+    workspaceId: input.workspaceId,
+    workstreamId: input.workstreamId,
+  });
+
   if (await isHarnessStopped(env, input.harnessRunId)) stopController.abort("stopped_by_user");
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
@@ -1537,8 +1556,8 @@ export async function runWorkstreamHarness(
     outcome = await runHarness({
       config: {
         apiKey: env.OPENROUTER_API_KEY,
-        primaryModel: hyperSightRun ? HYPERSIGHT_MODEL : env.OPENROUTER_PRIMARY_MODEL,
-        fallbackModels: hyperSightRun ? [] : splitModels(env.OPENROUTER_FALLBACK_MODELS),
+        primaryModel: modelRouting.model,
+        fallbackModels: modelRouting.fallbackModels,
         appUrl: env.PUBLIC_API_BASE_URL,
         appName: "Avalon",
         maxIterations: runLimits.maxIterations,
@@ -2510,6 +2529,10 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         }
 
         let childText = "";
+        const childModelRouting = await resolveAgentModelRouting(options.env, "inline_child", {
+          workspaceId: childInput.workspaceId,
+          workstreamId: childInput.workstreamId,
+        });
         const childInferenceLogger = createAgentInferenceLogger(options.env, {
           workspaceId: childInput.workspaceId,
           requestId: childInput.harnessRunId,
@@ -2520,8 +2543,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
         const outcome = await runHarness({
           config: {
             apiKey: options.env.OPENROUTER_API_KEY,
-            primaryModel: options.env.OPENROUTER_PRIMARY_MODEL,
-            fallbackModels: splitModels(options.env.OPENROUTER_FALLBACK_MODELS),
+            primaryModel: childModelRouting.model,
+            fallbackModels: childModelRouting.fallbackModels,
             appUrl: options.env.PUBLIC_API_BASE_URL,
             appName: "Avalon",
             maxIterations: limits.maxIterations,
@@ -3263,10 +3286,6 @@ async function loadToolReplayOutput(
     // The D1 summary is a safe fallback when a payload is missing, damaged, or stalls.
     return null;
   }
-}
-
-function splitModels(value: string): string[] {
-  return value.split(",").map((model) => model.trim()).filter(Boolean);
 }
 
 async function loadHarnessTools(
