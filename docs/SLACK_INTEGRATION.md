@@ -99,6 +99,25 @@ continues that task but marks the installation for reconnect before accepting la
 
 Suspended members and revoked links cannot start or continue tasks. A user may link separately in every connected Slack team.
 
+### Work stream attribution
+
+A work stream started from Slack records the Avalon member the Slack author resolves to as its
+creator, and adds them as a participant. Slack does not decide that mapping on its own: it
+uses the shared connector actor identity described in
+[the connector document](CONNECTORS.md#actor-identity-and-work-stream-attribution), which
+every agent connector uses. Slack contributes the `users.info` profile — including the email
+that feeds the `verified_email` step — and records the resolved mapping for later work.
+
+Slack adds one provider-specific mapping of its own: an explicit claim credits the claiming
+member when they are the same Slack author who started the task. A claim by a different Slack
+member makes that member a participant rather than the creator. When a mapping only arrives
+later — the member links their account, or joins Avalon after the task ran — the earlier
+ownerless work streams of their Slack sessions are credited to them then, and an existing
+creator is never rewritten.
+
+As everywhere else, attribution is not authorization: an unlinked author's task still runs
+with the workspace principal, and the opening message keeps its external Slack actor.
+
 ## Agent sessions and delivery
 
 A Slack root DM or root mention creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp. It maps to exactly one durable Avalon workstream. Human replies in that Slack thread add messages to the same workstream without requiring another `@Avalon` mention. Avalon ignores messages outside its session threads and does not replay or import the rest of the Slack conversation.
