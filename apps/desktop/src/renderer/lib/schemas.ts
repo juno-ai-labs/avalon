@@ -1,3 +1,4 @@
+import { AutomationPluginIconSchema } from '@avalon/contracts';
 import { z } from 'zod';
 
 const scopeSchema = z.enum(['you', 'workspace']);
@@ -91,6 +92,13 @@ export const toolEventSchema = z
     status: z.enum(['started', 'completed', 'failed', 'ambiguous']),
     durationMs: z.number().optional(),
     toolType: z.string().optional(),
+    plugin: z
+      .object({
+        pluginId: z.string(),
+        displayName: z.string(),
+        icon: AutomationPluginIconSchema,
+      })
+      .optional(),
     input: z.unknown().optional(),
     output: z.unknown().optional(),
   })

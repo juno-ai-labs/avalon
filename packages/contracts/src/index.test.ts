@@ -377,21 +377,32 @@ describe("boundary contracts", () => {
     });
     expect(request.defaultPluginIds).toHaveLength(25);
     expect(request.resourceIds).toEqual([]);
+    // A row is attributed to the one plugin that owns its tool, never to a set.
     const activity = AutomationDraftStreamEventSchema.parse({
       type: "tool",
       toolCallId: "tool-1",
-      name: "automation_plugins_list",
-      summary: "Loaded plugins",
+      name: "Reviewed Service 0",
+      summary: "Read the authorized service",
       status: "completed",
-      plugins: recommendations.map((plugin, index) => ({
-        pluginId: plugin.pluginId,
-        displayName: `Service ${index}`,
-        icon: "plug",
-      })),
+      plugin: { pluginId: recommendations[0]!.pluginId, displayName: "Service 0", icon: "plug" },
     });
     expect(activity.type).toBe("tool");
     if (activity.type !== "tool") throw new Error("Expected tool activity");
-    expect(activity.plugins).toHaveLength(25);
+    expect(activity.plugin).toEqual({
+      pluginId: recommendations[0]!.pluginId,
+      displayName: "Service 0",
+      icon: "plug",
+    });
+
+    const unattributed = AutomationDraftStreamEventSchema.parse({
+      type: "tool",
+      toolCallId: "tool-2",
+      name: "Searched the public web",
+      summary: "Web search completed",
+      status: "completed",
+    });
+    if (unattributed.type !== "tool") throw new Error("Expected tool activity");
+    expect(unattributed.plugin).toBeNull();
   });
 
   it("validates automation-scoped durable table declarations and natural keys", () => {

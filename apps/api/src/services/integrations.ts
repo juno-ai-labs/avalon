@@ -36,8 +36,10 @@ import {
 } from "@avalon/agent-harness";
 import {
   ElicitationSchema,
+  ModelPluginIdSchema,
   type AddressingClassification,
   type AutomationDraft,
+  type AutomationPluginActivity,
   type AutomationPluginIcon,
   type ConnectorPollWorkflowInput,
   type ExecutionPrincipal,
@@ -5147,9 +5149,33 @@ async function persistToolTranscriptMessage(
   ]);
 }
 
+/**
+ * The connector that owns a tool call, shaped for the transcript row that
+ * renders it. Avalon-owned tools carry no connection, so they resolve to null
+ * and their row falls back to the generic tool icon.
+ */
+function toolInvocationOwningPlugin(row: Record<string, unknown>): AutomationPluginActivity | null {
+  if (row.connection_id == null) return null;
+  const pluginId = ModelPluginIdSchema.safeParse(row.owner_model_plugin_id);
+  if (!pluginId.success) return null;
+  const displayName = String(row.owner_display_name ?? "");
+  if (!displayName) return null;
+  return {
+    pluginId: pluginId.data,
+    displayName,
+    icon: connectorAutomationPluginIcon(String(row.owner_connector_type ?? ""), displayName),
+  };
+}
+
 async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: string): Promise<ToolInvocation | null> {
   const row = await env.DB.prepare(
-    `SELECT * FROM tool_invocations WHERE harness_run_id = ? AND tool_call_id = ?`,
+    `SELECT invocation.*,
+            owner.connector_type AS owner_connector_type,
+            owner.display_name AS owner_display_name,
+            owner.model_plugin_id AS owner_model_plugin_id
+       FROM tool_invocations invocation
+       LEFT JOIN connector_connections owner ON owner.id = invocation.connection_id
+      WHERE invocation.harness_run_id = ? AND invocation.tool_call_id = ?`,
   ).bind(harnessRunId, toolCallId).first<Record<string, unknown>>();
   if (!row) return null;
   const error = parseJson<{ code: string; message: string } | null>(row.error_json, null);
@@ -5159,6 +5185,7 @@ async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: st
     toolCallId: String(row.tool_call_id),
     toolName: String(row.tool_name),
     connectionId: row.connection_id == null ? null : String(row.connection_id),
+    plugin: toolInvocationOwningPlugin(row),
     status: String(row.status) as ToolInvocation["status"],
     inputSummary: summarize(parseJson(row.input_json, {}), 1_000),
     outputSummary: row.output_summary == null ? null : summarize(String(row.output_summary), 4_000),
@@ -5214,6 +5241,7 @@ export const __integrationTesting = {
   childRunLimits,
   installInlineChildAgentTool,
   loadHarnessTools,
+  loadToolInvocation,
   loadTriggerFencedTranscriptMessages,
   projectModelProtocolTranscript,
   projectElicitationResponseMessage,

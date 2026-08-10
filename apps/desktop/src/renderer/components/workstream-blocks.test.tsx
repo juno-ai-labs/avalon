@@ -577,7 +577,7 @@ describe('MessageBlock tool rows', () => {
       name: 'Reviewed Google Drive · Work',
       summary: 'Found the authorized Drive folder',
       status: 'completed',
-      plugins: [{ pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' }],
+      plugin: { pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' },
     })} />);
 
     expect(screen.getByRole('img', { name: 'Plugin: Google Drive · Work' })).toBeVisible();
@@ -590,7 +590,6 @@ describe('MessageBlock tool rows', () => {
       name: 'Searched the public web',
       summary: 'Web search completed',
       status: 'completed',
-      plugins: [],
     })} />);
 
     expect(screen.queryByRole('img')).toBeNull();
