@@ -1,6 +1,9 @@
 <!--
 The full specification is docs/pull-requests.md. Read it before filling this in.
 
+Open this pull request ready for review — this repository does not use draft
+pull requests. If the change isn't ready for a reviewer, leave it on the branch.
+
 The five sections below are required and always keep their headings. If one has
 genuinely nothing to say, write `N/A — <reason>` rather than deleting it.
 
