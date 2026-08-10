@@ -18,6 +18,7 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
 import {
   isCanonicalPersonMention,
@@ -1202,7 +1203,7 @@ export class WorkstreamService {
     return (result.results ?? []).map((row) => ({
       id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
       resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
-      title: String(row.title), mimeType: row.mime_type == null ? null : String(row.mime_type), canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+      title: truncateUtf16Safe(String(row.title), 300), mimeType: row.mime_type == null ? null : String(row.mime_type), canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
       watchEnabled: Number(row.watch_enabled) === 1, watchStatus: String(row.watch_status), lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),
       createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     }));
@@ -1300,8 +1301,9 @@ export class WorkstreamService {
        WHERE s.workstream_id = ? ${includeResolved ? "" : "AND s.status = 'pending'"} ORDER BY s.created_at DESC`,
     ).bind(id).all<Record<string, unknown>>();
     return (result.results ?? []).map((row) => ({
-      id: String(row.id), activityId: String(row.activity_id), workstreamId: String(row.workstream_id), title: String(row.title), summary: String(row.summary),
-      confidence: Number(row.confidence), reason: String(row.reason), status: String(row.status), createdAt: String(row.created_at), resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
+      id: String(row.id), activityId: String(row.activity_id), workstreamId: String(row.workstream_id),
+      title: truncateUtf16Safe(String(row.title), 300), summary: truncateUtf16Safe(String(row.summary), 2_000),
+      confidence: Number(row.confidence), reason: truncateUtf16Safe(String(row.reason), 1_200), status: String(row.status), createdAt: String(row.created_at), resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
     }));
   }
 
@@ -1354,7 +1356,7 @@ export class WorkstreamService {
           content_ref, metadata_json, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT DO NOTHING`,
-      ).bind(id, this.auth.workspaceId, activity.connection_id, activity.resource_type ?? "activity", activity.provider, activity.provider_resource_id, activity.title, activity.payload_ref, activity.metadata_json ?? "{}", at, at).run();
+      ).bind(id, this.auth.workspaceId, activity.connection_id, activity.resource_type ?? "activity", activity.provider, activity.provider_resource_id, truncateUtf16Safe(String(activity.title), 300), activity.payload_ref, activity.metadata_json ?? "{}", at, at).run();
       resource = await this.env.DB.prepare(ACTIVITY_RESOURCE_LOOKUP_SQL).bind(
         this.auth.workspaceId,
         activity.connection_id,
