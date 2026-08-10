@@ -29,12 +29,53 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import type { AutomationRunSummary } from '../lib/types';
+import type { AutomationActivitySource, AutomationRunSummary, WorkstreamConnection } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from '../components/inspector-rail';
 import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
+
+function ActivitySourceSelectList({
+  sources,
+  connections,
+  selected,
+  scope,
+  onChange,
+}: {
+  sources: AutomationActivitySource[];
+  connections: WorkstreamConnection[];
+  selected: Record<string, string>;
+  scope: 'You' | 'Workspace';
+  onChange: (bindings: Record<string, string>) => void;
+}): React.JSX.Element | null {
+  if (!sources.length) return null;
+  return (
+    <div className="automation-source-fields">
+      {sources.map((source) => {
+        const candidates = connections.filter((connection) =>
+          connection.status === 'healthy'
+          && connection.connectorType === source.connectorType
+          && (scope === 'You' || connection.scope === 'workspace'));
+        return (
+          <label className="form-field" key={source.bindingKey}>
+            <span>{source.bindingKey.replaceAll('_', ' ')}</span>
+            <select
+              aria-label={`Connector for ${source.bindingKey}`}
+              onChange={(event) => onChange({ ...selected, [source.bindingKey]: event.target.value })}
+              value={selected[source.bindingKey] ?? ''}
+            >
+              <option value="">Select a connection…</option>
+              {candidates.map((connection) => (
+                <option key={connection.id} value={connection.modelPluginId}>{connection.displayName}</option>
+              ))}
+            </select>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 
 function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void }): React.JSX.Element {
   return (
@@ -66,6 +107,8 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const [shareOpen, setShareOpen] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [instructions, setInstructions] = useState('');
+  const [editSourcePluginIds, setEditSourcePluginIds] = useState<Record<string, string>>({});
+  const [adoptSourcePluginIds, setAdoptSourcePluginIds] = useState<Record<string, string>>({});
   const [automationEmailCopyState, setAutomationEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => () => closeRail(), [closeRail, id]);
@@ -86,10 +129,35 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     enabled: Boolean(api && id),
     staleTime: 10_000,
   });
+  const connections = useQuery({
+    queryKey: ['connections'],
+    queryFn: ({ signal }) => api!.getConnections(signal),
+    enabled: Boolean(api),
+    staleTime: 10_000,
+  });
 
   useEffect(() => {
-    if (automation.data) setInstructions(automation.data.instructions);
+    if (automation.data) {
+      setInstructions(automation.data.instructions);
+      setEditSourcePluginIds(automation.data.activitySourcePluginIds);
+    }
   }, [automation.data]);
+
+  useEffect(() => {
+    const detail = automation.data;
+    if (!detail?.templateUpdate || !connections.data) return;
+    const next: Record<string, string> = {};
+    for (const source of detail.templateUpdate.activitySources) {
+      const candidates = connections.data.filter((connection) =>
+        connection.status === 'healthy' && connection.connectorType === source.connectorType);
+      const currentPluginId = detail.activitySourcePluginIds[source.bindingKey];
+      const current = candidates.find((connection) => connection.modelPluginId === currentPluginId);
+      const suggested = candidates.find((connection) => connection.modelPluginId === source.suggestedPluginId);
+      const chosen = current ?? suggested ?? (candidates.length === 1 ? candidates[0] : undefined);
+      if (chosen) next[source.bindingKey] = chosen.modelPluginId;
+    }
+    setAdoptSourcePluginIds(next);
+  }, [automation.data, connections.data]);
 
   const statusMutation = useMutation({
     mutationFn: (action: 'pause' | 'resume') => api!.setAutomationStatus(id, action),
@@ -106,7 +174,10 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     },
   });
   const update = useMutation({
-    mutationFn: () => api!.updateAutomation(id, { instructions: instructions.trim() }),
+    mutationFn: () => api!.updateAutomation(id, {
+      instructions: instructions.trim(),
+      activitySourcePluginIds: editSourcePluginIds,
+    }),
     onSuccess: (updated) => {
       queryClient.setQueryData(['automation', id], updated);
       setEditOpen(false);
@@ -116,7 +187,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     mutationFn: () => api!.shareAutomation(id),
   });
   const adoptUpdate = useMutation({
-    mutationFn: (versionId: string) => api!.adoptAutomationUpdate(id, versionId),
+    mutationFn: (versionId: string) => api!.adoptAutomationUpdate(id, versionId, adoptSourcePluginIds),
     onSuccess: (updated) => {
       queryClient.setQueryData(['automation', id], updated);
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
@@ -276,7 +347,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
             <Button onClick={() => setUpdateOpen(false)}>Keep version {detail.versionNumber}</Button>
             <Button
               className="button-primary"
-              disabled={adoptUpdate.isPending}
+              disabled={adoptUpdate.isPending || detail.templateUpdate.activitySources.some((source) => !adoptSourcePluginIds[source.bindingKey])}
               onClick={() => adoptUpdate.mutate(detail.templateUpdate!.versionId)}
             >
               {adoptUpdate.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
@@ -333,6 +404,13 @@ export function AutomationOverviewScreen(): React.JSX.Element {
                 </div>
               )}
             </dl>
+            <ActivitySourceSelectList
+              connections={connections.data ?? []}
+              onChange={setAdoptSourcePluginIds}
+              selected={adoptSourcePluginIds}
+              scope={detail.executionScope}
+              sources={detail.templateUpdate.activitySources}
+            />
             {detail.instructions === detail.templateUpdate.instructions && (
               <p className="automation-update-note">Instructions are unchanged; this version updates the trigger or output settings.</p>
             )}
@@ -346,7 +424,11 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         footer={
           <>
             <Button onClick={() => setEditOpen(false)}>Cancel</Button>
-            <Button className="button-primary" disabled={!instructions.trim() || update.isPending} onClick={() => update.mutate()}>
+            <Button
+              className="button-primary"
+              disabled={!instructions.trim() || update.isPending || detail.activitySources.some((source) => !editSourcePluginIds[source.bindingKey])}
+              onClick={() => update.mutate()}
+            >
               {update.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Save changes
             </Button>
           </>
@@ -356,6 +438,13 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         title={`Edit ${detail.name}`}
       >
         <label className="form-field"><span>Instructions</span><textarea onChange={(event) => setInstructions(event.target.value)} rows={12} value={instructions} /></label>
+        <ActivitySourceSelectList
+          connections={connections.data ?? []}
+          onChange={setEditSourcePluginIds}
+          selected={editSourcePluginIds}
+          scope={detail.executionScope}
+          sources={detail.activitySources}
+        />
         {update.error && <InlineError>{update.error.message}</InlineError>}
       </Modal>
 

@@ -37,6 +37,7 @@ import { desktopBridge } from '../lib/platform';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import type {
+  AutomationActivitySource,
   AutomationDraftQuestion,
   AutomationDraftResponse,
   Message,
@@ -249,6 +250,59 @@ function PluginDefaults({
   );
 }
 
+function ActivitySourceBindings({
+  connections,
+  sources,
+  selected,
+  scope,
+  onChange,
+}: {
+  connections: WorkstreamConnection[];
+  sources: AutomationActivitySource[];
+  selected: Record<string, string>;
+  scope: 'you' | 'workspace';
+  onChange: (bindings: Record<string, string>) => void;
+}): React.JSX.Element | null {
+  if (!sources.length) return null;
+  const candidates = eligiblePlugins(connections, scope);
+  return (
+    <section className="automation-plugin-defaults" aria-label="Activity sources">
+      <header>
+        <div><strong>Activity sources</strong><small>Each trigger listens only to the selected connector connection.</small></div>
+        <span>{sources.filter((source) => selected[source.bindingKey]).length} / {sources.length}</span>
+      </header>
+      <ul>
+        {sources.map((source) => {
+          const sourceCandidates = candidates.filter((connection) => connection.connectorType === source.connectorType);
+          return (
+            <li key={source.bindingKey}>
+              <label className="automation-activity-source">
+                <span className="automation-plugin-copy">
+                  <strong>{source.bindingKey.replaceAll('_', ' ')}</strong>
+                  <small>{source.connectorType}</small>
+                </span>
+                <select
+                  aria-label={`Connector for ${source.bindingKey}`}
+                  onChange={(event) => onChange({ ...selected, [source.bindingKey]: event.target.value })}
+                  value={selected[source.bindingKey] ?? ''}
+                >
+                  <option value="">Select a connection…</option>
+                  {sourceCandidates.map((connection) => (
+                    <option key={connection.id} value={connection.modelPluginId}>
+                      {connection.displayName} · {connection.scope === 'workspace' ? 'Workspace' : 'Personal'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!sourceCandidates.length && <p className="automation-plugin-empty">Connect an eligible {source.connectorType} account to use this trigger.</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function automationQuestionMessage(
   assistantMessage: string | undefined,
   question: AutomationDraftQuestion,
@@ -272,10 +326,12 @@ function DraftSummary({
   creating,
   connections,
   defaultPluginIds,
+  activitySourcePluginIds,
   notes,
   selectedResourceIds,
   slackDeliveryConnectionId,
   onDefaultPluginsChange,
+  onActivitySourcesChange,
   onResourcesChange,
   onSlackDeliveryChange,
   onCreate,
@@ -284,10 +340,12 @@ function DraftSummary({
   creating: boolean;
   connections: WorkstreamConnection[];
   defaultPluginIds: string[];
+  activitySourcePluginIds: Record<string, string>;
   notes: NoteSummary[];
   selectedResourceIds: string[];
   slackDeliveryConnectionId: string;
   onDefaultPluginsChange: (pluginIds: string[]) => void;
+  onActivitySourcesChange: (bindings: Record<string, string>) => void;
   onResourcesChange: (resourceIds: string[]) => void;
   onSlackDeliveryChange: (connectionId: string) => void;
   onCreate: () => void;
@@ -295,6 +353,7 @@ function DraftSummary({
   if (!draft.summary) return null;
   const summary = draft.summary;
   const recommendations = summary.recommendedPlugins ?? [];
+  const activitySources = summary.activitySources ?? [];
   return (
     <section className="automation-summary-card" aria-labelledby="automation-summary-title">
       <header>
@@ -313,6 +372,13 @@ function DraftSummary({
         recommendations={recommendations}
         scope={summary.scope}
         selected={defaultPluginIds}
+      />
+      <ActivitySourceBindings
+        connections={connections}
+        onChange={onActivitySourcesChange}
+        scope={summary.scope}
+        selected={activitySourcePluginIds}
+        sources={activitySources}
       />
       <section className="automation-plugin-defaults automation-note-resources" aria-label="Note resources">
         <header>
@@ -361,7 +427,11 @@ function DraftSummary({
       )}
       <footer>
         <span>Plugin defaults improve startup speed but never widen runtime authority.</span>
-        <Button className="button-primary" disabled={creating} onClick={onCreate}>
+        <Button
+          className="button-primary"
+          disabled={creating || activitySources.some((source) => !activitySourcePluginIds[source.bindingKey])}
+          onClick={onCreate}
+        >
           {creating ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Create automation
         </Button>
       </footer>
@@ -386,9 +456,11 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
+  const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
   const [slackDeliveryConnectionId, setSlackDeliveryConnectionId] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
+  const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
   const attachmentDraft = useFileAttachments(api);
 
@@ -450,6 +522,27 @@ export function NewAutomationScreen(): React.JSX.Element {
     setDefaultPluginIds(recommendations.map((item) => item.pluginId).filter((pluginId) => eligible.has(pluginId)));
     setInitializedRecommendations(key);
   }, [connections.data, draft, initializedRecommendations]);
+
+  const visibleActivitySources = selectedTemplate?.activitySources ?? draft?.summary?.activitySources ?? [];
+  const activitySourceScope = selectedTemplate ? 'you' : draft?.summary?.scope ?? 'you';
+  const activitySourceInitializationKey = selectedTemplate
+    ? `template:${selectedTemplate.id}:${selectedTemplate.latestVersion}`
+    : draft
+      ? `draft:${draft.draftId}:${visibleActivitySources.map((source) => source.bindingKey).join(',')}`
+      : '';
+  useEffect(() => {
+    if (!activitySourceInitializationKey || initializedActivitySources === activitySourceInitializationKey || !connections.data) return;
+    const candidates = eligiblePlugins(connections.data, activitySourceScope);
+    const next: Record<string, string> = {};
+    for (const source of visibleActivitySources) {
+      const sourceCandidates = candidates.filter((connection) => connection.connectorType === source.connectorType);
+      const suggested = sourceCandidates.find((connection) => connection.modelPluginId === source.suggestedPluginId);
+      const chosen = suggested ?? (sourceCandidates.length === 1 ? sourceCandidates[0] : undefined);
+      if (chosen) next[source.bindingKey] = chosen.modelPluginId;
+    }
+    setActivitySourcePluginIds(next);
+    setInitializedActivitySources(activitySourceInitializationKey);
+  }, [activitySourceInitializationKey, activitySourceScope, connections.data, initializedActivitySources, visibleActivitySources]);
 
   const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
   useEffect(() => {
@@ -577,8 +670,8 @@ export function NewAutomationScreen(): React.JSX.Element {
 
   const create = useMutation({
     mutationFn: () => slackDeliveryConnectionId
-      ? api!.createAutomation(draft!.draftId, defaultPluginIds, selectedResourceIds, slackDeliveryConnectionId)
-      : api!.createAutomation(draft!.draftId, defaultPluginIds, selectedResourceIds),
+      ? api!.createAutomation(draft!.draftId, defaultPluginIds, activitySourcePluginIds, selectedResourceIds, slackDeliveryConnectionId)
+      : api!.createAutomation(draft!.draftId, defaultPluginIds, activitySourcePluginIds, selectedResourceIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -586,7 +679,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   });
 
   const subscribe = useMutation({
-    mutationFn: () => api!.subscribeTemplate(selectedTemplate!.id, defaultPluginIds),
+    mutationFn: () => api!.subscribeTemplate(selectedTemplate!.id, defaultPluginIds, activitySourcePluginIds),
     onSuccess: (automation) => {
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       void navigate(`/automations/${automation.id}`);
@@ -655,6 +748,8 @@ export function NewAutomationScreen(): React.JSX.Element {
             onSelect={(template) => {
               setTemplatesOpen(false);
               setDefaultPluginIds([]);
+              setActivitySourcePluginIds({});
+              setInitializedActivitySources('');
               setSelectedTemplate(template);
             }}
           />
@@ -673,7 +768,18 @@ export function NewAutomationScreen(): React.JSX.Element {
                   scope="you"
                   selected={defaultPluginIds}
                 />
-                <Button className="button-primary" disabled={subscribe.isPending} onClick={() => subscribe.mutate()}>
+                <ActivitySourceBindings
+                  connections={connections.data ?? []}
+                  onChange={setActivitySourcePluginIds}
+                  scope="you"
+                  selected={activitySourcePluginIds}
+                  sources={selectedTemplate.activitySources}
+                />
+                <Button
+                  className="button-primary"
+                  disabled={subscribe.isPending || selectedTemplate.activitySources.some((source) => !activitySourcePluginIds[source.bindingKey])}
+                  onClick={() => subscribe.mutate()}
+                >
                   {subscribe.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Use template
                 </Button>
               </section>
@@ -725,12 +831,14 @@ export function NewAutomationScreen(): React.JSX.Element {
                     connections={connections.data ?? []}
                     creating={create.isPending}
                     defaultPluginIds={defaultPluginIds}
+                    activitySourcePluginIds={activitySourcePluginIds}
                     notes={compatibleNotes}
                     selectedResourceIds={selectedResourceIds}
                     slackDeliveryConnectionId={slackDeliveryConnectionId}
                     draft={draft}
                     onCreate={() => create.mutate()}
                     onDefaultPluginsChange={setDefaultPluginIds}
+                    onActivitySourcesChange={setActivitySourcePluginIds}
                     onResourcesChange={setSelectedResourceIds}
                     onSlackDeliveryChange={setSlackDeliveryConnectionId}
                   />

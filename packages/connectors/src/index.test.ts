@@ -50,7 +50,7 @@ describe("connectors", () => {
         },
         supportedScopes: ["workspace"],
         oauthRequired: true,
-        activityTypes: [],
+        activityTriggers: [],
         resourceTypes: [],
         tools: [],
         supportsWatches: false,

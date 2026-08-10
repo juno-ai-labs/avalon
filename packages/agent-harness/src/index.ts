@@ -3,6 +3,7 @@ import type {
   AutomationPluginActivity,
   AutomationPluginIcon,
   AutomationDraft,
+  ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
   HarnessFailureCode,
   ToolDefinition
@@ -774,6 +775,8 @@ const automationDraftSubmissionJsonSchema = {
           summary: { type: ["string", "null"] },
           intervalSeconds: { type: ["integer", "null"], minimum: 60 },
           connectorType: { type: ["string", "null"] },
+          sourceBindingKey: { type: ["string", "null"] },
+          suggestedSourcePluginId: { type: ["string", "null"] },
           eventTypes: { type: ["array", "null"], items: { type: "string" } },
           deterministicFilters: {
             type: ["string", "null"],
@@ -793,6 +796,8 @@ const automationDraftSubmissionJsonSchema = {
           "summary",
           "intervalSeconds",
           "connectorType",
+          "sourceBindingKey",
+          "suggestedSourcePluginId",
           "eventTypes",
           "deterministicFilters",
           "deterministicPrefilter",
@@ -879,6 +884,7 @@ export interface AutomationCreatorPluginCatalogEntry {
   scope: "personal" | "workspace";
   searchAliases: string[];
   systemMessage: string;
+  activityTriggers: ConnectorActivityTriggerDescriptor[];
   tools: Array<{
     name: string;
     /** Canonical adapter identity; `name` remains the exact model-facing wire name. */
@@ -890,6 +896,24 @@ export interface AutomationCreatorPluginCatalogEntry {
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
+}
+
+function renderAutomationActivityTriggerGuidance(
+  triggers: ConnectorActivityTriggerDescriptor[],
+): string {
+  if (!triggers.length) return "";
+  const lines = triggers.map((trigger) => {
+    const filters = trigger.filterFields.length
+      ? ` Filters: ${trigger.filterFields.map((field) =>
+          `${field.key} (${field.valueType}; ${field.label}): ${field.description}`).join("; ")}`
+      : "";
+    return `- ${trigger.eventType}: ${trigger.label}. ${trigger.description}${filters}`;
+  });
+  return [
+    "# Automation activity triggers",
+    "Use only these exact normalized event types and declared deterministic filter fields.",
+    ...lines,
+  ].join("\n");
 }
 
 export type AutomationCompilerFailureCode =
@@ -1102,7 +1126,9 @@ export async function compileAutomation(input: {
     displayName: plugin.displayName,
     searchAliases: plugin.searchAliases,
     description: plugin.description,
-    systemMessage: plugin.systemMessage,
+    systemMessage: [plugin.systemMessage, renderAutomationActivityTriggerGuidance(plugin.activityTriggers)]
+      .filter(Boolean)
+      .join("\n\n"),
     tools: plugin.tools.flatMap((tool) => tool.execute
       ? [{
           definition: {
@@ -1120,6 +1146,7 @@ export async function compileAutomation(input: {
     explicit: false,
   }));
   const draftState: { submitted: AutomationDraft | null } = { submitted: null };
+  const loadedAutomationPluginIds = new Set<string>();
   let submissionReminderSent = false;
   let elicitationReminderSent = false;
   let modelTimeMs = 0;
@@ -1215,6 +1242,17 @@ export async function compileAutomation(input: {
             : {}),
         });
         if (!parsed.success) throw parsed.error;
+        if (parsed.data.ready) {
+          const sourcePluginIds = parsed.data.triggers.flatMap((trigger) =>
+            trigger.type === "connector_activity" || trigger.type === "semantic_activity" || trigger.type === "webhook"
+              ? trigger.suggestedSourcePluginId ? [trigger.suggestedSourcePluginId] : []
+              : []);
+          const unloadedPluginId = [...sourcePluginIds, ...parsed.data.recommendedPlugins.map((plugin) => plugin.pluginId)]
+            .find((pluginId) => !loadedAutomationPluginIds.has(pluginId));
+          if (unloadedPluginId) {
+            throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready automation draft`);
+          }
+        }
         draftState.submitted = parsed.data;
         await input.onDiagnostic?.({
           stage: "complete",
@@ -1364,6 +1402,10 @@ export async function compileAutomation(input: {
           plugins,
         });
       } else if (event.type === "tool_completed") {
+        if (event.toolName === "load_plugin") {
+          const loaded = String(asRecord(event.result.output).loaded ?? "");
+          if (loaded) loadedAutomationPluginIds.add(loaded);
+        }
         const runtimePlugin = event.pluginId.startsWith("automation:")
           ? automationPluginActivities(catalog, new Set([event.pluginId.slice("automation:".length)]))
           : [];
@@ -1509,6 +1551,7 @@ function executeAutomationCreatorDiscoveryTool(
         scope: plugin.scope,
         aliases: plugin.searchAliases,
         tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability, mode: tool.mode })),
+        activityTriggerCount: plugin.activityTriggers.length,
       })),
     };
   }
@@ -1520,6 +1563,7 @@ function executeAutomationCreatorDiscoveryTool(
       description: plugin.description,
       aliases: plugin.searchAliases,
       tools: plugin.tools.map((tool) => ({ name: tool.name, description: tool.description, capability: tool.capability })),
+      activityTriggers: plugin.activityTriggers.map((trigger) => ({ eventType: trigger.eventType, label: trigger.label })),
     }).toLocaleLowerCase().includes(query));
     return {
       query,
@@ -1557,6 +1601,7 @@ function executeAutomationCreatorDiscoveryTool(
           idempotency: tool.idempotency ?? "safe",
           inputSchema: tool.inputSchema,
         })),
+        activityTriggers: plugin.activityTriggers,
       },
     } : { error: "plugin_not_found", pluginId };
   }
@@ -1668,6 +1713,8 @@ function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): u
       return {
         type: "connector_activity",
         connectorType: trigger.connectorType,
+        sourceBindingKey: trigger.sourceBindingKey,
+        suggestedSourcePluginId: trigger.suggestedSourcePluginId,
         eventTypes: trigger.eventTypes,
         deterministicFilters: parseJsonObject(trigger.deterministicFilters)
       };
@@ -1675,13 +1722,20 @@ function normalizeAutomationTrigger(value: unknown, defaultTimezone?: string): u
       return {
         type: "semantic_activity",
         connectorType: trigger.connectorType,
+        sourceBindingKey: trigger.sourceBindingKey,
+        suggestedSourcePluginId: trigger.suggestedSourcePluginId,
         deterministicPrefilter: parseJsonObject(trigger.deterministicPrefilter),
         condition: trigger.condition
       };
     case "resource_watch":
       return { type: "resource_watch", resourceId: trigger.resourceId };
     case "webhook":
-      return { type: "webhook", eventTypes: trigger.eventTypes };
+      return {
+        type: "webhook",
+        sourceBindingKey: trigger.sourceBindingKey,
+        suggestedSourcePluginId: trigger.suggestedSourcePluginId,
+        eventTypes: trigger.eventTypes,
+      };
     default:
       return value;
   }
