@@ -29,6 +29,7 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 8. Mention a workspace member who is not participating and confirm that no participant is added until the person accepts the confirmation prompt.
 9. Type `@` mentions in the composer and confirm each participant or connection Avalon recognizes is highlighted in the brand color as soon as its full name is typed or picked, while half-typed and unknown handles stay plain. Confirm the highlight tracks the caret, wrapping, and scrolling exactly, and that an IME composition still shows its in-flight text.
 10. Send that message and confirm the transcript keeps the same brand treatment: the person mention becomes an avatar chip and the connection mention becomes a label chip, both in the brand color, in human and agent messages alike. Confirm neither chip navigates, and that a connection named in text without a stored mention range stays plain.
+11. Force the work-stream detail request to fail — a route such as `#/workstreams/does-not-exist` is enough — and confirm **Work stream could not be opened** offers **Copy work-stream ID** from the top-right menu alongside **Try again**. The copied value is the identifier from the route, which is the only one available once the detail payload has failed.
 
 ## Desktop signup, invitations, and settings
 

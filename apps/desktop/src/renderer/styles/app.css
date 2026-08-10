@@ -784,6 +784,7 @@ pre {
 .screen-with-titlebar { height: 100%; position: relative; }
 .screen-drag-strip { height: 46px; left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
+.screen-state-actions { align-items: center; display: flex; gap: 2px; position: absolute; right: 10px; top: 9px; }
 .muted-notice { color: var(--muted); font-size: 11px; }
 
 /* Workspace settings */
