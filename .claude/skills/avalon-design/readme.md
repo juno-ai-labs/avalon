@@ -125,3 +125,15 @@ A dense, quiet, dark work surface — near-black with a green cast, one electric
 
 ### Fonts — substitution note
 The repository ships **no font binaries**. Inter and DM Serif Display are loaded here from Google Fonts, and the monospace stack resolves to the platform's SFMono-Regular. This matches the CSS font stacks in the source exactly, but if Avalon has licensed variable-font files, drop them into `assets/fonts/` and replace the `@import` in `tokens/fonts.css` with real `@font-face` rules.
+
+### Icons — substitution note
+`components/core/Icon.jsx` and every `guidelines/*.card.html` specimen mask
+glyphs from `unpkg.com/lucide-static` so this package runs without an npm
+install. **This is prototype-only.** The product itself has zero CDN
+dependencies — Content-Security-Policy on both the desktop app
+(`font-src 'self' data:`) and the site (`script-src 'self'; connect-src
+'none'`) would block it — and `lucide-react` in `apps/desktop`'s own
+`package.json` is the real, offline icon source. Before copying `Icon.jsx`
+into production code, swap the `CDN` constant for a local import from
+`lucide-react` (product) or vendor the specific `lucide-static` SVGs this
+package actually uses into `assets/`.

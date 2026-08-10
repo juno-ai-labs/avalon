@@ -16,7 +16,9 @@ export default tseslint.config(
       // Vendored Claude Design reference package, not application source.
       // It has its own adherence check — see .claude/skills/avalon-design/eslint.adherence.mjs
       // and the `lint:design-system` script — run separately from the app's quality gate.
-      ".claude/skills/**",
+      // Scoped to this one skill, not all of .claude/skills/, so any other
+      // skill's JS still gets the app's normal linting.
+      ".claude/skills/avalon-design/**",
     ],
   },
   eslint.configs.recommended,
