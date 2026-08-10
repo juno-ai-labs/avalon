@@ -2656,15 +2656,6 @@ pre {
   width: fit-content;
 }
 
-:is(.workstream-screen, .automation-chat-surface) .coworker-message {
-  margin-left: 0;
-  margin-right: auto;
-}
-
-:is(.workstream-screen, .automation-chat-surface) .coworker-message .human-message-content {
-  align-items: flex-start;
-}
-
 :is(.workstream-screen, .automation-chat-surface) .human-message.is-sending {
   background: #2b2c28;
   border-color: #343530;
@@ -2699,8 +2690,12 @@ pre {
   100% { transform: translateX(125%); }
 }
 
+/* Every person's turn sits on the right — the signed-in user's, a coworker's, and
+   one relayed in by a connector — so the transcript reads as people on one side
+   and Avalon on the other. Identity is carried by the header, not by the side. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
   gap: 5px;
+  justify-content: flex-end;
   margin-bottom: 4px;
 }
 
