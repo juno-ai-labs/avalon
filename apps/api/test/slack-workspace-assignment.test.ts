@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { encryptString } from "../src/lib/crypto";
+import { encryptString, sha256 } from "../src/lib/crypto";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamService } from "../src/services/workstream-service";
@@ -106,7 +106,7 @@ describe("Slack workspace workstream assignment", () => {
     expect(database.prepare(
       `SELECT user_id, participation_reason FROM workstream_participants
        WHERE workstream_id = 'workstream-ownerless'`,
-    ).get()).toEqual({ user_id: "user-taylor", participation_reason: "explicit" });
+    ).get()).toEqual({ user_id: "user-taylor", participation_reason: "creator" });
     expect(database.prepare(
       "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-ownerless'",
     ).get()).toEqual({ created_by_user_id: "user-taylor" });
@@ -263,50 +263,7 @@ describe("Slack workspace workstream assignment", () => {
 
   it("changes authority only after an explicit eligible claim", async () => {
     const database = migratedDatabase();
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES
-        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
-        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
-      INSERT INTO workspaces
-        (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
-              'user-owner', '2026-01-01', '2026-01-01');
-      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
-      VALUES
-        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
-        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-02-01');
-      INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-         display_name, encrypted_credentials, credential_iv, credential_key_version,
-         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
-         model_plugin_id)
-      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
-              'Slack', 'encrypted', 'iv', 1, '["slack.agent"]', 'healthy', '{}', '{}',
-              '2026-01-01', '2026-01-01', 'plugin_slack_workspace');
-      INSERT INTO workstreams
-        (id, workspace_id, title, objective, origin_type, created_by_user_id,
-         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
-      VALUES ('workstream-claim', 'workspace-slack', 'Investigate', 'Investigate',
-              'ad_hoc', NULL, 'needs_input', 1, '2026-01-01', '2026-01-01', '2026-01-01');
-      INSERT INTO slack_agent_sessions
-        (id, workspace_id, connection_id, linked_user_id, execution_scope,
-         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-         opening_client_message_id, workstream_id, invocation_kind, channel_type,
-         context_json, created_at, updated_at)
-      VALUES ('session-claim', 'workspace-slack', 'connection-slack', NULL, 'workspace',
-              'T123', 'U456', 'C123', '1.0', 'event:opening', 'workstream-claim',
-              'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
-      INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-claim', 'workspace-slack', 'workstream-claim', 'test', '{}',
-              'needs_input', '2026-01-01');
-      INSERT INTO elicitations
-        (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
-         options_json, minimum_selections, maximum_selections, target_user_id, status, created_at)
-      VALUES ('elicitation-claim', 'workspace-slack', 'workstream-claim', 'run-claim',
-              'Taylor must approve', 'text', '[]', 0, NULL, 'user-taylor', 'open', '2026-01-01');
-    `);
+    seedClaimableSession(database, "user-taylor");
     const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
     const session = database.prepare(
       "SELECT * FROM slack_agent_sessions WHERE id = 'session-claim'",
@@ -371,13 +328,163 @@ describe("Slack workspace workstream assignment", () => {
     });
     expect(database.prepare(
       "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = 'workstream-claim'",
-    ).get()).toEqual({ user_id: "user-taylor", participation_reason: "explicit" });
+    ).get()).toEqual({ user_id: "user-taylor", participation_reason: "creator" });
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM audit_events WHERE action = 'slack.workspace_workstream.claimed'",
     ).get()).toEqual({ count: 1 });
     expect(database.prepare(
       "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-claim'",
     ).get()).toEqual({ created_by_user_id: "user-taylor" });
+  });
+
+  it("lets an explicit account link correct a creator its own email guess produced", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const encrypted = await encryptString(
+      JSON.stringify({ botAccessToken: "xoxb-test" }),
+      credentialsKey,
+      "connection-slack",
+    );
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01'),
+        ('user-jordan', 'google-jordan', 'jordan@example.com', 'Jordan', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+              'user-owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES
+        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-jordan', 'member', 'active', '2026-01-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+              'Slack', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+              '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+              'plugin_slack_workspace');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES
+        ('workstream-guessed', 'workspace-slack', 'Guessed', 'Slack task', 'ad_hoc', 'user-jordan',
+         'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01'),
+        ('workstream-elsewhere', 'workspace-slack', 'Elsewhere', 'Slack task', 'ad_hoc', 'user-owner',
+         'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO workstream_participants
+        (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
+      VALUES ('workstream-guessed', 'user-jordan', 'user-jordan', 'creator', '2026-01-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         assigned_user_id, assigned_at, assignment_method, context_json, created_at, updated_at)
+      VALUES
+        ('session-guessed', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '1.0', 'event:guessed', 'workstream-guessed',
+         'app_mention', 'public', 'user-jordan', '2026-01-01', 'verified_email', '{}',
+         '2026-01-01', '2026-01-01'),
+        ('session-elsewhere', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+         'T123', 'U456', 'C123', '2.0', 'event:elsewhere', 'workstream-elsewhere',
+         'app_mention', 'public', 'user-owner', '2026-01-01', 'explicit_link', '{}',
+         '2026-01-01', '2026-01-01');
+      INSERT INTO slack_link_challenges
+        (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, created_at)
+      VALUES ('${await sha256("link-token")}', 'connection-slack', 'T123', 'U456',
+              '2099-01-01T00:00:00.000Z', '2026-01-01');
+    `);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ ok: true }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )));
+    const env = {
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      CONNECTOR_CREDENTIALS_KEY: credentialsKey,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+      SLACK_CLIENT_ID: "client",
+      SLACK_CLIENT_SECRET: "secret",
+      SLACK_SIGNING_SECRET: "signing",
+    } as unknown as Env;
+
+    await expect(new SlackAgentService(env).linkUser({
+      sessionId: "session-taylor",
+      userId: "user-taylor",
+      workspaceId: "workspace-slack",
+      region: "global",
+      role: "member",
+    }, "link-token")).resolves.toMatchObject({ linked: true, slackUserId: "U456" });
+
+    // The link is a stronger statement about who this Slack member is than the
+    // address its own earlier assignment matched on.
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-guessed'",
+    ).get()).toEqual({ created_by_user_id: "user-taylor" });
+    expect(database.prepare(
+      `SELECT user_id, participation_reason FROM workstream_participants
+       WHERE workstream_id = 'workstream-guessed' ORDER BY user_id`,
+    ).all()).toEqual([
+      { user_id: "user-jordan", participation_reason: "explicit" },
+      { user_id: "user-taylor", participation_reason: "creator" },
+    ]);
+    // A creator recorded by anything other than that guess still stands.
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-elsewhere'",
+    ).get()).toEqual({ created_by_user_id: "user-owner" });
+  });
+
+  it("makes a claimer who did not start the Slack task a participant, not its creator", async () => {
+    const database = migratedDatabase();
+    seedClaimableSession(database, null);
+    const env = { DB: sqliteD1(database), AVALON_REGION: "global" } as unknown as Env;
+    const session = database.prepare(
+      "SELECT * FROM slack_agent_sessions WHERE id = 'session-claim'",
+    ).get();
+
+    await expect(__slackAgentTesting.claimWorkspaceSession(
+      env,
+      {
+        auth: {
+          sessionId: "slack:T123:UOWNER",
+          userId: "user-owner",
+          workspaceId: "workspace-slack",
+          region: "global" as const,
+          role: "owner" as const,
+        },
+        connection: {
+          id: "connection-slack",
+          workspace_id: "workspace-slack",
+          provider_account_id: "T123",
+          encrypted_credentials: "encrypted",
+          credential_iv: "iv",
+          granted_scopes_json: '["slack.agent"]',
+          status: "healthy",
+        },
+        // A different Slack member than the one the session belongs to.
+        slackUserId: "UOWNER",
+        teamId: "T123",
+        token: "xoxb-test",
+      },
+      session as never,
+    )).resolves.toBe("claimed");
+
+    expect(database.prepare(
+      "SELECT execution_scope, linked_user_id FROM slack_agent_sessions WHERE id = 'session-claim'",
+    ).get()).toEqual({ execution_scope: "user", linked_user_id: "user-owner" });
+    expect(database.prepare(
+      "SELECT user_id, participation_reason FROM workstream_participants WHERE workstream_id = 'workstream-claim'",
+    ).get()).toEqual({ user_id: "user-owner", participation_reason: "explicit" });
+    expect(database.prepare(
+      "SELECT created_by_user_id FROM workstreams WHERE id = 'workstream-claim'",
+    ).get()).toEqual({ created_by_user_id: null });
   });
 });
 
@@ -1187,6 +1294,55 @@ function slackMembershipEnvironment(
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
   } as unknown as Env;
+}
+
+function seedClaimableSession(database: DatabaseSync, elicitationTargetUserId: string | null): void {
+  database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+        ('user-taylor', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-slack', 'Slack Workspace', 'slack-workspace', 'global',
+              'user-owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES
+        ('workspace-slack', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('workspace-slack', 'user-taylor', 'member', 'active', '2026-02-01');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES ('connection-slack', 'workspace-slack', 'slack', 'workspace', NULL, 'T123',
+              'Slack', 'encrypted', 'iv', 1, '["slack.agent"]', 'healthy', '{}', '{}',
+              '2026-01-01', '2026-01-01', 'plugin_slack_workspace');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('workstream-claim', 'workspace-slack', 'Investigate', 'Investigate',
+              'ad_hoc', NULL, 'needs_input', 1, '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-claim', 'workspace-slack', 'connection-slack', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', 'event:opening', 'workstream-claim',
+              'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
+      INSERT INTO harness_runs
+        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
+      VALUES ('run-claim', 'workspace-slack', 'workstream-claim', 'test', '{}',
+              'needs_input', '2026-01-01');
+  `);
+  database.prepare(
+    `INSERT INTO elicitations
+     (id, workspace_id, workstream_id, harness_run_id, prompt, response_type,
+      options_json, minimum_selections, maximum_selections, target_user_id, status, created_at)
+     VALUES ('elicitation-claim', 'workspace-slack', 'workstream-claim', 'run-claim',
+             'Taylor must approve', 'text', '[]', 0, NULL, ?, 'open', '2026-01-01')`,
+  ).run(elicitationTargetUserId);
 }
 
 function migratedDatabase(): DatabaseSync {

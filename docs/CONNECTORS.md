@@ -19,24 +19,48 @@ The model sees only these stable IDs in plugin catalogs, active-plugin instructi
 
 Every connector that can start work from a provider identity resolves that identity to an
 Avalon member through one shared mapping, `resolveConnectorActorIdentity` over
-`external_user_identities`. It is not per-connector logic: Slack's Agent surface uses it
-today, and Linear's native-agent sessions and every later agent connector use the same
-resolution rather than repeating a provider lookup of their own. The mapping is tried
-strongest first and recorded once resolved, so later work by the same provider identity — in
-any surface — reuses it:
+`external_user_identities`. This is the contract for every agent connector rather than
+per-connector logic: Slack's Agent surface is the only caller wired today, and Linear's
+native-agent sessions and every later agent connector are expected to resolve through it
+instead of repeating a provider lookup of their own. The mapping is tried strongest first:
 
 1. **`account_link`** — a mapping already recorded for `(workspace, provider, provider tenant,
-   provider user)`, including the ones synced from confirmed Slack account links.
-2. **`personal_connection`** — a healthy personal connection of that provider whose account is
-   the actor. The member authorized that account themselves, so an exact match is that member.
+   provider user)`, including the ones the opportunity directory sync republishes from
+   confirmed Slack account links and personal connections.
+2. **`personal_connection`** — a healthy personal connection of that provider whose normalized
+   identity is the actor. The member authorized that account themselves, so an exact match is
+   that member. The comparison uses the `providerTenantId`/`providerUserId` pair every OAuth
+   callback writes to `config_json`, not `provider_account_id`, which is provider-shaped:
+   `<team>:<user>` for Slack, the organization for Linear.
 3. **`verified_email`** — a provider-verified address held by exactly one active workspace
    member. An ambiguous or unknown address resolves to nobody.
 
+Only a `verified_email` resolution is recorded. The stronger tiers are already durable — a
+stored row, or the connection itself — so re-recording them would add a write to every inbound
+provider message, churn the `updated_at` ordering the opportunity directory reads, and relabel
+another writer's row with a synonym of its own label. `verification_source` therefore has
+several vocabularies in the table (`slack_user_link` and `personal_connector_oauth` from
+`syncVerifiedIdentityDirectory`, `verified_email` from this resolver); each is mapped back onto
+the tiers above on read, so a stored row is judged at the strength it was recorded with and
+re-recording cannot silently promote it. The write is also monotonic: a `verified_email`
+observation never replaces a stronger stored mapping, because a provider profile can carry an
+address belonging to a member other than the one that identity is linked to.
+
 A work stream a connector creates for a resolved member records them as its
-`created_by_user_id` and adds them as a participant, so it reads as their work rather than as
-workspace automation. When a mapping only arrives later — the member links their account or
-joins the workspace after the task ran — the connector credits their earlier ownerless work
-streams then. An existing creator is never rewritten.
+`created_by_user_id` and adds them as a participant with `participation_reason = 'creator'`,
+so it reads as their work rather than as workspace automation. When a mapping only arrives
+later — the member links their account or joins the workspace after the task ran — the
+connector credits their earlier ownerless work streams then, promoting the participation
+reason it recorded at the time.
+
+An existing creator is never rewritten, with one exception: an explicit account link may
+correct a creator that the same connector session's own `verified_email` guess produced. The
+link is the stronger statement about who that provider identity is, and the address it
+disagrees with can belong to somebody else. The member it displaces stays a participant.
+
+Taking a task over is not the same claim as starting it. Where a connector lets another member
+assume a task's authority, only the member the actor resolves to is credited; the one who took
+it over stays a participant.
 
 Attribution is not authorization. A resolved member does not authenticate the actor, does not
 expose that member's personal connections, and never changes the execution principal: an
