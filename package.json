@@ -32,7 +32,7 @@
     "test:watch": "vitest",
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "eslint . --max-warnings=0",
-    "lint:design-system": "eslint --config .claude/skills/avalon-design/eslint.adherence.mjs .claude/skills/avalon-design",
+    "lint:design-system": "cd .claude/skills/avalon-design && eslint --config eslint.adherence.mjs .",
     "build": "pnpm -r --if-present build",
     "package:desktop": "pnpm --filter @avalon/desktop package:local",
     "package:desktop:release": "dotenv -e .env.local -- pnpm --filter @avalon/desktop package:release",
