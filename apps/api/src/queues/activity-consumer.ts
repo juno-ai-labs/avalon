@@ -20,7 +20,7 @@ import type { Env } from "../env";
 import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
-import { agentModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
@@ -694,7 +694,10 @@ async function startActivityAutomation(
     // The automation's pin follows the work streams its runs create. The work
     // stream is written in the same batch as its harness run, so the pin cannot
     // be read back from the row yet — it is the value being written beside it.
-    const modelOverride = agentModelOverride(subscription.model_override);
+    const modelOverride = automationModelOverride(env, subscription.model_override, {
+      workspaceId: activity.workspace_id,
+      automationSubscriptionId: subscription.id,
+    });
     const model = modelOverride ?? await scheduledWorkstreamModel(env, {
       workspaceId: activity.workspace_id,
       workstreamId,

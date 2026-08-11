@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type Ref,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -135,6 +136,15 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   }, [onAttach, submitting]);
   const debugEnabled = useDebugEnabled();
   const drop = useFileDrop((files) => attachFiles(files), submitting);
+  // Turning Debug enabled off takes the control away; it has to take the choice
+  // with it. A pin left behind in the parent's state would keep pinning every
+  // work stream started from this screen with nothing on screen saying so, and
+  // no way to clear it.
+  const releaseModelOverride = modelOverride?.onChange;
+  const modelOverrideValue = modelOverride?.value ?? null;
+  useEffect(() => {
+    if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
+  }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
   const paste = useFilePaste(attachFiles, submitting);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.

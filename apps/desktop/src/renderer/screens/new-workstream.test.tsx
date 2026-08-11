@@ -1,6 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
@@ -25,14 +25,26 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 // Debug enabled is on, so this bridge is what turns the control on and off.
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+  listeners: new Set<(settings: unknown) => void>(),
 }));
 
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
-    onApplicationSettingsChanged: () => () => undefined,
+    onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
+      applicationSettings.listeners.add(listener);
+      return () => applicationSettings.listeners.delete(listener);
+    },
   }),
 }));
+
+/** The main-process broadcast a change in the Settings window arrives on. */
+function announceApplicationSettings(settings: typeof applicationSettings.current): void {
+  applicationSettings.current = settings;
+  act(() => {
+    for (const listener of applicationSettings.listeners) listener(settings);
+  });
+}
 
 const currentUser = { id: 'user-1', name: 'Adam Juhasz', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
 const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
@@ -92,6 +104,7 @@ describe('New work-stream home', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
+    applicationSettings.listeners.clear();
     await clearAllDrafts();
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
@@ -279,6 +292,30 @@ describe('New work-stream home', () => {
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: 'Prepare the launch brief',
+      participantIds: [],
+    }));
+  });
+
+  it('releases the pin when developer mode is turned off under it', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderScreen();
+
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Luna' }));
+    await screen.findByRole('button', { name: 'Model: GPT-5.6 Luna' });
+
+    // The control goes away with the preference. A pin surviving it would keep
+    // pinning every work stream started here with nothing on screen saying so.
+    announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Model:/ })).not.toBeInTheDocument());
+
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
