@@ -1038,6 +1038,137 @@ describe("connectors", () => {
     expect(patch?.url.searchParams.get("sendUpdates")).toBe("all");
   });
 
+  it("preserves each guest's RSVP state and role when one attendee is added", async () => {
+    let patched: Record<string, unknown> = {};
+    const fetcher: typeof fetch = async (input, init) => {
+      if ((init?.method ?? "GET") === "GET") {
+        return googleJson({
+          attendees: [
+            { email: "yes@example.com", responseStatus: "accepted", displayName: "Yes Person" },
+            { email: "room@example.com", resource: true, responseStatus: "accepted" },
+            { email: "maybe@example.com", optional: true, responseStatus: "tentative" }
+          ]
+        });
+      }
+      patched = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return googleJson({ id: "event-existing" });
+    };
+    await googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", addAttendeeEmails: ["new@example.com"] },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(patched.attendees).toEqual([
+      { email: "yes@example.com", responseStatus: "accepted", displayName: "Yes Person" },
+      { email: "room@example.com", resource: true, responseStatus: "accepted" },
+      { email: "maybe@example.com", optional: true, responseStatus: "tentative" },
+      { email: "new@example.com" }
+    ]);
+  });
+
+  it("does not mail the guest list for an attendee change that changes nobody", async () => {
+    const methods: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      methods.push(init?.method ?? "GET");
+      return googleJson({ id: "event-existing", summary: "Renamed" });
+    };
+    const requests: URL[] = [];
+    const recording: typeof fetch = async (input, init) => {
+      requests.push(requestUrl(input));
+      return fetcher(input, init);
+    };
+    await googleAdapter(recording).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", summary: "Renamed", addAttendeeEmails: [] },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(methods).toEqual(["PATCH"]);
+    expect(requests[0]?.searchParams.get("sendUpdates")).toBeNull();
+  });
+
+  it("keeps the other hits when one message cannot be hydrated", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }, { id: "message-2", threadId: "thread-2" }] });
+      }
+      if (url.pathname.endsWith("/messages/message-2")) return googleJson({ error: { code: 429 } }, 429);
+      return googleJson({
+        id: "message-1",
+        threadId: "thread-1",
+        payload: { headers: [{ name: "Subject", value: "Survived" }] }
+      });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.search",
+      { query: "is:unread" },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(2_000)
+      }
+    );
+    expect(result.output).toMatchObject({
+      items: [
+        { id: "message-1", subject: "Survived" },
+        { id: "message-2", subject: null, headersUnavailable: true }
+      ]
+    });
+  });
+
+  it("never leaves a partial address behind when truncating a long recipient list", async () => {
+    const many = Array.from({ length: 40 }, (_, index) => `person${index}@a-fairly-long-domain.example.com`).join(", ");
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }] });
+      }
+      return googleJson({
+        id: "message-1",
+        threadId: "thread-1",
+        payload: { headers: [{ name: "To", value: many }] }
+      });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.find_contacts",
+      { name: "person" },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    // Every returned address has to be one that was actually in the header; a
+    // cut inside a domain would yield a plausible address nobody has.
+    const returned = (result.output as { items: Array<{ email: string }> }).items.map((item) => item.email);
+    expect(returned.length).toBeGreaterThan(0);
+    for (const email of returned) expect(many.toLowerCase()).toContain(email);
+  });
+
+  it("refuses to resolve a calendar name without the read capability that lists calendars", async () => {
+    const fetcher: typeof fetch = async () => googleJson({ items: [] });
+    await expect(googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { calendarId: "Work", eventId: "event-1", summary: "Renamed" },
+      {
+        connection: googleConnection(["calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({
+      code: "unsupported_capability",
+      details: { reason: "calendar_name_needs_read_capability" }
+    });
+  });
+
   it("refuses a relative attendee change when the guest list came back incomplete", async () => {
     const requests: string[] = [];
     const fetcher: typeof fetch = async (input, init) => {

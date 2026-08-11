@@ -791,6 +791,25 @@ describe("boundary contracts", () => {
       code: "invalid_payload",
       details: { reason: "wrong_id_family", field: "messageId" },
     });
+    // Details are an allowlist, not a convention: adapters already attach whole
+    // parsed provider error bodies, and forwarding those would put raw provider
+    // JSON into the transcript and the inference payload logs.
+    expect(readStructuredFailure(new ProviderError("provider_error", "Google API failed (403)", {
+      error: { code: 403, message: "Request had insufficient authentication scopes", errors: [{ reason: "forbidden" }] },
+      accessToken: "ya29.secret",
+    }))).toEqual({ code: "provider_error" });
+    expect(readStructuredFailure(new ProviderError("unauthorized", "Reconnect", {
+      reconnectRequired: true,
+      reason: "invalid_grant",
+      payload: { error_description: "Token has been revoked" },
+    }))).toEqual({
+      code: "unauthorized",
+      details: { reason: "invalid_grant", reconnectRequired: true },
+    });
+    expect(readStructuredFailure(new ProviderError("invalid_payload", "Ambiguous", {
+      reason: "ambiguous_calendar_name",
+      available: Array.from({ length: 400 }, (_, index) => `calendar-${index}-with-a-long-name`),
+    }))).toEqual({ code: "invalid_payload" });
     // A code with no details is still worth surfacing; anything without a code
     // carries nothing the caller could branch on.
     expect(readStructuredFailure(new ProviderError("unauthorized", "Reconnect"))).toEqual({ code: "unauthorized" });
