@@ -418,18 +418,31 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       displayName: "Notion",
       supportedScopes: ["personal"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("Notion", [
-        "notion.page.content_updated", "notion.page.created", "notion.page.deleted",
-        "notion.page.locked", "notion.page.moved", "notion.page.properties_updated",
-        "notion.page.transcription_block.transcript_deleted", "notion.page.undeleted", "notion.page.unlocked",
-        "notion.database.content_updated", "notion.database.created", "notion.database.deleted",
-        "notion.database.moved", "notion.database.schema_updated", "notion.database.undeleted",
-        "notion.data_source.content_updated", "notion.data_source.created", "notion.data_source.deleted",
-        "notion.data_source.moved", "notion.data_source.schema_updated", "notion.data_source.undeleted",
-        "notion.comment.created", "notion.comment.deleted", "notion.comment.updated",
-        "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
-        "notion.view.created", "notion.view.deleted", "notion.view.updated",
-      ], {}, [
+      // A page appearing or a comment arriving is somebody writing something.
+      // Notion fires `content_updated` on every save, so a page being written
+      // over an afternoon is one piece of news and dozens of events; the digest
+      // hears about its creation and its comments. Schema, view, lock, move and
+      // upload events are how the workspace is arranged rather than what was
+      // said in it.
+      activityTriggers: defineConnectorActivityTriggers("Notion", {
+        digestible: [
+          "notion.page.created", "notion.page.deleted",
+          "notion.database.created",
+          "notion.comment.created",
+        ],
+        operational: [
+          "notion.page.content_updated",
+          "notion.page.locked", "notion.page.moved", "notion.page.properties_updated",
+          "notion.page.transcription_block.transcript_deleted", "notion.page.undeleted", "notion.page.unlocked",
+          "notion.database.content_updated", "notion.database.deleted",
+          "notion.database.moved", "notion.database.schema_updated", "notion.database.undeleted",
+          "notion.data_source.content_updated", "notion.data_source.created", "notion.data_source.deleted",
+          "notion.data_source.moved", "notion.data_source.schema_updated", "notion.data_source.undeleted",
+          "notion.comment.deleted", "notion.comment.updated",
+          "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
+          "notion.view.created", "notion.view.deleted", "notion.view.updated",
+        ],
+      }, {}, [
         { key: "subscriptionId", label: "Subscription", description: "Notion webhook subscription identifier.", valueType: "string" },
         { key: "integrationId", label: "Integration", description: "Notion integration identifier.", valueType: "string" },
         { key: "notionWorkspaceId", label: "Workspace", description: "Notion workspace identifier.", valueType: "string" },

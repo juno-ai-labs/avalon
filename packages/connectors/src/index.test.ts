@@ -8,6 +8,7 @@ import {
   createGenericWebhookConnector,
   createGoogleConnector,
   CredentialCipher,
+  defineConnectorActivityTriggers,
   pollCheckpointedActivityStreams,
   verifyGenericWebhook,
   type ConnectorConnectionContext
@@ -186,6 +187,53 @@ describe("connectors", () => {
     })).not.toThrow();
   });
 
+  it("marks every activity a non-digestible stream produced, and nothing else", async () => {
+    const connection = googleConnection([]);
+    const result = await pollCheckpointedActivityStreams({
+      streams: () => [
+        { id: "gmail", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "drive", idlePollIntervalSeconds: 300, digestible: false },
+      ],
+      normalizeHighWatermark: () => ({}),
+      async pollStream(_connection, stream) {
+        return {
+          activities: [activityFrom(stream.id)],
+          highWatermark: {},
+          hasMore: false,
+        };
+      },
+    }, connection, AbortSignal.timeout(1_000));
+
+    const byEventType = new Map(result.activities.map((activity) => [activity.eventType, activity.metadata]));
+    // The stamp travels with the activity through the queue and the ingest
+    // row, because the decision is made here and read when the activity log is
+    // written — long after the stream object is gone.
+    expect(byEventType.get("drive.file_changed")).toMatchObject({ _streamNotDigestible: true });
+    expect(byEventType.get("gmail.email.received")).not.toHaveProperty("_streamNotDigestible");
+  });
+
+  it("refuses an activity type declared both digestible and operational", () => {
+    // Two lists are what force the decision; an event type in both is the
+    // decision not being made, and the manifest's duplicate check would see
+    // only a duplicate descriptor rather than an unanswered question.
+    expect(() => defineConnectorActivityTriggers("Test", {
+      digestible: ["test.thing.happened"],
+      operational: ["test.thing.happened"],
+    })).toThrow(/both digestible and operational/);
+  });
+
+  it("carries digestibility from the partition onto every descriptor", () => {
+    const triggers = defineConnectorActivityTriggers("Test", {
+      digestible: ["test.review.submitted"],
+      operational: ["test.check.completed"],
+    });
+
+    expect(triggers.map((trigger) => [trigger.eventType, trigger.digestible])).toEqual([
+      ["test.review.submitted", true],
+      ["test.check.completed", false],
+    ]);
+  });
+
   it("checkpoints polling streams independently and isolates transient failures", async () => {
     const connection = googleConnection([]);
     connection.cursor = {
@@ -195,8 +243,8 @@ describe("connectors", () => {
     };
     const result = await pollCheckpointedActivityStreams({
       streams: () => [
-        { id: "gmail", idlePollIntervalSeconds: 300, backlogPollIntervalSeconds: 5 },
-        { id: "calendar", idlePollIntervalSeconds: 300, failurePollIntervalSeconds: 60 },
+        { id: "gmail", idlePollIntervalSeconds: 300, backlogPollIntervalSeconds: 5, digestible: true },
+        { id: "calendar", idlePollIntervalSeconds: 300, failurePollIntervalSeconds: 60, digestible: true },
       ],
       normalizeHighWatermark(_connection, _stream, value) {
         return value && typeof value === "object" && !Array.isArray(value)
@@ -234,9 +282,9 @@ describe("connectors", () => {
     const seen = new Map<string, Record<string, unknown>>();
     const result = await pollCheckpointedActivityStreams({
       streams: () => [
-        { id: "sequence", legacyCursorKey: "sequenceLegacy", idlePollIntervalSeconds: 300 },
-        { id: "date", idlePollIntervalSeconds: 300 },
-        { id: "cursor", idlePollIntervalSeconds: 300 },
+        { id: "sequence", legacyCursorKey: "sequenceLegacy", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "date", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "cursor", idlePollIntervalSeconds: 300, digestible: true },
       ],
       normalizeHighWatermark(_connection, stream, value) {
         if (value == null) return {};
@@ -1864,6 +1912,38 @@ describe("connectors", () => {
 const TEST_USER_ID = "00000000-0000-7000-8000-000000000001";
 const TEST_WORKSPACE_ID = "00000000-0000-7000-8000-000000000002";
 const TEST_CONNECTION_ID = "00000000-0000-7000-8000-000000000003";
+
+/** A minimal polled activity, named after the stream that produced it. */
+function activityFrom(streamId: string) {
+  const eventType = streamId === "gmail" ? "gmail.email.received" : "drive.file_changed";
+  return {
+    workspaceId: TEST_WORKSPACE_ID,
+    region: "global" as const,
+    connectionId: TEST_CONNECTION_ID,
+    connectionScope: "personal" as const,
+    connectionOwnerUserId: TEST_USER_ID,
+    provider: "google",
+    providerEventId: `${streamId}-1`,
+    eventType,
+    resourceType: null,
+    providerResourceId: null,
+    actor: {},
+    subject: {},
+    occurredAt: "2026-08-11T09:00:00.000Z",
+    receivedAt: "2026-08-11T09:00:01.000Z",
+    title: `Something happened in ${streamId}`,
+    summary: "",
+    textSnippet: "",
+    payloadRef: null,
+    visibility: {},
+    targetUserIds: [],
+    entityKeys: [],
+    dedupeKey: `${streamId}-1`,
+    rawContentHash: null,
+    metadata: { source: streamId },
+    externalPeople: [],
+  };
+}
 
 function googleAdapter(fetcher: typeof fetch) {
   return createGoogleConnector({
