@@ -407,7 +407,7 @@ export class SlackAgentService {
           trigger_id: triggerId,
           view: connectModal(challenge.url),
         }, AbortSignal.timeout(1_500));
-        await this.supersedeOtherLinks(connection.id, slackUserId, challenge.tokenHash);
+        await this.supersedeLinksMintedBefore(connection.id, slackUserId, challenge.createdAt);
         return {};
       }
       if (callbackId === "avalon_preferences") {
@@ -2584,7 +2584,7 @@ export class SlackAgentService {
   private async createLink(
     connection: SlackConnectionRow,
     slackUserId: string,
-  ): Promise<{ url: string; tokenHash: string }> {
+  ): Promise<{ url: string; createdAt: string }> {
     const token = randomToken(32);
     const tokenHash = await sha256(token);
     const at = nowIso();
@@ -2595,23 +2595,31 @@ export class SlackAgentService {
     ).bind(tokenHash, connection.id, connection.provider_account_id, slackUserId, new Date(Date.now() + 15 * 60_000).toISOString(), at).run();
     const url = new URL("/slack/link", this.env.PUBLIC_WEB_BASE_URL);
     url.hash = new URLSearchParams({ token }).toString();
-    return { url: url.toString(), tokenHash };
+    return { url: url.toString(), createdAt: at };
   }
 
   /**
-   * Retires the member's earlier challenges, once a newer one has reached them.
+   * Retires the member's *earlier* challenges, once a newer one has reached
+   * them. Two rules here, each paid for by a distinct way of stranding someone.
    *
-   * Deliberately separate from minting, and called only after the modal
-   * carrying the new link has opened. Minting used to invalidate in the same
-   * batch, so a `views.open` that failed — an abort, a Slack error, a spent ack
-   * budget — took the previous modal's still-valid link down with it and left
-   * the member holding nothing that works and no way to see why.
+   * It is separate from minting, and runs only after the modal carrying the new
+   * link has opened. Minting used to invalidate in the same batch, so a
+   * `views.open` that failed — an abort, a Slack error, a spent ack budget —
+   * took the previous modal's still-valid link down with it.
+   *
+   * And it is bounded by mint time rather than retiring every token but the one
+   * just issued. Two clicks in flight together both insert and both open a
+   * modal, and each would then retire the other's token: two modals on screen,
+   * neither link redeemable. Comparing `created_at` makes the outcome the same
+   * whichever request finishes last — the newest link survives — and two mints
+   * that land in the same millisecond leave both alive, which is the harmless
+   * direction to fail in.
    */
-  private async supersedeOtherLinks(connectionId: string, slackUserId: string, keepTokenHash: string): Promise<void> {
+  private async supersedeLinksMintedBefore(connectionId: string, slackUserId: string, createdAt: string): Promise<void> {
     await this.env.DB.prepare(
       `UPDATE slack_link_challenges SET consumed_at = ?
-       WHERE connection_id = ? AND slack_user_id = ? AND consumed_at IS NULL AND token_hash <> ?`,
-    ).bind(nowIso(), connectionId, slackUserId, keepTokenHash).run();
+       WHERE connection_id = ? AND slack_user_id = ? AND consumed_at IS NULL AND created_at < ?`,
+    ).bind(nowIso(), connectionId, slackUserId, createdAt).run();
   }
 
   private async deactivateTeamRoute(connection: SlackConnectionRow): Promise<void> {
