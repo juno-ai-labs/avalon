@@ -31,7 +31,16 @@ export function isEntryPoint(moduleUrl) {
   if (!invoked) return false;
   try {
     return realpathSync(invoked) === realpathSync(fileURLToPath(moduleUrl));
-  } catch {
+  } catch (error) {
+    // Says so rather than returning quietly. Answering `false` here produces
+    // the exact outcome this helper exists to prevent — a script that exits 0
+    // having done nothing — so the one path that can still reach it must at
+    // least be diagnosable. Node has already loaded both files by the time
+    // this runs, which makes it close to unreachable in practice.
+    console.warn(
+      `Could not resolve ${invoked} while deciding whether ${moduleUrl} is the entry point, `
+        + `so it is being treated as an import and will not run: ${error instanceof Error ? error.message : error}`,
+    );
     return false;
   }
 }
