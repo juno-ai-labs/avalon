@@ -51,6 +51,12 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
   /** Whether the service allows this account the Developer section at all.
    * Off until a poll says otherwise, and off again on sign-out. */
   developerSettingsAvailable: boolean;
+  /** Whether the Avalon status item is in the macOS menu bar. On by default. */
+  menuBarEnabled: boolean;
+  /** Whether this platform has a menu bar Avalon can live in at all. The
+   * preference is still stored where it is not, so moving the same profile to a
+   * Mac restores the choice rather than the default. */
+  menuBarAvailable: boolean;
 }
 
 export interface DesktopWorkspaceSummary {
@@ -102,6 +108,7 @@ export interface AvalonDesktopBridge {
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   onApplicationSettingsChanged: (listener: (settings: DesktopApplicationSettings) => void) => () => void;
   getApplicationIcon: () => Promise<DesktopApplicationIconState>;
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopLockdownSettings } from '../common/desktop';
 import {
+  defaultStoredApplicationSettings,
   readStoredApplicationSettings,
   updateStoredApplicationSettings,
   writeStoredApplicationSettings,
@@ -108,14 +109,14 @@ describe('Lockdown mode controller', () => {
       .toMatchObject({ plaintext: 'auth', mode: 'lockdown' });
     expect(decryptSessionValue(await readStoredProfileFile(directory), safeStorage))
       .toMatchObject({ plaintext: 'profile', mode: 'lockdown' });
-    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ lockdownMode: true, debugEnabled: false });
+    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: true, debugEnabled: false });
 
     await expect(controller.set(false)).resolves.toMatchObject({ lockdownMode: false });
     expect(decryptSessionValue(await readStoredAuthFile(directory), safeStorage))
       .toMatchObject({ plaintext: 'auth', mode: 'global' });
     expect(decryptSessionValue(await readStoredProfileFile(directory), safeStorage))
       .toMatchObject({ plaintext: 'profile', mode: 'global' });
-    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ lockdownMode: false, debugEnabled: false });
+    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: false });
   });
 
   it('forces re-login if the JSON preference is edited from on to off outside the app', async () => {
@@ -129,7 +130,7 @@ describe('Lockdown mode controller', () => {
 
     // Simulate an out-of-app edit. An authorized toggle would have migrated
     // both envelopes to global before it committed this preference.
-    await writeStoredApplicationSettings(directory, { lockdownMode: false, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, { ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: false });
     const clearCredentials = vi.fn(() => removeStoredCredentialFiles(directory));
     const restartedController = await diskController(directory, safeStorage, { clearCredentials });
 
@@ -165,7 +166,7 @@ describe('Lockdown mode controller', () => {
   it('automatically turns Lockdown off and clears credentials if the keystore disappears', async () => {
     const directory = await temporaryUserDataDirectory();
     const safeStorage = mutableSafeStorage();
-    await writeStoredApplicationSettings(directory, { lockdownMode: true, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, { ...defaultStoredApplicationSettings, lockdownMode: true, debugEnabled: false });
     const clearCredentials = vi.fn(async () => undefined);
     const onChange = vi.fn();
     const controller = await diskController(directory, safeStorage, { clearCredentials, onChange });
@@ -177,14 +178,14 @@ describe('Lockdown mode controller', () => {
       lockdownAvailable: false,
     });
     expect(clearCredentials).toHaveBeenCalledTimes(1);
-    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ lockdownMode: false, debugEnabled: false });
+    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: false });
     expect(onChange).toHaveBeenLastCalledWith({ lockdownMode: false, lockdownAvailable: false });
   });
 
   it('automatically turns Lockdown off and requires re-login at startup without a keystore', async () => {
     const directory = await temporaryUserDataDirectory();
     const safeStorage = mutableSafeStorage(false);
-    await writeStoredApplicationSettings(directory, { lockdownMode: true, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, { ...defaultStoredApplicationSettings, lockdownMode: true, debugEnabled: false });
     const clearCredentials = vi.fn(async () => undefined);
     const controller = await diskController(directory, safeStorage, { clearCredentials });
 
@@ -193,13 +194,13 @@ describe('Lockdown mode controller', () => {
       lockdownAvailable: false,
     });
     expect(clearCredentials).toHaveBeenCalledTimes(1);
-    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ lockdownMode: false, debugEnabled: false });
+    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: false });
   });
 
   it('uses loaded-session recovery when the in-app toggle disables Lockdown without a keystore', async () => {
     const directory = await temporaryUserDataDirectory();
     const safeStorage = mutableSafeStorage();
-    await writeStoredApplicationSettings(directory, { lockdownMode: true, debugEnabled: false });
+    await writeStoredApplicationSettings(directory, { ...defaultStoredApplicationSettings, lockdownMode: true, debugEnabled: false });
     const recover = vi.fn(async () => undefined);
     const clearCredentials = vi.fn(async () => undefined);
     const controller = await diskController(directory, safeStorage, { clearCredentials, recover });
@@ -221,7 +222,7 @@ describe('Lockdown mode controller', () => {
 
     await expect(controller.set(true))
       .rejects.toThrow('Lockdown mode requires an available operating-system keystore');
-    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ lockdownMode: false, debugEnabled: false });
+    await expect(readStoredApplicationSettings(directory)).resolves.toEqual({ ...defaultStoredApplicationSettings, lockdownMode: false, debugEnabled: false });
   });
 
   it('serializes a session persist and a mode change through the shared mutation runner', async () => {
