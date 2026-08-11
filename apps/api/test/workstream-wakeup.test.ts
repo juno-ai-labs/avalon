@@ -367,6 +367,32 @@ describe("wake-up instant resolution", () => {
     }).dueAt.toISOString()).toBe("2026-08-11T12:01:00.000Z");
   });
 
+  it("quotes the grammar of the form the caller used when a bound is tripped", () => {
+    const bounds: Array<[Parameters<typeof resolveWakeupInstant>[0], string, string]> = [
+      [{ delay: "10s", defaultTimezone: "UTC", now }, "wakeup_too_soon", "delay"],
+      [{ at: "2026-08-11T12:00:10Z", defaultTimezone: "UTC", now }, "wakeup_too_soon", "at"],
+      [{ delay: "60 weeks", defaultTimezone: "UTC", now }, "wakeup_too_distant", "delay"],
+      [{ at: "2030-08-12T17:26:00Z", defaultTimezone: "UTC", now }, "wakeup_too_distant", "at"],
+    ];
+    for (const [request, code, form] of bounds) {
+      try {
+        resolveWakeupInstant(request);
+        expect.unreachable(`expected ${code}`);
+      } catch (error) {
+        const { hint } = error as WakeupInputError;
+        expect((error as WakeupInputError).code).toBe(code);
+        // A caller who passed `at` gets the timestamp grammar, not duration units.
+        if (form === "delay") {
+          expect(hint).toContain("Accepted units are seconds");
+          expect(hint).not.toContain("ISO-8601 date and time");
+        } else {
+          expect(hint).toContain("ISO-8601 date and time");
+          expect(hint).not.toContain("Accepted units are seconds");
+        }
+      }
+    }
+  });
+
   it("rejects a time beyond the one-year horizon in either form", () => {
     expect(() => resolveWakeupInstant({
       at: "2030-08-12T17:26:00Z",
@@ -428,6 +454,60 @@ describe("wake-up tools", () => {
       .toBe((first.output as { wakeupId: string }).wakeupId);
     expect((second.output as { dueAt: string }).dueAt)
       .toBe((first.output as { dueAt: string }).dueAt);
+    const count = database.prepare("SELECT COUNT(*) AS n FROM workstream_wakeups").get() as { n: number };
+    expect(count.n).toBe(1);
+  });
+
+  it("leaves no pending wake-up behind when the alarm cannot be armed", async () => {
+    const { database, env } = fixture();
+    (env as unknown as { WORKSPACE_SCHEDULERS: unknown }).WORKSPACE_SCHEDULERS = {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async () => new Response("nope", { status: 500 }) }),
+    };
+    const { schedule } = wakeupTools(env);
+
+    await expect(schedule.execute(
+      { prompt: "Unarmed", delay: "1 hour" },
+      context(),
+    )).rejects.toThrow();
+
+    // Either it is scheduled and armed, or it does not exist. A pending row with
+    // no alarm behind it would never fire in a workspace with nothing else due.
+    const rows = database.prepare("SELECT COUNT(*) AS n FROM workstream_wakeups").get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
+
+  it("re-arms the alarm when a replayed receipt finds a still-pending wake-up", async () => {
+    const { database, env, schedulerRefreshes } = fixture();
+    const { schedule } = wakeupTools(env);
+    // Stand in for a first attempt that persisted the row and then failed before
+    // arming: the row is present, the workspace has never been refreshed.
+    database.prepare(
+      `INSERT INTO workstream_wakeups
+         (id, workspace_id, workstream_id, execution_principal_json, prompt, due_at,
+          status, idempotency_key, version, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 1, ?, ?)`,
+    ).run(
+      "00000000-0000-4000-8000-0000000000b1",
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      JSON.stringify({ type: "user", userId: USER_ID }),
+      "Orphaned by a failed refresh",
+      "2026-12-01T00:00:00.000Z",
+      "receipt-orphan",
+      "2026-08-11",
+      "2026-08-11",
+    );
+    expect(schedulerRefreshes).toHaveLength(0);
+
+    const replay = await schedule.execute(
+      { prompt: "Orphaned by a failed refresh", delay: "1 hour" },
+      context("receipt-orphan"),
+    );
+
+    expect((replay.output as { wakeupId: string }).wakeupId)
+      .toBe("00000000-0000-4000-8000-0000000000b1");
+    expect(schedulerRefreshes).toHaveLength(1);
     const count = database.prepare("SELECT COUNT(*) AS n FROM workstream_wakeups").get() as { n: number };
     expect(count.n).toBe(1);
   });
@@ -614,6 +694,60 @@ describe("firing a due wake-up", () => {
     const row = database.prepare("SELECT status, fired_at FROM workstream_wakeups WHERE id = ?")
       .get(wakeupId) as { status: string; fired_at: string | null };
     expect(row).toMatchObject({ status: "pending", fired_at: null });
+  });
+
+  it("releases the claim when pre-launch preparation fails, not just the launch", async () => {
+    const { database, env, workflowCreations } = fixture();
+    const { schedule } = wakeupTools(env);
+    const scheduled = await schedule.execute(
+      { prompt: "Transcript write fails", delay: "1 hour" },
+      context(),
+    );
+    const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+    const row = pendingRow(database, wakeupId);
+    // Fail the transcript batch, which runs after the claim and before the
+    // launch. The claim is only safe to hold if every throw between them
+    // releases it: once the row leaves `pending`, the scheduler's retry gate
+    // cannot see it as due and the wake-up is consumed with no run.
+    const realBatch = env.DB.batch.bind(env.DB);
+    let failed = false;
+    (env.DB as unknown as { batch: unknown }).batch = async (statements: D1PreparedStatement[]) => {
+      if (!failed) {
+        failed = true;
+        throw new Error("D1 batch unavailable");
+      }
+      return realBatch(statements);
+    };
+
+    await expect(fireWorkstreamWakeup(env, row)).rejects.toThrow("D1 batch unavailable");
+
+    expect(workflowCreations).toHaveLength(0);
+    const after = database.prepare("SELECT status, fired_at FROM workstream_wakeups WHERE id = ?")
+      .get(wakeupId) as { status: string; fired_at: string | null };
+    expect(after).toMatchObject({ status: "pending", fired_at: null });
+  });
+
+  it("does not duplicate the transcript row when a released wake-up fires again", async () => {
+    const { database, env } = fixture();
+    const { schedule } = wakeupTools(env);
+    const scheduled = await schedule.execute(
+      { prompt: "Retried after a launch failure", delay: "1 hour" },
+      context(),
+    );
+    const wakeupId = (scheduled.output as { wakeupId: string }).wakeupId;
+    const workflow = env.WORKSTREAM_LOOP_WORKFLOW;
+    (env as unknown as { WORKSTREAM_LOOP_WORKFLOW: unknown }).WORKSTREAM_LOOP_WORKFLOW = {
+      create: async () => { throw new Error("workflow binding unavailable"); },
+    };
+
+    await expect(fireWorkstreamWakeup(env, pendingRow(database, wakeupId))).rejects.toThrow();
+    (env as unknown as { WORKSTREAM_LOOP_WORKFLOW: unknown }).WORKSTREAM_LOOP_WORKFLOW = workflow;
+    expect((await fireWorkstreamWakeup(env, pendingRow(database, wakeupId))).fired).toBe(true);
+
+    const messages = database.prepare(
+      "SELECT COUNT(*) AS n FROM messages WHERE workstream_id = ? AND message_type = 'system'",
+    ).get(WORKSTREAM_ID) as { n: number };
+    expect(messages.n).toBe(1);
   });
 
   it("consumes without running a wake-up whose principal lost workspace membership", async () => {
