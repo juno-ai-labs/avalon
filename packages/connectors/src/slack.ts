@@ -527,7 +527,9 @@ const SlackOkSchema = z.object({ ok: z.literal(true) }).passthrough();
 const SlackChannelSchema = z.object({ id: SlackIdSchema }).passthrough();
 const SlackConversationSchema = SlackChannelSchema.extend({
   name: z.string().optional(),
-  is_private: z.boolean(),
+  // Optional because Slack omits it entirely on an `im` response. Consumers
+  // must treat its absence as "not known to be public" rather than as public.
+  is_private: z.boolean().optional(),
   is_im: z.boolean().optional(),
   is_mpim: z.boolean().optional(),
   // Slack Connect. Set on externally shared channels and on external DMs
