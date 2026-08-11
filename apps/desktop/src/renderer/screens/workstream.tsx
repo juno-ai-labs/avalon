@@ -291,11 +291,22 @@ export function WorkstreamHeader({
     setRenameError(null);
     setRenaming(false);
   }, [workstream.id]);
+  // Closing the editor unmounts the field, which would leave focus on the body
+  // and strand a keyboard user at the top of the document. The title button
+  // does not exist until the next render, so the focus call waits for it.
+  const titleButton = useRef<HTMLButtonElement>(null);
+  const returnFocusToTitle = useRef(false);
+  useEffect(() => {
+    if (renameDraft !== null || !returnFocusToTitle.current) return;
+    returnFocusToTitle.current = false;
+    titleButton.current?.focus();
+  }, [renameDraft]);
   const startRename = (): void => {
     setRenameDraft(workstream.title);
     setRenameError(null);
   };
   const cancelRename = (): void => {
+    returnFocusToTitle.current = true;
     setRenameDraft(null);
     setRenameError(null);
   };
@@ -318,6 +329,7 @@ export function WorkstreamHeader({
     try {
       await onRename(title);
       if (shownWorkstreamId.current !== submittedFor) return;
+      returnFocusToTitle.current = true;
       setRenameDraft(null);
     } catch (error) {
       if (shownWorkstreamId.current !== submittedFor) return;
@@ -368,6 +380,7 @@ export function WorkstreamHeader({
                       startRename();
                     }
                   }}
+                  ref={titleButton}
                   title="Double-click to rename"
                   type="button"
                 >
@@ -383,11 +396,20 @@ export function WorkstreamHeader({
                 }}
               >
                 <input
-                  aria-label="Work-stream name"
+                  aria-label="Work stream name"
                   autoFocus
                   className="workstream-title-input"
                   disabled={renaming}
-                  onChange={(event) => setRenameDraft(event.currentTarget.value)}
+                  // The contract caps a title at 180, and the sidebar's dialog
+                  // already stops there. Without the same cap the server
+                  // rejects the save with a message that never mentions length.
+                  maxLength={180}
+                  onChange={(event) => {
+                    setRenameDraft(event.currentTarget.value);
+                    // The reason for a failed save stands in for the status
+                    // line, so it cannot outlive the draft that caused it.
+                    setRenameError(null);
+                  }}
                   onFocus={(event) => event.currentTarget.select()}
                   onKeyDown={(event) => {
                     if (event.key === 'Escape') {
