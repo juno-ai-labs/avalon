@@ -28,6 +28,7 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // toggle is offered nowhere it cannot work.
   menuBarEnabled: true,
   menuBarAvailable: false,
+  menuBarPresent: false,
   // A tab is not a login item either. Both read as unavailable so neither
   // toggle is offered where it could not work.
   launchAtLogin: false,

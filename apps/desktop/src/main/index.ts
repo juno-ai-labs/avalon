@@ -595,6 +595,7 @@ function desktopApplicationSettings(
     debugEnabled: debugSettingsController.enabled() && developerSettingsAvailable,
     menuBarEnabled: menuBarController.enabled(),
     menuBarAvailable: menuBarController.available(),
+    menuBarPresent: menuBarController.present(),
     launchAtLogin: launchAtLoginController.enabled(),
     launchAtLoginAvailable: launchAtLoginController.available(),
   };

@@ -1083,6 +1083,18 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                       </label>
                     </div>
                     {updateMenuBarEnabled.error && <InlineError>{updateMenuBarEnabled.error.message}</InlineError>}
+                    {/* The write succeeded and the item still is not there —
+                      * creating one can fail, and without this the switch reads
+                      * on beside an empty menu bar with nothing said about it. */}
+                    {applicationSettings?.menuBarEnabled
+                      && applicationSettings.menuBarAvailable
+                      && !applicationSettings.menuBarPresent
+                      && !updateMenuBarEnabled.isPending
+                      && (
+                        <InlineError>
+                          Avalon could not add itself to the menu bar. Turn this off and on to try again, or restart Avalon.
+                        </InlineError>
+                      )}
                   </>
                 )}
                 <ApplicationIconPicker />
