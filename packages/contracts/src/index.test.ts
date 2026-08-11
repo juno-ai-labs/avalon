@@ -6,6 +6,7 @@ import {
   AppendNoteTranscriptSegmentRequestSchema,
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
+  AGENT_MODEL_OVERRIDES,
   ClientSocketEventSchema,
   CompileAutomationRequestSchema,
   ConnectorOAuthProviderSchema,
@@ -160,6 +161,23 @@ describe("boundary contracts", () => {
       openingMessage: "",
       attachmentIds: [id],
     }).objective).toBeUndefined();
+  });
+
+  it("accepts a model override only from the closed list of selectable models", () => {
+    const base = {
+      clientMessageId: id,
+      participantUserIds: [],
+      openingMessage: "Prepare the launch brief",
+    };
+    // Unpinned is the normal shape: absent rather than null, so the flag decides.
+    expect(CreateWorkstreamRequestSchema.parse(base).modelOverride).toBeUndefined();
+    expect(CreateWorkstreamRequestSchema.parse({ ...base, modelOverride: "deepseek/deepseek-v4-pro" }).modelOverride)
+      .toBe("deepseek/deepseek-v4-pro");
+    // An override bypasses the rollout, so the reachable set is reviewed here
+    // rather than being whatever string a client sends.
+    expect(CreateWorkstreamRequestSchema.safeParse({ ...base, modelOverride: "x-ai/grok-9" }).success).toBe(false);
+    expect(AGENT_MODEL_OVERRIDES[0]).toBe("x-ai/grok-4.3");
+    expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
   });
 
   it("defaults inference logging off and accepts only explicit workspace preference updates", () => {

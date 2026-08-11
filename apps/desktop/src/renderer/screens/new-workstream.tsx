@@ -9,7 +9,7 @@ import { useDraftText } from '../lib/use-draft-text';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import type { Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AgentModelOverride, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { Avatar, AvatarStack, AvalonMark, Button, Modal, StatusDot } from '../components/primitives';
@@ -19,6 +19,7 @@ interface CreateWorkstreamInput {
   attachmentIds: string[];
   attachmentLocalIds: string[];
   attachments: MessageAttachment[];
+  modelOverride: AgentModelOverride | null;
   openingMessage: string;
   participantIds: string[];
 }
@@ -121,6 +122,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const { text: message, setText: setMessage } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Not kept in the draft cache: the draft outlives the session, and a model
+  // pinned last week is not a choice anyone would expect to still be in force.
+  const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const attachmentDraft = useFileAttachments(api, draftKey);
   // The composer autofocuses here, but focus moves away the moment anything else
@@ -156,6 +160,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
         ...(input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
+        ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
       }),
     onError: (_error, input) => {
       setMessage((current) => current.length > 0 ? current : input.openingMessage);
@@ -248,6 +253,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         contentAvailable: true,
         createdAt,
       })),
+      modelOverride,
       openingMessage,
       participantIds,
     });
@@ -316,6 +322,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           fileInputRef={fileInputRef}
           footerHint="Enter to create · Shift+Enter for a new line"
           maxHeight={220}
+          modelOverride={{ value: modelOverride, onChange: setModelOverride }}
           onAttach={attachmentDraft.addFiles}
           onMention={() => setPickerOpen(true)}
           onOpenAttachment={setAttachmentPreview}

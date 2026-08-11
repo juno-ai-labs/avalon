@@ -14,7 +14,14 @@ import {
   useState,
 } from 'react';
 import type { AvalonApi } from '../lib/api';
+import {
+  AGENT_MODEL_GROUPS,
+  DEFAULT_AGENT_MODEL,
+  agentModelLabel,
+  type AgentModelOverride,
+} from '../lib/agent-models';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
@@ -36,6 +43,21 @@ interface ComposerInputProps {
   mentionLabel?: string;
   /** Labels of the resources an `@` can name here; typing one highlights it in the draft. */
   mentionLabels?: readonly string[];
+  /**
+   * Offers the model this composer's work will run on, pinning it ahead of the
+   * `agent-model-workstream` flag. Composers that pass nothing show no selector;
+   * those that do still only show it while Application → Developer → **Debug
+   * enabled** is on, because choosing a model is a developer's question rather
+   * than part of describing work.
+   *
+   * `value` is `null` until something is chosen, which is what keeps an
+   * untouched composer on the flag rather than silently pinning every work
+   * stream a developer starts to the model the selector happens to display.
+   */
+  modelOverride?: {
+    value: AgentModelOverride | null;
+    onChange: (model: AgentModelOverride) => void;
+  };
   onAttach: (files: FileList | File[]) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onMention: () => void;
@@ -81,6 +103,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   mentionDisabled = false,
   mentionLabel = 'Mention a participant or connection',
   mentionLabels = NO_MENTION_LABELS,
+  modelOverride,
   onAttach,
   onKeyDown,
   onMention,
@@ -106,6 +129,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const attachFiles = useCallback((files: FileList | File[]): void => {
     if (!submitting) onAttach(files);
   }, [onAttach, submitting]);
+  const debugEnabled = useDebugEnabled();
   const drop = useFileDrop((files) => attachFiles(files), submitting);
   const paste = useFilePaste(attachFiles, submitting);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
@@ -319,6 +343,45 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             </div>
+            {modelOverride && debugEnabled && (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton
+                    className="model-selector-trigger"
+                    disabled={submitting}
+                    label={`Model: ${agentModelLabel(modelOverride.value ?? DEFAULT_AGENT_MODEL)}`}
+                  >
+                    <span>{agentModelLabel(modelOverride.value ?? DEFAULT_AGENT_MODEL)}</span>
+                    <ChevronDown aria-hidden="true" size={13} />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
+                    <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
+                    {/* Unchosen reads as the default rather than as nothing: it is
+                        the model this work will actually run on today. */}
+                    <DropdownMenu.RadioGroup
+                      onValueChange={(model) => modelOverride.onChange(model as AgentModelOverride)}
+                      value={modelOverride.value ?? DEFAULT_AGENT_MODEL}
+                    >
+                      {AGENT_MODEL_GROUPS.map((group) => (
+                        <Fragment key={group.provider}>
+                          <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
+                          {group.models.map((choice) => (
+                            <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
+                              <span>{choice.label}</span>
+                              <DropdownMenu.ItemIndicator asChild>
+                                <Check aria-hidden="true" size={15} />
+                              </DropdownMenu.ItemIndicator>
+                            </DropdownMenu.RadioItem>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </DropdownMenu.RadioGroup>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            )}
           </div>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">
