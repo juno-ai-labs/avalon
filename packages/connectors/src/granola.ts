@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@avalon/contracts";
+import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
   isRecord,
@@ -233,14 +234,14 @@ const personalMcpInputSchemas = {
 export type GranolaMcpTool = keyof typeof personalMcpInputSchemas;
 
 const ResourceMetadataSchema = z.object({
-  resource: z.string().url(),
-  authorization_servers: z.array(z.string().url()).min(1),
+  resource: HttpsUrlSchema,
+  authorization_servers: z.array(HttpsUrlSchema).min(1),
   scopes_supported: z.array(z.string()).optional(),
 }).passthrough();
 const AuthorizationServerMetadataSchema = z.object({
-  authorization_endpoint: z.string().url(),
-  token_endpoint: z.string().url(),
-  registration_endpoint: z.string().url(),
+  authorization_endpoint: HttpsUrlSchema,
+  token_endpoint: HttpsUrlSchema,
+  registration_endpoint: HttpsUrlSchema,
   code_challenge_methods_supported: z.array(z.string()).optional(),
   token_endpoint_auth_methods_supported: z.array(z.string()).optional(),
 }).passthrough();
@@ -961,9 +962,9 @@ async function exchangeToken(
 
 function parseOAuthState(value: unknown): GranolaOAuthState {
   const parsed = z.object({
-    resource: z.string().url(),
-    authorizationEndpoint: z.string().url(),
-    tokenEndpoint: z.string().url(),
+    resource: HttpsUrlSchema,
+    authorizationEndpoint: HttpsUrlSchema,
+    tokenEndpoint: HttpsUrlSchema,
     clientId: z.string().min(1),
     clientSecret: z.string().min(1).nullable().optional(),
     tokenEndpointAuthMethod: z.enum(["none", "client_secret_post", "client_secret_basic"]),
