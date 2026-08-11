@@ -7,6 +7,7 @@ import { useUiStore } from '../lib/ui-store';
 import {
   AddResourceDialog,
   highestVisibleAttentionSequence,
+  hypersightHoldsSidebar,
   initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
@@ -46,14 +47,20 @@ const headerWorkstream: WorkstreamDetail = {
   automationRuns: [],
 };
 
-function renderWorkstreamHeader(workstream = headerWorkstream): ReturnType<typeof render> {
+function renderWorkstreamHeader(
+  workstream = headerWorkstream,
+  overrides: { hypersightOpen?: boolean; onToggleHyperSight?: () => void } = {},
+): ReturnType<typeof render> {
   return render(
     <Tooltip.Provider>
       <WorkstreamHeader
-        hypersightOpen={false}
+        hypersightOpen={overrides.hypersightOpen ?? false}
         hypersightPreferencePending={false}
         onAddParticipant={vi.fn()}
-        onToggleHyperSight={vi.fn()}
+        // The screen opens the rail through the same store action, after
+        // giving up the right sidebar's other occupant.
+        onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+        onToggleHyperSight={overrides.onToggleHyperSight ?? vi.fn()}
         socketState="connected"
         workstream={workstream}
       />
@@ -114,6 +121,39 @@ describe('WorkstreamHeader origin affordances', () => {
     expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'runs' });
   });
 
+  it('marks the panel holding the right sidebar as open and closes it from there', () => {
+    renderWorkstreamHeader();
+
+    const context = screen.getByRole('button', { name: 'Work-stream context' });
+    expect(context).toHaveAttribute('aria-pressed', 'false');
+    expect(context).not.toHaveClass('is-active');
+
+    fireEvent.click(context);
+    expect(useUiStore.getState()).toMatchObject({ railOpen: true, railVariant: 'context' });
+    const openContext = screen.getByRole('button', { name: 'Hide work-stream context' });
+    expect(openContext).toHaveAttribute('aria-pressed', 'true');
+    expect(openContext).toHaveClass('is-active');
+    // The sidebar holds one panel at a time, so the other control stays unpressed.
+    expect(screen.getByRole('button', { name: 'Background tasks' })).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(openContext);
+    expect(useUiStore.getState().railOpen).toBe(false);
+    expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('shows HyperSight as the open panel while it holds the sidebar', () => {
+    const onToggleHyperSight = vi.fn();
+    renderWorkstreamHeader(headerWorkstream, { hypersightOpen: true, onToggleHyperSight });
+
+    const hypersight = screen.getByRole('button', { name: 'Hide HyperSight' });
+    expect(hypersight).toHaveAttribute('aria-pressed', 'true');
+    expect(hypersight).toHaveClass('is-active');
+    expect(screen.getByRole('button', { name: 'Work-stream context' })).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(hypersight);
+    expect(onToggleHyperSight).toHaveBeenCalledTimes(1);
+  });
+
   it('does not expose automation runs or an origin icon for ad-hoc work streams', async () => {
     renderWorkstreamHeader({ ...headerWorkstream, origin: 'ad_hoc' });
 
@@ -154,6 +194,17 @@ const transcript: Message[] = [
     createdAt: '2026-08-01T00:00:02.000Z',
   },
 ];
+
+describe('right sidebar occupancy', () => {
+  it('gives the slot to the inspector, so a failed preference write cannot open both', () => {
+    expect(hypersightHoldsSidebar(true, false)).toBe(true);
+    expect(hypersightHoldsSidebar(false, false)).toBe(false);
+    expect(hypersightHoldsSidebar(false, true)).toBe(false);
+    // The stored preference can still say "visible" after a rolled-back write;
+    // the panel the person just opened keeps the slot regardless.
+    expect(hypersightHoldsSidebar(true, true)).toBe(false);
+  });
+});
 
 describe('transcript read positioning', () => {
   it('opens one message before the first unread sequence to preserve context', () => {

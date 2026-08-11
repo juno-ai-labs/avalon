@@ -1,9 +1,12 @@
+import { IconAugmentedReality } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { AlertTriangle, GripVertical, LoaderCircle, Plus, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, GripVertical, LoaderCircle, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { HyperSight, HyperSightBlock } from '../lib/types';
+import { useUiStore } from '../lib/ui-store';
 import { Button, IconButton, Modal } from './primitives';
+import { RailResizeHandle } from './rail-resize-handle';
 import { MarkdownBody } from './workstream-blocks';
 
 interface HyperSightPanelProps {
@@ -108,110 +111,101 @@ export function HyperSightPanel({
   };
 
   return (
-    <section aria-label="HyperSight" className="hypersight-panel">
-      <header className="hypersight-panel-header">
-        <div>
-          <Sparkles aria-hidden="true" size={14} />
-          <h2>HyperSight</h2>
-        </div>
-        <span>{blocks.length === 1 ? '1 block' : `${blocks.length} blocks`}</span>
-      </header>
-      <div className="hypersight-panel-scroll">
-        <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
-        <div className="hypersight-block-list">
-          {blocks.map((block, blockIndex) => (
-            <article
-              className={clsx('hypersight-block', draggingId === block.id && 'is-dragging')}
-              key={block.id}
-              onDragEnter={(event) => {
-                event.preventDefault();
-                if (!draggingId || draggingId === block.id) return;
-                setBlocks((current) => moveBlock(current, draggingId, block.id));
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                finishDrag();
-              }}
-            >
-              <div className="hypersight-block-card">
-                <HyperSightBlockContent block={block} />
-              </div>
-              <div className="hypersight-block-controls">
-                <IconButton
-                  disabled={pending}
-                  label={block.prompt ? 'Edit HyperSight prompt' : 'Add HyperSight prompt'}
-                  onClick={() => openPrompt(block)}
-                >
-                  <Sparkles size={15} />
-                </IconButton>
-                <div className="hypersight-block-hover-controls">
-                  <button
-                    aria-label="Reorder HyperSight block"
-                    aria-keyshortcuts="ArrowUp ArrowDown"
-                    className="hypersight-grip"
-                    disabled={pending}
-                    draggable={!pending}
-                    onDragEnd={finishDrag}
-                    onDragStart={(event) => {
-                      dragFinishedRef.current = false;
-                      draggingIdRef.current = block.id;
-                      setDraggingId(block.id);
-                      event.dataTransfer.effectAllowed = 'move';
-                      event.dataTransfer.setData('text/plain', block.id);
-                      const article = event.currentTarget.closest('.hypersight-block');
-                      if (article instanceof HTMLElement) {
-                        const ghost = article.cloneNode(true) as HTMLElement;
-                        ghost.classList.add('hypersight-drag-ghost');
-                        ghost.style.width = `${article.getBoundingClientRect().width}px`;
-                        document.body.append(ghost);
-                        event.dataTransfer.setDragImage(ghost, 24, 24);
-                        dragImageRef.current = ghost;
-                      }
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-                      event.preventDefault();
-                      const targetIndex = blockIndex + (event.key === 'ArrowUp' ? -1 : 1);
-                      const target = blocks[targetIndex];
-                      if (!target) return;
-                      const next = moveBlock(blocks, block.id, target.id);
-                      setReorderAnnouncement(`Moved block to position ${targetIndex + 1} of ${blocks.length}.`);
-                      void commit(next);
-                    }}
-                    type="button"
-                  >
-                    <GripVertical aria-hidden="true" size={15} />
-                  </button>
-                  <IconButton
-                    className="hypersight-delete"
-                    disabled={pending}
-                    label="Delete HyperSight block"
-                    onClick={() => void commit(blocks.filter((candidate) => candidate.id !== block.id))}
-                  >
-                    <Trash2 size={14} />
-                  </IconButton>
-                </div>
-              </div>
-            </article>
-          ))}
-          <button
-            className="hypersight-add-block"
-            disabled={pending || blocks.length >= 24}
-            onClick={() => {
-              const block: HyperSightBlock = { id: crypto.randomUUID(), prompt: '', latestRun: null };
-              const next = [...blocks, block];
-              void commit(next).then((saved) => {
-                if (saved) openPrompt(block);
-              });
+    <section aria-label="HyperSight blocks" className="hypersight-panel">
+      <span aria-live="polite" className="sr-only">{reorderAnnouncement}</span>
+      <div className="hypersight-block-list">
+        {blocks.map((block, blockIndex) => (
+          <article
+            className={clsx('hypersight-block', draggingId === block.id && 'is-dragging')}
+            key={block.id}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              if (!draggingId || draggingId === block.id) return;
+              setBlocks((current) => moveBlock(current, draggingId, block.id));
             }}
-            type="button"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              finishDrag();
+            }}
           >
-            <Plus aria-hidden="true" size={15} />
-            <span>Add block</span>
-          </button>
-          {error ? <p className="hypersight-panel-error" role="alert">{error}</p> : null}
-        </div>
+            <div className="hypersight-block-card">
+              <HyperSightBlockContent block={block} />
+            </div>
+            <div className="hypersight-block-controls">
+              <IconButton
+                disabled={pending}
+                label={block.prompt ? 'Edit HyperSight prompt' : 'Add HyperSight prompt'}
+                onClick={() => openPrompt(block)}
+              >
+                <Sparkles size={15} />
+              </IconButton>
+              <div className="hypersight-block-hover-controls">
+                <button
+                  aria-label="Reorder HyperSight block"
+                  aria-keyshortcuts="ArrowUp ArrowDown"
+                  className="hypersight-grip"
+                  disabled={pending}
+                  draggable={!pending}
+                  onDragEnd={finishDrag}
+                  onDragStart={(event) => {
+                    dragFinishedRef.current = false;
+                    draggingIdRef.current = block.id;
+                    setDraggingId(block.id);
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('text/plain', block.id);
+                    const article = event.currentTarget.closest('.hypersight-block');
+                    if (article instanceof HTMLElement) {
+                      const ghost = article.cloneNode(true) as HTMLElement;
+                      ghost.classList.add('hypersight-drag-ghost');
+                      ghost.style.width = `${article.getBoundingClientRect().width}px`;
+                      document.body.append(ghost);
+                      event.dataTransfer.setDragImage(ghost, 24, 24);
+                      dragImageRef.current = ghost;
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                    event.preventDefault();
+                    const targetIndex = blockIndex + (event.key === 'ArrowUp' ? -1 : 1);
+                    const target = blocks[targetIndex];
+                    if (!target) return;
+                    const next = moveBlock(blocks, block.id, target.id);
+                    setReorderAnnouncement(`Moved block to position ${targetIndex + 1} of ${blocks.length}.`);
+                    void commit(next);
+                  }}
+                  type="button"
+                >
+                  <GripVertical aria-hidden="true" size={15} />
+                </button>
+                <IconButton
+                  className="hypersight-delete"
+                  disabled={pending}
+                  label="Delete HyperSight block"
+                  onClick={() => void commit(blocks.filter((candidate) => candidate.id !== block.id))}
+                >
+                  <Trash2 size={14} />
+                </IconButton>
+              </div>
+            </div>
+          </article>
+        ))}
+        <button
+          className="hypersight-add-block"
+          disabled={pending || blocks.length >= 24}
+          onClick={() => {
+            const block: HyperSightBlock = { id: crypto.randomUUID(), prompt: '', latestRun: null };
+            const next = [...blocks, block];
+            void commit(next).then((saved) => {
+              if (saved) openPrompt(block);
+            });
+          }}
+          type="button"
+        >
+          <Plus aria-hidden="true" size={15} />
+          <span>Add block</span>
+        </button>
+        {error ? <p className="hypersight-panel-error" role="alert">{error}</p> : null}
       </div>
       <Modal
         description="This prompt runs against the current work stream whenever its shared context changes. The result is rendered as Markdown."
@@ -255,64 +249,65 @@ export function HyperSightPanel({
   );
 }
 
-export function HyperSightResizeHandle({ onResize }: { onResize: (height: number) => void }): React.JSX.Element {
-  const dragRef = useRef<{
-    maximum: number;
-    minimum: number;
-    pointerId: number;
-    startHeight: number;
-    startY: number;
-  } | null>(null);
+/**
+ * HyperSight's right sidebar. It shares the inspector rail's slot, geometry,
+ * and grab handle: only one of the two is ever open, so they can be laid out as
+ * one panel that changes contents.
+ */
+export function HyperSightRail({
+  blockCount,
+  children,
+  onClose,
+}: {
+  blockCount: number;
+  children: React.ReactNode;
+  onClose: () => void;
+}): React.JSX.Element {
+  const width = useUiStore((state) => state.hypersightWidth);
+  const setWidth = useUiStore((state) => state.setHyperSightWidth);
+  const railRef = useRef<HTMLElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
 
-  const finishDrag = (element?: HTMLDivElement): void => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    dragRef.current = null;
-    if (element?.hasPointerCapture?.(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
-    document.body.classList.remove('is-resizing-hypersight');
-  };
-
-  useEffect(() => () => {
-    dragRef.current = null;
-    document.body.classList.remove('is-resizing-hypersight');
+  useEffect(() => {
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    requestAnimationFrame(() => railRef.current?.focus());
+    return () => previousFocus.current?.focus();
   }, []);
 
   return (
-    <div
-      aria-label="Resize HyperSight"
-      aria-orientation="horizontal"
-      className="hypersight-resizer"
-      onLostPointerCapture={(event) => finishDrag(event.currentTarget)}
-      onPointerCancel={(event) => finishDrag(event.currentTarget)}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        const startY = event.clientY;
-        const panel = event.currentTarget.closest('.hypersight-shell');
-        if (!(panel instanceof HTMLElement)) return;
-        const startHeight = panel.getBoundingClientRect().height;
-        const screen = panel.closest('.workstream-screen');
-        const screenHeight = screen instanceof HTMLElement ? screen.getBoundingClientRect().height : window.innerHeight;
-        const minimum = screenHeight * 0.18;
-        const maximum = screenHeight * 0.58;
-        finishDrag(event.currentTarget);
-        dragRef.current = { maximum, minimum, pointerId: event.pointerId, startHeight, startY };
-        event.currentTarget.setPointerCapture?.(event.pointerId);
-        document.body.classList.add('is-resizing-hypersight');
-      }}
-      onPointerMove={(event) => {
-        const drag = dragRef.current;
-        if (!drag || event.pointerId !== drag.pointerId) return;
-        onResize(Math.min(
-          drag.maximum,
-          Math.max(drag.minimum, drag.startHeight + event.clientY - drag.startY),
-        ));
-      }}
-      onPointerUp={(event) => {
-        if (event.pointerId === dragRef.current?.pointerId) finishDrag(event.currentTarget);
-      }}
-      role="separator"
-    >
-      <span />
-    </div>
+    <>
+      {/* Distinct from the header's control so the two do not read as one
+          repeated button when a screen reader lists them. */}
+      <button aria-label="Dismiss HyperSight" className="rail-scrim" onClick={onClose} type="button" />
+      <aside
+        aria-label="HyperSight"
+        className="hypersight-rail"
+        onKeyDown={(event) => {
+          // The block prompt's dialog is portalled to the document body, but a
+          // React synthetic event still bubbles up the React tree to here — so
+          // without this, dismissing that dialog would also close the sidebar
+          // and persist HyperSight off. Only Escapes raised inside the sidebar
+          // itself close it.
+          if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node)) return;
+          onClose();
+        }}
+        ref={railRef}
+        style={{ width }}
+        tabIndex={-1}
+      >
+        <RailResizeHandle label="Resize HyperSight" onResize={setWidth} width={width} />
+        <header className="rail-header window-drag">
+          <div className="rail-title window-no-drag">
+            <span aria-hidden="true" className="hypersight-rail-icon"><IconAugmentedReality size={15} stroke={1.7} /></span>
+            <h2>HyperSight</h2>
+            <span className="hypersight-block-count">{blockCount === 1 ? '1 block' : `${blockCount} blocks`}</span>
+          </div>
+          <div className="rail-header-actions window-no-drag">
+            <IconButton label="Close HyperSight" onClick={onClose}><X size={15} /></IconButton>
+          </div>
+        </header>
+        <div className="rail-scroll">{children}</div>
+      </aside>
+    </>
   );
 }

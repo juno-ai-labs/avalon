@@ -12,7 +12,40 @@ describe('context rail state', () => {
       railWidth: 360,
       railExpanded: false,
       inspector: null,
+      hypersightOpen: false,
+      hypersightWidth: 360,
+      railScope: null,
     });
+  });
+
+  it('clamps HyperSight to the same width range as the rail it shares the sidebar with', () => {
+    useUiStore.getState().setHyperSightWidth(120);
+    expect(useUiStore.getState().hypersightWidth).toBe(320);
+
+    useUiStore.getState().setHyperSightWidth(900);
+    expect(useUiStore.getState().hypersightWidth).toBe(560);
+
+    useUiStore.getState().setHyperSightOpen(true);
+    expect(useUiStore.getState().hypersightOpen).toBe(true);
+  });
+
+  it('keeps a separate remembered width per panel and per work stream', () => {
+    useUiStore.getState().setRailScope('workstream-one');
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 360, hypersightWidth: 360 });
+
+    useUiStore.getState().setRailWidth(420);
+    useUiStore.getState().setHyperSightWidth(520);
+
+    // A work stream that has never opened either panel starts at the default.
+    useUiStore.getState().setRailScope('workstream-two');
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 360, hypersightWidth: 360 });
+    useUiStore.getState().setRailWidth(330);
+
+    useUiStore.getState().setRailScope('workstream-one');
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 420, hypersightWidth: 520 });
+
+    useUiStore.getState().setRailScope('workstream-two');
+    expect(useUiStore.getState()).toMatchObject({ railWidth: 330, hypersightWidth: 360 });
   });
 
   it('clamps and persists sidebar resizing', () => {

@@ -94,6 +94,26 @@ describe('InspectorRail details', () => {
     });
   });
 
+  it('steps the stored width from the keyboard without swallowing it into the expanded floor', () => {
+    useUiStore.setState({ railExpanded: true });
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={workstream} />
+      </Tooltip.Provider>,
+    );
+    const handle = screen.getByRole('separator', { name: 'Resize inspector' });
+
+    // Expanded, the rail is drawn at its 520 floor while 360 is what this
+    // person chose; a keypress must widen the 360, not persist the floor.
+    expect(handle).toHaveAttribute('aria-valuenow', '520');
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(useUiStore.getState().railWidth).toBe(376);
+
+    useUiStore.setState({ railExpanded: false });
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(useUiStore.getState().railWidth).toBe(360);
+  });
+
   it('shows automation-subscription and bounded harness-run metadata while debugging is on', async () => {
     render(
       <Tooltip.Provider>
