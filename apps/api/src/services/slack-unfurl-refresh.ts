@@ -13,6 +13,7 @@ import {
   WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
   slackUnfurlErrorReason,
+  unfurlStatusLabel,
   workstreamUnfurlBlocks,
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
@@ -182,12 +183,15 @@ async function refreshConnectionUnfurls(
       continue;
     }
 
-    // A row selected only by the audience clock usually has nothing to say.
     // Rewriting an identical card would burn the workspace's `chat.unfurl`
-    // budget for no visible change, so only a genuine drift re-posts.
+    // budget for no visible change, so compare what the card actually renders
+    // rather than the raw status. Most states share the same empty badge, so a
+    // move between two of them — `completed` to `idle`, say — drifts the row
+    // without changing a pixel. Record the new status and post nothing.
     const wasAnonymous = row.rendered_anonymous === 1;
-    if (row.harness_status === row.rendered_status && external === wasAnonymous) {
-      await markAudienceChecked(env, connectionId, row, at);
+    const badgeUnchanged = unfurlStatusLabel(row.harness_status) === unfurlStatusLabel(row.rendered_status);
+    if (badgeUnchanged && external === wasAnonymous) {
+      await markCardCurrent(env, connectionId, row, at);
       continue;
     }
 
@@ -238,16 +242,21 @@ async function refreshConnectionUnfurls(
   }
 }
 
-async function markAudienceChecked(
+/**
+ * Record that the posted card is current without touching Slack. Advancing
+ * `rendered_status` matters even though nothing was posted: leaving it behind
+ * would re-select the row on every sweep for as long as the raw status differs.
+ */
+async function markCardCurrent(
   env: Env,
   connectionId: string,
-  row: { slack_channel_id: string; slack_message_ts: string; url: string },
+  row: { slack_channel_id: string; slack_message_ts: string; url: string; harness_status: string },
   at: string,
 ): Promise<void> {
   await env.DB.prepare(
-    `UPDATE slack_unfurled_links SET audience_checked_at = ?
+    `UPDATE slack_unfurled_links SET rendered_status = ?, audience_checked_at = ?
       WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
-  ).bind(at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
+  ).bind(row.harness_status, at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
 }
 
 async function workspaceBotToken(env: Env, connection: SlackUnfurlConnection): Promise<string> {
