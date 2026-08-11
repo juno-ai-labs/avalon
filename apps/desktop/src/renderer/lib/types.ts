@@ -431,6 +431,12 @@ export interface CreatedWorkstream {
   messageId: string;
   clientMessageId: string;
   createdAt: string;
+  /**
+   * The run the opening message started. Seeded into the work stream's detail so
+   * the work timer the launch surface started keeps counting across the
+   * navigation instead of disappearing until the first refetch answers.
+   */
+  harnessRunId: string | null;
 }
 
 export interface WorkOpportunity {
