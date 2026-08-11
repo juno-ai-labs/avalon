@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   isProviderCredentialRejection,
   isRecord,
+  isRevokedGrantError,
   jsonHeaders,
   providerJson,
   readResponseBytes,
@@ -523,11 +524,28 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       tokenEndpointAuthMethod: connection.credentials.tokenEndpointAuthMethod,
       scope: connection.credentials.tokenScope ?? "mcp offline_access",
     });
-    const token = await exchangeToken(fetcher, authorizationState, {
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      resource: authorizationState.resource,
-    }, signal);
+    // The host marks a connection `needs_reconnect` only when the adapter says
+    // the grant itself is gone. Without this the token endpoint's bare 401
+    // arrives as an `unauthorized` carrying no verdict, and a revoked Granola
+    // grant leaves the row `healthy` forever: every run drops the plugin, no
+    // member is ever prompted, and only a manual connection test recovers it.
+    let token: z.infer<typeof TokenResponseSchema>;
+    try {
+      token = await exchangeToken(fetcher, authorizationState, {
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+        resource: authorizationState.resource,
+      }, signal);
+    } catch (error) {
+      if (isRevokedGrantError(error)) {
+        throw new ConnectorError("unauthorized", "The Granola authorization is no longer valid", {
+          status: isRecord(error.details) ? error.details.status : 401,
+          reconnectRequired: true,
+          reason: "refresh_rejected",
+        });
+      }
+      throw error;
+    }
     return {
       ...connection.credentials,
       accessToken: token.access_token,

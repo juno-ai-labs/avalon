@@ -136,6 +136,20 @@ const CONFIGURATION_ERRORS = new Set([
 ]);
 
 /**
+ * Whether an OAuth error code a token endpoint named means the grant is dead.
+ *
+ * For the callers that hold the code but no HTTP status — a provider that
+ * reports a token failure as `200 {"error": "..."}`, as GitHub does — so they
+ * do not have to treat every named error as a revoked grant and nag members to
+ * reconnect accounts that work. An unfamiliar code still counts as revoked: the
+ * two ways to be wrong are not symmetric, and leaving a dead connection
+ * reporting healthy strands it silently.
+ */
+export function isRevokedGrantCode(code: string): boolean {
+  return !CONFIGURATION_ERRORS.has(code);
+}
+
+/**
  * Whether a token-endpoint failure means the stored grant is dead.
  *
  * Classifying by status alone marks a connection `needs_reconnect` for any 400
