@@ -166,6 +166,46 @@ describe("Slack account linking", () => {
     expect(challengeCount(database)).toBe(2);
   });
 
+  it("routes every Avalon button by its action id, not a view's callback id", async () => {
+    // The connect button is not a special case: the handler matches all of
+    // Avalon's buttons this way, and none of these four branches had coverage
+    // before they were converted. Each payload carries a top-level `callback_id`
+    // that would shadow the action id under the old matching.
+    const cases = [
+      { actionId: "avalon_preferences", expect: "views.open", view: "avalon_preferences_submit" },
+      { actionId: "avalon_feedback", expect: "views.open", view: "avalon_feedback_submit" },
+      { actionId: "avalon_create_automation", expect: null, view: null },
+      { actionId: "avalon_open_task", expect: null, view: null },
+    ];
+    for (const testCase of cases) {
+      const database = await seededDatabase();
+      const slack = stubSlack();
+      await expect(new SlackAgentService(environment(database)).processInteraction({
+        ...connectClick(),
+        callback_id: "avalon_some_modal",
+        actions: [{ action_id: testCase.actionId, type: "button", value: "workstream-1" }],
+      }, `route-${testCase.actionId}`)).resolves.toEqual({});
+      const opened = slack.calls.find((call) => call.method === "views.open");
+      expect(opened?.method ?? null).toBe(testCase.expect);
+      expect((opened?.body.view as { callback_id?: string } | undefined)?.callback_id ?? null).toBe(testCase.view);
+    }
+  });
+
+  it("queues a workspace claim raised by its action id", async () => {
+    const database = await seededDatabase();
+    stubSlack();
+
+    await expect(new SlackAgentService(environment(database)).processInteraction({
+      ...connectClick(),
+      callback_id: "avalon_some_modal",
+      actions: [{ action_id: "avalon_claim_workstream", type: "button", value: "session-1" }],
+    }, "claim-hash")).resolves.toEqual({});
+
+    expect(database.prepare(
+      "SELECT kind, status FROM slack_ingress_jobs WHERE id = 'interaction:claim-hash'",
+    ).get()).toMatchObject({ kind: "interaction", status: "queued" });
+  });
+
   it("offers a reconnect instead of a link the installation cannot honor", async () => {
     const database = await seededDatabase();
     database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");

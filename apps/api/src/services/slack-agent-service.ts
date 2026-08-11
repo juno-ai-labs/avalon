@@ -367,18 +367,19 @@ export class SlackAgentService {
     const action = Array.isArray(payload.actions) && payload.actions[0] && typeof payload.actions[0] === "object"
       ? payload.actions[0] as Record<string, unknown>
       : null;
-    const callbackId = String(payload.callback_id ?? action?.action_id ?? "");
-    // Avalon's own buttons are matched on the action id, never on `callbackId`.
-    // That fallback prefers any top-level `callback_id`, which a block action
-    // raised from inside a view can carry — so a connect button placed in a
-    // modal would miss its branch and fall through to the shortcut path, and a
-    // handoff button would open a task modal on top of the link it just
-    // followed. The action id is the button, whatever it is embedded in.
+    // Every one of Avalon's own buttons is matched on the action id, and none
+    // on `payload.callback_id`. A block action raised from inside a view can
+    // carry that view's callback id, which would shadow the button's own — a
+    // connect button placed in a modal would miss its branch and fall through
+    // to the shortcut path, and a handoff button would open a task modal on top
+    // of the link it just followed. The action id is the button, whatever it is
+    // embedded in. The two manifest shortcuts carry no action at all and reach
+    // the task modal below by falling past every branch here.
     const actionId = String(action?.action_id ?? "");
     // Slack follows a `url` button's link itself, so the interaction it also
     // sends needs nothing but an acknowledgement.
     if (type === "block_actions" && actionId.startsWith("avalon_open_")) return {};
-    if (type === "block_actions" && callbackId === "avalon_claim_workstream") {
+    if (type === "block_actions" && actionId === "avalon_claim_workstream") {
       if (typeof action?.value !== "string" || !action.value) {
         throw new ApiError(422, "slack_claim_invalid", "The Slack task claim is invalid");
       }
@@ -392,7 +393,7 @@ export class SlackAgentService {
       return {};
     }
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
-      if (callbackId.startsWith("avalon_open_") || callbackId === "avalon_create_automation") return {};
+      if (actionId === "avalon_create_automation") return {};
       if (actionId === "avalon_connect") {
         if (connection.status !== "healthy") {
           await slackApi(token, "views.open", { trigger_id: triggerId, view: reconnectRequiredModal() }, AbortSignal.timeout(1_500));
@@ -410,7 +411,7 @@ export class SlackAgentService {
         await this.supersedeLinksMintedBefore(connection.id, slackUserId, challenge.createdAt);
         return {};
       }
-      if (callbackId === "avalon_preferences") {
+      if (actionId === "avalon_preferences") {
         const preferences = await this.env.DB.prepare(
           `SELECT notify_needs_input, notify_automation_completed
            FROM slack_delivery_preferences pref
@@ -423,7 +424,7 @@ export class SlackAgentService {
         }, AbortSignal.timeout(1_500));
         return {};
       }
-      if (callbackId === "avalon_feedback") {
+      if (actionId === "avalon_feedback") {
         await slackApi(token, "views.open", { trigger_id: triggerId, view: feedbackModal(String(action?.value ?? "")) }, AbortSignal.timeout(1_500));
         return {};
       }
@@ -1549,7 +1550,7 @@ export class SlackAgentService {
             thread_ts: thread,
             text: identity
               ? "This question is targeted to another Avalon workspace member, so only that member can answer it."
-              : "This question is targeted to a specific Avalon workspace member. Only that linked member can answer it; I sent you a private link in case that member is you.",
+              : "This question is targeted to a specific Avalon workspace member. Only that linked member can answer it; I sent you a private message with a Connect Avalon button in case that member is you.",
           }, AbortSignal.timeout(5_000));
           return;
         }
