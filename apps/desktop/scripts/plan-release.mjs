@@ -39,6 +39,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isEntryPoint } from './entry-point.mjs';
 import { nextReleaseVersion, parseReleaseTag } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -216,7 +217,11 @@ function report(plan) {
   return output;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+// Guarded on identity rather than on how the path was spelled: this script is
+// run out of a symlinked temporary directory by its own test, and on macOS
+// every such directory is symlinked. See entry-point.mjs — a plan step that
+// silently emits no outputs is worse here than one that fails.
+if (isEntryPoint(import.meta.url)) {
   main()
     .then(async (output) => {
       if (process.env.GITHUB_OUTPUT) {
