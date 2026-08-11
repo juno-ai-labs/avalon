@@ -29,6 +29,12 @@ Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
 dry-run builds, the desktop release invariants, and a Gitleaks scan over the full
 history.
 
+`pnpm test:scripts` covers only the repository's own `scripts/`. The release
+tooling under `apps/desktop/scripts/` — the planner and the workflow invariants —
+is a separate suite that CI runs as `pnpm --filter @avalon/desktop test:release`.
+Run that one too when touching a release script, or its tests will not execute
+locally and the name of the other gate will suggest they did.
+
 ## Flaky tests
 
 **A test that fails once and passes on a rerun is a defect in the test or the
