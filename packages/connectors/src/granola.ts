@@ -857,12 +857,13 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       );
       return { output: boundGranolaValue(output), summary: `Read Granola with ${name}` };
     },
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Granola connector configuration is available" };
+      const signal = callerSignal ?? AbortSignal.timeout(15_000);
       try {
         if (connection.scope === "workspace") {
           const apiKey = requireWorkspaceApiKey(connection);
-          await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, AbortSignal.timeout(10_000));
+          await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, signal);
           const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
           if (!webhookEndpointId) {
             throw new ConnectorError("invalid_configuration", "Granola webhook endpoint identity is missing");
@@ -873,7 +874,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
             apiKey,
             "/v1/webhook-endpoints",
             {},
-            AbortSignal.timeout(10_000),
+            signal,
           );
           const endpoint = recordArray(endpoints, "webhook_endpoints")
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
@@ -886,13 +887,12 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
                 method: "PATCH",
                 headers: jsonHeaders(apiKey),
                 body: JSON.stringify({ enabled: true }),
-                signal: AbortSignal.timeout(10_000),
+                signal,
               },
               GRANOLA_RESPONSE_BYTES,
             );
           }
         } else {
-          const signal = AbortSignal.timeout(15_000);
           const accountResult = await reauthorizingMcpCall(
             connection,
             signal,

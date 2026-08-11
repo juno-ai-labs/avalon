@@ -2388,7 +2388,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       throw new ConnectorError("unsupported_capability", `Unsupported Google tool: ${name}`);
     },
 
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Google adapter is configured" };
       if (!connection.credentials.accessToken && !connection.credentials.refreshToken) {
         throw new ConnectorError("unauthorized", "Google connection needs reconnecting", {
@@ -2398,7 +2398,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         });
       }
       await api(connection, "https://openidconnect.googleapis.com/v1/userinfo", {
-        signal: AbortSignal.timeout(15_000)
+        signal: callerSignal ?? AbortSignal.timeout(15_000)
       }).then((response) => safeJsonBounded(response, 256_000));
       return { ok: true, message: "Google account access is healthy" };
     }

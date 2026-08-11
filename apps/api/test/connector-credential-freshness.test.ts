@@ -10,6 +10,7 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { encryptString } from "../src/lib/crypto";
 import { withAuthorizedConnection } from "../src/services/connector-connection-access";
+import { __integrationTesting } from "../src/services/integrations";
 
 /**
  * A connection reaches a provider only through `withAuthorizedConnection`,
@@ -198,6 +199,80 @@ describe("the credential door", () => {
   });
 });
 
+describe("plugin revalidation verdicts", () => {
+  const frozen = {
+    pluginId: "connection:00000000-0000-7000-8000-00000000c0de",
+    connectionId: "00000000-0000-7000-8000-00000000c0de",
+    workspaceId: "00000000-0000-7000-8000-00000000ffff",
+    connectorType: "granola",
+  };
+  const input = {
+    workspaceId: frozen.workspaceId,
+    workstreamId: "00000000-0000-7000-8000-0000000000ws",
+    harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+  };
+
+  function recordingEnv() {
+    const statements: string[] = [];
+    return {
+      statements,
+      env: {
+        DB: {
+          prepare(sql: string) {
+            statements.push(sql);
+            return { bind() { return this; }, async run() { return { success: true, meta: { changes: 1 } }; } };
+          },
+        },
+        LOG_LEVEL: "error",
+      },
+    };
+  }
+
+  it("records a denial the adapter reported rather than threw", async () => {
+    // Granola and Slack answer a refused credential with `{ ok: false,
+    // reconnectRequired: true }` instead of throwing, so the credential door's
+    // error path never sees it. Nothing else writes the verdict down.
+    const { env, statements } = recordingEnv();
+
+    await expect(__integrationTesting.pluginAuthorizationFromHealth(
+      env as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[0],
+      input as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[1],
+      frozen as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[2],
+      { ok: false, message: "Granola authorization was revoked", reconnectRequired: true },
+    )).resolves.toBe("denied");
+
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+
+  it("leaves the connection alone when the check could not reach a decision", async () => {
+    const { env, statements } = recordingEnv();
+
+    await expect(__integrationTesting.pluginAuthorizationFromHealth(
+      env as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[0],
+      input as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[1],
+      frozen as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[2],
+      { ok: false, message: "TwitterAPI.io has no remaining credits" },
+    )).resolves.toBe("indeterminate");
+
+    // An unhealthy result that says nothing about authority must not take a
+    // working connection out of the desktop.
+    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+  });
+
+  it("authorizes a healthy connection without writing anything", async () => {
+    const { env, statements } = recordingEnv();
+
+    await expect(__integrationTesting.pluginAuthorizationFromHealth(
+      env as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[0],
+      input as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[1],
+      frozen as unknown as Parameters<typeof __integrationTesting.pluginAuthorizationFromHealth>[2],
+      { ok: true, message: "healthy" },
+    )).resolves.toBe("authorized");
+
+    expect(statements).toEqual([]);
+  });
+});
+
 /**
  * The credential a run starts with can still be rejected while the call is in
  * flight — a token revoked seconds ago, a provider expiring it early, a clock
@@ -222,11 +297,24 @@ describe("adapter conformance: recovery from a rejected credential", () => {
       if (!fixture) throw new Error(`Add a credential fixture for the ${type} connector`);
       const authorizations: string[] = [];
       conformanceFetch.configure(authorizations);
-
-      const health = await adapter.healthCheck(authorizedConnection(connectionContext(
+      // Registering the host's rotation is what tells a retry that went through
+      // the door from one an adapter performed beside it. Asserting only that a
+      // retry happened passes an adapter that redeems the stored refresh token
+      // privately, which is the race the door exists to close.
+      // Rotates whichever key this provider keeps its token under, without the
+      // fixture having to name it.
+      const rotate = vi.fn(async (refused: Record<string, unknown>) => Object.fromEntries(
+        Object.entries(refused).map(([key, value]) => [key, value === STALE_TOKEN ? FRESH_TOKEN : value]),
+      ));
+      const connection = connectionContext(
         { ...fixture.credentials, expiresAt: "2099-01-01T00:00:00.000Z" },
         fixture.scope,
-      )));
+      );
+
+      const health = await adapter.healthCheck(
+        authorizedConnection(connection, rotate),
+        AbortSignal.timeout(5_000),
+      );
 
       if (authorizations.length === 0) {
         // Nothing was rejected because nothing was presented: this adapter's
@@ -243,6 +331,7 @@ describe("adapter conformance: recovery from a rejected credential", () => {
       expect(authorizations.some((value) => value.includes(STALE_TOKEN))).toBe(true);
       expect(authorizations.some((value) => value.includes(FRESH_TOKEN))).toBe(true);
       expect(health.reconnectRequired ?? false).toBe(false);
+      expect(rotate).toHaveBeenCalledTimes(1);
     });
   }
 });

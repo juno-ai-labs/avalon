@@ -12,6 +12,7 @@ import {
   stringValue,
   truncateText,
   verifyHmacSha256,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -305,15 +306,14 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     signal: AbortSignal,
     operation: (token: string) => Promise<T>,
   ): Promise<T> => {
-    let token = credentialString(connection, "accessToken");
-    try {
-      return await operation(token);
-    } catch (error) {
-      if (!isProviderUnauthorized(error)) throw error;
-      connection.credentials = await refresh(connection, signal);
-      token = credentialString(connection, "accessToken");
-      return operation(token);
-    }
+    // Through the shared helper rather than a private retry: it prefers the
+    // host's lease-serialized rotation, so two calls refused at once cannot
+    // each redeem the same rotating refresh token.
+    return withProviderReauthorization(
+      connection,
+      { refresh, isRejection: isProviderUnauthorized, signal },
+      () => operation(credentialString(connection, "accessToken")),
+    );
   };
 
   const request = async (
@@ -666,7 +666,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       throw new ConnectorError("unsupported_capability", `Unsupported Notion tool: ${name}`);
     },
 
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Notion OAuth is configured" };
       assertPersonalConnection(connection);
       const token = credentialString(connection, "accessToken");
@@ -679,7 +679,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
           "notion-version": notionVersion,
         },
         body: JSON.stringify({ token }),
-        signal: AbortSignal.timeout(15_000),
+        signal: callerSignal ?? AbortSignal.timeout(15_000),
       }, 128_000);
       if (payload.active !== true) {
         throw new ConnectorError("unauthorized", "Notion authorization is inactive and must be reconnected", {

@@ -12,6 +12,7 @@ import {
   stringValue,
   truncateText,
   verifyHmacSha256,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -575,27 +576,31 @@ export async function canGitHubPersonalConnectionAccessRepository(
     { signal },
   );
   const expiration = stringValue(connection.credentials, "expiresAt");
-  let token = stringValue(connection.credentials, "accessToken");
-  if (!token || (expiration && Date.parse(expiration) <= (config.now?.() ?? Date.now()) + TOKEN_EXPIRY_SKEW_MS)) {
+  if (
+    !stringValue(connection.credentials, "accessToken")
+    || (expiration && Date.parse(expiration) <= (config.now?.() ?? Date.now()) + TOKEN_EXPIRY_SKEW_MS)
+  ) {
     connection.credentials = await refreshGitHubUserCredentials(config, connection, signal);
-    token = credentialString(connection, "accessToken");
   }
   try {
-    return isRecord(await request(token));
+    // Through the shared helper so a rejection here rotates under the host's
+    // lease like every other GitHub call, rather than redeeming the stored
+    // refresh token beside it.
+    return isRecord(await withProviderReauthorization(
+      connection,
+      {
+        refresh: (candidate, refreshSignal) =>
+          refreshGitHubUserCredentials(config, candidate, refreshSignal),
+        isRejection: isUnauthorizedStatus,
+        signal,
+      },
+      () => request(credentialString(connection, "accessToken")),
+    ));
   } catch (error) {
     const status = connectorErrorStatus(error);
     if (status === 403 && isGitHubRateLimitError(error)) throw error;
     if (status === 403 || status === 404) return false;
-    if (status !== 401) throw error;
-    connection.credentials = await refreshGitHubUserCredentials(config, connection, signal);
-    try {
-      return isRecord(await request(credentialString(connection, "accessToken")));
-    } catch (retryError) {
-      const retryStatus = connectorErrorStatus(retryError);
-      if (retryStatus === 403 && isGitHubRateLimitError(retryError)) throw retryError;
-      if (retryStatus === 403 || retryStatus === 404) return false;
-      throw retryError;
-    }
+    throw error;
   }
 }
 
@@ -696,18 +701,20 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
     operation: (token: string) => Promise<T>,
   ): Promise<T> => {
     const expiration = stringValue(connection.credentials, "expiresAt");
-    let token = stringValue(connection.credentials, "accessToken");
-    if (!token || (expiration && Date.parse(expiration) <= now() + TOKEN_EXPIRY_SKEW_MS)) {
+    if (
+      !stringValue(connection.credentials, "accessToken")
+      || (expiration && Date.parse(expiration) <= now() + TOKEN_EXPIRY_SKEW_MS)
+    ) {
       connection.credentials = await refresh(connection, signal);
-      token = credentialString(connection, "accessToken");
     }
-    try {
-      return await operation(token);
-    } catch (error) {
-      if (!isUnauthorizedStatus(error)) throw error;
-      connection.credentials = await refresh(connection, signal);
-      return operation(credentialString(connection, "accessToken"));
-    }
+    // Through the shared helper rather than a private retry: it prefers the
+    // host's lease-serialized rotation, so two calls refused at once cannot
+    // each redeem the same rotating refresh token.
+    return withProviderReauthorization(
+      connection,
+      { refresh, isRejection: isUnauthorizedStatus, signal },
+      () => operation(credentialString(connection, "accessToken")),
+    );
   };
 
   const request = async (
@@ -1003,12 +1010,12 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       return executeGitHubTool(name, rawArgs, context, request);
     },
 
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) {
         await createGitHubAppJwt({ clientId: config.clientId, privateKey: config.privateKey, now: now() });
         return { ok: true, message: "GitHub App credentials are configured" };
       }
-      const signal = AbortSignal.timeout(15_000);
+      const signal = callerSignal ?? AbortSignal.timeout(15_000);
       if (connection.scope === "workspace") {
         const response = await request(connection, signal, "GET", "/installation/repositories", { query: { per_page: 1 } });
         return isRecord(response) ? { ok: true, message: "GitHub App installation is healthy" } : { ok: false, message: "GitHub did not return installation repositories" };

@@ -253,9 +253,9 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       throw new ConnectorError("unsupported_capability", `Unsupported X tool: ${name}`);
     },
 
-    async healthCheck() {
+    async healthCheck(_connection, callerSignal) {
       try {
-        const payload = await request("/oapi/my/info", {}, AbortSignal.timeout(15_000));
+        const payload = await request("/oapi/my/info", {}, callerSignal ?? AbortSignal.timeout(15_000));
         return typeof payload.recharge_credits !== "number"
           ? { ok: false, message: "TwitterAPI.io did not return account information" }
           : payload.recharge_credits > 0
