@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
-import { Sidebar } from './sidebar';
+import { REVEAL_DEADLINE_MS, Sidebar } from './sidebar';
 
 const copyText = vi.hoisted(() => vi.fn());
 const openSettings = vi.hoisted(() => vi.fn());
@@ -1451,6 +1451,35 @@ describe('pinned work streams', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' })));
   });
 
+  // The two sections are separate subtrees, so the row is unmounted and
+  // remounted as it moves and Radix has nothing left to restore focus to. For
+  // somebody driving the sidebar from the keyboard, "where I was" is focus, not
+  // scrollTop, and the next Tab otherwise restarts at the top of the window.
+  it('takes focus with the row, since scrollTop is only half of following it', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    const moved = await screen.findByRole('region', { name: 'Pinned' });
+    await waitFor(() => expect(document.activeElement)
+      .toBe(within(moved).getByRole('link', { name: /Quarterly planning/u })));
+  });
+
+  it('leaves focus alone when it is somewhere real', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    // Whoever put focus here owns it, and a pin is not a reason to take it.
+    const elsewhere = screen.getByRole('button', { name: 'Open navigation' });
+    elsewhere.focus();
+
+    await screen.findByRole('region', { name: 'Pinned' });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
   it('brings it back into view after unpinning too, since that moves it as far', async () => {
     renderPinnable([pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0)]);
 
@@ -1533,6 +1562,49 @@ describe('pinned work streams', () => {
     await screen.findByRole('region', { name: 'Pinned' });
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
+
+  // A reveal the list never honours would otherwise be re-evaluated on every
+  // fifteen-second poll and fire whenever the state happened to match, moving
+  // the sidebar under somebody who pinned something a minute ago.
+  it('gives up on a reveal the list never honours', async () => {
+    const row = workstream('ws-slow', 'Quarterly planning', 'completed');
+    function Slow(): React.JSX.Element {
+      const [streams, setStreams] = useState([row]);
+      return (
+        <>
+          <button onClick={() => setStreams([{ ...row, pinPosition: 0 }])} type="button">Let it land</button>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            // Reports applied, but the list does not follow — the shape of a
+            // response overtaken by a change from another device.
+            onPinWorkstream={async () => true}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
+        </>
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Slow /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(screen.queryByRole('menuitem', { name: 'Pin' })).not.toBeInTheDocument());
+
+    // Real time rather than fake: this asserts on a `setTimeout` the component
+    // owns, and driving the clock out from under React's effects here made the
+    // deadline appear to fire without the state having settled.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, REVEAL_DEADLINE_MS + 200));
+    });
+
+    // The state arriving late is not a reason to scroll: the action that asked
+    // for it is long finished.
+    fireEvent.click(screen.getByRole('button', { name: 'Let it land' }));
+    await screen.findByRole('region', { name: 'Pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  }, 10_000);
 
   it('scrolls nothing when the pin was refused', async () => {
     renderWith(

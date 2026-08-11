@@ -74,6 +74,20 @@ const EDGE_REVEAL_DISTANCE = 20;
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
 
+/**
+ * How long the sidebar will wait for the list to carry a pin before it stops
+ * intending to follow the row.
+ *
+ * The wait is normally one render. It is bounded because the alternative is a
+ * reveal that stays armed: the list polls every fifteen seconds, so an intent
+ * that is never honoured is re-evaluated forever and fires the moment the state
+ * happens to match — scrolling, and moving focus, under somebody who pinned
+ * something a minute ago and has long since moved on. Following a row is only
+ * worth anything while the action that moved it is still what the reader is
+ * thinking about; two seconds is past the round trip and well short of that.
+ */
+export const REVEAL_DEADLINE_MS = 2_000;
+
 const onboardingItems = [
   {
     id: 'connect-tools',
@@ -901,6 +915,14 @@ export function Sidebar({
   // update lands — which is exactly the failure this whole effect exists to
   // prevent, reintroduced one render earlier. Comparing against the pinned-ness
   // the action asked for is what makes "has the list caught up yet" answerable.
+  // Gives up on a reveal the list never honoured. Re-armed with the reveal, so
+  // the clock runs from the action rather than from any render after it.
+  useEffect(() => {
+    if (reveal === null) return undefined;
+    const timer = setTimeout(() => setReveal(null), REVEAL_DEADLINE_MS);
+    return () => clearTimeout(timer);
+  }, [reveal]);
+
   useEffect(() => {
     if (reveal === null) return;
     const row = workstreams.find((workstream) => workstream.id === reveal.id);
@@ -914,8 +936,8 @@ export function Sidebar({
     }
     if ((row.pinPosition !== null) !== reveal.pinned) return;
     setReveal(null);
-    const rendered = [...scrollRef.current?.querySelectorAll('[data-workstream-id]') ?? []]
-      .find((candidate) => candidate.getAttribute('data-workstream-id') === reveal.id);
+    // Ids are server-generated UUIDs, so they need no escaping in a selector.
+    const rendered = scrollRef.current?.querySelector(`[data-workstream-id="${reveal.id}"]`);
     // Unpinning something the recent list does not carry leaves nothing to
     // scroll to, which is a no-op rather than a case to handle.
     rendered?.scrollIntoView?.({
@@ -928,6 +950,21 @@ export function Sidebar({
       // someone who has asked for less of it.
       behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     });
+    // Focus is where a keyboard reader *is*, and the two sections are separate
+    // subtrees, so the row is unmounted and remounted as it moves and Radix's
+    // restore on menu close has nothing left to restore to — focus lands on the
+    // body and the next Tab starts again from the top of the window. Scrolling
+    // alone therefore follows the row for the pointer half of the audience and
+    // abandons the half with the least other way to find it again.
+    //
+    // Only when focus was lost, which is precisely the case this repairs. Focus
+    // resting anywhere real — a composer, a dialog, another list — belongs to
+    // whoever put it there, and a pin is not a reason to take it.
+    if (document.activeElement === null || document.activeElement === document.body) {
+      // The scroll above already put the row where it belongs; letting focus
+      // scroll again would fight it, and would undo `nearest` besides.
+      rendered?.querySelector('a')?.focus({ preventScroll: true });
+    }
   }, [reveal, workstreams]);
 
   return (
