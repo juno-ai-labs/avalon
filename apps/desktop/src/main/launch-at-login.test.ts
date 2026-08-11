@@ -21,6 +21,7 @@ function harness(options: {
     state.openAtLogin = openAtLogin;
   });
   const onChange = vi.fn();
+  const logWarning = vi.fn();
   const controller = new LaunchAtLoginController({
     supported: options.supported ?? true,
     registersDefault: options.registersDefault ?? true,
@@ -32,8 +33,9 @@ function harness(options: {
       return Promise.resolve();
     },
     onChange,
+    logWarning,
   });
-  return { controller, setOpenAtLogin, onChange, state, storedSettings: () => settings };
+  return { controller, setOpenAtLogin, onChange, logWarning, state, storedSettings: () => settings };
 }
 
 describe('launch at login', () => {
@@ -98,6 +100,7 @@ describe('launch at login', () => {
         return Promise.reject(new Error('the preference file is read-only'));
       },
       onChange: vi.fn(),
+      logWarning: vi.fn(),
     });
 
     await expect(controller.initialize()).rejects.toThrow(/read-only/u);
@@ -124,6 +127,40 @@ describe('launch at login', () => {
     await subject.controller.set(false);
 
     expect(subject.storedSettings().launchAtLoginDefaultApplied).toBe(true);
+  });
+
+  it('follows the login item being changed in System Settings while Avalon runs', async () => {
+    const subject = harness({ stored: { launchAtLoginDefaultApplied: true }, openAtLogin: true });
+    await subject.controller.initialize();
+    expect(subject.controller.enabled()).toBe(true);
+
+    // Nothing tells Avalon this happened, so a cached answer would keep
+    // claiming Avalon opens at login until the next launch.
+    subject.state.openAtLogin = false;
+
+    expect(subject.controller.enabled()).toBe(false);
+  });
+
+  it('keeps its last answer when the login item cannot be read at all', async () => {
+    const subject = harness({ stored: { launchAtLoginDefaultApplied: true }, openAtLogin: true });
+    await subject.controller.initialize();
+
+    const failing = new LaunchAtLoginController({
+      supported: true,
+      registersDefault: false,
+      getLoginItemState: () => {
+        throw new Error('the login item service is unavailable');
+      },
+      setOpenAtLogin: vi.fn(),
+      readSettings: () => Promise.resolve({ ...defaultStoredApplicationSettings }),
+      writeSettings: () => Promise.resolve(),
+      onChange: vi.fn(),
+      logWarning: subject.logWarning,
+    });
+
+    // Reporting off would be a claim about the system this cannot see.
+    expect(failing.enabled()).toBe(false);
+    expect(subject.logWarning).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a value that is not a boolean, and the platform that has no login items', async () => {
