@@ -5,6 +5,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatRelative } from '../lib/format';
 import { useFileAttachments } from '../lib/use-file-attachments';
+import { useWindowFilePaste } from '../lib/use-file-paste';
 import type { Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -118,6 +119,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const attachmentDraft = useFileAttachments(api);
+  // The composer autofocuses here, but focus moves away the moment anything else
+  // is clicked; a paste landing on the document still reaches the draft.
+  useWindowFilePaste(attachmentDraft.addFiles);
   const members = useQuery({
     queryKey: ['workspace-members'],
     queryFn: ({ signal }) => api!.getWorkspaceMembers(signal),
