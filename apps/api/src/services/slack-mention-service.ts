@@ -149,8 +149,9 @@ export async function sendWorkstreamMentionSlack(
       }), nowIso(), connectionId).run();
     }
     const outcome = postedChunks > 0 ? "partial" : "skipped";
-    // One event with the outcome as a field, not two event names: the saved
-    // views filter on `outcome`, and a template literal is not queryable.
+    // One event with the outcome as a field, not an event name interpolated
+    // from it: a template literal splits the same failure across two values no
+    // saved view can filter on as one.
     logWarn(env, "slack_mention_delivery_incomplete", {
       outcome,
       message_id: input.messageId,
