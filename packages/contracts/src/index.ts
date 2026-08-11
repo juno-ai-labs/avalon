@@ -779,6 +779,9 @@ export const AutomationSummarySchema = z.object({
   status: z.enum(["draft", "active", "paused", "error"]),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
+  /** Last time the subscription itself changed. It is the only activity a draft
+   * has, since a draft never runs. */
+  updatedAt: TimestampSchema,
   updateAvailable: z.boolean()
 });
 
@@ -1184,6 +1187,12 @@ export const WorkstreamWorkflowInputSchema = z.object({
   triggerMessageId: IdSchema.nullable(),
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
+  /**
+   * Set when the workspace scheduler started this run from a due wake-up. The
+   * run reads the wake-up's prompt as its trigger. Optional rather than
+   * nullable so every existing producer keeps parsing unchanged.
+   */
+  scheduledWakeupId: IdSchema.optional(),
   executionPrincipal: ExecutionPrincipalSchema,
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),

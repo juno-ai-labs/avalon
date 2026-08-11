@@ -1,5 +1,7 @@
 import '@testing-library/jest-dom/vitest';
 import { configure } from '@testing-library/react';
+// jsdom ships no IndexedDB, and the composer's draft cache lives in one.
+import 'fake-indexeddb/auto';
 
 // `waitFor` and every helper built on it default to a one-second budget, which
 // bets on the machine rather than on the code: a loaded CI runner can leave the
