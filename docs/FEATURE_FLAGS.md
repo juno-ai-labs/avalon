@@ -40,12 +40,12 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 
 The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
-are the standalone structured-output agents, which call OpenRouter directly
-rather than through the harness: message addressing; semantic activity
-triggering plus contextual routing; the two halves of suggested work, which get
-separate flags because admission turns connector activity into prompts while
-ranking orders them per user, and pinning one should not move the other; and the
-work-stream description loop.
+are the standalone structured-output agents: message addressing uses the
+agent-harness classifier helper; semantic activity triggering, contextual
+routing, the two halves of suggested work, and the work-stream description loop
+use the bounded structured-inference gateway. Admission and ranking get separate
+flags because admission turns connector activity into prompts while ranking
+orders them per user, and pinning one should not move the other.
 
 The description loop is the one role whose default is most likely to want
 raising. It reads a window of up to 600 messages and decides whether a work
@@ -57,7 +57,10 @@ would move the classifiers with it.
 
 **Adding an agent means adding a flag.** The set above is the whole of what
 `agent-model-flags.ts` knows about; an agent that reads `OPENROUTER_*` directly
-is invisible to every rollout. The exhaustiveness checks on
+is invisible to every rollout. ESLint forbids those reads outside the resolver
+(with the health endpoint as the narrow availability-check exception) and also
+forbids API feature modules from constructing an OpenRouter client outside the
+structured-inference gateway. The exhaustiveness checks on
 `AGENT_MODEL_FLAG_KEYS` and `defaultAgentModelRouting` catch a *role* that was
 declared and not wired, but nothing catches a new service that never declared
 one.
