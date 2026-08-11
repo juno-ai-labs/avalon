@@ -54,6 +54,7 @@ import {
   type HarnessToolResult,
   type ModelMessage,
   type OpenRouterProviderError,
+  type PluginAuthorization,
   type RunHarnessInput,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
@@ -1083,6 +1084,10 @@ async function createPluginRuntime(
     if (!registry) throw new Error("Plugin registry is not initialized");
     return registry;
   };
+  // A host that supplies no port authorizes everything it made eligible.
+  const reauthorize = async (id: string): Promise<PluginAuthorization> =>
+    await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id))
+      ?? "authorized";
   const discovery = buildPlugin({
     canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
     modelId: "avalon_discovery",
@@ -1124,8 +1129,18 @@ async function createPluginRuntime(
         if (!eligibleIds.has(id) || activeRegistry.isCoreName(id)) {
           return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
         }
-        if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
+        const authorization = await reauthorize(id);
+        if (authorization === "denied") {
           return { output: { error: "plugin_not_authorized" }, summary: "Plugin is no longer authorized" };
+        }
+        if (authorization === "indeterminate") {
+          // The host could not reach an authorization decision. Reporting that
+          // as a revoked grant would send the run off to explain a permission
+          // problem that may not exist, so the transient outcome says so.
+          return {
+            output: { error: "plugin_authorization_unavailable" },
+            summary: "Plugin authorization could not be verified",
+          };
         }
         await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
         const plugin = activeRegistry.get(id)!;
@@ -1233,9 +1248,10 @@ async function createPluginRuntime(
     canonicalizeName: registry.canonicalizeName,
     resolve: async (id) => {
       if (!eligibleIds.has(id)) return "unknown";
-      return await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false
-        ? "unreachable"
-        : true;
+      // Bind's rehydration vocabulary has one drop reason, so a denial and an
+      // unverifiable plugin both land on `unreachable`; the host distinguishes
+      // them in its own log when it produces the verdict.
+      return await reauthorize(id) === "authorized" ? true : "unreachable";
     },
   });
   for (const id of restored.active) active.add(id);
@@ -1254,7 +1270,7 @@ async function createPluginRuntime(
   const reauthorizeActive = async () => {
     for (const id of [...active]) {
       if (registry.isCoreName(id)) continue;
-      if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
+      if (await reauthorize(id) !== "authorized") {
         active.delete(id);
         await input.onActivationDropped?.({ name: id, reason: "unreachable" });
       }

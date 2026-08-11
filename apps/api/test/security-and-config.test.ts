@@ -3,6 +3,7 @@ import {
   ConnectorError,
   createGoogleConnector,
   type ConnectorConnectionContext,
+  type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
@@ -11,6 +12,7 @@ import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualT
 import { redact } from "../src/observability/logger";
 import { AuthService } from "../src/services/auth-service";
 import { __connectionServiceTesting } from "../src/services/connection-service";
+import { withAuthorizedConnection } from "../src/services/connector-connection-access";
 import { __integrationTesting } from "../src/services/integrations";
 import {
   isAllowedSocketOrigin,
@@ -365,22 +367,47 @@ describe("API security utilities", () => {
 
   it("persists credentials mutated by a reactive connector refresh with connection-bound encryption", async () => {
     const updates: Array<{ sql: string; values: unknown[] }> = [];
+    const encryptionKey = randomToken(32);
+    // A mid-call rejection rotates under the credential-refresh lease, so this
+    // stub answers the lease claim and the write-back the coordinator performs.
     const database = {
       prepare(sql: string) {
         const update = { sql, values: [] as unknown[] };
-        updates.push(update);
         return {
           bind(...values: unknown[]) {
             update.values = values;
-            return this;
-          },
-          async run() {
-            return { success: true, meta: { changes: 1 } };
+            return {
+              async first() {
+                if (sql.includes("credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?")) {
+                  const encrypted = await encryptString(
+                    JSON.stringify({
+                      accessToken: "expired-access-token",
+                      refreshToken: "offline-refresh-token",
+                    }),
+                    encryptionKey,
+                    String(values[2]),
+                  );
+                  return {
+                    encrypted_credentials: encrypted.ciphertext,
+                    credential_iv: encrypted.iv,
+                    credential_key_version: 7,
+                  };
+                }
+                if (sql.includes("RETURNING id")) {
+                  updates.push(update);
+                  return { id: "connection" };
+                }
+                return null;
+              },
+              async run() {
+                if (sql.includes("encrypted_credentials = ?")) updates.push(update);
+                return { success: true, meta: { changes: 1 } };
+              },
+            };
           },
         };
       },
     } as unknown as D1Database;
-    const encryptionKey = randomToken(32);
     const connection = connectorContext({
       accessToken: "expired-access-token",
       refreshToken: "offline-refresh-token",
@@ -410,18 +437,22 @@ describe("API security utilities", () => {
       }) as typeof fetch,
     });
 
-    await expect(__integrationTesting.withConnectorCredentialLifecycle(
+    await expect(withAuthorizedConnection(
       {
         DB: database,
         CONNECTOR_CREDENTIALS_KEY: encryptionKey,
         CONNECTOR_CREDENTIALS_KEY_VERSION: "7",
       },
-      connection,
-      () => adapter.executeTool(
+      {
+        connection,
+        adapter: adapter as ResolvedConnectorAdapter,
+        signal: new AbortController().signal,
+      },
+      (authorized) => adapter.executeTool(
         "gmail.search",
         { query: "from:example.com" },
         {
-          connection,
+          connection: authorized,
           principal: { type: "workspace", workspaceId: connection.workspaceId },
           signal: new AbortController().signal,
         },
@@ -469,13 +500,17 @@ describe("API security utilities", () => {
       refreshToken: "must-never-be-persisted-in-an-error",
     });
 
-    await expect(__integrationTesting.withConnectorCredentialLifecycle(
+    await expect(withAuthorizedConnection(
       {
         DB: database,
         CONNECTOR_CREDENTIALS_KEY: randomToken(32),
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
-      connection,
+      {
+        connection,
+        adapter: {} as ResolvedConnectorAdapter,
+        signal: new AbortController().signal,
+      },
       async () => {
         throw new ConnectorError("unauthorized", "Google authorization was revoked", {
           reconnectRequired: true,

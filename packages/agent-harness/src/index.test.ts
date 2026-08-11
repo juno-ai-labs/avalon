@@ -19,6 +19,7 @@ import {
   type HarnessTool,
   type InferenceAttemptEvent,
   type InferenceRequestEvent,
+  type PluginAuthorization,
   type StructuredModelDiagnostic,
 } from "./index";
 
@@ -1824,7 +1825,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation: (id) => { order.push(`persist:${id}`); },
       onEvent: (event) => { events.push(event); },
     });
@@ -1918,7 +1919,7 @@ describe("agent harness", () => {
           "Work with authorized Linear issues and projects.",
         ),
       ],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation: () => undefined,
     });
 
@@ -2043,7 +2044,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation: (id) => { order.push(`persist:${id}`); },
       onEvent: (event) => { events.push(event); },
       findCompletedToolResult,
@@ -2111,7 +2112,7 @@ describe("agent harness", () => {
       ...runInput(fetcher),
       plugins: [first, second],
       activationHints: [first.canonicalId, second.canonicalId],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "could not choose" });
@@ -2160,7 +2161,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "found it", toolCalls: 1 });
@@ -2196,7 +2197,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation,
     });
 
@@ -2204,6 +2205,54 @@ describe("agent harness", () => {
     expect(persistActivation).not.toHaveBeenCalled();
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain("preload_search");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Preloaded plugin policy");
+  });
+
+  it.each([
+    { verdict: "denied" as const, error: "plugin_not_authorized" },
+    { verdict: "indeterminate" as const, error: "plugin_authorization_unavailable" },
+  ])("reports a $verdict load as $error", async ({ verdict, error }) => {
+    // A host that cannot verify a plugin has not learned that the grant was
+    // revoked. Both outcomes leave it inactive; only one of them is an
+    // authorization result the run should reason about.
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(
+              0,
+              "provider-load",
+              "load_plugin",
+              JSON.stringify({ pluginId: "plugin_unverifiable" }),
+            )],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "carried on" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const persistActivation = vi.fn();
+    const plugin = {
+      ...credentialPlugin("connection:unverifiable", "unverifiable", "Unverifiable plugin policy"),
+      modelId: "plugin_unverifiable",
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => verdict,
+      persistActivation,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "carried on" });
+    expect(persistActivation).not.toHaveBeenCalled();
+    const transcript = JSON.stringify(requestBodies[1]!.messages);
+    expect(transcript).toContain(error);
+    if (verdict === "indeterminate") expect(transcript).not.toContain("plugin_not_authorized");
   });
 
   it("does not widen a frozen run scope when the model requests an ineligible plugin id", async () => {
@@ -2236,7 +2285,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [credentialPlugin("connection:eligible", "eligible", "Eligible plugin policy")],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation,
     });
 
@@ -2256,14 +2305,14 @@ describe("agent harness", () => {
       return streamResponse([{ choices: [{ delta: { content: "continued safely" }, finish_reason: "stop" }] }]);
     }) as typeof fetch;
     const plugin = credentialPlugin("connection:revoked", "revoked", "Revoked plugin policy");
-    const authorization = [true, false];
+    const authorization: PluginAuthorization[] = ["authorized", "denied"];
     const dropped: unknown[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
       activationHints: [plugin.canonicalId],
-      reauthorizePlugin: () => authorization.shift() ?? false,
+      reauthorizePlugin: () => authorization.shift() ?? "denied",
       onActivationDropped: (drop) => { dropped.push(drop); },
     });
 
@@ -2296,7 +2345,7 @@ describe("agent harness", () => {
       ...runInput(fetcher),
       plugins,
       activationHints: plugins.map((plugin) => plugin.canonicalId),
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "all plugins available" });

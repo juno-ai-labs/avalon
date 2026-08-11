@@ -1,6 +1,89 @@
-import { ConnectorError } from "./types";
+import {
+  ConnectorError,
+  connectorCredentialRotation,
+  type ConnectorConnectionContext,
+} from "./types";
 
 const DEFAULT_RESPONSE_BYTES = 1_000_000;
+
+/**
+ * Runs a provider call and, if the provider rejects the credential it carried,
+ * refreshes that credential once and repeats the call.
+ *
+ * The host refreshes an expiring credential before an adapter is ever reached,
+ * so this is not that guard duplicated. It covers what the host cannot see: a
+ * token revoked between the two calls, a provider that expires one early or
+ * disagrees about the clock, a long-running call whose credential ages out
+ * mid-flight. Freshness at the door makes the rejection rare; recovering from
+ * it is what keeps a connector from surfacing a transient one as a revoked
+ * grant.
+ *
+ * Refreshed credentials are written back onto `connection.credentials`, which
+ * is what the host's credential door persists when the operation returns. When
+ * the host supplied a serialized `rotateCredentials`, that is used in
+ * preference to the adapter's own refresh: a rotating refresh token is
+ * single-use, and two calls refused at the same moment must not each redeem it.
+ *
+ * A second rejection is a real one and is raised: it is no longer plausible
+ * that the credential was merely stale.
+ */
+export async function withProviderReauthorization<T>(
+  connection: ConnectorConnectionContext,
+  input: {
+    /** Mints replacement credentials, usually the adapter's own `refreshCredentials`. */
+    refresh: (
+      connection: ConnectorConnectionContext,
+      signal: AbortSignal,
+    ) => Promise<Record<string, unknown>>;
+    /** Whether this failure is the provider refusing the credential. */
+    isRejection: (error: unknown) => boolean;
+    /** Whether the connection holds what a refresh needs. */
+    canRefresh?: (connection: ConnectorConnectionContext) => boolean;
+    signal: AbortSignal;
+  },
+  call: () => Promise<T>,
+): Promise<T> {
+  // A copy, not the live reference: an adapter that mutates credentials in
+  // place before failing would otherwise leave this pointing at the mutated
+  // object, and the host's rotation would read that difference as a sibling
+  // having already rotated and skip the refresh entirely.
+  const refused = { ...connection.credentials };
+  try {
+    return await call();
+  } catch (error) {
+    if (!input.isRejection(error)) throw error;
+    if (input.canRefresh && !input.canRefresh(connection)) throw error;
+    if (isAbortError(error)) throw error;
+    input.signal.throwIfAborted();
+    const rotate = connectorCredentialRotation(connection);
+    connection.credentials = rotate
+      ? await rotate(refused, input.signal)
+      : await input.refresh(connection, input.signal);
+    return await call();
+  }
+}
+
+/**
+ * Whether an error is the provider refusing the credential that was presented.
+ *
+ * `unauthorized` alone is far too broad to answer this: adapters also raise it
+ * for policy and configuration failures that never reached the provider — a
+ * tool invoked without its invocation token, an event from another workspace, a
+ * missing token — and rotating a refresh token over one of those spends a
+ * single-use grant to retry something that will fail identically. The provider
+ * vocabulary that means "this credential is stale" is provider-specific, so
+ * each adapter states its own; only errors carrying provider response details
+ * are eligible in the first place.
+ */
+export function isProviderCredentialRejection(
+  error: unknown,
+  matches: (details: Record<string, unknown>) => boolean,
+): boolean {
+  return error instanceof ConnectorError
+    && error.code === "unauthorized"
+    && isRecord(error.details)
+    && matches(error.details);
+}
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
