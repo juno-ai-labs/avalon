@@ -53,6 +53,7 @@ import {
   type HarnessToolPolicyIdentity,
   type HarnessToolResult,
   type ModelMessage,
+  type OpenRouterProviderError,
   type RunHarnessInput,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
@@ -945,6 +946,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cursor,
             latencyMs: target.durationMs,
             failureKind: classified.kind,
+            ...(error instanceof OpenRouterError
+              ? (() => {
+                const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+                  ?.providerError;
+                return providerError ? { providerError } : {};
+              })()
+              : {}),
           }));
           return {
             kind: "failure",

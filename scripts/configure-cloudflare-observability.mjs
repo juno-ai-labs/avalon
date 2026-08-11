@@ -89,6 +89,22 @@ export const SAVED_QUERY_DEFINITIONS = Object.freeze([
       filter("event", "eq", "string", "connector_poll_failed"),
     ])],
   ),
+  savedQuery(
+    "Avalon · Rejected model calls",
+    "OpenRouter calls the provider refused, with its own rejection classification.",
+    [group("or", [
+      filter("event", "eq", "string", "agent_inference_attempt_failed"),
+      filter("provider_error_code", "exists", "string"),
+    ])],
+  ),
+  savedQuery(
+    "Avalon · Broken response contracts",
+    "Responses that failed their own schema before leaving the Worker.",
+    [
+      filter("event", "eq", "string", "request_failed"),
+      filter("error_name", "eq", "string", "ZodError"),
+    ],
+  ),
 ]);
 
 function sortObject(value) {

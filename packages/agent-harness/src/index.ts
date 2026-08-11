@@ -115,6 +115,8 @@ export interface InferenceAttemptEvent {
   costCents?: number;
   responseBytes?: number;
   failureKind?: string;
+  /** The provider's own classification of a rejected request, when it gave one. */
+  providerError?: OpenRouterProviderError;
 }
 
 /**
@@ -144,6 +146,8 @@ export type StructuredModelDiagnostic = {
   cachedInputTokens?: number | null;
   success?: boolean;
   failureKind?: string;
+  /** The provider's own classification of a rejected request, when it gave one. */
+  providerError?: OpenRouterProviderError;
   validationIssues?: Array<{ path: string; code: string }>;
 };
 
@@ -282,7 +286,9 @@ export class OpenRouterClient {
             throw new OpenRouterError(
               payload?.error?.message ?? `OpenRouter request failed (${response.status})`,
               response.status,
-              payload
+              // The envelope's classification, not the body: `payload` can carry
+              // the provider's echo of the request that was rejected.
+              { providerError: openRouterProviderError(payload) }
             );
           }
           const content = payload?.choices?.[0]?.message?.content;
@@ -384,6 +390,9 @@ export class OpenRouterClient {
             throw error;
           }
         } catch (error) {
+          const providerError = error instanceof OpenRouterError
+            ? (error.details as { providerError?: OpenRouterProviderError } | undefined)?.providerError
+            : undefined;
           await input.onDiagnostic?.({
             stage: "complete",
             schemaName: input.schemaName,
@@ -394,6 +403,7 @@ export class OpenRouterClient {
             latencyMs: Date.now() - startedAt,
             success: false,
             failureKind: structuredFailureKind(error, input.signal),
+            ...(providerError ? { providerError } : {}),
           });
           if (input.signal?.aborted) throw error;
           const disposition = openRouterFailureDisposition(error);
@@ -505,12 +515,14 @@ export class OpenRouterClient {
         details = await response.text();
       }
       throw new OpenRouterError(`OpenRouter stream failed (${response.status})`, response.status, {
-        // Preserve only retry metadata for routing. Provider response bodies are
-        // deliberately not retained by the durable runtime or structured logs.
+        // Preserve retry metadata for routing, plus the provider's own error
+        // classification so a rejected request is diagnosable. The response body
+        // itself is still not retained by the durable runtime or structured logs.
         headers: {
           "retry-after": response.headers.get("retry-after") ?? undefined,
         },
         providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
+        providerError: openRouterProviderError(details),
       });
     }
 
@@ -713,6 +725,40 @@ function withExpectedJsonSchema(
   return result;
 }
 
+/**
+ * The diagnosable part of an OpenRouter error envelope.
+ *
+ * Provider response bodies are not retained — they can echo prompt content back.
+ * These three fields are the provider's own classification of the rejection, and
+ * without them a run that fails against OpenRouter is indistinguishable from any
+ * other failure: the status code alone cannot tell a bad model id from an
+ * over-long context from a provider outage. The message is bounded, because it
+ * is the one field a provider could pad.
+ */
+export interface OpenRouterProviderError {
+  code?: string | number;
+  message?: string;
+  providerName?: string;
+}
+
+export function openRouterProviderError(payload: unknown): OpenRouterProviderError | undefined {
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const error = (payload as { error?: unknown }).error;
+  if (typeof error !== "object" || error === null) return undefined;
+  const { code, message, metadata } = error as {
+    code?: unknown;
+    message?: unknown;
+    metadata?: { provider_name?: unknown };
+  };
+  const providerName = metadata?.provider_name;
+  const captured: OpenRouterProviderError = {
+    ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
+    ...(typeof message === "string" ? { message: message.slice(0, 300) } : {}),
+    ...(typeof providerName === "string" ? { providerName } : {}),
+  };
+  return Object.keys(captured).length > 0 ? captured : undefined;
+}
+
 async function readJsonResponse<T>(response: Response): Promise<T | null> {
   const body = await response.text();
   if (!body) return null;
@@ -788,6 +834,7 @@ export async function classifyAddressing(input: {
   recentMessages?: AddressingContextMessage[];
   signal?: AbortSignal;
   fetch?: typeof globalThis.fetch;
+  onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
 }): Promise<AddressingClassification> {
   const deterministic = classifyAddressingHeuristically(input);
   if (deterministic.confidence >= 0.9) return deterministic;
@@ -808,7 +855,8 @@ export async function classifyAddressing(input: {
     schemaName: "message_addressing",
     jsonSchema: addressingJsonSchema,
     parse: (value) => AddressingClassificationSchema.parse(value),
-    ...(input.signal ? { signal: input.signal } : {})
+    ...(input.signal ? { signal: input.signal } : {}),
+    ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
   });
 }
 
