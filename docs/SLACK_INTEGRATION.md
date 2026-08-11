@@ -110,8 +110,11 @@ read whenever the member gets to it, so a token rendered into either dies where
 it is still visible, and a member clicking it has no way to tell. A new surface
 that invites a member to connect uses the same button; it does not embed a link.
 
-Minting invalidates any challenge still outstanding for that member, so only the
-most recently requested one can be redeemed. A challenge that cannot be redeemed
+A member's earlier challenges are retired once a newer one has reached them, so
+only the most recently requested link can be redeemed. That retirement happens
+**after** the modal carrying the replacement opens, never as part of minting: a
+`views.open` that fails would otherwise have invalidated the link the member is
+still looking at, in exchange for one they never received. A challenge that cannot be redeemed
 is refused with the reason rather than a single generic expiry:
 `slack_link_unknown`, `slack_link_consumed` (already used, or superseded),
 `slack_link_expired`, `slack_link_workspace_mismatch`, and
@@ -399,6 +402,14 @@ challenge exists. `loadLinkChallenge` checks its conditions in a deliberate orde
 — workspace mismatch ahead of every state check, so a caller holding a token
 minted for another Avalon workspace learns nothing about it — and a new condition
 has to be placed in that order rather than appended.
+
+Two orderings in the interaction handler are load-bearing and look arbitrary.
+Avalon's buttons are matched on the Slack action id and never on the payload's
+`callback_id`, whose fallback prefers a top-level value that a block action
+raised from inside a view carries — matching the other way sends a connect button
+placed in a modal down the shortcut path instead. And `supersedeOtherLinks` runs
+after `views.open`, not inside the mint, so a modal that fails to open cannot
+retire the link the member is still holding.
 
 Slack's rendering of the new modal and buttons was verified structurally, against
 the Block Kit payloads in `apps/api/test/slack-account-link.test.ts`; Slack
