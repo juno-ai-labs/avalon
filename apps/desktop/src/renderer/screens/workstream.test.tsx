@@ -7,6 +7,7 @@ import { useUiStore } from '../lib/ui-store';
 import {
   AddResourceDialog,
   highestVisibleAttentionSequence,
+  hypersightHoldsSidebar,
   initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
@@ -193,6 +194,17 @@ const transcript: Message[] = [
     createdAt: '2026-08-01T00:00:02.000Z',
   },
 ];
+
+describe('right sidebar occupancy', () => {
+  it('gives the slot to the inspector, so a failed preference write cannot open both', () => {
+    expect(hypersightHoldsSidebar(true, false)).toBe(true);
+    expect(hypersightHoldsSidebar(false, false)).toBe(false);
+    expect(hypersightHoldsSidebar(false, true)).toBe(false);
+    // The stored preference can still say "visible" after a rolled-back write;
+    // the panel the person just opened keeps the slot regardless.
+    expect(hypersightHoldsSidebar(true, true)).toBe(false);
+  });
+});
 
 describe('transcript read positioning', () => {
   it('opens one message before the first unread sequence to preserve context', () => {

@@ -99,11 +99,12 @@ describe('HyperSightRail', () => {
     fireEvent.keyDown(screen.getByRole('complementary', { name: 'HyperSight' }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
 
-    // The scrim behind the sidebar and the header control close it alike.
-    const closeControls = screen.getAllByRole('button', { name: 'Close HyperSight' });
-    expect(closeControls).toHaveLength(2);
-    fireEvent.click(closeControls[1]!);
+    // The scrim behind the sidebar and the header control both close it, under
+    // names that tell them apart.
+    fireEvent.click(screen.getByRole('button', { name: 'Close HyperSight' }));
     expect(onClose).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss HyperSight' }));
+    expect(onClose).toHaveBeenCalledTimes(3);
   });
 });
 

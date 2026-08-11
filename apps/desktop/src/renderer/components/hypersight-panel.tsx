@@ -276,7 +276,9 @@ export function HyperSightRail({
 
   return (
     <>
-      <button aria-label="Close HyperSight" className="rail-scrim" onClick={onClose} type="button" />
+      {/* Distinct from the header's control so the two do not read as one
+          repeated button when a screen reader lists them. */}
+      <button aria-label="Dismiss HyperSight" className="rail-scrim" onClick={onClose} type="button" />
       <aside
         aria-label="HyperSight"
         className="hypersight-rail"

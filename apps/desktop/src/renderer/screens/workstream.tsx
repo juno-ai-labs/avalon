@@ -77,6 +77,17 @@ export function workstreamRunTiming(
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
 }
 
+/**
+ * Which panel holds the right sidebar. The inspector rail's open state is local
+ * and immediate, while HyperSight's is a preference write that can fail and roll
+ * back, so the rail holds the slot until that write settles: a failed write can
+ * leave the stored preference disagreeing with the screen, never two panels
+ * stacked in one slot with both controls reading as open.
+ */
+export function hypersightHoldsSidebar(preferenceVisible: boolean, railOpen: boolean): boolean {
+  return preferenceVisible && !railOpen;
+}
+
 export function manualElicitationResponse(
   elicitation: ElicitationData,
   text: string,
@@ -451,6 +462,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
   const openRail = useUiStore((state) => state.openRail);
+  const railOpen = useUiStore((state) => state.railOpen);
   const setHyperSightOpen = useUiStore((state) => state.setHyperSightOpen);
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -572,7 +584,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     enabled: Boolean(api && id),
     staleTime: 5_000,
   });
-  const hypersightOpen = hypersightPreference.data?.visible ?? false;
+  const hypersightPreferred = hypersightPreference.data?.visible ?? false;
+  const hypersightOpen = hypersightHoldsSidebar(hypersightPreferred, railOpen);
   const hypersight = useQuery({
     queryKey: ['hypersight', id],
     queryFn: ({ signal }) => api!.getHyperSight(id, signal),
@@ -753,8 +766,8 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const openRailVariant = useCallback((variant: RailVariant): void => {
     openRail(variant);
-    if (hypersightOpen) persistHyperSightPreference(false);
-  }, [hypersightOpen, openRail, persistHyperSightPreference]);
+    if (hypersightPreferred) persistHyperSightPreference(false);
+  }, [hypersightPreferred, openRail, persistHyperSightPreference]);
 
   // The shell lays the main pane out against whichever panel holds the right
   // sidebar, and only this screen knows whether HyperSight has it.
