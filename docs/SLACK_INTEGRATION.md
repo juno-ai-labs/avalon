@@ -178,7 +178,7 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - `/avalon [request]`: start the request; an empty command opens the modal.
 - Result buttons: open the canonical task or provide feedback.
 - Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
-- Avalon links: unfurls that summarize the work stream — title, status, last activity, and automation origin — and require the viewer's normal Avalon authorization for its contents.
+- Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running or needs input — and require the viewer's normal Avalon authorization for its contents.
 
 Every work-stream link Avalon posts is the canonical
 `https://with-avalon.com/app/workstreams/<uuid>` — see

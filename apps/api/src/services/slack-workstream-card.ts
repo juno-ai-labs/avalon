@@ -60,14 +60,40 @@ export function workstreamUnfurlSummary(row: Record<string, unknown>): Workstrea
   };
 }
 
-const SLACK_UNFURL_STATUS_LABELS: Record<string, string> = {
-  needs_input: ":warning: Needs input",
-  running: ":large_green_circle: Running",
-  scheduled: "Scheduled",
-  completed: "Completed",
-  failed: ":red_circle: Failed",
-  idle: "Idle",
+/**
+ * Only a work stream that is doing something, or waiting on someone, says so.
+ *
+ * A card reading "Completed" tells a reader nothing they can act on and reads
+ * as clutter next to the title — and because a card is only rewritten when its
+ * status drifts, a settled one would carry that badge indefinitely. Every other
+ * state renders as no badge at all, leaving the title and timestamp to speak.
+ */
+/**
+ * The emoji leads the title so the state is legible before the text is read,
+ * and the word follows in the detail line so the emoji is never the only
+ * carrier of meaning. Both come from this one table so they cannot drift apart.
+ *
+ * The emoji match App Home's existing task rows, so a member sees the same
+ * marks in both places.
+ */
+const SLACK_UNFURL_STATUS_BADGES: Record<string, { emoji: string; label: string }> = {
+  needs_input: { emoji: ":warning:", label: "Needs input" },
+  running: { emoji: ":large_green_circle:", label: "Running" },
 };
+
+export function unfurlStatusBadge(harnessStatus: string): { emoji: string; label: string } | null {
+  return SLACK_UNFURL_STATUS_BADGES[harnessStatus] ?? null;
+}
+
+/**
+ * The badge's label, or null for the states that show none. The sweep compares
+ * this rather than the raw status: every other state renders identically, so
+ * moving between two of them must not spend a `chat.unfurl` rewriting a card
+ * into itself.
+ */
+export function unfurlStatusLabel(harnessStatus: string): string | null {
+  return unfurlStatusBadge(harnessStatus)?.label ?? null;
+}
 
 function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -148,13 +174,20 @@ export function workstreamUnfurlBlocks(
   }
   // Truncate before escaping, or a cut can land inside an `&amp;` entity.
   const title = escapeMrkdwn(summary.title.trim().slice(0, 200) || "Untitled work stream");
+  const badge = unfurlStatusBadge(summary.harnessStatus);
   const detail = [
-    SLACK_UNFURL_STATUS_LABELS[summary.harnessStatus] ?? null,
+    badge?.label ?? null,
     slackUnfurlUpdatedAt(summary.lastActivityAt),
     summary.automationName ? `via ${escapeMrkdwn(summary.automationName.trim().slice(0, 100))}` : null,
   ].filter((part): part is string => part !== null).join(" · ");
   return [
-    { type: "section", text: { type: "mrkdwn", text: `*<${url}|${title}>*${detail ? `\n${detail}` : ""}` } },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `${badge ? `${badge.emoji} ` : ""}*<${url}|${title}>*${detail ? `\n${detail}` : ""}`,
+      },
+    },
     openButton,
   ];
 }
