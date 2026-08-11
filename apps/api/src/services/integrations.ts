@@ -4467,9 +4467,25 @@ async function pluginAuthorizationFromHealth(
   env: Env,
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
-  health: { ok: boolean; message: string; reconnectRequired?: boolean },
+  health: { ok: boolean; message: string; reconnectRequired?: boolean; warning?: string },
 ): Promise<PluginAuthorization> {
-  if (health.ok) return "authorized";
+  if (health.ok) {
+    // A healthy connection can still be degraded, and this is the only place
+    // that learns it: a warning dropped here is an outage nobody is told
+    // about until somebody happens to test the connection.
+    if (health.warning) {
+      logStructuredEvent(env, "warn", "connector_health_warning", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        plugin_id: frozen.pluginId,
+        connection_id: frozen.connectionId,
+        connector_type: frozen.connectorType,
+        warning: health.warning,
+      });
+    }
+    return "authorized";
+  }
   logPluginAuthorizationFailure(env, input, frozen, health.message);
   // An adapter reports a withdrawn grant as `reconnectRequired`. Every other
   // unhealthy result — an unreachable provider, a malformed response — says
