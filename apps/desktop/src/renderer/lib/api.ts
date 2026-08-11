@@ -1013,6 +1013,10 @@ export class AvalonApi {
     });
   }
 
+  archiveNote(id: string): Promise<void> {
+    return this.requestVoid(`/notes/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+  }
+
   appendNoteTranscriptSegment(
     id: string,
     input: {

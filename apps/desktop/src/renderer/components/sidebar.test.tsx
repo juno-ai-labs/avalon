@@ -44,6 +44,8 @@ const workspace: Workspace = {
 
 const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
+  onArchiveNote: async (): Promise<void> => undefined,
+  onChangeNoteScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
@@ -87,7 +89,7 @@ function note(id: string, title: string, lastActivityAt: string): NoteSummary {
     id,
     workspaceId: '00000000-0000-4000-8000-000000000010',
     resourceId: '00000000-0000-4000-8000-000000000011',
-    ownerUserId: '00000000-0000-4000-8000-000000000012',
+    ownerUserId: workspace.currentUser.id,
     scope: 'personal',
     title,
     recordingStatus: 'complete',
@@ -473,6 +475,168 @@ describe('Sidebar work-stream markers', () => {
       .not.toBeInTheDocument();
     fireEvent.click(noteLink);
     expect(onOpenMeetingNotes).not.toHaveBeenCalled();
+  });
+
+  it('archives a private note from its right-click menu and offers to publish it', async () => {
+    const onArchiveNote = vi.fn(async () => undefined);
+    const onChangeNoteScope = vi.fn(async () => undefined);
+    const target = note('00000000-0000-4000-8000-000000000031', 'Customer interview', '2026-07-31T19:55:00.000Z');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[target]}
+            onArchiveNote={onArchiveNote}
+            onChangeNoteScope={onChangeNoteScope}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
+
+    // A private note offers the state it would move to, never the one it is in.
+    expect(await screen.findByRole('menuitem', { name: 'Make public to workspace' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
+    const archive = screen.getByRole('menuitem', { name: 'Archive note' });
+    expect(archive).toHaveClass('menu-item-danger');
+    expect(archive).not.toHaveAttribute('data-disabled');
+    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Make public to workspace' }));
+    await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledWith(target, 'workspace'));
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive note' }));
+    await waitFor(() => expect(onArchiveNote).toHaveBeenCalledWith(target));
+  });
+
+  it('offers a public note the way back to private', async () => {
+    const onChangeNoteScope = vi.fn(async () => undefined);
+    const target: NoteSummary = {
+      ...note('00000000-0000-4000-8000-000000000034', 'Launch retro', '2026-07-31T19:35:00.000Z'),
+      scope: 'workspace',
+    };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[target]}
+            onChangeNoteScope={onChangeNoteScope}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch retro/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Make private' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Make public to workspace' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Make private' }));
+    await waitFor(() => expect(onChangeNoteScope).toHaveBeenCalledWith(target, 'personal'));
+  });
+
+  it('leaves both note actions disabled on a workspace note owned by someone else', async () => {
+    const onArchiveNote = vi.fn(async () => undefined);
+    const onChangeNoteScope = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[{
+              ...note('00000000-0000-4000-8000-000000000032', 'Shared research', '2026-07-31T19:45:00.000Z'),
+              ownerUserId: 'user-2',
+              scope: 'workspace',
+            }]}
+            onArchiveNote={onArchiveNote}
+            onChangeNoteScope={onChangeNoteScope}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Shared research/u }), { clientX: 120, clientY: 90 });
+
+    const item = await screen.findByRole('menuitem', { name: 'Archive note' });
+    expect(item).toHaveAttribute('data-disabled');
+    expect(screen.getByRole('menuitem', { name: 'Make private' })).toHaveAttribute('data-disabled');
+    fireEvent.click(item);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Make private' }));
+    expect(onArchiveNote).not.toHaveBeenCalled();
+    expect(onChangeNoteScope).not.toHaveBeenCalled();
+  });
+
+  it('reports a visibility change that the server rejected', async () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[note('00000000-0000-4000-8000-000000000035', 'Customer interview', '2026-07-31T19:55:00.000Z')]}
+            onChangeNoteScope={vi.fn(async () => {
+              throw new Error('The note could not be reached.');
+            })}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to workspace' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Note visibility could not be changed' });
+    expect(within(dialog).getByText('The note is still private. Try again in a moment.')).toBeVisible();
+    expect(within(dialog).getByText('The note could not be reached.')).toBeVisible();
+  });
+
+  it('reports a note archive that the server rejected instead of failing silently', async () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            notes={[note('00000000-0000-4000-8000-000000000033', 'Customer interview', '2026-07-31T19:55:00.000Z')]}
+            onArchiveNote={vi.fn(async () => {
+              throw new Error('The note could not be reached.');
+            })}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Customer interview/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive note' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Note could not be archived' });
+    expect(within(dialog).getByText('The note could not be reached.')).toBeVisible();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Note could not be archived' })).not.toBeInTheDocument());
+    expect(screen.getByRole('link', { name: /Customer interview/u })).toBeVisible();
   });
 
   it('copies resource identifiers from the menus only while debugging is enabled', async () => {
