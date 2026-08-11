@@ -16,7 +16,7 @@ import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
-import { scheduledWorkstreamModel } from "./agent-model-flags";
+import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
 import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
 import {
   buildAutomationMemoryTableStatements,
@@ -238,10 +238,10 @@ export class AutomationService {
          (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
           execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
           default_plugins_json, overrides_json, status,
-          email_address, email_route_status,
+          email_address, email_route_status, model_override,
           next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?)`,
-      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, nextRunAt, at, at),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', 'active', ?, 'reserved', ?, ?, ?, ?)`,
+      ).bind(subscriptionId, this.auth.workspaceId, templateId, versionId, input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, input.modelOverride ?? null, nextRunAt, at, at),
       ...memoryTables.statements,
       ...deliveryTargets.map((target) => this.env.DB.prepare(
         `INSERT INTO automation_delivery_targets
@@ -898,6 +898,13 @@ export class AutomationService {
     const harnessRunId = newId();
     const triggerMessageId = openingInput ? newId() : null;
     const at = nowIso();
+    // Copied onto the run's work stream rather than looked up through the
+    // subscription later, so the run reads its model from its own row like
+    // every other work stream does.
+    const modelOverride = automationModelOverride(this.env, subscription.model_override, {
+      workspaceId: this.auth.workspaceId,
+      automationSubscriptionId: String(subscription.id),
+    });
     const routeInput = routeInputFor(workstreamId);
     const emailRoute = await emailRouting.reserve(routeInput);
     const principal = parseJson<ExecutionPrincipal>(subscription.execution_principal_json, { type: "user", userId: this.auth.userId });
@@ -907,9 +914,9 @@ export class AutomationService {
           `INSERT INTO workstreams
            (id, workspace_id, title, objective, email_address, email_route_status, origin_type, automation_subscription_id,
             automation_run_id, planned_for, harness_status, next_sequence_number,
-            latest_attention_sequence_number, last_activity_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, openingInput ? 1 : 0, at, at, at),
+            latest_attention_sequence_number, last_activity_at, created_at, updated_at, model_override)
+           VALUES (?, ?, ?, ?, ?, 'reserved', 'automation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).bind(workstreamId, this.auth.workspaceId, String(subscription.name), String(subscription.description), emailRoute.emailAddress, subscription.id, runId, plannedFor, "scheduled", openingInput ? 2 : 1, openingInput ? 1 : 0, at, at, at, modelOverride),
         this.env.DB.prepare(
           `INSERT INTO automation_runs
            (id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
@@ -948,7 +955,9 @@ export class AutomationService {
         principal.type === "user" ? principal.userId : null,
       ));
       if (start) {
-        const model = await scheduledWorkstreamModel(this.env, {
+        // The work stream is created in this same batch, so its override cannot
+        // be read back yet — it is the value being written just above.
+        const model = modelOverride ?? await scheduledWorkstreamModel(this.env, {
           workspaceId: this.auth.workspaceId,
           workstreamId,
         });

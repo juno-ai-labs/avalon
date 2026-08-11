@@ -1,3 +1,4 @@
+import { AgentModelOverrideSchema } from "@avalon/contracts";
 import { z } from "zod";
 import { HYPERSIGHT_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
@@ -253,10 +254,126 @@ export async function resolveAgentModelRouting(
 /**
  * The model a work-stream run is expected to use, recorded on `harness_runs`
  * rows at schedule time. Resolved from the same flag the run itself reads.
+ *
+ * Flag-only: this is what the paths that are *creating* the work stream call,
+ * where there is no row to carry an override yet. A caller that already knows
+ * the override it is about to write passes it through `pinnedModelRouting`;
+ * every path reading an existing work stream uses
+ * `resolveWorkstreamModelRouting` below.
  */
 export async function scheduledWorkstreamModel(
   env: Env,
   context: AgentModelFlagContext = {},
 ): Promise<string> {
   return (await resolveAgentModelRouting(env, "workstream", context)).model;
+}
+
+/**
+ * A stored model override, validated against the closed list a creator may
+ * choose from, or `null` for anything else — an absent override, and equally a
+ * model that has since left the list. Re-validating on read is what lets a
+ * model be retired from `AGENT_MODEL_OVERRIDES` without a migration: the work
+ * streams pinned to it quietly return to the flag.
+ */
+export function agentModelOverride(value: unknown): string | null {
+  const parsed = AgentModelOverrideSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * A stored value that was meant to be an override and is not one — a model that
+ * has left `AGENT_MODEL_OVERRIDES`, or anything a direct database write could
+ * have put there. Absent and empty are not that: they are the ordinary
+ * unpinned state and say nothing.
+ */
+function unknownStoredOverride(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  return agentModelOverride(value) === null ? value : null;
+}
+
+/**
+ * `agentModelOverride`, for a pin being copied off an automation subscription
+ * onto the work stream a run is creating.
+ *
+ * Separate from the plain validator because dropping a pin silently is only
+ * acceptable where something else will say so. The work-stream read path logs
+ * it; these paths write the column and would otherwise retire a model out from
+ * under every automation pinned to it with nothing in the logs — which is
+ * exactly the diagnostic `docs/FEATURE_FLAGS.md` promises exists.
+ */
+export function automationModelOverride(
+  env: Env,
+  value: unknown,
+  context: { workspaceId: string; automationSubscriptionId: string },
+): string | null {
+  const unknown = unknownStoredOverride(value);
+  if (unknown) {
+    logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
+      agent: "workstream",
+      workspace_id: context.workspaceId,
+      automation_subscription_id: context.automationSubscriptionId,
+      stored_model: unknown,
+    });
+  }
+  return agentModelOverride(value);
+}
+
+/**
+ * The route plan for a pinned model. An override carries no fallbacks: it is a
+ * request to observe one specific model, and routing onward would answer a
+ * question nobody asked — the same reason HyperSight pins rather than routes.
+ */
+export function pinnedModelRouting(model: string): AgentModelRouting {
+  return { model, fallbackModels: [] };
+}
+
+/**
+ * The work-stream agent's route plan for one work stream: its own override if
+ * it carries one, otherwise `agent-model-workstream`.
+ *
+ * The override wins over the flag rather than the other way round. A flag is a
+ * fleet-wide default and an override is somebody asking this one work stream to
+ * run somewhere else, so a rollout reaching the workspace must not quietly take
+ * the pinned work stream with it.
+ *
+ * Unlike `resolveAgentModelRouting` this reads D1, so it can throw — against
+ * the same database every caller is already writing its `harness_runs` row to.
+ */
+export async function resolveWorkstreamModelRouting(
+  env: Env,
+  context: { workspaceId: string; workstreamId: string },
+): Promise<AgentModelRouting> {
+  const row = await env.DB.prepare(
+    "SELECT model_override FROM workstreams WHERE id = ? AND workspace_id = ?",
+  ).bind(context.workstreamId, context.workspaceId).first<{ model_override: string | null }>();
+  const override = agentModelOverride(row?.model_override);
+  if (override) {
+    logStructuredEvent(env, "debug", "workstream_model_override_applied", {
+      agent: "workstream",
+      workspace_id: context.workspaceId,
+      workstream_id: context.workstreamId,
+      model: override,
+    });
+    return pinnedModelRouting(override);
+  }
+  // A stored value the list no longer admits is worth saying out loud: the work
+  // stream is about to run on a different model than whoever pinned it expects.
+  const unknown = unknownStoredOverride(row?.model_override);
+  if (unknown) {
+    logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
+      agent: "workstream",
+      workspace_id: context.workspaceId,
+      workstream_id: context.workstreamId,
+      stored_model: unknown,
+    });
+  }
+  return resolveAgentModelRouting(env, "workstream", context);
+}
+
+/** `resolveWorkstreamModelRouting`, reduced to the model column's value. */
+export async function scheduledWorkstreamModelForExisting(
+  env: Env,
+  context: { workspaceId: string; workstreamId: string },
+): Promise<string> {
+  return (await resolveWorkstreamModelRouting(env, context)).model;
 }
