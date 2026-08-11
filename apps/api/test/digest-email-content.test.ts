@@ -78,12 +78,17 @@ describe("digest markdown rendering", () => {
     expect(html).toContain("color-scheme:dark");
     // The app's own canvas token, so the email and the product are one surface.
     expect(html).toContain("background:#111210");
-    // And it runs the height of the reading pane rather than ending in a hard
-    // edge above the client's own white, whichever way the client sized the
-    // document — with the content still pinned to the top of it.
-    expect(html).toContain("min-height:100vh");
-    expect(html).toContain('valign="top"');
-    expect(html).toMatch(/<body style="[^"]*height:100%/u);
+    // A full-height body paints the pane itself, for the client that paints its
+    // own background onto `html` and so stops the body's from propagating.
+    expect(html).toMatch(/<html[^>]*style="[^"]*height:100%/u);
+    expect(html).toMatch(/<body style="[^"]*height:100%;background:#111210/u);
+    // That height is a percentage and never a viewport unit, and no table
+    // carries one at all. Both would grow the message past its pane in a client
+    // that measures them against something else — the browser window in webmail
+    // that injects this markup into its own page, the page box in Word — and
+    // hang a dark tail off the bottom of it.
+    expect(html).not.toMatch(/\d(?:vh|vmin|vmax)/u);
+    expect(html).not.toMatch(/<table[^>]*height/u);
   });
 
   it("singularizes the update count", () => {
