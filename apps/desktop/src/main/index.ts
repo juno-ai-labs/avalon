@@ -29,6 +29,7 @@ import {
   session as electronSession,
   shell,
   systemPreferences,
+  Tray,
 } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import type {
@@ -51,6 +52,7 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import {
   definitivelyInvalidatesStoredCredential,
+  readJsonBody,
   refreshFailureIsTerminal,
   responseError,
   UnusableCredentialError,
@@ -71,7 +73,11 @@ import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
+import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import { LockdownModeController } from './lockdown-mode';
+import { MenuBarController, type MenuBarTray } from './menu-bar';
+import { MenuBarContentStore } from './menu-bar-content';
+import { supportsSectionHeaders, type MenuBarSuggestion } from './menu-bar-menu';
 import {
   allowsTrustedAudioCapture,
 } from './media-permission';
@@ -140,6 +146,12 @@ const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
 /** Well inside the flag's poll interval, so a lost poll costs one round rather
  * than blocking the next. */
 const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
+/** Short, because the drop-down is already open — or about to be — while this
+ * runs, and a menu that updates a minute later has updated for nobody. */
+const MENU_BAR_REQUEST_TIMEOUT_MS = 8_000;
+/** How long the menu's cached content is served before the pointer arriving at
+ * the status item asks for it again. */
+const MENU_BAR_CONTENT_MAX_AGE_MS = 15_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function isUuid(value: string): boolean {
@@ -282,6 +294,18 @@ function broadcastSessionChanged(value: WireSession | null): void {
   // answered by a request issued as the previous one.
   if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
   else developerSettingsFlagController.stop();
+  // The menu bar item outlives every window, so it has to be told about a
+  // sign-out directly. Leaving the previous account's work-stream titles in the
+  // menu would keep them readable to whoever signs in next.
+  //
+  // Only the sign-out half is unconditional. This also fires on every token
+  // renewal, so fetching without a status item to fill would be recurring API
+  // traffic — and a cache of work-stream titles in memory — on every Windows and
+  // Linux install and on any Mac with the preference off. `clear()` stays
+  // ungated so a cache from a session where the item *was* on cannot outlive it.
+  if (!exposed) menuBarContentStore.clear();
+  else if (menuBarItemIsLive()) void menuBarContentStore.refresh();
+  menuBarController.refresh();
 }
 
 async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -453,6 +477,108 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
   },
 });
 
+const menuBarContentStore = new MenuBarContentStore({
+  requestJson: avalonApiRequest,
+  onChange: () => menuBarController.refresh(),
+  logWarning: (message, error) => logWarn('avalon', message, error),
+});
+
+const launchAtLoginController = new LaunchAtLoginController({
+  supported: process.platform === 'darwin',
+  // A development run's executable is a shared Electron binary in
+  // `node_modules`, not an installed Avalon. Registering it would add a login
+  // item that outlives the checkout, so the enabled-by-default registration is
+  // only made by a packaged build. The toggle itself still works.
+  registersDefault: process.platform === 'darwin' && app.isPackaged,
+  getLoginItemState: () => {
+    const settings = app.getLoginItemSettings();
+    return { openAtLogin: settings.openAtLogin, wasOpenedAtLogin: settings.wasOpenedAtLogin };
+  },
+  setOpenAtLogin: (openAtLogin) => app.setLoginItemSettings({ openAtLogin }),
+  readSettings: () => readStoredApplicationSettings(userDataDirectory()),
+  writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  logWarning: (message, error) => logWarn('avalon', message, error),
+});
+
+/**
+ * Whether there is a menu to fill. The preference and the platform both have to
+ * agree before the main process spends a request on content nobody can see —
+ * `MenuBarController.refresh()` returns early with no tray, so fetching for one
+ * buys nothing and keeps workspace content in memory to no purpose.
+ *
+ * Deliberately `enabled() && available()` rather than `present()`: a status item
+ * whose creation failed still has the preference on and will be retried at the
+ * next launch, and content fetched meanwhile is what that retry renders.
+ */
+function menuBarItemIsLive(): boolean {
+  return menuBarController.available() && menuBarController.enabled();
+}
+
+/** A status item click does not activate Avalon the way a Dock click does, so
+ * anything opened from the menu would appear behind the frontmost app. */
+function activateFromMenuBar(): void {
+  app.focus({ steal: true });
+}
+
+function openMainWindowFromMenuBar(): void {
+  activateFromMenuBar();
+  void createMainWindow().catch((error: unknown) => {
+    logError('avalon', 'failed to open the main window from the menu bar', error);
+  });
+}
+
+function startSuggestedWorkstreamFromMenuBar(suggestion: MenuBarSuggestion): void {
+  activateFromMenuBar();
+  void menuBarContentStore.startSuggestion(suggestion)
+    .then((workstreamId) => emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`))
+    .catch((error: unknown) => {
+      // The click has to land somewhere. Opening Avalon puts the person in
+      // front of the same suggestion on the home screen, where starting it
+      // again reports its own failure.
+      logWarn('avalon', 'could not start a suggested work stream from the menu bar', error);
+      openMainWindowFromMenuBar();
+    });
+}
+
+const menuBarController = new MenuBarController({
+  supported: process.platform === 'darwin',
+  appName: app.name,
+  createTray: createMenuBarTray,
+  content: () => menuBarContentStore.content(),
+  // The in-memory credential rather than a live session: this is read while the
+  // menu is being built, and it only decides which empty state to show.
+  signedIn: () => Boolean(inMemoryAuth),
+  sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
+  actions: {
+    newMeetingNote: () => {
+      activateFromMenuBar();
+      void createMeetingWindow().catch((error: unknown) => {
+        logError('avalon', 'failed to open meeting notes from the menu bar', error);
+      });
+    },
+    newWorkstream: () => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://workstreams/new`);
+    },
+    newAutomation: () => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://automations/new`);
+    },
+    startSuggestion: startSuggestedWorkstreamFromMenuBar,
+    openWorkstream: (workstreamId) => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`);
+    },
+    openAvalon: openMainWindowFromMenuBar,
+    quit: () => app.quit(),
+  },
+  readSettings: () => readStoredApplicationSettings(userDataDirectory()),
+  writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  logWarning: (message, error) => logWarn('avalon', message, error),
+});
+
 function desktopApplicationSettings(
   lockdown: DesktopLockdownSettings = lockdownModeController.state(),
 ): DesktopApplicationSettings {
@@ -467,6 +593,11 @@ function desktopApplicationSettings(
     // every window reads this one value. The stored bit is left alone, so the
     // choice is still there when the flag comes back.
     debugEnabled: debugSettingsController.enabled() && developerSettingsAvailable,
+    menuBarEnabled: menuBarController.enabled(),
+    menuBarAvailable: menuBarController.available(),
+    menuBarPresent: menuBarController.present(),
+    launchAtLogin: launchAtLoginController.enabled(),
+    launchAtLoginAvailable: launchAtLoginController.available(),
   };
 }
 
@@ -509,6 +640,46 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
   if (!parsed.success) throw new Error('Avalon returned an unreadable feature flag response');
   return parsed.data.developerSettings;
+}
+
+/**
+ * Performs an authorized request against the signed-in account's regional API
+ * from the main process.
+ *
+ * This exists for the menu bar item, which has to work when no window is open —
+ * a launch at login opens none — so it cannot ask a renderer to fetch for it.
+ * Like the feature-flag poll it renews once through the coalescing refresh on a
+ * 401, and it always settles: a connection that hangs would otherwise wedge the
+ * status item's content for the life of the process.
+ */
+async function avalonApiRequest(
+  path: string,
+  init?: { method: 'POST'; body: unknown },
+): Promise<unknown> {
+  const stored = await loadStoredAuth();
+  if (!stored) throw new Error('No Avalon session is available');
+  const apiBaseUrl = apiBaseForAuth(stored);
+  const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}${path}`, {
+    method: init?.method ?? 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      ...(init ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(init ? { body: JSON.stringify(init.body) } : {}),
+    signal: AbortSignal.timeout(MENU_BAR_REQUEST_TIMEOUT_MS),
+  });
+  let response = await ask(stored.accessToken);
+  if (response.status === 401) {
+    const renewed = await withDeadline(
+      coalescedRefreshSession(),
+      MENU_BAR_REQUEST_TIMEOUT_MS,
+      'Renewing the Avalon session for the menu bar timed out',
+    );
+    response = await ask(renewed.accessToken);
+  }
+  if (!response.ok) throw await responseError(response);
+  return readJsonBody(response);
 }
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
@@ -1224,6 +1395,10 @@ function emitDeepLink(rawUrl: string): void {
     const isWorkstream = deepLink.protocol === `${customProtocol}:`
       && deepLink.hostname === 'workstreams'
       && /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(deepLink.pathname);
+    const isNewWorkstream = deepLink.protocol === `${customProtocol}:`
+      && deepLink.hostname === 'workstreams'
+      && deepLink.pathname === '/new'
+      && deepLink.search === '';
     const isInvitation = deepLink.protocol === `${customProtocol}:`
       && deepLink.hostname === 'invitations'
       && deepLink.pathname === '/accept'
@@ -1243,7 +1418,10 @@ function emitDeepLink(rawUrl: string): void {
       && /^[A-Za-z0-9_-]{20,500}$/u.test(deepLink.searchParams.get('token') ?? '')
       && [...deepLink.searchParams.keys()].every((key) => key === 'token')
       && deepLink.searchParams.getAll('token').length === 1;
-    if (!isAuthentication && !isWorkstream && !isInvitation && !isSettings && !isAutomation && !isSlackLink) return;
+    if (
+      !isAuthentication && !isWorkstream && !isNewWorkstream && !isInvitation
+      && !isSettings && !isAutomation && !isSlackLink
+    ) return;
     sendDeepLink(deepLink.toString());
   } catch {
     // Ignore malformed protocol payloads from the operating system.
@@ -1296,6 +1474,25 @@ function registerIpc(): void {
     // effect. `state()` still probes keystore availability, so an unavailable
     // keystore is reported as the recoverable state the Settings pane already
     // models, and the fallback runs on the next read or Lockdown interaction.
+    return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:set-menu-bar-enabled', async (event, rawEnabled: unknown) => {
+    assertTrustedIpcSender(event);
+    await menuBarController.set(rawEnabled);
+    // Nothing was fetched while the item was off, so an item just switched on
+    // would open empty until the pointer next crossed it.
+    if (menuBarItemIsLive() && inMemoryAuth) void menuBarContentStore.refresh();
+    // `state()` for the same reason as the Developer preference above: reading
+    // Lockdown mode's full settings can run the keystore fallback, and adding
+    // or removing a status item must never cost anyone their session.
+    return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:set-launch-at-login', async (event, rawEnabled: unknown) => {
+    assertTrustedIpcSender(event);
+    await launchAtLoginController.set(rawEnabled);
+    // `state()` for the same reason as the two preferences above: registering a
+    // login item must never run Lockdown mode's keystore fallback, which clears
+    // credentials and forces a new sign-in.
     return desktopApplicationSettings();
   });
   ipcMain.handle('application-icon:get', (event) => {
@@ -1518,6 +1715,63 @@ function applicationWindowIconPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
     : resolve(currentDirectory, '../../resources/icon.png');
+}
+
+function menuBarIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'menu-bar', 'avalonTemplate.png')
+    : resolve(currentDirectory, '../../resources/menu-bar/avalonTemplate.png');
+}
+
+function createMenuBarTray(): MenuBarTray {
+  const iconPath = menuBarIconPath();
+  // `nativeImage` finds the `@2x` sibling by name; only the 1x path is given.
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) throw new Error(`The menu bar icon could not be loaded: ${iconPath}`);
+  // AppKit paints a template image to match the menu bar it is drawn into,
+  // which is what keeps the mark legible against the translucent menu bar in
+  // macOS 26 and 27 and against a desktop picture showing through it. The
+  // filename's `Template` suffix already sets this; setting it explicitly means
+  // a rename cannot silently turn the item into a black blob.
+  icon.setTemplateImage(true);
+  const tray = new Tray(icon);
+  tray.setToolTip(app.name);
+  tray.setIgnoreDoubleClickEvents(true);
+  // The drop-down opens from cache, so freshness is bought on the way in: the
+  // pointer reaching the item is roughly a menu's worth of time before it is
+  // read. `refreshIfStale` is what keeps a pointer crossing the menu bar from
+  // becoming a request.
+  const refreshContent = (): void => {
+    // Signed out there is nothing to ask for, and every attempt would log two
+    // warnings. The menu already says so, and a sign-in refreshes on its own.
+    if (!inMemoryAuth) return;
+    void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
+  };
+  // Opening the drop-down is the moment its suggestions are seen, and seeing
+  // one and passing over it is what moves the ranking. `mouse-enter` is
+  // deliberately not a trigger: the pointer crossing the menu bar puts nothing
+  // in front of anyone.
+  const recordImpressions = (): void => {
+    void menuBarContentStore.recordImpressions();
+  };
+  tray.on('mouse-enter', refreshContent);
+  tray.on('click', () => {
+    refreshContent();
+    // Both this and `menu-will-show` report the open. Which of the two macOS
+    // raises for a status item's own menu is not something this repository can
+    // check — there is no menu bar in the sandbox — and reporting nothing is
+    // the failure being avoided. `recordImpressions` is keyed on the set, so
+    // the pair costs one report rather than two.
+    recordImpressions();
+  });
+  return {
+    setContextMenu: (template) => {
+      const menu = Menu.buildFromTemplate(template);
+      menu.on('menu-will-show', recordImpressions);
+      tray.setContextMenu(menu);
+    },
+    destroy: () => tray.destroy(),
+  };
 }
 
 function applicationIconResourceDirectory(): string {
@@ -2001,7 +2255,33 @@ if (!singleInstanceLock) {
       },
     });
     installApplicationMenu();
-    await createMainWindow();
+    try {
+      await launchAtLoginController.initialize();
+    } catch (error) {
+      logWarn('avalon', 'could not read whether Avalon opens at login', error);
+    }
+    // Read before the first window exists, because it decides whether there is
+    // one. macOS sets this on a launch that came from the login item, and
+    // leaves it unset when a person opened Avalon from the Dock, Finder,
+    // Spotlight, or a deep link — so a login or restart starts Avalon in the
+    // menu bar with nothing on screen, and a click on the icon still opens it.
+    const openedAtLogin = launchedAtLogin({
+      platform: process.platform,
+      loginItemState: app.getLoginItemSettings(),
+      argv: process.argv,
+    });
+    try {
+      await menuBarController.initialize();
+    } catch (error) {
+      logWarn('avalon', 'could not add Avalon to the menu bar', error);
+    }
+    if (launchAuth && menuBarItemIsLive()) void menuBarContentStore.refresh();
+    // Hidden only into somewhere. The menu bar item is what a login launch
+    // leaves a person, and it is off whenever they turned it off and absent
+    // whenever creating it failed — either way, opening no window would start
+    // Avalon with nothing on screen and nothing in the menu bar, reachable only
+    // by hunting for it in the Dock.
+    if (!openedAtLogin || !menuBarController.present()) await createMainWindow();
     void initializeApplicationIcon();
 
     const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));
@@ -2021,5 +2301,15 @@ if (!singleInstanceLock) {
 }
 
 app.on('window-all-closed', () => {
+  // The menu bar item is not a window, and on macOS it is often the only thing
+  // left — a login launch opens no window at all. Quitting here would take it
+  // away the first time someone closed the last window.
   if (process.platform !== 'darwin') app.quit();
 });
+
+// `will-quit`, not `before-quit`: the latter fires before any window is asked to
+// close, and a meeting window refuses. A quit vetoed that way would leave Avalon
+// running with the status item already destroyed and nothing that recreates it —
+// no window and no menu bar presence, which is the state the `present()` check
+// on launch exists to prevent. This fires only once the quit is going through.
+app.on('will-quit', () => menuBarController.destroy());

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AvalonApiResponseError,
   definitivelyInvalidatesStoredCredential,
+  readJsonBody,
   refreshFailureIsTerminal,
   responseError,
   UnusableCredentialError,
@@ -46,5 +47,32 @@ describe('desktop API response errors', () => {
     expect(error).toBeInstanceOf(AvalonApiResponseError);
     expect(error.message).toBe('Avalon authentication failed (500)');
     expect(error.status).toBe(500);
+  });
+});
+
+describe('decoding a successful response body', () => {
+  it('reads a no-content reply as null rather than as a failure', async () => {
+    // `POST /work-opportunities/impressions` answers `c.body(null, 204)`. A
+    // caller that decodes unconditionally reads every successful report as a
+    // failure, and `response.ok` is true for a 204 so no error guard catches it.
+    await expect(readJsonBody(new Response(null, { status: 204 }))).resolves.toBeNull();
+    await expect(new Response(null, { status: 204 }).json()).rejects.toThrow();
+  });
+
+  it('reads an empty 200 body as null', async () => {
+    await expect(readJsonBody(new Response('', { status: 200 }))).resolves.toBeNull();
+    await expect(readJsonBody(new Response('   ', { status: 200 }))).resolves.toBeNull();
+  });
+
+  it('still decodes an ordinary JSON body', async () => {
+    const response = new Response(JSON.stringify({ items: [1, 2] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    await expect(readJsonBody(response)).resolves.toEqual({ items: [1, 2] });
+  });
+
+  it('rejects a body that claims to be JSON and is not', async () => {
+    await expect(readJsonBody(new Response('<html>502</html>', { status: 200 }))).rejects.toThrow();
   });
 });

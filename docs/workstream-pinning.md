@@ -118,7 +118,10 @@ a drop target, so a release in the gap between two rows still counts as a drop.
 ## Boundary
 
 This module owns `workstream_pins`, the three pin endpoints, `pinPosition` on the
-work-stream contract, and the Pinned section of the sidebar. It owns no part of
+work-stream contract, and the Pinned section of the sidebar. The macOS menu bar
+item renders a second, read-only view of the same arrangement — its top five —
+and [`menu-bar.md`](menu-bar.md) owns that; it reads `pinPosition` and changes
+nothing. It owns no part of
 what a work stream *is*, who may read it, or how the recent list is sorted.
 
 It deliberately does not:

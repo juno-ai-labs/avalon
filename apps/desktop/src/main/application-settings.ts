@@ -7,6 +7,15 @@ const APPLICATION_SETTINGS_FILE_NAME = 'application-settings.json';
 export interface StoredApplicationSettings {
   lockdownMode: boolean;
   debugEnabled: boolean;
+  /** Whether the Avalon status item is in the macOS menu bar. */
+  menuBarEnabled: boolean;
+  /**
+   * Whether the enabled-by-default login item has been registered once. The
+   * operating system, not this file, remembers whether Avalon opens at login;
+   * this only records that the default was applied, so a person who turns the
+   * login item off does not get it switched back on by the next launch.
+   */
+  launchAtLoginDefaultApplied: boolean;
 }
 
 interface StoredApplicationSettingsFile extends StoredApplicationSettings {
@@ -16,19 +25,35 @@ interface StoredApplicationSettingsFile extends StoredApplicationSettings {
 export const defaultStoredApplicationSettings: StoredApplicationSettings = {
   lockdownMode: false,
   debugEnabled: false,
+  menuBarEnabled: true,
+  launchAtLoginDefaultApplied: false,
 };
 
 export function parseStoredApplicationSettings(value: unknown): StoredApplicationSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return defaultStoredApplicationSettings;
   }
-  const candidate = value as { version?: unknown; lockdownMode?: unknown; debugEnabled?: unknown };
+  const candidate = value as {
+    version?: unknown;
+    lockdownMode?: unknown;
+    debugEnabled?: unknown;
+    menuBarEnabled?: unknown;
+    launchAtLoginDefaultApplied?: unknown;
+  };
   if (candidate.version !== 1 || typeof candidate.lockdownMode !== 'boolean') {
     return defaultStoredApplicationSettings;
   }
   // Preferences written before the Developer section carry no debug field. An
   // unreadable value falls back to off rather than discarding Lockdown mode.
-  return { lockdownMode: candidate.lockdownMode, debugEnabled: candidate.debugEnabled === true };
+  return {
+    lockdownMode: candidate.lockdownMode,
+    debugEnabled: candidate.debugEnabled === true,
+    // The menu bar item ships on, so a file written before it existed — and any
+    // unreadable value — has to mean on. Reading it as off would silently
+    // withdraw the status item from every device that upgraded.
+    menuBarEnabled: candidate.menuBarEnabled !== false,
+    launchAtLoginDefaultApplied: candidate.launchAtLoginDefaultApplied === true,
+  };
 }
 
 export function applicationSettingsFilePath(userDataDirectory: string): string {
