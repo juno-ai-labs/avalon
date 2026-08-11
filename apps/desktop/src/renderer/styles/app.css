@@ -3277,6 +3277,12 @@ pre {
    dressed exactly as the screen it is about to become, and the navigation that
    follows changes only the data. */
 
+/* The one thing the launching state does not take from `.workstream-screen` is
+   this template, and it cannot: that screen's header row is a fixed `55px`, and
+   inheriting it would snap the row to full height on the frame the class lands,
+   shoving the transcript down — the jump this whole block exists to remove. An
+   `auto` row lets the header animate its own height into place instead, and at
+   rest the two resolve to the same 55px. */
 .workstream-launch-screen {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -3287,21 +3293,27 @@ pre {
 }
 
 /* Collapsed rather than absent: a header that mounted at the swap would push
-   the transcript down by its own height on the frame it arrived. */
+   the transcript down by its own height on the frame it arrived. Only the
+   collapsed values are stated here — while launching the border and padding are
+   `.workstream-header`'s own. */
 .workstream-launch-screen > .launch-header {
-  border-bottom-width: 0;
-  height: 0;
   overflow: hidden;
-  padding-bottom: 0;
-  padding-top: 0;
   transition: height 220ms cubic-bezier(.32, .72, 0, 1);
 }
 
+.workstream-launch-screen:not(.is-launching) > .launch-header {
+  border-bottom-width: 0;
+  height: 0;
+  padding-bottom: 0;
+  padding-top: 0;
+}
+
+/* The single launching value this block states, and it is the animation's
+   endpoint rather than a style: a grid track sized `auto` cannot be animated,
+   so the header's own height is what grows. It has to equal the
+   `.workstream-screen` header row, and `app.css.node.test.ts` asserts that it does. */
 .workstream-launch-screen.is-launching > .launch-header {
-  border-bottom-width: 1px;
   height: 55px;
-  padding-bottom: 6px;
-  padding-top: 6px;
 }
 
 /* Both layers share one grid cell, so the home content can fade out over the
@@ -3347,28 +3359,30 @@ pre {
   from { opacity: 0; transform: translateY(7px); }
 }
 
+/* Only the transition is stated for both states. Every value the launching
+   state settles on is the destination's own — `.workstream-screen .composer-dock`
+   and `.workstream-screen .composer-stack` — so a later change to the real dock
+   flows into the launch surface instead of leaving a copy of the old geometry
+   behind to jump against. */
 .workstream-launch-screen > .launch-dock {
+  transition: padding 240ms cubic-bezier(.32, .72, 0, 1);
+}
+
+.workstream-launch-screen:not(.is-launching) > .launch-dock {
   background: none;
   bottom: auto;
   left: auto;
   padding: 12px 34px 28px;
   position: relative;
   right: auto;
-  transition: padding 240ms cubic-bezier(.32, .72, 0, 1);
-}
-
-.workstream-launch-screen.is-launching > .launch-dock {
-  background: linear-gradient(to bottom, transparent 0, var(--surface) 30px, var(--surface) 100%);
-  padding: 40px 28px 14px;
 }
 
 .workstream-launch-screen .composer-stack {
-  max-width: 690px;
   transition: max-width 240ms cubic-bezier(.32, .72, 0, 1);
 }
 
-.workstream-launch-screen.is-launching .composer-stack {
-  max-width: 920px;
+.workstream-launch-screen:not(.is-launching) .composer-stack {
+  max-width: 690px;
 }
 
 /* Participants are chosen before the work stream exists and are part of the
@@ -3420,7 +3434,7 @@ pre {
 }
 
 @media (max-width: 760px) {
-  .workstream-launch-screen > .launch-dock {
+  .workstream-launch-screen:not(.is-launching) > .launch-dock {
     padding-left: 16px;
     padding-right: 16px;
   }

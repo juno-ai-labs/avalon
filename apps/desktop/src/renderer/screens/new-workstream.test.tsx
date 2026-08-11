@@ -61,6 +61,7 @@ const createdWorkstream = {
   messageId: 'message-new-workstream',
   clientMessageId: 'client-new-workstream',
   createdAt: '2026-07-31T20:00:00.000Z',
+  harnessRunId: 'run-new-workstream',
 };
 
 function workstream(id: string, title: string, harnessStatus: WorkstreamSummary['harnessStatus']): WorkstreamSummary {
@@ -444,6 +445,133 @@ describe('New work-stream home', () => {
     expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
     expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+  });
+
+  // Without the seeded run the work timer the launch surface has been running
+  // disappears on arrival and only returns when the refetch answers, which is
+  // the one thing that still read as a navigation.
+  it('seeds the created run so the work timer keeps counting across the swap', async () => {
+    const queryClient = renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
+      latestHarnessRunId: 'run-new-workstream',
+      latestHarnessRun: { id: 'run-new-workstream', status: 'running' },
+    }));
+    const detail = queryClient.getQueryData<{ latestHarnessRun?: { startedAt?: string } }>(['workstream', 'new-workstream']);
+    // The submit instant the surface counted from, not the response's — that is
+    // what makes the timer continuous rather than restarting at the navigation.
+    expect(Date.parse(detail!.latestHarnessRun!.startedAt!)).toBeLessThanOrEqual(Date.now());
+    expect(detail!.latestHarnessRun!.startedAt).not.toBe(createdWorkstream.createdAt);
+  });
+
+  it('opens suggested work onto the same surface, with no turn and no unsent draft', async () => {
+    api.getWorkOpportunities.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000099',
+      version: 3,
+      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
+      icon: 'brand-slack',
+      sourceLabel: 'From slack',
+    }]);
+    api.startWorkOpportunity.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'A different thing I have not sent' } });
+    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
+    fireEvent.click(within(suggestions).getByRole('button', {
+      name: 'Prepare the follow-up for the unresolved launch blocker',
+    }));
+
+    expect(await screen.findByRole('status', { name: 'Avalon is working' })).toBeVisible();
+    // The opening turn of suggested work is the agent's, written from the
+    // expanded prompt, so there is nothing here that could stand in for it.
+    expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
+    // And the draft belongs to a work stream nobody has started.
+    expect(composer).toHaveValue('');
+  });
+
+  // Without seeding, the work-stream screen has neither query and shows its
+  // full-screen `Opening work stream…` state — cutting away from a surface that
+  // was already showing this work stream.
+  it('seeds the destination for suggested work so it does not land on the loading orb', async () => {
+    api.getWorkOpportunities.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000099',
+      version: 3,
+      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
+      icon: 'brand-slack',
+      sourceLabel: 'From slack',
+    }]);
+    const queryClient = renderScreen();
+
+    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
+    fireEvent.click(within(suggestions).getByRole('button', {
+      name: 'Prepare the follow-up for the unresolved launch blocker',
+    }));
+
+    await waitFor(() => expect(queryClient.getQueryData(['workstream', 'new-workstream'])).toMatchObject({
+      id: 'new-workstream',
+      latestHarnessRun: { id: 'run-new-workstream', status: 'running' },
+    }));
+    // Empty rather than invented: the opening turn belongs to the agent and
+    // arrives with the refetch.
+    expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([]);
+    expect(queryClient.getQueryData(['messages-cursor', 'new-workstream'])).toBeNull();
+  });
+
+  it('gives the draft back when suggested work fails to start', async () => {
+    api.getWorkOpportunities.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000099',
+      version: 3,
+      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
+      icon: 'brand-slack',
+      sourceLabel: 'From slack',
+    }]);
+    api.startWorkOpportunity.mockRejectedValueOnce(new Error('offline'));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'A different thing I have not sent' } });
+    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
+    fireEvent.click(within(suggestions).getByRole('button', {
+      name: 'Prepare the follow-up for the unresolved launch blocker',
+    }));
+
+    await waitFor(() => expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+    expect(composer).toHaveValue('A different thing I have not sent');
+  });
+
+  // The composer is controlled, so an empty value shown over a held draft is one
+  // keystroke away from being written back over it.
+  it('does not let a keystroke during a suggested-work launch eat the held draft', async () => {
+    api.getWorkOpportunities.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000099',
+      version: 3,
+      displayPrompt: 'Prepare the follow-up for the unresolved launch blocker',
+      icon: 'brand-slack',
+      sourceLabel: 'From slack',
+    }]);
+    let settleStart = (): void => undefined;
+    api.startWorkOpportunity.mockReturnValue(new Promise((_resolve, reject) => {
+      settleStart = () => reject(new Error('offline'));
+    }));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Keep this' } });
+    const suggestions = await screen.findByRole('region', { name: 'Suggested work' });
+    fireEvent.click(within(suggestions).getByRole('button', {
+      name: 'Prepare the follow-up for the unresolved launch blocker',
+    }));
+    await screen.findByRole('status', { name: 'Avalon is working' });
+
+    fireEvent.change(composer, { target: { value: 'typed while launching' } });
+    settleStart();
+
+    await waitFor(() => expect(composer).toHaveValue('Keep this'));
   });
 
   it('restores an immediately cleared message when creation fails without replacing a newer draft', async () => {
