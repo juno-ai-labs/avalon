@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env, IdentityAuthContext } from "../src/env";
 import {
-  DEVELOPER_SETTINGS_EMAIL_DOMAIN,
   DEVELOPER_SETTINGS_FLAG_KEY,
-  developerSettingsEligibleEmail,
   resolveClientFeatureFlags,
   resolveDeveloperSettingsEnabled,
 } from "../src/services/client-feature-flags";
@@ -12,6 +10,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 const staffUserId = "00000000-0000-4000-8000-0000000000a1";
 const customerUserId = "00000000-0000-4000-8000-0000000000a2";
 const workspaceId = "00000000-0000-4000-8000-0000000000a3";
+const accountCreatedAt = "2026-01-02T03:04:05.000Z";
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
 // quiet the way it does in development.
@@ -23,15 +22,14 @@ const baseEnv = {
 
 function envWithAccounts(flags?: Partial<Flagship>): Env {
   const database = migratedSqliteDatabase();
-  const now = new Date().toISOString();
   const accounts: Array<[string, string]> = [
-    [staffUserId, `Adam@${DEVELOPER_SETTINGS_EMAIL_DOMAIN}`],
+    [staffUserId, "Adam@Juno-Labs.com"],
     [customerUserId, "adam@example.com"],
   ];
   for (const [id, email] of accounts) {
     database
       .prepare("INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, `google-${id}`, email, "Adam", now, now);
+      .run(id, `google-${id}`, email, "Adam", accountCreatedAt, accountCreatedAt);
   }
   return {
     ...baseEnv,
@@ -41,83 +39,122 @@ function envWithAccounts(flags?: Partial<Flagship>): Env {
 }
 
 function auth(userId: string, workspace: string | null = workspaceId): IdentityAuthContext {
-  return { sessionId: "session-1", userId, workspaceId: workspace, region: "global", role: "member" };
+  return {
+    sessionId: "session-1",
+    userId,
+    workspaceId: workspace,
+    region: "global",
+    role: workspace ? "member" : null,
+  };
 }
 
-/** A stub that serves `value` the way a provisioned, matching flag would. */
-function serving(value: unknown, variant = "on"): Partial<Flagship> {
+/**
+ * A stub standing in for Flagship, serving `on` only where `rule` matches the
+ * evaluation context — which is how a real targeting rule decides, and the only
+ * way a test can tell an attribute was actually sent.
+ */
+function servingWhen(rule: (context: FlagshipEvaluationContext) => boolean): Partial<Flagship> {
+  return {
+    getBooleanDetails: vi.fn(async (flagKey: string, defaultValue: boolean, context = {}) => {
+      const matched = rule(context);
+      return {
+        flagKey,
+        value: matched ? true : defaultValue,
+        variant: matched ? "on" : "off",
+        reason: matched ? "TARGETING_MATCH" : "DEFAULT",
+      };
+    }),
+  };
+}
+
+/** A stub that serves `value` to everyone, the way a flag with no rules would. */
+function serving(value: unknown): Partial<Flagship> {
   return {
     getBooleanDetails: vi.fn(async (flagKey: string) => ({
       flagKey,
       value: value as boolean,
-      variant,
+      variant: "on",
       reason: "STATIC",
     })),
   };
 }
 
 describe("client feature flags", () => {
-  it("recognizes only the staff email domain, case- and whitespace-insensitively", () => {
-    expect(developerSettingsEligibleEmail("adam@juno-labs.com")).toBe(true);
-    expect(developerSettingsEligibleEmail("  ADAM@Juno-Labs.COM  ")).toBe(true);
-    expect(developerSettingsEligibleEmail("adam@example.com")).toBe(false);
-    // A domain the staff one is only a suffix or prefix of is a different domain.
-    expect(developerSettingsEligibleEmail("adam@notjuno-labs.com")).toBe(false);
-    expect(developerSettingsEligibleEmail("adam@juno-labs.com.example.com")).toBe(false);
-    expect(developerSettingsEligibleEmail("adam@juno-labs.com@example.com")).toBe(false);
-    expect(developerSettingsEligibleEmail("juno-labs.com")).toBe(false);
-    expect(developerSettingsEligibleEmail(null)).toBe(false);
-  });
-
-  it("enables the section for a staff account whose flag is on", async () => {
-    const env = envWithAccounts(serving(true));
-
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(true);
-    await expect(resolveClientFeatureFlags(env, auth(staffUserId))).resolves.toEqual({ developerSettings: true });
-  });
-
-  it("evaluates the flag with a default of off and the account in its context", async () => {
+  it("describes the signed-in person with every attribute a rule may target", async () => {
     const flags = serving(true);
     const env = envWithAccounts(flags);
 
-    await resolveDeveloperSettingsEnabled(env, auth(staffUserId));
+    await resolveClientFeatureFlags(env, auth(staffUserId));
 
     expect(flags.getBooleanDetails).toHaveBeenCalledWith(DEVELOPER_SETTINGS_FLAG_KEY, false, {
+      userId: staffUserId,
       region: "global",
       appEnv: "production",
-      userId: staffUserId,
-      emailDomain: DEVELOPER_SETTINGS_EMAIL_DOMAIN,
+      // Normalized, so a rule can be written in one spelling of the address.
+      email: "adam@juno-labs.com",
+      emailDomain: "juno-labs.com",
+      accountCreatedAt,
       workspaceId,
+      workspaceRole: "member",
     });
   });
 
-  it("evaluates for a staff account that has not chosen an organization yet", async () => {
-    const flags = serving(true);
-    const env = envWithAccounts(flags);
+  it("lets a Flagship rule decide the cohort rather than deciding it here", async () => {
+    // The staff rollout as it is actually provisioned: one rule on emailDomain.
+    const staffOnly = servingWhen((context) => context.emailDomain === "juno-labs.com");
 
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId, null))).resolves.toBe(true);
-    expect(flags.getBooleanDetails).toHaveBeenCalledWith(
-      DEVELOPER_SETTINGS_FLAG_KEY,
-      false,
-      expect.not.objectContaining({ workspaceId: expect.anything() }),
-    );
+    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(staffOnly), auth(staffUserId)))
+      .resolves.toBe(true);
+    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(staffOnly), auth(customerUserId)))
+      .resolves.toBe(false);
   });
 
-  it("never asks the flag about an account outside the staff domain", async () => {
-    const flags = serving(true);
-    const env = envWithAccounts(flags);
-
-    await expect(resolveDeveloperSettingsEnabled(env, auth(customerUserId))).resolves.toBe(false);
-    expect(flags.getBooleanDetails).not.toHaveBeenCalled();
-  });
-
-  it("stays off for a staff account whose flag is off", async () => {
+  it("serves whatever the flag says, with no cohort of its own to override it", async () => {
+    // A flag with no rules reaches everyone it is served to. Nothing in the
+    // resolver may narrow that; only Flagship decides who is in.
+    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving(true)), auth(customerUserId)))
+      .resolves.toBe(true);
     await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving(false)), auth(staffUserId)))
       .resolves.toBe(false);
   });
 
+  it("omits the organization attributes before one is chosen, rather than sending them empty", async () => {
+    const flags = serving(true);
+    const env = envWithAccounts(flags);
+
+    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId, null))).resolves.toBe(true);
+    const context = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
+    expect(context).not.toHaveProperty("workspaceId");
+    expect(context).not.toHaveProperty("workspaceRole");
+    expect(context).toMatchObject({ userId: staffUserId, emailDomain: "juno-labs.com" });
+  });
+
+  it("sends no address attributes for an account it cannot read, so a cohort rule cannot match", async () => {
+    const staffOnly = servingWhen((context) => context.emailDomain === "juno-labs.com");
+    const env = envWithAccounts(staffOnly);
+
+    // A session whose user row is gone still evaluates, on identity alone.
+    await expect(resolveDeveloperSettingsEnabled(env, auth("00000000-0000-4000-8000-0000000000ff")))
+      .resolves.toBe(false);
+    const context = (staffOnly.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
+    expect(context).not.toHaveProperty("email");
+    expect(context).not.toHaveProperty("emailDomain");
+  });
+
+  it("evaluates, without throwing, when the account store is unavailable", async () => {
+    const flags = servingWhen((context) => context.userId === staffUserId);
+    const env = {
+      ...baseEnv,
+      DB: { prepare: () => { throw new Error("D1 unavailable"); } } as unknown as D1Database,
+      FLAGS: flags as unknown as Flagship,
+    } as Env;
+
+    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(true);
+  });
+
   it("stays off when no binding is attached", async () => {
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(), auth(staffUserId))).resolves.toBe(false);
+    await expect(resolveClientFeatureFlags(envWithAccounts(), auth(staffUserId)))
+      .resolves.toEqual({ developerSettings: false });
   });
 
   it("stays off when the binding throws, as it does under wrangler dev --local", async () => {
@@ -151,20 +188,14 @@ describe("client feature flags", () => {
       .resolves.toBe(false);
   });
 
-  it("stays off, without throwing, when the account cannot be read", async () => {
-    const env = {
-      ...baseEnv,
-      DB: { prepare: () => { throw new Error("D1 unavailable"); } } as unknown as D1Database,
-      FLAGS: serving(true) as unknown as Flagship,
-    } as Env;
+  it("evaluates every client flag against one description of the person", async () => {
+    const flags = serving(true);
+    const env = envWithAccounts(flags);
 
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(false);
-  });
+    await resolveClientFeatureFlags(env, auth(staffUserId));
 
-  it("stays off for a session whose user row is gone", async () => {
-    const env = envWithAccounts(serving(true));
-
-    await expect(resolveDeveloperSettingsEnabled(env, auth("00000000-0000-4000-8000-0000000000ff")))
-      .resolves.toBe(false);
+    const contexts = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[2]);
+    expect(contexts.length).toBeGreaterThan(0);
+    for (const context of contexts) expect(context).toEqual(contexts[0]);
   });
 });

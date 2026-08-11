@@ -12,20 +12,42 @@ import { logStructuredEvent } from "../observability/logger";
  * Every flag here fails **closed**. A model flag falls back to the Worker
  * variables because an agent still has to run; a client flag has nothing it
  * must do, so an unbound binding, an unreachable Flagship, a missing flag, and
- * a mistyped value all resolve to off. See `docs/FEATURE_FLAGS.md`.
+ * a mistyped value all resolve to off.
+ *
+ * **Who gets a feature is a Flagship targeting rule, never a condition in this
+ * file.** This module's whole job is to describe the person accurately enough
+ * for those rules to be written against, and to fail closed when it cannot. A
+ * cohort encoded here would be invisible from the Flagship console, would need
+ * a deploy to change, and would silently override whatever the flag says. See
+ * `docs/FEATURE_FLAGS.md` for the rules each flag is provisioned with.
  */
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
 
-/**
- * The one email domain the Developer section may ever be offered to. This is a
- * property of the product, not of whoever last edited the flag: the flag can
- * withdraw the section from Juno staff, or stage its rollout among them, but it
- * can never hand it to a customer. Enforced here so a mis-scoped targeting rule
- * is inert rather than a release.
- */
-export const DEVELOPER_SETTINGS_EMAIL_DOMAIN = "juno-labs.com";
+interface FlagSubject {
+  email: string | null;
+  createdAt: string | null;
+}
+
+async function flagSubject(env: Env, auth: IdentityAuthContext): Promise<FlagSubject> {
+  try {
+    const row = await env.DB.prepare("SELECT email, created_at FROM users WHERE id = ?")
+      .bind(auth.userId)
+      .first<{ email: string | null; created_at: string | null }>();
+    return { email: row?.email ?? null, createdAt: row?.created_at ?? null };
+  } catch (error) {
+    // An unreadable account is not a reason to fail the request, and not a
+    // reason to invent attributes either. Evaluation continues with the
+    // identity alone, so a rule keyed on an attribute that is missing simply
+    // does not match and the flag serves its default.
+    logStructuredEvent(env, "warn", "client_flag_subject_unreadable", {
+      user_id: auth.userId,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+    });
+    return { email: null, createdAt: null };
+  }
+}
 
 /** The domain of `email`, lower-cased, or `null` when it has no single one. */
 function emailDomain(email: string): string | null {
@@ -33,58 +55,60 @@ function emailDomain(email: string): string | null {
   return parts.length === 2 && parts[0] && parts[1] ? parts[1] : null;
 }
 
-/** Whether `email` belongs to the staff domain the Developer section is scoped to. */
-export function developerSettingsEligibleEmail(email: string | null | undefined): boolean {
-  return email ? emailDomain(email) === DEVELOPER_SETTINGS_EMAIL_DOMAIN : false;
-}
-
-async function signedInEmail(env: Env, userId: string): Promise<string | null> {
-  const row = await env.DB.prepare("SELECT email FROM users WHERE id = ?")
-    .bind(userId)
-    .first<{ email: string | null }>();
-  return row?.email ?? null;
+/**
+ * Everything a targeting rule may match a client flag on. Attributes are
+ * omitted rather than sent empty, so `when=emailDomain equals …` cannot match
+ * an account whose address could not be read.
+ *
+ * Add an attribute here rather than adding a condition to a resolver: this is
+ * the vocabulary every client flag's rules are written in, and it is the whole
+ * of what Flagship knows about the person.
+ *
+ * | Attribute | Value |
+ * | --- | --- |
+ * | `userId` | The account, and the right key to bucket a percentage rollout by |
+ * | `email` | The full address, for targeting one person |
+ * | `emailDomain` | Lower-cased domain, for targeting an organization such as staff |
+ * | `accountCreatedAt` | ISO timestamp, for targeting by tenure |
+ * | `workspaceId` | Present once an organization is chosen |
+ * | `workspaceRole` | `owner`, `admin`, or `member`, likewise |
+ * | `region` | `global` or `eu` |
+ * | `appEnv` | `development`, `test`, `staging`, or `production` |
+ */
+export function clientFlagEvaluationContext(
+  env: Env,
+  auth: IdentityAuthContext,
+  subject: FlagSubject,
+): FlagshipEvaluationContext {
+  const domain = subject.email ? emailDomain(subject.email) : null;
+  return {
+    userId: auth.userId,
+    region: env.AVALON_REGION,
+    appEnv: env.APP_ENV,
+    ...(subject.email ? { email: subject.email.trim().toLowerCase() } : {}),
+    ...(domain ? { emailDomain: domain } : {}),
+    ...(subject.createdAt ? { accountCreatedAt: subject.createdAt } : {}),
+    ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+    ...(auth.role ? { workspaceRole: auth.role } : {}),
+  };
 }
 
 /**
- * Whether Application → Developer may be offered to this person.
- *
- * Two gates, in this order: the account has to sit on the staff email domain,
- * and the flag has to be on for them. The first is checked before Flagship is
- * called at all, so an ineligible account cannot be reached by a targeting
- * rule, and its address never enters an evaluation context.
- *
- * Never throws — a flag failure is reported as off, the same as a flag that is
- * genuinely off, because there is nothing here worth failing a request over.
+ * Evaluate one boolean client flag. Off unless Flagship says otherwise, and
+ * never throws: an unavailable binding, an unresolved flag, and a value that
+ * is not exactly `true` are all the same answer as a flag that is simply off.
  */
-export async function resolveDeveloperSettingsEnabled(
+async function resolveBooleanClientFlag(
   env: Env,
   auth: IdentityAuthContext,
+  flagKey: string,
+  context: FlagshipEvaluationContext,
 ): Promise<boolean> {
-  let email: string | null;
-  try {
-    email = await signedInEmail(env, auth.userId);
-  } catch (error) {
-    logStructuredEvent(env, "warn", "developer_settings_flag_unresolved", {
-      user_id: auth.userId,
-      reason: "account_unreadable",
-      error_name: error instanceof Error ? error.name : "UnknownError",
-    });
-    return false;
-  }
-  if (!developerSettingsEligibleEmail(email)) return false;
-
   const flags = env.FLAGS;
   if (!flags) return false;
-  const context = {
-    region: env.AVALON_REGION,
-    appEnv: env.APP_ENV,
-    userId: auth.userId,
-    emailDomain: DEVELOPER_SETTINGS_EMAIL_DOMAIN,
-    ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
-  };
   let details: FlagshipEvaluationDetails<boolean>;
   try {
-    details = await flags.getBooleanDetails(DEVELOPER_SETTINGS_FLAG_KEY, false, context);
+    details = await flags.getBooleanDetails(flagKey, false, context);
   } catch (error) {
     // `wrangler dev --local` binds this always-remote binding as an object
     // whose every call throws `Binding FLAGS needs to be run remotely`, so this
@@ -92,10 +116,10 @@ export async function resolveDeveloperSettingsEnabled(
     logStructuredEvent(
       env,
       env.APP_ENV === "development" || env.APP_ENV === "test" ? "debug" : "warn",
-      "developer_settings_flag_unavailable",
+      "client_flag_unavailable",
       {
         user_id: auth.userId,
-        flag_key: DEVELOPER_SETTINGS_FLAG_KEY,
+        flag_key: flagKey,
         error_name: error instanceof Error ? error.name : "UnknownError",
       },
     );
@@ -105,9 +129,9 @@ export async function resolveDeveloperSettingsEnabled(
   // default rather than a throw, so `errorCode` is the only thing separating a
   // mistyped key from a flag that is provisioned and off.
   if (details.errorCode) {
-    logStructuredEvent(env, "warn", "developer_settings_flag_unresolved", {
+    logStructuredEvent(env, "warn", "client_flag_unresolved", {
       user_id: auth.userId,
-      flag_key: DEVELOPER_SETTINGS_FLAG_KEY,
+      flag_key: flagKey,
       reason: details.reason,
       error_code: details.errorCode,
       error_message: details.errorMessage,
@@ -115,9 +139,14 @@ export async function resolveDeveloperSettingsEnabled(
     return false;
   }
   const enabled = details.value === true;
-  logStructuredEvent(env, "debug", "developer_settings_flag_resolved", {
+  // The variant and reason are what confirm a targeting rule actually matched
+  // this person, which is the only way to tell a rule that excluded them from
+  // one that never fired. The domain is logged and the address is not: it is
+  // enough to read a cohort rule by, and it identifies nobody.
+  logStructuredEvent(env, "debug", "client_flag_resolved", {
     user_id: auth.userId,
-    flag_key: DEVELOPER_SETTINGS_FLAG_KEY,
+    flag_key: flagKey,
+    email_domain: context.emailDomain,
     variant: details.variant,
     reason: details.reason,
     enabled,
@@ -125,10 +154,29 @@ export async function resolveDeveloperSettingsEnabled(
   return enabled;
 }
 
-/** Every client-visible flag, in the shape `GET /feature-flags` returns. */
+/**
+ * Every client-visible flag, in the shape `GET /feature-flags` returns, all
+ * evaluated against one description of the signed-in person.
+ */
 export async function resolveClientFeatureFlags(
   env: Env,
   auth: IdentityAuthContext,
 ): Promise<ClientFeatureFlags> {
-  return { developerSettings: await resolveDeveloperSettingsEnabled(env, auth) };
+  const context = clientFlagEvaluationContext(env, auth, await flagSubject(env, auth));
+  return {
+    developerSettings: await resolveBooleanClientFlag(
+      env,
+      auth,
+      DEVELOPER_SETTINGS_FLAG_KEY,
+      context,
+    ),
+  };
+}
+
+/** The Developer section's flag on its own, for a caller that wants only it. */
+export async function resolveDeveloperSettingsEnabled(
+  env: Env,
+  auth: IdentityAuthContext,
+): Promise<boolean> {
+  return (await resolveClientFeatureFlags(env, auth)).developerSettings;
 }
