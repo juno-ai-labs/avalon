@@ -358,4 +358,4 @@ that is not an ordinary unregistered-connector error. The reasoning behind
 everything in this document before this entry is not recorded, and was not
 reconstructed.
 
-Shipped on `claude/empty-digest-investigation-qicglw`.
+Shipped in #93.
