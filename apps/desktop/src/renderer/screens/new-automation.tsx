@@ -46,6 +46,7 @@ import type {
   AutomationScope,
   Message,
   MessageAttachment,
+  Workspace,
   WorkspaceTemplate,
   WorkstreamConnection,
 } from '../lib/types';
@@ -476,13 +477,13 @@ function DraftSummary({
   );
 }
 
-export function NewAutomationScreen(): React.JSX.Element {
+export function NewAutomationScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api, session } = useAppSession();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const draftKey = newAutomationDraftKey(session?.workspace?.id ?? 'pending');
+  const draftKey = newAutomationDraftKey(workspace.id);
   const { text: input, setText: setInput } = useDraftText(draftKey);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);

@@ -1,9 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
+import type { Workspace } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
 import { NewAutomationScreen } from './new-automation';
 
@@ -23,6 +24,15 @@ const session = vi.hoisted(() => ({
   workspace: { id: 'workspace-1', name: 'Juno Labs', region: 'global', role: 'owner' },
 }));
 
+const workspace: Workspace = {
+  id: 'workspace-1',
+  name: 'Juno Labs',
+  region: 'global',
+  timezone: 'America/Los_Angeles',
+  logAgentInference: false,
+  currentUser: { id: 'user-1', name: 'Morgan Ellis', email: 'adam@juno-labs.com', timezone: 'America/Los_Angeles' },
+};
+
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session }) }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
 vi.mock('thinking-orbs', () => ({
@@ -40,7 +50,7 @@ function renderScreen(): void {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={['/automations/new']}>
           <Routes>
-            <Route element={<NewAutomationScreen />} path="/automations/new" />
+            <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/new" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -340,7 +350,9 @@ describe('New automation composer', () => {
     expect(screen.queryByRole('region', { name: 'Default plugins' })).not.toBeInTheDocument();
     expect(screen.queryByText('Suggested tools: linear_search_issues')).not.toBeInTheDocument();
     expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
-    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Default plugins' })).getByRole('checkbox')).toBeChecked());
+    // The picks are preloaded into state with nothing on screen to assert on, so
+    // let the effect that sets them commit before acting on it.
+    await act(async () => undefined);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(

@@ -3,6 +3,7 @@ import { ApiError, type AvalonApi } from './api';
 import {
   type CachedDraftAttachment,
   deleteDraftAttachments,
+  draftCacheEpoch,
   nextDraftSortKey,
   pruneExpiredDrafts,
   readDraftAttachments,
@@ -28,6 +29,7 @@ const MAX_ATTACHMENTS = 10;
 const MAX_ATTACHMENT_BYTES = 25_000_000;
 const IMAGE_FILE_PATTERN = /\.(?:avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/iu;
 const DISCONNECTED_ERROR = 'Avalon is not connected. Try again after reconnecting.';
+const UNSAVED_ERROR = 'This device is out of room to hold attachments, so they will be lost if you quit before sending.';
 
 const DELETE_RETRY_DELAYS_MS = [0, 250, 1_250] as const;
 
@@ -36,6 +38,7 @@ const NO_ATTACHMENTS: PendingAttachment[] = [];
 
 /** Expired drafts are swept once per application run, not once per composer. */
 let prunedThisSession = false;
+let pruning = false;
 
 async function sha256Buffer(bytes: ArrayBuffer): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
@@ -113,7 +116,11 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
   const removed = useRef(new Set<string>());
   const apiRef = useRef(api);
   apiRef.current = api;
+  // Assigned during render, not in the effect below: a callback fired from the
+  // render that changes `draftKey` must already attribute its work to the new
+  // draft rather than to the one leaving the screen.
   const draftKeyRef = useRef(draftKey);
+  draftKeyRef.current = draftKey;
   const connected = Boolean(api);
 
   const replace = useCallback((updater: (current: PendingAttachment[]) => PendingAttachment[]) => {
@@ -129,6 +136,7 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
   }, [replace]);
 
   const upload = useCallback(async (attachment: PendingAttachment, key: string): Promise<void> => {
+    const atEpoch = draftCacheEpoch();
     const client = apiRef.current;
     if (!client) {
       settle(key, attachment.localId, { status: 'failed', error: DISCONNECTED_ERROR });
@@ -150,7 +158,7 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
       }
       // The cache write is bookkeeping; the composer is ready the moment the
       // upload is, and a lost write only costs a re-upload after a restart.
-      void updateDraftAttachment(key, attachment.localId, { resource });
+      void updateDraftAttachment(key, attachment.localId, { resource }, atEpoch);
       settle(key, attachment.localId, { progress: 100, resource, status: 'ready', error: undefined });
     } catch (uploadError) {
       controllers.current.delete(attachment.localId);
@@ -161,7 +169,7 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
           await deleteDraftWithRetry(client, resource.id).catch(() => undefined);
           return;
         }
-        void updateDraftAttachment(key, attachment.localId, { resource });
+        void updateDraftAttachment(key, attachment.localId, { resource }, atEpoch);
         settle(key, attachment.localId, { progress: 100, resource, status: 'ready', error: undefined });
         return;
       }
@@ -176,6 +184,7 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
     const key = draftKeyRef.current;
+    const atEpoch = draftCacheEpoch();
     setFingerprinting((current) => current + 1);
     fingerprintQueue.current = fingerprintQueue.current.then(async () => {
       const fingerprinted = await Promise.all(incoming.map(async (file) => {
@@ -234,6 +243,10 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
             lastModified: attachment.file.lastModified,
             bytes,
             ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+          }, atEpoch).then((stored) => {
+            // Silence would be the wrong failure mode here: the attachment
+            // still uploads and still sends, but it will not come back.
+            if (!stored && draftKeyRef.current === key && draftCacheEpoch() === atEpoch) setError(UNSAVED_ERROR);
           });
         }
         if (attachment.status === 'uploading') void upload(attachment, key);
@@ -245,22 +258,31 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
     });
   }, [replace, upload]);
 
+  /**
+   * Forgets one attachment everywhere it exists: in flight, on screen, in the
+   * cache, and upstream. `removed` also covers the upload that has not landed
+   * yet, whose completion then deletes the draft it created.
+   */
+  const discard = useCallback((attachment: PendingAttachment, key: string): void => {
+    removed.current.add(attachment.localId);
+    controllers.current.get(attachment.localId)?.abort();
+    controllers.current.delete(attachment.localId);
+    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    replace((current) => current.filter((item) => item.localId !== attachment.localId));
+    void deleteDraftAttachments(key, [attachment.localId]);
+    const client = apiRef.current;
+    if (client) {
+      void deleteDraftWithRetry(client, attachment.resource?.id ?? attachment.localId)
+        .catch(() => undefined);
+    }
+  }, [replace]);
+
   const removeAttachment = useCallback((localId: string): void => {
     const attachment = attachmentsRef.current.find((item) => item.localId === localId);
     if (!attachment) return;
-    const key = draftKeyRef.current;
-    removed.current.add(localId);
-    controllers.current.get(localId)?.abort();
-    controllers.current.delete(localId);
-    if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
-    replace((current) => current.filter((item) => item.localId !== localId));
+    discard(attachment, draftKeyRef.current);
     setError(undefined);
-    void deleteDraftAttachments(key, [localId]);
-    if (api) {
-      void deleteDraftWithRetry(api, attachment.resource?.id ?? localId)
-        .catch(() => undefined);
-    }
-  }, [api, replace]);
+  }, [discard]);
 
   const retryAttachment = useCallback((localId: string): void => {
     const attachment = attachmentsRef.current.find((item) => item.localId === localId);
@@ -288,19 +310,23 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
   }, []);
 
   useEffect(() => {
-    if (prunedThisSession) return;
-    prunedThisSession = true;
+    // Without a client the expired resources cannot be released, so the sweep
+    // has not really happened: leave it un-run for a later composer to retry.
+    if (prunedThisSession || pruning || !connected) return;
+    pruning = true;
     void pruneExpiredDrafts().then((expired) => {
       const client = apiRef.current;
       if (!client) return;
+      prunedThisSession = true;
       for (const attachment of expired) {
         void deleteDraftWithRetry(client, attachment.resource?.id ?? attachment.localId).catch(() => undefined);
       }
+    }).finally(() => {
+      pruning = false;
     });
-  }, []);
+  }, [connected]);
 
   useEffect(() => {
-    draftKeyRef.current = draftKey;
     let cancelled = false;
     // In-flight uploads keep running: `upload` writes their result to the cache
     // under the key they started on, so nothing is lost by looking away.
@@ -319,18 +345,26 @@ export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
       const restored = cached.slice(0, MAX_ATTACHMENTS).map((item) => restoredAttachment(item, connected));
       // Files dropped while the cache was still opening keep their place at the
       // end of the row rather than being replaced by what was on disk.
+      let merged: PendingAttachment[] = [];
       replace((current) => {
         const present = new Set(current.map((item) => item.localId));
-        return [...restored.filter((item) => !present.has(item.localId)), ...current].slice(0, MAX_ATTACHMENTS);
+        merged = [...restored.filter((item) => !present.has(item.localId)), ...current];
+        return merged;
       });
       for (const attachment of restored) {
         if (attachment.status === 'uploading') void upload(attachment, draftKey);
       }
+      // A drop that raced the read was counted against an empty composer, so the
+      // ten-file limit is settled here rather than by hiding the excess: the
+      // overflow is cancelled, uncached, and its draft resources released.
+      const overflowing = merged.slice(MAX_ATTACHMENTS);
+      for (const attachment of overflowing) discard(attachment, draftKey);
+      if (overflowing.length > 0) setError(`You can attach up to ${MAX_ATTACHMENTS} files to one message.`);
     });
     return () => {
       cancelled = true;
     };
-  }, [connected, draftKey, replace, upload]);
+  }, [connected, discard, draftKey, replace, upload]);
 
   useEffect(() => () => {
     for (const controller of controllers.current.values()) controller.abort();

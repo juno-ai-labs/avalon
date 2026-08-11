@@ -44,13 +44,41 @@ corrupt database still composes and sends normally — it just forgets.
 A cached attachment names a **draft resource** that the API's reaper deletes 24
 hours after upload (`DRAFT_ATTACHMENT_TTL_HOURS`). Local drafts therefore expire
 at 12 hours (`DRAFT_CACHE_TTL_MS`), comfortably inside that window, so a restored
-attachment never points at a resource that has already been swept. Reads filter
-expired rows; the first composer mounted in an application run also calls
-`pruneExpiredDrafts`, which deletes them and hands back their resources so the
-client can release the server-side drafts too.
+attachment never points at a resource that has already been swept.
 
-Signing out calls `clearAllDrafts`. Drafted text and cached file bytes are
-workspace content, and a signed-out device keeps none of it.
+The clock runs from the last **edit**, not the last visit. Hydration deliberately
+does not write back what it just read; otherwise opening a work stream daily
+would restamp its row forever and the draft would never expire.
+
+Reads filter expired rows. The first composer mounted in an application run also
+sweeps with `pruneExpiredDrafts`, which walks the attachment store's `updatedAt`
+index rather than reading it whole — a live draft's file bytes are never
+deserialized just to learn that the draft is not expired. The sweep hands back
+the rows it deleted so the client can release their server-side draft resources,
+and it only counts as done once it has a client to do that with; a composer that
+mounts before the API is ready leaves the sweep for the next one.
+
+Nothing else evicts. The TTL is the bound: the cache holds at most the
+attachments added in the last twelve hours, across every composer visited in that
+window. Beyond it the device's own quota is the limit, and a write that the quota
+refuses is reported rather than swallowed — see below.
+
+Leaving a session drops every draft. `AppSessionProvider` watches the session and
+calls `clearAllDrafts` on any transition that changes the draft scope — the API
+host, the user, or the workspace — which covers a deliberate sign-out, main
+surrendering a terminally expired credential, and one account replacing another
+on the device. A role change is not a scope change: being promoted does not cost
+anyone their unsent message. The first session of a run is an arrival rather than
+a departure, so launching Avalon keeps what the last run left behind.
+
+A wipe has to beat work that was already in flight when it started — a debounced
+save, a file still being fingerprinted, an upload about to record its resource —
+or a draft typed seconds before sign-out lands behind the clear and survives on a
+signed-out device. Ordering alone does not settle that, so the cache carries an
+**epoch**: `clearAllDrafts` moves it on, every write states the epoch its content
+was captured in, and a write from an earlier one is dropped. A composer opened
+after the wipe reads the new epoch and writes normally, so nothing has to be
+reset by hand.
 
 ## How a draft is restored
 
@@ -66,6 +94,18 @@ previews. An attachment that already carries a resource is immediately ready; on
 whose upload never finished is uploaded again. Files dropped while the read was
 still in flight keep their place at the end of the row rather than being replaced
 by what was on disk.
+
+The ten-file limit is settled after the read, not before it. A drop that arrives
+while the cache is still opening is counted against an empty composer, so it can
+push the total past ten once the cached files land. The excess is then cancelled,
+uncached, and its draft resources released, and the composer reports the same
+overflow message it would have shown up front — rather than hiding files that
+were uploaded but can no longer be reached or removed.
+
+A write the device refuses — an exhausted quota, most likely — is surfaced in the
+composer's error line. The attachment still uploads and still sends; what it will
+not do is come back after a restart, and that is worth saying out loud in a
+feature whose whole promise is that work survives.
 
 Because the upload endpoint keys a draft resource by the client's local ID, a
 re-upload of an interrupted attachment answers `409 attachment_draft_exists`.
@@ -86,8 +126,19 @@ are still on disk to try again with.
   input component is cached; the rest belongs to the API's draft.
 - Files that could never be sent. An empty file, or one over the 25 MB limit, is
   shown as failed and never written to disk.
-- Attachments beyond the ten a message may carry. Overflow rows found on restore
-  are deleted rather than kept.
+- Attachments beyond the ten a message may carry, whether they were found on
+  restore or created by a drop that raced it.
+
+## A consequence worth knowing
+
+The attachment hook no longer deletes draft resources when a composer unmounts,
+because the draft is meant to outlive the screen. That cleanup was also the only
+thing that released the resource an *in-flight* upload eventually creates. So
+when a message is sent while one of its attachments is still uploading, the
+composer clears, the cached row goes, and the upload then completes into a draft
+resource that nothing references. The API's 24-hour reaper collects it. This is
+an accepted trade — the alternative was destroying uploads the user could still
+see — but it is a real behavior change rather than an oversight.
 
 ## Testing
 

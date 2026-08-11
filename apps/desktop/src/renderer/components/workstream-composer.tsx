@@ -2,7 +2,7 @@ import { AtSign, LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
 import { workstreamDraftKey } from '../lib/draft-keys';
-import { useDraftText } from '../lib/use-draft-text';
+import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { AttachmentPreview } from './attachments';
@@ -127,7 +127,7 @@ export function WorkstreamComposer({
 
   const resetDraft = (): void => {
     setText('');
-    setSelectedMentions([]);
+    setSelectedMentions(NO_MENTIONS);
     setMentionQuery(null);
     setSlashDismissed(false);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
