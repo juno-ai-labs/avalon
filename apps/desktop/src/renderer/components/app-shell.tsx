@@ -20,8 +20,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
+  const hypersightOpen = useUiStore((state) => state.hypersightOpen);
+  const hypersightWidth = useUiStore((state) => state.hypersightWidth);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
-  const showShellRail = railOpen && !location.pathname.startsWith('/notes/');
+  // HyperSight and the inspector rail are the same slot, so the main pane makes
+  // room for whichever one holds it.
+  const showShellRail = (railOpen || hypersightOpen) && !location.pathname.startsWith('/notes/');
   const automations = useQuery({
     queryKey: ['automations'],
     queryFn: ({ signal }) => api!.getAutomations(signal),
@@ -44,7 +48,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   });
 
   const shellStyle = {
-    '--rail-width': `${railExpanded ? Math.max(520, railWidth) : railWidth}px`,
+    '--rail-width': `${hypersightOpen ? hypersightWidth : railExpanded ? Math.max(520, railWidth) : railWidth}px`,
     '--sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 

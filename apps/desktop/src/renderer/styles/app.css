@@ -1518,7 +1518,6 @@ pre {
 /* Work-stream header and transcript */
 
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
-.workstream-screen.has-hypersight { grid-template-rows: 55px auto minmax(0, 1fr); }
 .workstream-header { align-items: center; border-bottom: 1px solid var(--line-soft); display: flex; gap: 12px; justify-content: space-between; min-width: 0; padding: 6px 10px 6px 16px; }
 .workstream-header-left,
 .workstream-header-actions { align-items: center; display: flex; min-width: 0; }
@@ -1530,22 +1529,24 @@ pre {
 .workstream-subtitle { align-items: center; display: flex; gap: 10px; margin-top: 2px; }
 .workstream-subtitle > span:not(.status-indicator) { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 4px; }
 .workstream-header-actions { gap: 2px; }
-.hypersight-toggle.is-active { background: color-mix(in srgb, var(--brand) 12%, var(--raised)); color: var(--brand); }
-.hypersight-toggle.is-active:hover { background: color-mix(in srgb, var(--brand) 17%, var(--raised)); }
+/* Every control that owns the right sidebar reads as pressed while its panel is
+   the one showing there. */
+.panel-toggle.is-active { background: color-mix(in srgb, var(--brand) 12%, var(--raised)); color: var(--brand); }
+.panel-toggle.is-active:hover { background: color-mix(in srgb, var(--brand) 17%, var(--raised)); }
 .participant-header-button { align-items: center; background: transparent; border-radius: 7px; color: var(--muted); display: flex; gap: 4px; min-height: 30px; padding: 2px 5px; }
 .participant-header-button:hover { background: var(--raised); color: var(--ink); }
 .icon-count { align-items: center; background: var(--blue); border: 2px solid var(--surface); border-radius: 999px; color: #101820; display: flex; font-size: 8px; font-weight: 700; height: 14px; justify-content: center; min-width: 14px; position: absolute; right: -3px; top: -3px; }
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; }
 
-/* HyperSight */
-.hypersight-shell { margin: 10px 18px 0; min-width: 0; position: relative; }
-.hypersight-panel { background: #20211e; border: 1px solid #3c3d38; border-radius: 13px; box-shadow: 0 10px 34px rgba(0, 0, 0, .24); display: grid; grid-template-rows: 39px minmax(0, 1fr); height: calc(100% - 8px); min-height: 0; overflow: hidden; }
-.hypersight-panel-header { align-items: center; border-bottom: 1px solid #343530; display: flex; justify-content: space-between; padding: 0 12px 0 14px; }
-.hypersight-panel-header > div { align-items: center; color: var(--brand); display: flex; gap: 7px; }
-.hypersight-panel-header h2 { color: var(--ink-soft); font-size: 12px; font-weight: 620; margin: 0; }
-.hypersight-panel-header > span { color: var(--muted); font-size: 9.5px; }
-.hypersight-panel-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* HyperSight — the second panel of the right sidebar, sharing the inspector
+   rail's frame, grab handle, and header. */
+.hypersight-rail .rail-title { gap: 7px; }
+.hypersight-rail .rail-title h2 { margin-left: 0; }
+.hypersight-rail .rail-scroll { overscroll-behavior: contain; }
+.hypersight-rail-icon { align-items: center; color: var(--brand); display: flex; }
+.hypersight-block-count { color: var(--muted); font-size: 9.5px; }
+.hypersight-panel { min-width: 0; }
 .hypersight-block-list { padding: 8px 10px 10px; }
 .hypersight-block { display: grid; gap: 7px; grid-template-columns: minmax(0, 1fr) 29px; margin-bottom: 9px; min-height: 96px; position: relative; transition: opacity 100ms ease, transform 100ms ease; }
 .hypersight-block-card { background: #2c2d29; border: 1px solid #42433e; border-radius: 9px; color: var(--ink-soft); line-height: 1.48; max-height: 260px; min-height: 96px; overflow-y: auto; padding: 12px 14px; }
@@ -1574,14 +1575,9 @@ pre {
 .hypersight-add-block:hover:not(:disabled) { background: #292a26; border-color: #62635c; color: var(--ink-soft); }
 .hypersight-add-block:disabled { cursor: not-allowed; opacity: .45; }
 .hypersight-panel-error { color: #d8867f; font-size: 10.5px; margin: 9px 36px 0 0; }
-.hypersight-load-state { align-items: center; background: #20211e; border: 1px solid #3c3d38; border-radius: 13px; display: flex; flex-direction: column; gap: 10px; height: calc(100% - 8px); justify-content: center; }
+.hypersight-load-state { align-items: center; display: flex; flex-direction: column; gap: 10px; justify-content: center; padding: 46px 14px; }
 .hypersight-load-state .center-state { background: transparent; }
 .hypersight-load-state .inline-error { margin: 0; }
-.hypersight-resizer { align-items: center; bottom: 0; cursor: row-resize; display: flex; height: 12px; justify-content: center; left: 0; position: absolute; right: 0; touch-action: none; z-index: 2; }
-.hypersight-resizer > span { background: #50514b; border-radius: 99px; height: 2px; transition: background 100ms ease, width 100ms ease; width: 38px; }
-.hypersight-resizer:hover > span,
-.is-resizing-hypersight .hypersight-resizer > span { background: var(--brand); width: 54px; }
-.is-resizing-hypersight { cursor: row-resize !important; user-select: none !important; }
 .hypersight-prompt-field { display: grid; gap: 7px; }
 .hypersight-prompt-field > span { color: var(--muted); font-size: 11px; }
 .hypersight-prompt-field textarea { background: #262722; border: 1px solid #454640; border-radius: 9px; color: var(--ink); line-height: 1.5; min-height: 142px; outline: 0; padding: 10px 11px; resize: vertical; width: 100%; }
@@ -1901,15 +1897,20 @@ pre {
 .mention-confirm-person > span { display: flex; flex-direction: column; }
 .mention-confirm-person small { color: var(--muted); font-size: 11px; }
 
-/* Context inspector rail */
+/* Right sidebar: the context inspector rail and HyperSight */
 
 .rail-scrim { display: none; }
-.inspector-rail { background: #20211e; border: 1px solid #3a3b35; border-radius: 10px; bottom: 8px; box-shadow: -8px 0 28px rgba(0,0,0,.16); display: grid; grid-template-rows: 45px minmax(0, 1fr); max-width: calc(100vw - var(--sidebar-width) - 24px); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; z-index: 40; }
-.rail-resizer { bottom: 7px; cursor: col-resize; left: -5px; position: absolute; top: 45px; width: 10px; z-index: 2; }
-.rail-resizer::after { background: transparent; border-radius: 2px; bottom: 8px; content: ''; left: 4px; position: absolute; top: 8px; transition: background 120ms; width: 2px; }
-.rail-resizer:hover::after,
-.rail-resizer:focus-visible::after,
-.inspector-rail.is-resizing .rail-resizer::after { background: #65665e; }
+.inspector-rail,
+.hypersight-rail { background: #20211e; border: 1px solid #3a3b35; border-radius: 10px; bottom: 8px; box-shadow: -8px 0 28px rgba(0,0,0,.16); display: grid; grid-template-rows: 45px minmax(0, 1fr); max-width: calc(100vw - var(--sidebar-width) - 24px); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; z-index: 40; }
+/* A short handle that colors and grows under the pointer, rather than a second
+   border running the height of the sidebar. */
+.rail-resizer { align-items: center; bottom: 7px; cursor: col-resize; display: flex; justify-content: center; left: 0; position: absolute; top: 45px; touch-action: none; width: 11px; z-index: 2; }
+.rail-resizer > span { background: #50514b; border-radius: 99px; height: 38px; transition: background 100ms ease, height 100ms ease; width: 2px; }
+.rail-resizer:focus-visible { outline: 0; }
+.rail-resizer:hover > span,
+.rail-resizer:focus-visible > span,
+.rail-resizer.is-resizing > span { background: var(--brand); height: 54px; }
+.is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
 .rail-header { align-items: center; border-bottom: 1px solid #30312c; display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
 .rail-title,
 .rail-header-actions { align-items: center; display: flex; gap: 2px; }
@@ -2198,7 +2199,8 @@ pre {
 
 @media (max-width: 1180px) {
   .rail-scrim { background: rgba(0,0,0,.2); display: block; inset: 0; position: fixed; z-index: 35; }
-  .inspector-rail { box-shadow: -14px 0 42px rgba(0,0,0,.38); max-width: min(560px, calc(100vw - var(--sidebar-width) - 20px)); }
+  .inspector-rail,
+  .hypersight-rail { box-shadow: -14px 0 42px rgba(0,0,0,.38); max-width: min(560px, calc(100vw - var(--sidebar-width) - 20px)); }
   .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-width) / 2)); width: calc(100% - var(--sidebar-width) - 60px); }
   .automation-overview-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .automation-overview-actions .button:not(.run-now-button) { font-size: 0; gap: 0; padding: 5px 8px; }
@@ -2215,7 +2217,8 @@ pre {
   .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
   .sidebar-resizer { display: none; }
-  .inspector-rail { max-width: calc(100vw - 16px); }
+  .inspector-rail,
+  .hypersight-rail { max-width: calc(100vw - 16px); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
   .workstream-header,
@@ -2583,7 +2586,8 @@ pre {
   .waiting-workstream-source,
   .waiting-workstream-row time,
   .waiting-workstream-copy > span { display: none; }
-  .inspector-rail { border-radius: 8px; min-width: 0; width: calc(100vw - 16px) !important; }
+  .inspector-rail,
+  .hypersight-rail { border-radius: 8px; min-width: 0; width: calc(100vw - 16px) !important; }
   .rail-resizer { display: none; }
   .automation-builder { padding-left: 18px; padding-right: 18px; }
   .automation-overview-title > .badge { display: none; }
@@ -2592,7 +2596,6 @@ pre {
   .automation-update-banner > .button { grid-column: 1 / -1; justify-content: center; }
   .automation-update-details > div { grid-template-columns: 1fr; }
   .workstream-header-actions > .icon-button:not(.hypersight-toggle):not(:last-child) { display: none; }
-  .hypersight-shell { margin-left: 10px; margin-right: 10px; }
   .socket-state:not(.header-socket-state) { display: none; }
 }
 
