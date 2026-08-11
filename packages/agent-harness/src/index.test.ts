@@ -333,6 +333,122 @@ describe("agent harness", () => {
     ]));
   });
 
+  it("streams research-turn narration as one growing bubble", async () => {
+    const valid = {
+      name: "Daily summary",
+      description: "Create a daily summary.",
+      overview: "Creates a concise daily summary from recent project activity.",
+      instructions: "Summarize changes.",
+      triggers: [{ type: "manual" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["Summary"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const responses = [
+      streamResponse([
+        { choices: [{ delta: { content: "Looking at the connected " } }] },
+        { choices: [{ delta: { content: "plugins first." } }] },
+        {
+          choices: [{
+            delta: { tool_calls: [toolDelta(0, "creator-list", "automation_plugins_list")] },
+            finish_reason: "tool_calls",
+          }],
+        },
+      ]),
+      streamResponse([
+        { choices: [{ delta: { content: "GitHub is the only source; drafting it now." } }] },
+        {
+          choices: [{
+            delta: { tool_calls: [toolDeltaWithArguments(0, "creator-search", "automation_plugins_search", '{"query":"github"}')] },
+            finish_reason: "tool_calls",
+          }],
+        },
+      ]),
+      automationSubmitResponse(valid),
+    ];
+    const compilerEvents: AutomationCompilerStreamEvent[] = [];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Create it" }],
+      fetch: fetcher,
+      onStreamEvent: (event) => { compilerEvents.push(event); },
+    })).resolves.toMatchObject({ name: "Daily summary" });
+
+    // One `started` for the whole compile, not one per turn: the composer
+    // clears its narration on that frame, so a per-turn frame would erase the
+    // plan the person is reading.
+    expect(compilerEvents.filter((event) => event.type === "started")).toHaveLength(1);
+    const deltas = compilerEvents.flatMap((event) => event.type === "delta" ? [event] : []);
+    expect(deltas.every((event) => !event.reset)).toBe(true);
+    expect(deltas.map((event) => event.delta).join("")).toBe(
+      "Looking at the connected plugins first.\n\nGitHub is the only source; drafting it now.",
+    );
+  });
+
+  it("restores settled narration when one research turn's stream is abandoned", async () => {
+    const valid = {
+      name: "Daily summary",
+      description: "Create a daily summary.",
+      overview: "Creates a concise daily summary from recent project activity.",
+      instructions: "Summarize changes.",
+      triggers: [{ type: "manual" }],
+      requiredCapabilities: [],
+      recommendedPlugins: [],
+      expectedOutputs: ["Summary"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const responses = [
+      streamResponse([
+        { choices: [{ delta: { content: "Checking the plugin catalog." } }] },
+        {
+          choices: [{
+            delta: { tool_calls: [toolDelta(0, "creator-list", "automation_plugins_list")] },
+            finish_reason: "tool_calls",
+          }],
+        },
+      ]),
+      streamResponse([{
+        choices: [{
+          delta: {
+            content: "discard this",
+            tool_calls: [toolDeltaWithArguments(0, "creator-truncated", "automation_plugins_search", '{"query":')],
+          },
+          finish_reason: "length",
+        }],
+      }]),
+      automationSubmitResponse(valid),
+    ];
+    const compilerEvents: AutomationCompilerStreamEvent[] = [];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Create it" }],
+      fetch: fetcher,
+      onStreamEvent: (event) => { compilerEvents.push(event); },
+    })).resolves.toMatchObject({ name: "Daily summary" });
+
+    expect(compilerEvents.flatMap((event) => event.type === "delta" ? [event] : [])).toEqual([
+      { type: "delta", delta: "Checking the plugin catalog.", reset: false },
+      { type: "delta", delta: "\n\ndiscard this", reset: false },
+      // The abandoned attempt is retracted, but the first turn's update is not.
+      { type: "delta", delta: "Checking the plugin catalog.", reset: true },
+    ]);
+  });
+
   it("loads and uses an Avalon web plugin while compiling a draft", async () => {
     const valid = {
       name: "Azure model monitor",
