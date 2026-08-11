@@ -7,7 +7,8 @@ import { escapeHtml } from "./resend";
  * app has one appearance. Every colour is the app's own token, written inline —
  * a mail client will strip a `<style>` block, and several rewrite a page that
  * declares a light scheme, so the palette is stated on the elements themselves
- * and stays put.
+ * and stays put. The canvas is also asked to fill the reading pane rather than
+ * stop at the last line — see `digestEmailHtml`.
  *
  * The Markdown renderer here is deliberately small rather than a library. Mail
  * clients ignore most of what a general renderer emits, and rendering raw HTML
@@ -190,8 +191,25 @@ export function digestEmailHtml(content: DigestEmailContent): string {
     ? `${content.highlightCount} need${content.highlightCount === 1 ? "s" : ""} you · ${items} in ${content.workspaceName}`
     : `${items} in ${content.workspaceName}`;
 
+  // `height:100%` on the document and body, so a short digest does not end in a
+  // hard edge with the client's own white below it.
+  //
+  // A body background normally propagates to the canvas and paints the whole
+  // pane on its own. What defeats that is a client painting its own background
+  // onto `html` — propagation only happens while the root has none — and that
+  // is the only case this chain is for: a full-height body paints the pane
+  // itself rather than relying on a propagation the client has already broken.
+  //
+  // A percentage is load-bearing, and a viewport unit would be wrong. Where a
+  // webmail client strips `<body>` and injects this markup into its own page,
+  // the percentage meets an auto-height ancestor and collapses to nothing,
+  // leaving the message the height of its content — which is what a thread card
+  // wants. `100vh` there would measure the browser window instead of the pane
+  // and hang a tall dark tail off the bottom of the card. Nothing carries a
+  // height on the layout table either: the Word engine reads that as a minimum
+  // against the page box, which is the same tail in a different client.
   return `<!doctype html>
-<html lang="en" style="color-scheme:dark;supported-color-schemes:dark">
+<html lang="en" style="color-scheme:dark;supported-color-schemes:dark;height:100%;background:${COLOR.canvas}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -199,7 +217,7 @@ export function digestEmailHtml(content: DigestEmailContent): string {
     <meta name="supported-color-schemes" content="dark">
     <title>Your ${workspaceName} digest</title>
   </head>
-  <body style="margin:0;padding:0;width:100%;background:${COLOR.canvas};color:${COLOR.ink};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
+  <body style="margin:0;padding:0;width:100%;height:100%;background:${COLOR.canvas};color:${COLOR.ink};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escapeHtml(preheader)}</div>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:${COLOR.canvas};padding:36px 14px">
       <tr><td align="center">
