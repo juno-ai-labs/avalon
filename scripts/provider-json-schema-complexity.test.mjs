@@ -78,3 +78,18 @@ test("measures depth and schema nodes independently of property-map objects", ()
     nodes: 3,
   });
 });
+
+test("traverses tuple-style items arrays", () => {
+  assert.deepEqual(measureProviderJsonSchema({
+    type: "array",
+    items: [
+      { type: "string", maxLength: 20 },
+      { type: "object", properties: { enabled: { type: "boolean" } } },
+    ],
+  }), {
+    arrayExpansion: 1,
+    constraints: 1,
+    depth: 3,
+    nodes: 4,
+  });
+});

@@ -18,6 +18,7 @@ import {
   type HarnessTool,
   type InferenceAttemptEvent,
   type InferenceRequestEvent,
+  type StructuredModelDiagnostic,
 } from "./index";
 
 describe("agent harness", () => {
@@ -981,6 +982,33 @@ describe("agent harness", () => {
         schema: { required: ["ok"], additionalProperties: false },
       },
     });
+  });
+
+  it("emits a failure diagnostic for every failed structured provider attempt", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 1,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "provider_failure",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).rejects.toMatchObject({ name: "OpenRouterError", status: 503 });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(diagnostics.filter((diagnostic) => diagnostic.success === false)).toEqual([
+      expect.objectContaining({ stage: "complete", model: "test/model", attempt: 0, failureKind: "server_error" }),
+      expect.objectContaining({ stage: "complete", model: "test/model", attempt: 1, failureKind: "server_error" }),
+    ]);
   });
 
   it("retries transient stream failures on the same model before fallback", async () => {
