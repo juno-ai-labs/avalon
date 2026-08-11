@@ -2768,13 +2768,6 @@ pre {
   min-height: 34px;
 }
 
-.plugin-face-pile {
-  align-items: center;
-  display: flex;
-  min-width: 24px;
-  padding-right: 3px;
-}
-
 .plugin-face {
   align-items: center;
   background: #2d2e2a;
@@ -2785,21 +2778,20 @@ pre {
   flex: 0 0 auto;
   height: 24px;
   justify-content: center;
-  margin-left: -7px;
+  margin-right: 3px;
   position: relative;
   width: 24px;
 }
 
-.plugin-face:first-child { margin-left: 0; }
 .plugin-face-brand-github { background: #292a2d; color: #d0cfd0; }
 .plugin-face-brand-google { background: #302b28; color: #e2a084; }
 .plugin-face-brand-google-drive { background: #29312b; color: #91c4a1; }
 .plugin-face-brand-notion { background: #2c2d2b; color: #d7d6d0; }
+.plugin-face-brand-slack { background: #2b2f33; color: #9fc0d4; }
 .plugin-face-linear { background: #2e2b36; color: #b5a2df; }
 .plugin-face-webhook { background: #312c28; color: #d7aa83; }
 .plugin-face-world-search { background: #283037; color: #8eb8d6; }
 .plugin-face-plug { background: #30302a; color: #c2bd8a; }
-.plugin-face-overflow { color: #aaa9a2; font-size: 8px; font-weight: 650; }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-icon {
   color: #74746d;

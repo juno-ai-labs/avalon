@@ -85,7 +85,9 @@ function invocation(status: "started" | "completed"): ToolInvocation {
     harnessRunId,
     toolCallId: "tool-call-1",
     toolName: "Search evidence",
+    activityName: "Search evidence",
     connectionId: null,
+    plugin: null,
     status,
     inputSummary: '{"query":"invoice failures"}',
     outputSummary: status === "completed" ? "Found the relevant failures." : null,
@@ -135,5 +137,136 @@ describe("durable inline tool transcript", () => {
       replayVersion: 1,
       output: { body: "x".repeat(300_000) },
     });
+  });
+});
+
+class SingleRowDatabase {
+  sql = "";
+
+  constructor(private readonly row: Record<string, unknown> | null) {}
+
+  readonly binding = {
+    prepare: (sql: string) => {
+      this.sql = sql.replace(/\s+/gu, " ").trim();
+      return {
+        bind: () => ({ first: async () => this.row }),
+      } as unknown as D1PreparedStatement;
+    },
+  } as unknown as D1Database;
+}
+
+const invocationRow = {
+  id: invocationId,
+  harness_run_id: harnessRunId,
+  tool_call_id: "tool-call-1",
+  tool_name: "google_2_drive_search",
+  status: "completed",
+  input_json: '{"query":"avalon"}',
+  output_summary: "Found the authorized Drive folder",
+  started_at: "2026-08-01T12:00:01.000Z",
+  completed_at: "2026-08-01T12:00:04.000Z",
+  error_json: null,
+};
+
+describe("tool invocation attribution", () => {
+  it("attributes an invocation to the connector that owns its tool", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "Google Drive · Work",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
+
+    expect(database.sql).toContain("LEFT JOIN connector_connections owner ON owner.id = invocation.connection_id");
+    expect(loaded?.plugin).toEqual({
+      pluginId: "plugin_google_2",
+      displayName: "Google Drive · Work",
+      icon: "brand-google-drive",
+    });
+    expect(loaded?.activityName).toBe("Searched Google Drive · Work");
+  });
+
+  it("leaves an Avalon-owned tool unattributed", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      tool_name: "web_search",
+      connection_id: null,
+      owner_connector_type: null,
+      owner_display_name: null,
+      owner_model_plugin_id: null,
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
+
+    expect(loaded?.connectionId).toBeNull();
+    expect(loaded?.plugin).toBeNull();
+    expect(loaded?.activityName).toBe("Searched the public web");
+  });
+
+  it("refuses to attribute a connection whose model plugin id is unusable", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "Google Drive · Work",
+      owner_model_plugin_id: "Not-A-Plugin-Id",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.plugin).toBeNull();
+  });
+});
+
+describe("tool invocation failure wording", () => {
+  it("words a failed connector row as a failure, not a success", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      status: "failed",
+      output_summary: null,
+      error_json: JSON.stringify({ code: "provider_error", message: "Drive rejected the request" }),
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "Google Drive · Work",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
+      .toBe("Could not reach Google Drive · Work");
+  });
+
+  it("keeps settled wording on an ambiguous write, which may still have landed", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      status: "ambiguous",
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "Google Drive · Work",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
+      .toBe("Searched Google Drive · Work");
+  });
+
+  it("leaves a row unattributed when the connector name is blank", async () => {
+    const database = new SingleRowDatabase({
+      ...invocationRow,
+      connection_id: "00000000-0000-7000-8000-000000000010",
+      owner_connector_type: "google",
+      owner_display_name: "   ",
+      owner_model_plugin_id: "plugin_google_2",
+    });
+    const env = { DB: database.binding } as unknown as Env;
+
+    const loaded = await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1");
+    expect(loaded?.plugin).toBeNull();
+    expect(loaded?.activityName).toBe("Google 2 drive search");
   });
 });

@@ -196,7 +196,7 @@ describe('Avalon API wire adapter', () => {
         name: 'Reviewing connected tools',
         summary: 'Checking the authorized plugin catalog…',
         status: 'started',
-        plugins: [{ pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' }],
+        plugin: { pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' },
       },
       {
         type: 'tool',
@@ -204,7 +204,7 @@ describe('Avalon API wire adapter', () => {
         name: 'Reviewing connected tools',
         summary: 'Reviewed the authorized plugin catalog',
         status: 'completed',
-        plugins: [{ pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' }],
+        plugin: { pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' },
         durationMs: 42,
       },
       { type: 'delta', delta: 'Which blog ', reset: false },
@@ -391,6 +391,72 @@ describe('Avalon API wire adapter', () => {
         durationMs: 3_000,
       },
     });
+  });
+
+  it('carries the owning connector onto a work-stream tool row', () => {
+    const mapped = mapMessage({
+      ...message,
+      id: taskId,
+      author: { type: 'agent' as const },
+      messageType: 'tool' as const,
+      textContent: '',
+      structuredContent: {
+        invocation: {
+          id: taskId,
+          harnessRunId: messageId,
+          toolCallId: 'turn-1-tool-1',
+          toolName: 'google_2_drive_search',
+          activityName: 'Reviewed Google Drive · Work',
+          connectionId,
+          plugin: { pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' },
+          status: 'completed',
+          inputSummary: '{"query":"avalon"}',
+          outputSummary: 'Found the authorized Drive folder.',
+          startedAt: '2026-08-01T12:00:01.000Z',
+          completedAt: '2026-08-01T12:00:04.000Z',
+          error: null,
+        },
+      },
+      sequenceNumber: 6,
+    });
+
+    expect(mapped.toolEvent?.plugin).toEqual({
+      pluginId: 'plugin_google_2',
+      displayName: 'Google Drive · Work',
+      icon: 'brand-google-drive',
+    });
+    expect(mapped.toolEvent?.name).toBe('Reviewed Google Drive · Work');
+  });
+
+  it('leaves a work-stream tool row from an Avalon-owned tool unattributed', () => {
+    const mapped = mapMessage({
+      ...message,
+      id: taskId,
+      author: { type: 'agent' as const },
+      messageType: 'tool' as const,
+      textContent: '',
+      structuredContent: {
+        invocation: {
+          id: taskId,
+          harnessRunId: messageId,
+          toolCallId: 'turn-1-tool-2',
+          toolName: 'web_search',
+          activityName: 'Searched the public web',
+          connectionId: null,
+          plugin: null,
+          status: 'completed',
+          inputSummary: '{"query":"azure models"}',
+          outputSummary: 'Found eight results.',
+          startedAt: '2026-08-01T12:00:01.000Z',
+          completedAt: '2026-08-01T12:00:04.000Z',
+          error: null,
+        },
+      },
+      sequenceNumber: 7,
+    });
+
+    expect(mapped.toolEvent?.plugin).toBeUndefined();
+    expect(mapped.toolEvent?.name).toBe('Searched the public web');
   });
 
   it('gives the durable elicitation answer the same identity as its realtime question', () => {
