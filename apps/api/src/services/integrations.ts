@@ -255,7 +255,9 @@ async function publishRuntimeEventBestEffort(
   event: Record<string, unknown>,
   publishers: readonly {
     channel: string;
-    publish: (event: Record<string, unknown>) => void | Promise<void>;
+    // `unknown` rather than `void`: `publishWorkstreamEvent` reports whether
+    // the room accepted the event, and a best-effort fan-out ignores that.
+    publish: (event: Record<string, unknown>) => void | Promise<unknown>;
   }[],
   onDropped?: (channel: string, error: unknown) => void,
 ): Promise<void> {
@@ -1271,16 +1273,26 @@ function createStreamDeltaBatcher(
   };
 }
 
+/**
+ * Hand one event to the work stream's room.
+ *
+ * Returns whether the room accepted it. Almost every caller ignores that and
+ * should: realtime delivery is an optimization, and canonical D1 state and
+ * snapshots recover the UI after a room outage without replaying product
+ * mutations. The exception is an event the room acts on rather than relays —
+ * a retraction of read access — where a swallowed failure would leave the
+ * caller believing something was enforced that was not. Those callers check.
+ */
 export async function publishWorkstreamEvent(
   env: Env,
   workspaceId: string,
   workstreamId: string,
   event: Omit<ServerSocketEvent, "sequence" | "occurredAt"> | Record<string, unknown>,
-): Promise<void> {
+): Promise<boolean> {
   try {
     const rooms = durableObjectNamespaceForRegion(env.WORKSTREAM_ROOMS, env.AVALON_REGION, env.APP_ENV);
     const id = rooms.idFromName(`${env.AVALON_REGION}:${workspaceId}:${workstreamId}`);
-    await rooms.get(id).fetch("https://room.internal/internal/events", {
+    const response = await rooms.get(id).fetch("https://room.internal/internal/events", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1289,9 +1301,12 @@ export async function publishWorkstreamEvent(
       },
       body: JSON.stringify(event),
     });
+    // A room that answered `409 room_identity_mismatch` or rejected the frame
+    // as `invalid_event` did not deliver it, and says so in the status rather
+    // than by throwing.
+    return response.ok;
   } catch {
-    // Realtime delivery is an optimization. Canonical D1 state and snapshots
-    // recover the UI after a room outage without replaying product mutations.
+    return false;
   }
 }
 

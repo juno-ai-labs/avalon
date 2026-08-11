@@ -1146,6 +1146,21 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   /** Monotonic within one turn epoch; distinct from the room event sequence. */
   streamSeq: z.number().int().nonnegative()
 });
+/**
+ * The close code the work-stream room uses when it disconnects a socket whose
+ * reader may no longer see the work stream.
+ *
+ * It is `1008` (policy violation) rather than an application code because the
+ * close frame is the whole message — there is no event body to carry a reason
+ * to somebody who is no longer allowed one. The client distinguishes it from
+ * every other close: an ordinary close reconnects, this one must not, because
+ * the reconnect would 404 forever with a transcript still on screen.
+ *
+ * The room deliberately uses `1011` when it cannot *establish* who may stay, so
+ * that case still reconnects and is re-authorized rather than dead-ending.
+ */
+export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
+
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
