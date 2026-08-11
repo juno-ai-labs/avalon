@@ -320,6 +320,43 @@ describe('Sidebar work-stream markers', () => {
     await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(staleDraft));
   });
 
+  it('reports an archive that the server rejected instead of failing silently', async () => {
+    const draft: AutomationSummary = {
+      id: 'automation-4',
+      name: 'Half-written monitor',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-08-02T11:00:00.000Z',
+    };
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[draft]}
+            onArchiveDraftAutomation={vi.fn(async () => {
+              throw new Error('The automation could not be reached.');
+            })}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Half-written monitor/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive draft' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Draft could not be archived' });
+    expect(within(dialog).getByText('The automation could not be reached.')).toBeVisible();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Draft could not be archived' })).not.toBeInTheDocument());
+    // The row is still there, which is what the dialog said.
+    expect(screen.getByRole('link', { name: /Half-written monitor/u })).toBeVisible();
+  });
+
   it('deletes an automation only after the confirmation dialog', async () => {
     const onDeleteAutomation = vi.fn(async () => undefined);
     render(

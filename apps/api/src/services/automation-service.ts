@@ -492,19 +492,30 @@ export class AutomationService {
     await this.refreshScheduler();
   }
 
-  /** Hides an abandoned draft from the automation list. A draft holds no enabled
-   * schedule and no active email route, so archiving one stops nothing that was
-   * running; a finished automation is paused or deleted instead. */
+  /** Hides an abandoned draft from the automation list; a finished automation is
+   * paused or deleted instead. A draft is created without schedules and holds no
+   * active email route, so archiving one stops nothing that was running — but
+   * the schedules are disabled anyway rather than trusting that, since a
+   * hidden-yet-firing automation is the one outcome this must never produce. */
   async archiveDraft(id: string): Promise<void> {
     const subscription = await this.loadSubscription(id);
     this.assertCanManageSubscription(subscription);
     if (subscription.status !== "draft") {
       throw new ApiError(409, "automation_not_draft", "Only a draft automation can be archived");
     }
-    await this.env.DB.prepare(
-      `UPDATE automation_subscriptions SET lifecycle_state = 'archived', updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND lifecycle_state = 'visible'`,
-    ).bind(nowIso(), id, this.auth.workspaceId).run();
+    const at = nowIso();
+    const [, disabled] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE automation_subscriptions SET lifecycle_state = 'archived', updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND lifecycle_state = 'visible'`,
+      ).bind(at, id, this.auth.workspaceId),
+      this.env.DB.prepare(
+        `UPDATE schedules SET enabled = 0, updated_at = ?, version = version + 1
+         WHERE automation_subscription_id = ? AND enabled = 1`,
+      ).bind(at, id),
+    ]);
+    // The workspace alarm only needs recomputing if a draft did carry one.
+    if (Number(disabled?.meta?.changes ?? 0) > 0) await this.refreshScheduler();
   }
 
   /** Removes an automation for good. The row stays so its runs, work streams,
@@ -575,7 +586,15 @@ export class AutomationService {
       // requires a visible, active subscription, and work-stream ingestion
       // rejects an archived owner.
     }
-    await this.refreshScheduler();
+    try {
+      await this.refreshScheduler();
+    } catch {
+      // The deletion is already committed, and a retry would 404 because the
+      // subscription no longer loads — so failing here would strand the caller
+      // on work that actually succeeded. Nothing is lost by tolerating it: the
+      // alarm re-reads enabled schedules from D1 on every firing, so a stale
+      // armed alarm wakes, finds nothing due, and clears itself.
+    }
   }
 
   async runs(id: string, limit = 50) {
