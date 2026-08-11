@@ -194,6 +194,33 @@ export class NoteService {
     return this.get(id);
   }
 
+  /** Hides a note from the sidebar, its resource from every listing, and the
+   * agent context that reads it, without destroying the transcript. Only the
+   * owner may archive: a workspace note stays readable to the rest of the
+   * members, and the read guard already keeps a private id opaque. */
+  async archive(id: string): Promise<void> {
+    const at = nowIso();
+    const result = await this.env.DB.prepare(
+      `UPDATE notes SET archived_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL
+         AND recording_status != 'recording'`,
+    ).bind(at, at, id, this.auth.workspaceId, this.auth.userId).run();
+    if (result.meta.changes) return;
+    // The write is the authorization, so nothing was read before it. A miss is
+    // usually a note this user cannot archive, but it is also how an active
+    // recording refuses, and those two owe the caller different answers. This
+    // read throws the 404 for every other cause; reaching past it means the row
+    // is present, owned, and unarchived, so recording is what stopped the write.
+    // Archiving underneath a live meeting window would 404 its next segment
+    // save while capture kept running, losing the rest of the transcript.
+    await this.requireNote(id, true);
+    throw new ApiError(
+      409,
+      "note_recording",
+      "This note is still recording. End the recording before archiving it.",
+    );
+  }
+
   async appendSegment(id: string, input: AppendNoteTranscriptSegmentRequest): Promise<NoteTranscriptSegment> {
     await this.requireNote(id, true);
     const duplicate = await this.env.DB.prepare(

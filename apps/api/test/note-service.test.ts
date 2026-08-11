@@ -556,6 +556,55 @@ describe("NoteService", () => {
     });
   });
 
+  it("archives a note out of every listing without destroying its transcript", async () => {
+    const { auth, database, env } = fixture();
+    const ownerService = new NoteService(env, auth);
+    const created = await ownerService.create({ id: noteId, title: "Finished interview", scope: "workspace" });
+    await ownerService.appendSegment(noteId, {
+      clientSegmentId: "00000000-0000-4000-8000-000000000215",
+      startOffsetMs: 0,
+      endOffsetMs: 2_000,
+      capturedAt: "2026-08-07T18:00:02.000Z",
+      speakerLabel: null,
+      text: "Worth keeping after the row leaves the sidebar.",
+    });
+    const otherAuth = { ...auth, userId: otherUserId, role: "member" as const };
+
+    // A workspace note is readable by every member, but archiving it is the
+    // owner's call alone.
+    await expect(new NoteService(env, otherAuth).archive(noteId))
+      .rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(new NoteService(env, otherAuth).get(noteId)).resolves.toMatchObject({ id: noteId });
+
+    // Archiving underneath a live meeting window would 404 its next segment
+    // save while capture kept running, so a recording note refuses distinctly
+    // from one the caller may not touch at all.
+    await ownerService.update(noteId, { recordingStatus: "recording" });
+    await expect(ownerService.archive(noteId))
+      .rejects.toMatchObject({ status: 409, code: "note_recording" });
+    expect(database.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
+      .toEqual({ archived_at: null });
+    await ownerService.update(noteId, { recordingStatus: "complete" });
+
+    await ownerService.archive(noteId);
+
+    await expect(ownerService.list(250)).resolves.toEqual({ items: [] });
+    await expect(new NoteService(env, otherAuth).list(250)).resolves.toEqual({ items: [] });
+    await expect(ownerService.get(noteId)).rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(ownerService.update(noteId, { title: "Renamed after archiving" }))
+      .rejects.toMatchObject({ status: 404, code: "note_not_found" });
+    await expect(new ResourceService(env, auth).get(created.resourceId))
+      .rejects.toMatchObject({ status: 404, code: "resource_not_found" });
+    // Archiving twice is the same answer as archiving something that is gone.
+    await expect(ownerService.archive(noteId)).rejects.toMatchObject({ status: 404, code: "note_not_found" });
+
+    expect(database.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
+      .toMatchObject({ archived_at: expect.any(String) });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM note_transcript_segments WHERE note_id = ?",
+    ).get(noteId)).toEqual({ count: 1 });
+  });
+
   it("deletes the owned resource row when a note is deleted", async () => {
     const { auth, bucket, database, env } = fixture();
     const noteService = new NoteService(env, auth);
