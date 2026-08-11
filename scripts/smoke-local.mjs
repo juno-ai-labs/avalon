@@ -1,5 +1,22 @@
 import WebSocket from "ws";
 
+// Inlined rather than imported: this script runs from the repository root with
+// plain Node, which resolves no workspace package and would not run the
+// TypeScript source behind one. `scripts/socket-ticket-transport.test.mjs`
+// fails if these drift from `packages/contracts/src/socket-tickets.ts`.
+const SOCKET_TICKET_SUBPROTOCOL = "avalon.ticket.v1";
+const SOCKET_TICKET_QUERY_PARAM = "ticket";
+
+function socketTicketProtocols(ticket) {
+  return [SOCKET_TICKET_SUBPROTOCOL, ticket];
+}
+
+function socketUrlWithoutTicket(url) {
+  const parsed = new URL(url);
+  parsed.searchParams.delete(SOCKET_TICKET_QUERY_PARAM);
+  return parsed.toString();
+}
+
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
 const otherBaseUrl = process.env.AVALON_SMOKE_OTHER_BASE_URL;
 const expectedWebOrigin = process.env.AVALON_SMOKE_PUBLIC_WEB_ORIGIN ?? "http://127.0.0.1:5174";
@@ -15,9 +32,9 @@ async function jsonRequest(path, options = {}, origin = baseUrl) {
   return { response, body };
 }
 
-async function openSocket(url, { expectOpen }) {
+async function openSocket(url, { expectOpen, protocols }) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, { origin: "app://avalon" });
+    const socket = new WebSocket(url, protocols ?? [], { origin: "app://avalon" });
     const timeout = setTimeout(() => {
       socket.close();
       reject(new Error(`Realtime check timed out (${expectOpen ? "open" : "replay"})`));
@@ -33,8 +50,9 @@ async function openSocket(url, { expectOpen }) {
       try {
         const payload = JSON.parse(String(event.data));
         if (payload.type === "snapshot") {
+          const negotiated = socket.protocol;
           socket.close(1000, "Smoke check complete");
-          finish({ opened: true, snapshot: true });
+          finish({ opened: true, snapshot: true, negotiated });
         }
       } catch (error) {
         clearTimeout(timeout);
@@ -175,11 +193,31 @@ assert(replayedMessage.body?.message?.id === "00000000-0000-7000-8000-0000000000
 assert(replayedMessage.body?.agentInvoked === false, "Message replay launched duplicate agent work");
 
 const ticket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
-assert(ticket.response.ok && ticket.body?.url, "Realtime ticket creation failed");
-const firstSocket = await openSocket(ticket.body.url, { expectOpen: true });
+assert(ticket.response.ok && ticket.body?.url && ticket.body?.ticket, "Realtime ticket creation failed");
+// The desktop presents its ticket the way the renderer does: through the
+// handshake subprotocol, with the deprecated query ticket stripped from the URL.
+const handshakeUrl = socketUrlWithoutTicket(ticket.body.url);
+assert(!handshakeUrl.includes("ticket="), "The handshake URL still carries the ticket");
+const firstSocket = await openSocket(handshakeUrl, {
+  expectOpen: true,
+  protocols: socketTicketProtocols(ticket.body.ticket),
+});
 assert(firstSocket.snapshot, "Realtime connection did not provide a snapshot");
-const replaySocket = await openSocket(ticket.body.url, { expectOpen: false });
+assert(
+  firstSocket.negotiated === SOCKET_TICKET_SUBPROTOCOL,
+  `The server selected ${firstSocket.negotiated || "no subprotocol"} rather than the sentinel`,
+);
+const replaySocket = await openSocket(handshakeUrl, {
+  expectOpen: false,
+  protocols: socketTicketProtocols(ticket.body.ticket),
+});
 assert(!replaySocket.opened, "Realtime ticket replay was accepted");
+
+// The deprecated query transport stays covered while builds that use it exist.
+const legacyTicket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
+assert(legacyTicket.response.ok && legacyTicket.body?.url, "Realtime ticket creation failed");
+const legacySocket = await openSocket(legacyTicket.body.url, { expectOpen: true });
+assert(legacySocket.snapshot, "The deprecated query ticket stopped working");
 
 console.log(JSON.stringify({
   health: "ok",
@@ -190,5 +228,7 @@ console.log(JSON.stringify({
   sidebarFixtures: "ok",
   messageIdempotency: "ok",
   firstSocket: "snapshot",
+  socketTransport: SOCKET_TICKET_SUBPROTOCOL,
+  legacyQuerySocket: "snapshot",
   replaySocket: "rejected",
 }));
