@@ -157,9 +157,68 @@ const INLINE_CHILD_SYSTEM_PROMPT = [
 const HYPERSIGHT_SYSTEM_PROMPT = [
   "You are rendering one shared HyperSight dashboard block for this work stream.",
   "Follow the block prompt using the current work-stream transcript and authorized tools as needed.",
-  "Return only the Markdown that should appear in the block, with no preamble or explanation about HyperSight.",
-  "Do not ask for input. HyperSight is automatically refreshed and cannot pause for a response.",
+  "Submit the block by calling hypersight_submit_block with the Markdown that should appear in it, and nothing else: assistant text is not the block and is discarded. Include no preamble and no explanation about HyperSight.",
+  "Do not ask for input, and do not perform writes. HyperSight is automatically refreshed, cannot pause for a response, and is read-only.",
 ].join(" ");
+
+const HYPERSIGHT_SUBMIT_TOOL_NAME = "submit_block";
+
+/**
+ * The block's own submission tool.
+ *
+ * The rendered block used to be whatever assistant text the run happened to
+ * finish with, which made every preamble, apology, and "here is the block:"
+ * part of the dashboard. A tool call is an explicit act with a schema, so the
+ * markdown arrives as an argument rather than as a leftover.
+ *
+ * `mode: "read"` because it writes to Avalon's own block record and never to a
+ * provider — the same reason the automation architect's draft submission is a
+ * read — and because a HyperSight run rejects write-mode tools outright.
+ */
+function hyperSightSubmissionPlugin(state: { markdown: string | null }): HarnessPlugin {
+  return {
+    canonicalId: "avalon:hypersight",
+    modelId: "avalon_hypersight",
+    displayName: "HyperSight",
+    shortWireName: "hypersight",
+    description: "Submit the rendered Markdown for this HyperSight block.",
+    systemMessage:
+      "The block is whatever you pass to this plugin's submission tool. Call it exactly once, last, with the finished Markdown.",
+    preload: true,
+    explicit: true,
+    tools: [{
+      definition: {
+        name: HYPERSIGHT_SUBMIT_TOOL_NAME,
+        description:
+          "Submit the finished Markdown for this dashboard block. Call this once, as the last thing you do. The block renders exactly what you pass here.",
+        capability: "avalon.hypersight.submit",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            markdown: {
+              type: "string",
+              minLength: 1,
+              maxLength: 100_000,
+              description: "The Markdown to render, with no preamble and no mention of HyperSight.",
+            },
+          },
+          required: ["markdown"],
+        },
+      },
+      execute: async (raw) => {
+        const args = z.object({ markdown: z.string().min(1).max(100_000) }).strict().parse(raw);
+        state.markdown = args.markdown;
+        return {
+          output: { submitted: true, characters: args.markdown.length },
+          summary: `Submitted ${args.markdown.length} characters of block Markdown`,
+        };
+      },
+    }],
+  };
+}
 
 type WorkstreamHarnessResult = {
   status: "completed" | "needs_input" | "failed" | "stopped";
@@ -1632,6 +1691,8 @@ export async function runWorkstreamHarness(
     source: hyperSightRun ? "hypersight" : "workstream",
     workstreamId: input.workstreamId,
   });
+  const hyperSightBlock: { markdown: string | null } = { markdown: null };
+  let hyperSightSubmissionAsked = false;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   try {
     outcome = await runHarness({
@@ -1661,12 +1722,13 @@ export async function runWorkstreamHarness(
         ? `${promptContext.systemPrompt}\n\n${HYPERSIGHT_SYSTEM_PROMPT}`
         : promptContext.systemPrompt,
       messages: modelMessages,
-      // Offered, never activated: the catalog line is all a run sees until it
-      // loads one, and loading grants no authority. HyperSight is excluded
-      // because it renders one block of Markdown, cannot pause for input, and
-      // does not write — every shipped skill is a procedure for doing something
-      // it is not there to do.
-      ...(hyperSightRun ? {} : { skills: [...BUILT_IN_SKILLS] }),
+      // Offered to every run, never activated by being offered: a run sees only
+      // each catalog line until it loads one, and loading adds instructions and
+      // nothing else. What a surface may *do* is settled by the tool loop —
+      // HyperSight and inline children reject write-mode tools before they run
+      // — so withholding a skill would only hide advice, never authority, and
+      // a future general skill would be hidden along with it.
+      skills: [...BUILT_IN_SKILLS],
       ...(!hyperSightRun ? {
         compaction: {
           persist: async (checkpoint) => {
@@ -1681,7 +1743,9 @@ export async function runWorkstreamHarness(
           },
         },
       } : {}),
-      corePlugins: harnessTools.corePlugins,
+      corePlugins: hyperSightRun
+        ? [...harnessTools.corePlugins, hyperSightSubmissionPlugin(hyperSightBlock)]
+        : harnessTools.corePlugins,
       plugins: harnessTools.plugins,
       activationHints,
       includeWebSearch: false,
@@ -1725,6 +1789,18 @@ export async function runWorkstreamHarness(
         stream_seq: event.streamSeq,
       });
     },
+    ...(hyperSightRun ? {
+      onTurnWouldEnd: () => {
+        if (hyperSightBlock.markdown !== null || hyperSightSubmissionAsked) return null;
+        // Once. A block that will not submit twice running is a failed block,
+        // and nagging it further only burns the run's ceilings.
+        hyperSightSubmissionAsked = true;
+        return [
+          `You ended the turn without calling ${HYPERSIGHT_SUBMIT_TOOL_NAME}, so this block has nothing to render.`,
+          "Call it now with the finished Markdown as its argument. Assistant text is discarded — the block is exactly what you pass to the tool.",
+        ].join("\n\n");
+      },
+    } : {}),
     beforeToolCall: composeBeforeToolCallHooks(
       hyperSightRun
         ? rejectToolModesBeforeCall(["write"], "Writes are not currently allowed", "hypersight_writes_disabled")
@@ -2115,14 +2191,7 @@ export async function runWorkstreamHarness(
   });
   if (hyperSightRun) {
     const at = nowIso();
-    const blockStatus = terminalResult.status === "completed"
-      ? "completed"
-      : terminalResult.status === "stopped"
-        ? "stopped"
-        : "failed";
-    const error = terminalResult.status === "needs_input"
-      ? { code: "hypersight_input_unavailable", message: "HyperSight cannot pause for input" }
-      : terminalResult.error;
+    const { status: blockStatus, error } = hyperSightBlockOutcome(terminalResult, hyperSightBlock.markdown);
     const result = await env.DB.prepare(
       `UPDATE hypersight_block_runs
           SET status = ?, markdown = ?, error_json = ?, completed_at = ?
@@ -2135,7 +2204,7 @@ export async function runWorkstreamHarness(
           )`,
     ).bind(
       blockStatus,
-      streamedText || null,
+      hyperSightBlock.markdown,
       error ? JSON.stringify(error) : null,
       at,
       hyperSightRun.id,
@@ -2173,12 +2242,42 @@ export async function runWorkstreamHarness(
     liveness.lease.owner,
   ).run();
   if (!hyperSightRun) return terminalResult;
-  return {
-    status: terminalResult.status === "needs_input" ? "failed" : terminalResult.status,
-    ...(terminalResult.status === "needs_input"
-      ? { error: { code: "hypersight_input_unavailable", message: "HyperSight cannot pause for input" } }
-      : terminalResult.error ? { error: terminalResult.error } : {}),
-  };
+  return hyperSightBlockOutcome(terminalResult, hyperSightBlock.markdown);
+}
+
+/**
+ * How a HyperSight run settles, for the block row and for the caller alike —
+ * one function so the two can never disagree about whether a block succeeded.
+ *
+ * A run that reaches its last iteration without calling the submission tool has
+ * produced no block, whatever Bind thought of the conversation: the nudge above
+ * already asked for it once. Recording that as `completed` would leave a block
+ * that renders nothing and reports no reason, which is the failure mode hardest
+ * to notice from the dashboard.
+ */
+function hyperSightBlockOutcome(
+  terminalResult: { status: string; error?: { code: string; message: string } },
+  markdown: string | null,
+): { status: "completed" | "failed" | "stopped"; error?: { code: string; message: string } } {
+  if (terminalResult.status === "stopped") return { status: "stopped" };
+  if (terminalResult.status === "needs_input") {
+    return {
+      status: "failed",
+      error: { code: "hypersight_input_unavailable", message: "HyperSight cannot pause for input" },
+    };
+  }
+  if (terminalResult.status === "completed") {
+    return markdown === null
+      ? {
+          status: "failed",
+          error: {
+            code: "hypersight_block_not_submitted",
+            message: "The run ended without submitting a block",
+          },
+        }
+      : { status: "completed" };
+  }
+  return { status: "failed", ...(terminalResult.error ? { error: terminalResult.error } : {}) };
 }
 
 function inlineChildOutcomeAsToolResult(
@@ -2668,6 +2767,10 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           executionPrincipal: childInput.executionPrincipal,
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
           messages: [{ role: "user", content: args.objective }],
+          // Same offer the parent gets, for the same reason: a catalog line is
+          // advice, and the child's read-only posture is enforced by the hook
+          // below rather than by what it was allowed to read.
+          skills: [...BUILT_IN_SKILLS],
           compaction: {},
           corePlugins: childHarnessTools.corePlugins,
           plugins: childPlugins,
@@ -2697,7 +2800,17 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             });
             await assertChildOwned();
           },
-          beforeToolCall: async ({ pluginId, toolName }) => {
+          beforeToolCall: composeBeforeToolCallHooks(
+            // First, and by tool mode, so a child that reaches for a write is
+            // told no and can carry on. The scope check below throws, which
+            // aborts the run — right for an id outside the frozen scope, wrong
+            // for a model simply trying the wrong kind of tool.
+            rejectToolModesBeforeCall(
+              ["write"],
+              "Sub-agents are read-only; report what you found and let the parent run perform any write",
+              "child_writes_disabled",
+            ),
+            async ({ pluginId, toolName }) => {
             await childLiveness.pulse("before_tool", true);
             await assertChildOwned();
             await assertRunAuthorityStillValid(options.env.DB, childInput, options.runAuthoritySnapshot);
@@ -2713,7 +2826,8 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             ) {
               throw new ConnectorError("unauthorized", "Plugin is outside the child scope");
             }
-          },
+            },
+          ),
           findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
             await assertChildOwned();
             const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, childHarnessTools);
@@ -5773,6 +5887,8 @@ export const __integrationTesting = {
   createAvalonTools,
   createInlineChildHarnessSurface,
   childRunLimits,
+  hyperSightSubmissionPlugin,
+  hyperSightBlockOutcome,
   installInlineChildAgentTool,
   createWorkstreamCorePlugins,
   loadHarnessTools,
