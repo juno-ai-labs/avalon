@@ -180,7 +180,7 @@ describe('WorkstreamHeader inline rename', () => {
     const onRename = vi.fn(async () => undefined);
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
-    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     const input = screen.getByRole('textbox', { name: 'Work-stream name' });
     expect(input).toHaveValue('Daily product brief');
 
@@ -196,16 +196,16 @@ describe('WorkstreamHeader inline rename', () => {
     const onRename = vi.fn(async () => undefined);
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
-    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Discarded' } });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel rename' }));
-    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Daily product brief' })).toBeInTheDocument();
 
-    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Also discarded' } });
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Work-stream name' }), { key: 'Escape' });
 
-    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Daily product brief' })).toBeInTheDocument();
     expect(onRename).not.toHaveBeenCalled();
   });
 
@@ -215,7 +215,7 @@ describe('WorkstreamHeader inline rename', () => {
     });
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
-    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     const input = screen.getByRole('textbox', { name: 'Work-stream name' });
     fireEvent.change(input, { target: { value: '   ' } });
     expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
@@ -230,7 +230,7 @@ describe('WorkstreamHeader inline rename', () => {
   it('drops an open draft when the header moves to another work stream', () => {
     const { rerender } = renderWorkstreamHeader();
 
-    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Stale draft' } });
 
     rerender(
@@ -256,11 +256,75 @@ describe('WorkstreamHeader inline rename', () => {
     const onRename = vi.fn(async () => undefined);
     renderWorkstreamHeader(headerWorkstream, { onRename });
 
-    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
 
     expect(onRename).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Daily product brief' })).toBeInTheDocument();
+  });
+
+  it('names the title as a button inside the heading, and opens only on keyboard activation', () => {
+    renderWorkstreamHeader();
+
+    // The heading survives: assistive technology gets both the document
+    // structure and something it can report as actionable.
     expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+    const title = screen.getByRole('button', { name: 'Daily product brief' });
+    expect(title).toHaveAttribute('aria-keyshortcuts', 'Enter F2');
+
+    // A single mouse click reports a detail of 1 and must not open the editor.
+    fireEvent.click(title, { detail: 1 });
+    expect(screen.queryByRole('textbox', { name: 'Work-stream name' })).not.toBeInTheDocument();
+
+    // Keyboard activation of a button reports a detail of 0.
+    fireEvent.click(title, { detail: 0 });
+    expect(screen.getByRole('textbox', { name: 'Work-stream name' })).toBeInTheDocument();
+  });
+
+  it('opens the editor on F2', () => {
+    renderWorkstreamHeader();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Daily product brief' }), { key: 'F2' });
+
+    expect(screen.getByRole('textbox', { name: 'Work-stream name' })).toBeInTheDocument();
+  });
+
+  it('discards a rename that settles after the header moved to another work stream', async () => {
+    let settle: (() => void) | undefined;
+    const onRename = vi.fn(() => new Promise<void>((_resolve, reject) => {
+      settle = () => reject(new Error('The stale stream could not be renamed.'));
+    }));
+    const { rerender } = renderWorkstreamHeader(headerWorkstream, { onRename });
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Launch planning' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith('Launch planning'));
+
+    rerender(
+      <Tooltip.Provider>
+        <WorkstreamHeader
+          hypersightOpen={false}
+          hypersightPreferencePending={false}
+          onAddParticipant={vi.fn()}
+          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+          onRename={onRename}
+          onToggleHyperSight={vi.fn()}
+          socketState="connected"
+          workstream={{ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }}
+        />
+      </Tooltip.Provider>,
+    );
+
+    settle?.();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Another stream' })).toBeInTheDocument());
+
+    // The old stream's failure must not land under the new stream's title, and
+    // its editor must still be openable rather than stuck mid-save.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Another stream' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Renamed later' } });
+    expect(screen.getByRole('button', { name: 'Save name' })).not.toBeDisabled();
   });
 });
 
