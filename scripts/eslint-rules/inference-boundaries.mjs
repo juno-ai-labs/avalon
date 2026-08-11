@@ -76,6 +76,17 @@ export const noDirectModelEnvReadRule = {
           context.report({ node, messageId: "directModelEnv", data: { name } });
         }
       },
+      Property(node) {
+        if (node.parent?.type !== "ObjectPattern" || node.computed) return;
+        const name = node.key.type === "Identifier"
+          ? node.key.name
+          : node.key.type === "Literal" && typeof node.key.value === "string"
+            ? node.key.value
+            : null;
+        if (name && MODEL_ENV_NAMES.has(name)) {
+          context.report({ node, messageId: "directModelEnv", data: { name } });
+        }
+      },
     };
   },
 };
