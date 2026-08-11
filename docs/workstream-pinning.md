@@ -17,7 +17,7 @@ the different question of who a work stream is *for*.
 | Path | Responsibility |
 | --- | --- |
 | `packages/db/migrations/0064_workstream_pins.sql` | The `workstream_pins` table: one row per (work stream, person), carrying the manual `position`. |
-| `packages/contracts/src/index.ts` | `WorkstreamSchema.pinPosition` — the per-viewer position on the wire — plus `MAX_PINNED_WORKSTREAMS` and `ReorderWorkstreamPinsRequestSchema`. |
+| `packages/contracts/src/index.ts` | `WorkstreamSchema.pinPosition` — the per-viewer position on the wire — and `ReorderWorkstreamPinsRequestSchema`. |
 | `apps/api/src/mappers/workstream.ts` | `WORKSTREAM_VIEWER_JOINS_SQL` joins the reader's pin; `workstreamViewerBindings` is the one place the viewer's id is bound for those joins. |
 | `apps/api/src/services/workstream-service.ts` | `pin`, `unpin`, `reorderPins`, and the position rewrite behind them. `list` excludes pins from the recency order and attaches them to the first page. |
 | `apps/api/src/routes/workstreams.ts` | `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
@@ -106,10 +106,11 @@ a drop target, so a release in the gap between two rows still counts as a drop.
   excluded from the paged query and appended to the first page instead. Leaving
   them in both would return a quiet pin twice — once appended, once on whichever
   cursor page its `last_activity_at` falls in.
-- **The pin limit counts what the section can show.** A pin whose work stream is
-  archived or no longer visible renders nothing and offers no menu, so counting
-  it would spend a slot its owner cannot free; 50 of them would wedge pinning
-  shut behind an empty section.
+- **Nothing counts pins against a limit.** Two limits were tried and both broke
+  on the same rock — a pin whose work stream has gone out of sight renders
+  nothing and offers no menu, so it cannot be counted, and once it is not
+  counted the list can outgrow any bound the reorder request enforces. Anything
+  that reintroduces a count has to answer both.
 - **Pinning is gated on readability; unpinning is not.** Removing a pin is never
   a question about the work stream, and a pin that has gone dark can only be
   reached by a caller that already knows the id.
@@ -133,21 +134,12 @@ It deliberately does not:
 
 ## Failure modes and limits
 
-- **50 *visible* pins per person** (`MAX_PINNED_WORKSTREAMS`). The 51st is
-  refused with `422 pin_limit_reached`, and the sidebar raises it as an error
-  dialog naming the limit. It is a product limit — the section's whole value is
-  that a glance takes it in — not a storage one, and the stored row count may
-  exceed it by however many pins have gone dark. The check is a read followed by
-  a write, so two pins made at the same instant can both pass at 49 and leave 51.
-  The obvious way to close that is the way this schema closes its other
-  invariants — a `BEFORE INSERT` trigger that counts and `RAISE`s, of which the
-  database already holds around fifty — and it is the wrong tool *here*
-  specifically: this limit counts the pins the reader can **see**, so a trigger
-  would have to restate `workstream-visibility.ts` in SQL, inside a migration
-  that is immutable once deployed and therefore cannot follow that rule when it
-  changes. The one time that rule was duplicated by hand, the copy silently
-  omitted `scope`. A trigger counting *stored* rows instead would enforce a
-  different limit and reintroduce the archived-pins-wedge-the-feature bug below.
+- **No limit on how many a person may pin**, and none on how many ids one
+  arrangement may name. The section is as long as its owner made it. Two things
+  scale with that length, and are what a future bound would have to be argued
+  against rather than assumed: a reorder writes one `UPDATE` per pin in a single
+  `batch`, and the first page of `GET /workstreams` carries one extra row per
+  pin.
 - **A refused drag reverts.** The local arrangement is dropped and the section
   re-renders from what the server holds, which is what the person's other
   devices are showing. The dialog says so rather than leaving a list that
@@ -192,6 +184,54 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-11 — There is no limit on how many work streams a person may pin
+
+**What changed:** `MAX_PINNED_WORKSTREAMS` is gone, along with the
+`pin_limit_reached` refusal and the bound on `ReorderWorkstreamPinsRequestSchema`.
+Nothing counts pins, and an arrangement may name as many ids as the person has
+pinned. This reverses the third bullet of the entry below, which had just moved
+that cap onto a visibility-filtered count.
+
+**Why:** The cap could not be made to work in either of its two possible forms,
+and both failures were the cap's, not the list's.
+
+Counting *stored* rows meant a pin whose work stream had been archived or made
+private without its owner spent a slot forever: the row renders nothing and
+offers no menu, so nobody could free it. That was found in the first review round
+and fixed by counting only *visible* pins — which promptly created the opposite
+failure, found in the second round by two independent reviewers. A dark pin that
+comes back makes the visible list longer than the cap the reorder request
+enforces, and because an arrangement is all-or-nothing, that request is refused
+rather than truncated. The list becomes permanently unreorderable until its owner
+unpins something. A limit that only holds while nothing goes out of sight is not
+a limit, it is a trap.
+
+**Considered and rejected:**
+
+- **A hard cap that evicts the oldest dark pin** when a new pin is made at the
+  ceiling. It restores a single clean invariant — stored equals visible, both
+  bounded — but pays for it by silently deleting something its owner chose,
+  reachable again the moment the work stream reappeared.
+- **A larger bound on the reorder request** than on pinning, sized as a request
+  guard rather than the product limit. This just moves the cliff: the stored set
+  still grows without bound as pins go dark, so the same "unreorderable list"
+  failure waits at the larger number.
+- **A `BEFORE INSERT` trigger**, which is how this schema states its other
+  invariants and would close the read-then-write race in the cap. Wrong tool for
+  this one: the count that mattered was of *visible* pins, so the trigger would
+  have to restate `workstream-visibility.ts` in SQL inside a migration that is
+  immutable once deployed — and the one time that rule was duplicated by hand,
+  the copy lost `scope`.
+
+**Consequences:** Two things now scale with the length of somebody's pinned list
+and are the argument any future bound has to beat: a reorder writes one `UPDATE`
+per pin in one `batch`, and the first page of `GET /workstreams` carries one
+extra row per pin. Neither is bounded by anything but the person's own patience.
+The `includeSystem` question the cap raised — that `loadPinnedWorkstreams`
+defaults to `true` while the sidebar reads its list with the viewer's debug
+preference — disappears with the count that asked it; the reads that render still
+take the caller's value.
 
 ### 2026-08-11 — Pins leave the recency order, and a position is allocated in SQL
 
