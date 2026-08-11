@@ -391,6 +391,57 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 
 ## Changelog
 
+### 2026-08-11 — The digestible default stays permissive, and the deployment window that exposed it is written down instead
+
+**What changed:** Nothing in the code or the schema. `activity_events.digestible`
+keeps `DEFAULT 1`. What changed is that the reason is now recorded here, in
+[`DATA_MODEL.md`](DATA_MODEL.md), and — as an operational rule rather than a fact
+about this column — in [the runbook](RUNBOOK.md#the-window-between-a-migration-and-the-worker-that-needs-it).
+
+**Why:** Deploying the entry below produced six wrong rows. The deploy job
+applies migrations before it deploys the Workers, so between `0063` landing at
+`18:56:00` and the Global Worker going live at `18:56:23`, the *previous* Worker
+inserted six `activity_events` rows without naming `digestible`. They took the
+column default of `1` and are marked digestible although every one of them —
+two `check_run.completed`, a `pull_request.edited`, two `email.updated`, a
+`sheets.spreadsheet_changed` — is operational under the manifests that shipped
+in the same commit. The default was chosen to leave pre-existing rows alone,
+which the migration's own backfill then overrode anyway; nobody asked what the
+old code would write through it, and for twenty-three seconds that was the only
+thing the default governed.
+
+**Considered and rejected:** Flipping it to `DEFAULT 0`, which was the first
+instinct and is wrong twice over. It buys almost nothing: every deployed version
+from here on sets `digestible` explicitly, so no future deployment window can
+produce a defaulted row, and the only remaining reader of the default is a raw
+`INSERT` that no code path performs. And it is not a one-line change — SQLite
+cannot alter a column default, so it means rebuilding `activity_events`, which
+means staging every `activity_event_targets` row around a parent drop that would
+otherwise cascade them away, and restoring `sqlite_sequence` by hand because
+`log_sequence` is `AUTOINCREMENT` and a rebuild of an empty table resets the
+counter to zero. The EU copy of this table is empty today, so that reset would
+have reissued sequences beneath cursors already stored in `digest_deliveries` —
+the exact failure the `AUTOINCREMENT` comment in `0059` exists to prevent. A
+rebuild of the log to change a default that will never again be read is a large
+risk for no benefit.
+
+Also considered: correcting the six rows in a migration. There is no structural
+marker that identifies them — only a production timestamp, which would be wrong
+in the EU database and wrong in every fresh deployment. They are a one-off
+correction against one region's data, not a schema change.
+
+**Consequences:** The default is now load-bearing documentation rather than a
+safety net: anything that inserts into `activity_events` outside
+`recordActivityEvent` must set `digestible` itself, because the column will not
+withhold on its behalf. The six rows were left in place — they are six lines of
+noise in one digest window and they age out — so a reader comparing the log
+against the manifests will find that many disagreements and should not treat it
+as drift. The general rule this produced now lives in the runbook, where the
+next person adding a `NOT NULL` column to a hot table will meet it before they
+pick a default rather than twenty seconds after.
+
+Shipped on `claude/empty-digest-investigation-qicglw`.
+
 ### 2026-08-11 — A digest run is handed its window, and only hears about what a connector confirmed is worth hearing
 
 **What changed:** Two things, because the same digest exposed both. A scheduled

@@ -336,6 +336,16 @@ The one interaction the platform does not sequence is an API deployment overlapp
 
 Because API deployment is continuous, a merge to `main` is a production release. Do not add required reviewers to `api-production`; that environment scopes the Cloudflare token to the deployment job and is not an approval gate. Migrations apply automatically, so a migration is live the moment its pull request merges: an irreversible or destructive migration must be split into backward-compatible steps, and a rollback is a forward migration, never a redeployment of the previous Worker. A failed deployment leaves the migrations applied; recover by fixing forward on `main`.
 
+### The window between a migration and the Worker that needs it
+
+The deploy job applies both regions' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds in practice — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
+
+So when a migration adds a `NOT NULL` column to a table the Worker writes to on a hot path, **choose the default that is safe for the old code to produce**, not the one that is convenient for the rows already there. Those are different questions and they are answered in different places: existing rows are the migration's own `UPDATE`, which can say anything; rows written during the window get the column default and nothing else.
+
+This is not hypothetical. `0063_activity_events_digestible.sql` added `digestible` with `DEFAULT 1` — permissive, so that pre-existing rows kept their prior behavior — and then backfilled the existing connector rows to `0`. Six rows landed in Global between the migration at `18:56:00` and the Global Worker going live at `18:56:23`, took the default, and were marked digestible when every one of them should have been withheld. The blast radius was six lines of noise in one digest, which is why they were left alone; a column governing something less forgiving would not be.
+
+Changing such a default afterwards is far more expensive than choosing it correctly, because SQLite cannot alter one: it takes a full table rebuild, and for a table with children — `activity_events` has `activity_event_targets` cascading off it — that means staging every child row, dropping and recreating the parent, restoring the children, and restoring `sqlite_sequence` by hand where the parent's key is `AUTOINCREMENT`. `0039_slack_connector.sql` is the worked example of that shape. The five minutes spent picking the default at introduction is the cheapest it will ever be.
+
 ## Provider configuration
 
 Google identity and connector OAuth use two distinct Google Cloud OAuth **Web application** clients in one project. The **Avalon Login** client requests only platform identity scopes and has this one redirect URI:
