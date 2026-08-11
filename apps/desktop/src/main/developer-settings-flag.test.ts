@@ -169,6 +169,30 @@ describe('developer settings flag controller', () => {
     expect(read).toHaveBeenCalledTimes(2);
   });
 
+  it('closes the section when the account changes, before the new one is answered for', async () => {
+    const { read, pending } = deferredReads();
+    const { controller: flag, onChange } = controller(read);
+    flag.observeSession('global-identity@https://api.example.com');
+    pending[0]?.(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(flag.enabled()).toBe(true);
+
+    // Onboarding swaps a Global identity session for a regional one without
+    // passing through signed-out, so this is an account change with no `stop()`.
+    flag.observeSession('regional@https://eu.api.example.com');
+
+    expect(flag.enabled()).toBe(false);
+    expect(onChange.mock.calls).toEqual([[true], [false]]);
+
+    // And it stays closed while the new account's polls fail, rather than
+    // inheriting what the previous context resolved to.
+    pending[1]?.(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(flag.enabled()).toBe(true);
+  });
+
   it('never applies an answer that arrives after sign-out', async () => {
     const { read, pending } = deferredReads();
     const { controller: flag, onChange } = controller(read);
