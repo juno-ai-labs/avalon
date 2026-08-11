@@ -8,10 +8,11 @@ import type { WorkstreamResource } from './types';
  * thumbnails and retry its uploads without the file picker.
  */
 const DATABASE_NAME = 'avalon-composer-drafts';
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const TEXT_STORE = 'text';
 const ATTACHMENT_STORE = 'attachments';
 const DRAFT_KEY_INDEX = 'draftKey';
+const UPDATED_AT_INDEX = 'updatedAt';
 
 /**
  * A cached attachment carries a server draft resource ID that the API's reaper
@@ -48,6 +49,18 @@ export interface CachedDraftAttachment {
 
 let databasePromise: Promise<IDBDatabase | null> | null = null;
 let lastSortKey = 0;
+let epoch = 0;
+
+/**
+ * A write carries the epoch its content was captured in, and a wipe moves the
+ * epoch on. Anything still in flight from before the wipe — a debounced save, a
+ * file mid-fingerprint, an upload about to record its resource — is therefore
+ * dropped rather than landing behind the clear and restoring what was erased.
+ * A composer created after the wipe reads the new epoch and writes normally.
+ */
+export function draftCacheEpoch(): number {
+  return epoch;
+}
 
 /** Insertion keys must keep rising even when two files land in the same tick. */
 export function nextDraftSortKey(): number {
@@ -74,9 +87,17 @@ function openDatabase(): Promise<IDBDatabase | null> {
       if (!database.objectStoreNames.contains(TEXT_STORE)) {
         database.createObjectStore(TEXT_STORE, { keyPath: 'draftKey' });
       }
-      if (!database.objectStoreNames.contains(ATTACHMENT_STORE)) {
-        const store = database.createObjectStore(ATTACHMENT_STORE, { keyPath: ['draftKey', 'localId'] });
-        store.createIndex(DRAFT_KEY_INDEX, 'draftKey');
+      const attachments = database.objectStoreNames.contains(ATTACHMENT_STORE)
+        ? request.transaction!.objectStore(ATTACHMENT_STORE)
+        : (() => {
+            const created = database.createObjectStore(ATTACHMENT_STORE, { keyPath: ['draftKey', 'localId'] });
+            created.createIndex(DRAFT_KEY_INDEX, 'draftKey');
+            return created;
+          })();
+      // Added in version 2 so the launch sweep can range-scan straight to the
+      // expired rows instead of materializing every cached file to read a date.
+      if (!attachments.indexNames.contains(UPDATED_AT_INDEX)) {
+        attachments.createIndex(UPDATED_AT_INDEX, 'updatedAt');
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -182,7 +203,13 @@ export async function readDraftText(draftKey: string): Promise<CachedDraftText |
 }
 
 /** An empty draft is not a draft: writing one removes the row instead. */
-export async function writeDraftText(draftKey: string, text: string, mentions: MentionIdentity[] = []): Promise<void> {
+export async function writeDraftText(
+  draftKey: string,
+  text: string,
+  mentions: MentionIdentity[] = [],
+  atEpoch: number = epoch,
+): Promise<void> {
+  if (atEpoch !== epoch) return;
   await withStores([TEXT_STORE], 'readwrite', async (transaction) => {
     const store = transaction.objectStore(TEXT_STORE);
     if (text.length === 0) store.delete(draftKey);
@@ -203,10 +230,21 @@ export async function readDraftAttachments(draftKey: string): Promise<CachedDraf
   }, []);
 }
 
-export async function writeDraftAttachment(attachment: Omit<CachedDraftAttachment, 'updatedAt'>): Promise<void> {
-  await withStores([ATTACHMENT_STORE], 'readwrite', async (transaction) => {
+/**
+ * Reports whether the bytes actually landed. A composer that promises work will
+ * survive has to know when the device refused to store it — an exhausted quota
+ * is the difference between a cached attachment and one that disappears at the
+ * next launch.
+ */
+export async function writeDraftAttachment(
+  attachment: Omit<CachedDraftAttachment, 'updatedAt'>,
+  atEpoch: number = epoch,
+): Promise<boolean> {
+  if (atEpoch !== epoch) return false;
+  return withStores([ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     transaction.objectStore(ATTACHMENT_STORE).put({ ...attachment, updatedAt: Date.now() } satisfies CachedDraftAttachment);
-  }, undefined);
+    return true;
+  }, false);
 }
 
 /**
@@ -217,7 +255,9 @@ export async function updateDraftAttachment(
   draftKey: string,
   localId: string,
   patch: Pick<Partial<CachedDraftAttachment>, 'resource' | 'sha256'>,
+  atEpoch: number = epoch,
 ): Promise<void> {
+  if (atEpoch !== epoch) return;
   await withStores([ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     const store = transaction.objectStore(ATTACHMENT_STORE);
     const existing = parseCachedAttachment(await awaitRequest(store.get([draftKey, localId])));
@@ -245,27 +285,39 @@ export async function deleteDraftAttachments(draftKey: string, localIds?: string
  */
 export async function pruneExpiredDrafts(): Promise<CachedDraftAttachment[]> {
   const cutoff = Date.now() - DRAFT_CACHE_TTL_MS;
+  const expiredRange = IDBKeyRange.upperBound(cutoff);
   return withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     const textStore = transaction.objectStore(TEXT_STORE);
     for (const record of await awaitRequest(textStore.getAll())) {
       const parsed = parseCachedText(record);
       if (parsed && parsed.updatedAt <= cutoff) textStore.delete(parsed.draftKey);
     }
+    // Walked through the date index rather than read whole: a live draft's file
+    // bytes are never deserialized just to learn that the draft is not expired.
     const attachmentStore = transaction.objectStore(ATTACHMENT_STORE);
     const expired: CachedDraftAttachment[] = [];
-    for (const record of await awaitRequest(attachmentStore.getAll())) {
-      const parsed = parseCachedAttachment(record);
-      if (!parsed) continue;
-      if (parsed.updatedAt > cutoff) continue;
-      expired.push(parsed);
-      attachmentStore.delete([parsed.draftKey, parsed.localId]);
-    }
+    await new Promise<void>((resolve, reject) => {
+      const request = attachmentStore.index(UPDATED_AT_INDEX).openCursor(expiredRange);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        const parsed = parseCachedAttachment(cursor.value);
+        if (parsed) expired.push(parsed);
+        cursor.delete();
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error ?? new Error('The draft cache sweep failed.'));
+    });
     return expired;
   }, []);
 }
 
 /** Sign-out leaves no drafted text or file bytes behind on the device. */
 export async function clearAllDrafts(): Promise<void> {
+  epoch += 1;
   await withStores([TEXT_STORE, ATTACHMENT_STORE], 'readwrite', async (transaction) => {
     transaction.objectStore(TEXT_STORE).clear();
     transaction.objectStore(ATTACHMENT_STORE).clear();
@@ -281,5 +333,6 @@ export function closeDraftCache(): void {
   const opening = databasePromise;
   databasePromise = null;
   lastSortKey = 0;
+  epoch = 0;
   void opening?.then((database) => database?.close());
 }

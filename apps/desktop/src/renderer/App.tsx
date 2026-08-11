@@ -176,7 +176,7 @@ function WorkspaceApp(): React.JSX.Element {
           <Route element={<NewWorkstreamScreen workspace={workspace.data} />} path="/workstreams/new" />
           <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
           <Route element={<NoteDetailScreen />} path="/notes/:id" />
-          <Route element={<NewAutomationScreen />} path="/automations/new" />
+          <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
           <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
           <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
           <Route element={<NotFoundScreen />} path="*" />
