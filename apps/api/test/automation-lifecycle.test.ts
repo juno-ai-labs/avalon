@@ -224,6 +224,38 @@ describe("automation lifecycle", () => {
     expect(failure.metadata_json).toContain("automation_subscription_unavailable");
   });
 
+  it("leaves the work stream of a run that already started alone", async () => {
+    const database = seededDatabase();
+    // The scheduler marks a run running when it creates the Workflow instance,
+    // but the work stream stays 'scheduled' until the harness claims its
+    // attempt. A delete landing inside that window must not archive a work
+    // stream the live run is still writing into.
+    database.exec(`
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, automation_subscription_id, automation_run_id,
+         planned_for, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-00000000000d', '00000000-0000-7000-8000-000000000001', 'Daily product brief',
+              'Write the brief', 'automation', '00000000-0000-7000-8000-000000000007',
+              '00000000-0000-7000-8000-00000000000e', '2026-01-02T16:00:00.000Z', 'scheduled', 1,
+              '2026-01-01', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_runs
+        (id, workspace_id, automation_subscription_id, workstream_id, trigger_type, planned_for,
+         started_at, status, created_at)
+      VALUES ('00000000-0000-7000-8000-00000000000e', '00000000-0000-7000-8000-000000000001',
+              '00000000-0000-7000-8000-000000000007', '00000000-0000-7000-8000-00000000000d', 'schedule',
+              '2026-01-02T16:00:00.000Z', '2026-01-02T16:00:01.000Z', 'running', '2026-01-01');
+    `);
+
+    await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
+
+    expect(database.prepare(
+      "SELECT archived_at, harness_status FROM workstreams WHERE id = ?",
+    ).get("00000000-0000-7000-8000-00000000000d")).toEqual({ archived_at: null, harness_status: "scheduled" });
+    expect(database.prepare(
+      "SELECT status, result_summary FROM automation_runs WHERE id = ?",
+    ).get("00000000-0000-7000-8000-00000000000e")).toEqual({ status: "running", result_summary: null });
+  });
+
   it("closes a run that was opened ahead of its planned time", async () => {
     const database = seededDatabase();
     database.exec(`

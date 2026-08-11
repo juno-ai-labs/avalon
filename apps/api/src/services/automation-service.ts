@@ -541,6 +541,12 @@ export class AutomationService {
     // the work stream and run already exist and only wait for the alarm.
     // Nothing would start them once the schedule is disabled, so they would sit
     // in the sidebar claiming to be scheduled forever.
+    //
+    // The run's own state decides this, not the work stream's. The scheduler
+    // marks a run running as soon as it creates the Workflow instance, while
+    // the work stream stays harness_status = 'scheduled' until the harness
+    // claims its attempt — so a work stream matched on that alone could belong
+    // to a run that is already live.
     const planned = await this.env.DB.prepare(
       `SELECT w.id FROM workstreams w
        JOIN automation_runs r ON r.workstream_id = w.id AND r.workspace_id = w.workspace_id
@@ -557,17 +563,23 @@ export class AutomationService {
       this.env.DB.prepare(
         "UPDATE schedules SET enabled = 0, updated_at = ?, version = version + 1 WHERE automation_subscription_id = ?",
       ).bind(at, id),
+      // Ordered: this reads the run rows the statement below rewrites, so
+      // archiving has to happen while those runs still read 'scheduled'.
+      this.env.DB.prepare(
+        `UPDATE workstreams SET archived_at = ?, updated_at = ?
+         WHERE workspace_id = ? AND automation_subscription_id = ?
+           AND harness_status = 'scheduled' AND archived_at IS NULL
+           AND EXISTS (SELECT 1 FROM automation_runs r
+                        WHERE r.workstream_id = workstreams.id
+                          AND r.workspace_id = workstreams.workspace_id
+                          AND r.status = 'scheduled' AND r.started_at IS NULL)`,
+      ).bind(at, at, this.auth.workspaceId, id),
       this.env.DB.prepare(
         `UPDATE automation_runs SET status = 'failed', completed_at = ?,
            result_summary = COALESCE(result_summary, 'The automation was deleted before this run started')
          WHERE workspace_id = ? AND automation_subscription_id = ?
            AND status = 'scheduled' AND started_at IS NULL`,
       ).bind(at, this.auth.workspaceId, id),
-      this.env.DB.prepare(
-        `UPDATE workstreams SET archived_at = ?, email_route_status = 'reserved', updated_at = ?
-         WHERE workspace_id = ? AND automation_subscription_id = ?
-           AND harness_status = 'scheduled' AND archived_at IS NULL`,
-      ).bind(at, at, this.auth.workspaceId, id),
     ]);
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     try {
@@ -632,7 +644,8 @@ export class AutomationService {
   async listTemplates() {
     const result = await this.env.DB.prepare(
       `SELECT t.*, u.name AS author_name,
-       (SELECT COUNT(*) FROM automation_subscriptions s WHERE s.template_id = t.id) AS use_count,
+       (SELECT COUNT(*) FROM automation_subscriptions s
+         WHERE s.template_id = t.id AND s.lifecycle_state = 'visible') AS use_count,
        v.required_capabilities_json, v.trigger_definitions_json
        FROM automation_templates t JOIN users u ON u.id = t.owner_user_id
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
