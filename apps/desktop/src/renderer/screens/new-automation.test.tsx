@@ -936,28 +936,25 @@ describe('New automation composer', () => {
       expect(api.getAutomationDraftSystemPrompt).not.toHaveBeenCalled();
     });
 
-    it('renders the prompt read-only, and only once it is asked for', async () => {
+    it('shows the prompt read-only, with nothing to expand and nothing else to read', async () => {
       applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
       api.getAutomationDraftSystemPrompt.mockResolvedValue('You are Avalon.\n\n# Authorized task context\n{}');
       await renderReadyDraft();
 
-      // Several kilobytes nobody creating an automation needs: the section is
-      // there, the request is not made until it is expanded.
-      const section = screen.getByRole('region', { name: 'System prompt' });
-      expect(api.getAutomationDraftSystemPrompt).not.toHaveBeenCalled();
-
-      fireEvent.click(within(section).getByRole('button', { name: 'Show' }));
-
       expect(await screen.findByText(/You are Avalon\./)).toBeInTheDocument();
       expect(api.getAutomationDraftSystemPrompt).toHaveBeenCalledWith('draft-prompt', 'you', expect.anything());
+
+      // Turning debugging on is the only asking this section needs, and the
+      // prompt is the only thing in it: no disclosure, no caption over it.
+      const section = screen.getByRole('region', { name: 'System prompt' });
+      expect(within(section).queryByRole('button', { name: /Show|Hide/ })).not.toBeInTheDocument();
+      expect(within(section).getByRole('button')).toHaveAccessibleName('Copy');
+      expect(section).toHaveTextContent(/^System prompt ?CopyYou are Avalon\./);
       // Nothing here is editable: the draft changes by describing the change.
       expect(within(section).queryByRole('textbox')).not.toBeInTheDocument();
 
       fireEvent.click(within(section).getByRole('button', { name: 'Copy' }));
       expect(copyText).toHaveBeenCalledWith('You are Avalon.\n\n# Authorized task context\n{}');
-
-      fireEvent.click(within(section).getByRole('button', { name: 'Hide' }));
-      expect(screen.queryByText(/You are Avalon\./)).not.toBeInTheDocument();
     });
 
     it('re-renders the prompt under the scope Runs as is set to', async () => {
@@ -966,11 +963,10 @@ describe('New automation composer', () => {
         Promise.resolve(`Prompt for ${scope}`));
       await renderReadyDraft();
 
-      fireEvent.click(within(screen.getByRole('region', { name: 'System prompt' })).getByRole('button', { name: 'Show' }));
       expect(await screen.findByText('Prompt for you')).toBeInTheDocument();
 
-      // The execution-authority paragraph is part of the prompt, so a viewer
-      // left open across a scope change must not keep showing the other one.
+      // The execution-authority paragraph is part of the prompt, so the
+      // rendered one must not survive a scope change.
       fireEvent.change(screen.getByRole('combobox', { name: 'Runs as' }), { target: { value: 'workspace' } });
 
       expect(await screen.findByText('Prompt for workspace')).toBeInTheDocument();
@@ -984,10 +980,9 @@ describe('New automation composer', () => {
         .mockResolvedValueOnce('Prompt after the edit');
       await renderReadyDraft();
 
-      fireEvent.click(within(screen.getByRole('region', { name: 'System prompt' })).getByRole('button', { name: 'Show' }));
       expect(await screen.findByText('Prompt before the edit')).toBeInTheDocument();
 
-      // The draft id survives an edit, so the viewer cannot rely on its key
+      // The draft id survives an edit, so the query cannot rely on its key
       // alone to notice that the draft under it was rewritten.
       fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
         target: { value: 'Send it on Thursdays instead' },
@@ -1002,8 +997,6 @@ describe('New automation composer', () => {
       applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
       api.getAutomationDraftSystemPrompt.mockRejectedValue(new Error('This automation draft is no longer available.'));
       await renderReadyDraft();
-
-      fireEvent.click(within(screen.getByRole('region', { name: 'System prompt' })).getByRole('button', { name: 'Show' }));
 
       expect(await screen.findByText('This automation draft is no longer available.')).toBeInTheDocument();
     });
