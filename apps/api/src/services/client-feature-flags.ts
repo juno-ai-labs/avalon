@@ -27,15 +27,22 @@ export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
 
 interface FlagSubject {
   email: string | null;
+  platformUserId: string | null;
   createdAt: string | null;
 }
 
 async function flagSubject(env: Env, auth: IdentityAuthContext): Promise<FlagSubject> {
   try {
-    const row = await env.DB.prepare("SELECT email, created_at FROM users WHERE id = ?")
+    const row = await env.DB.prepare(
+      "SELECT email, platform_user_id, created_at FROM users WHERE id = ?",
+    )
       .bind(auth.userId)
-      .first<{ email: string | null; created_at: string | null }>();
-    return { email: row?.email ?? null, createdAt: row?.created_at ?? null };
+      .first<{ email: string | null; platform_user_id: string | null; created_at: string | null }>();
+    return {
+      email: row?.email ?? null,
+      platformUserId: row?.platform_user_id ?? null,
+      createdAt: row?.created_at ?? null,
+    };
   } catch (error) {
     // An unreadable account is not a reason to fail the request, and not a
     // reason to invent attributes either. Evaluation continues with the
@@ -45,7 +52,7 @@ async function flagSubject(env: Env, auth: IdentityAuthContext): Promise<FlagSub
       user_id: auth.userId,
       error_name: error instanceof Error ? error.name : "UnknownError",
     });
-    return { email: null, createdAt: null };
+    return { email: null, platformUserId: null, createdAt: null };
   }
 }
 
@@ -66,14 +73,24 @@ function emailDomain(email: string): string | null {
  *
  * | Attribute | Value |
  * | --- | --- |
- * | `userId` | The account, and the right key to bucket a percentage rollout by |
- * | `email` | The full address, for targeting one person |
+ * | `platformUserId` | The person, stable across regions. **Bucket percentage rollouts by this.** |
+ * | `regionalUserId` | Their `users` row in *this* region — a different value per region for one person |
+ * | `email` | The full address, lower-cased, for targeting one person |
  * | `emailDomain` | Lower-cased domain, for targeting an organization such as staff |
- * | `accountCreatedAt` | ISO timestamp, for targeting by tenure |
+ * | `regionalAccountJoinedAt` | When they first appeared in *this* region, not the age of the account |
  * | `workspaceId` | Present once an organization is chosen |
  * | `workspaceRole` | `owner`, `admin`, or `member`, likewise |
  * | `region` | `global` or `eu` |
  * | `appEnv` | `development`, `test`, `staging`, or `production` |
+ *
+ * The two identity attributes are separate because `users.id` and
+ * `users.created_at` are **regional** — see [`REGIONALIZATION.md`]. One person
+ * with workspaces in both regions has two rows, so a rollout bucketed by the
+ * regional id would put them in different buckets on each, and a tenure rule
+ * would read the date they joined that region. `platform_user_id` is the
+ * identity the Global control plane establishes once and neither region may
+ * change; it is absent only for an account that predates the control plane, and
+ * a rule keyed on it then does not match rather than matching the wrong person.
  */
 export function clientFlagEvaluationContext(
   env: Env,
@@ -82,12 +99,13 @@ export function clientFlagEvaluationContext(
 ): FlagshipEvaluationContext {
   const domain = subject.email ? emailDomain(subject.email) : null;
   return {
-    userId: auth.userId,
+    regionalUserId: auth.userId,
     region: env.AVALON_REGION,
     appEnv: env.APP_ENV,
+    ...(subject.platformUserId ? { platformUserId: subject.platformUserId } : {}),
     ...(subject.email ? { email: subject.email.trim().toLowerCase() } : {}),
     ...(domain ? { emailDomain: domain } : {}),
-    ...(subject.createdAt ? { accountCreatedAt: subject.createdAt } : {}),
+    ...(subject.createdAt ? { regionalAccountJoinedAt: subject.createdAt } : {}),
     ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
     ...(auth.role ? { workspaceRole: auth.role } : {}),
   };

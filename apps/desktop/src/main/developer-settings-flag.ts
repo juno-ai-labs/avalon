@@ -9,6 +9,13 @@ export interface DeveloperSettingsFlagControllerDependencies {
    */
   read: () => Promise<boolean>;
   onChange: (enabled: boolean) => void;
+  /**
+   * Called once when polling starts failing, and again when it recovers. A
+   * device that cannot reach the service keeps whatever answer it last had, so
+   * without this a permanently broken poll — a 500, a schema change, an older
+   * Worker answering 404 — would look exactly like a quiet, working one.
+   */
+  onAvailabilityChange?: (reachable: boolean, error?: unknown) => void;
   pollIntervalMs?: number;
 }
 
@@ -17,9 +24,9 @@ export interface DeveloperSettingsFlagControllerDependencies {
  *
  * The Debug enabled preference is per-device and lives in
  * `application-settings.json`; whether the section exists at all is the
- * service's decision, scoped to staff accounts. This controller holds the
- * second half, so the effective preference is the stored one **and** this — a
- * file that says `debugEnabled: true` grants nothing on its own.
+ * service's decision. This controller holds the second half, so the effective
+ * preference is the stored one **and** this — a file that says
+ * `debugEnabled: true` grants nothing on its own.
  *
  * It starts off and stays off until the service says otherwise, so a device
  * that has never reached the service, or has just signed out, offers nothing.
@@ -34,6 +41,17 @@ export class DeveloperSettingsFlagController {
   private serverEnabled = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight: Promise<boolean> | null = null;
+  private inFlightSince = 0;
+  private identity: string | null = null;
+  private reachable = true;
+  /**
+   * Which account the answer in flight belongs to. Bumped whenever the account
+   * changes or polling stops, so an answer that arrives after that is dropped
+   * instead of applied. Without it a poll issued as one account could re-open
+   * the section after sign-out, or hand a staff account's answer to whoever
+   * signs in next.
+   */
+  private generation = 0;
 
   constructor(private readonly dependencies: DeveloperSettingsFlagControllerDependencies) {}
 
@@ -41,15 +59,26 @@ export class DeveloperSettingsFlagController {
     return this.serverEnabled;
   }
 
-  /** Begins polling, asking once immediately. Safe to call again at any time. */
-  start(): void {
-    if (this.timer === null) {
+  /**
+   * Follows the signed-in account, and is the only way polling starts.
+   *
+   * The same account again — which is what a token refresh looks like from here
+   * — keeps the poll exactly as it was rather than asking an extra time. A
+   * different one discards whatever is in flight and asks immediately, because
+   * the answer belongs to the account rather than to the device.
+   */
+  observeSession(identity: string): void {
+    const changedAccount = identity !== this.identity;
+    this.identity = identity;
+    if (changedAccount) this.invalidate();
+    const startedPolling = this.timer === null;
+    if (startedPolling) {
       const intervalMs = this.dependencies.pollIntervalMs ?? DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS;
       this.timer = setInterval(() => void this.refresh(), intervalMs);
       // A feature flag must never be the reason the process stays alive.
       this.timer.unref?.();
     }
-    void this.refresh();
+    if (changedAccount || startedPolling) void this.refresh();
   }
 
   /** Stops polling and closes the section. Sign-out and shutdown both take this. */
@@ -58,6 +87,8 @@ export class DeveloperSettingsFlagController {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.identity = null;
+    this.invalidate();
     this.settle(false);
   }
 
@@ -67,17 +98,51 @@ export class DeveloperSettingsFlagController {
    * three answers to the same question are worth one round trip.
    */
   async refresh(): Promise<boolean> {
+    // A request that has outlived a whole poll interval is treated as lost.
+    // The one real `read` bounds itself, but a shared promise that never
+    // settles would otherwise wedge every later tick behind it for the life of
+    // the process, which is too quiet a way for a flag to stop working.
+    if (this.inFlight && Date.now() - this.inFlightSince >= this.abandonAfterMs()) this.invalidate();
     if (this.inFlight) return this.inFlight;
+    const generation = this.generation;
+    const current = (): boolean => this.serverEnabled;
     const request = this.dependencies
       .read()
-      .then((enabled) => this.settle(enabled === true))
-      // An unanswered poll is not an answer; keep whatever the last one said.
-      .catch(() => this.serverEnabled)
+      .then(
+        (enabled) => {
+          if (generation !== this.generation) return current();
+          this.announceReachable(true);
+          return this.settle(enabled === true);
+        },
+        // An unanswered poll is not an answer; keep whatever the last one said.
+        (error: unknown) => {
+          if (generation === this.generation) this.announceReachable(false, error);
+          return current();
+        },
+      )
       .finally(() => {
-        this.inFlight = null;
+        // Only the request that is still the current one may release the slot.
+        if (generation === this.generation) this.inFlight = null;
       });
     this.inFlight = request;
+    this.inFlightSince = Date.now();
     return request;
+  }
+
+  private abandonAfterMs(): number {
+    return this.dependencies.pollIntervalMs ?? DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS;
+  }
+
+  /** Disowns whatever is in flight, so its answer can no longer be applied. */
+  private invalidate(): void {
+    this.generation += 1;
+    this.inFlight = null;
+  }
+
+  private announceReachable(reachable: boolean, error?: unknown): void {
+    if (reachable === this.reachable) return;
+    this.reachable = reachable;
+    this.dependencies.onAvailabilityChange?.(reachable, error);
   }
 
   private settle(enabled: boolean): boolean {
