@@ -1819,19 +1819,3 @@ export class AvalonApi {
   }
 
 }
-
-export function backgroundTasksFromMessages(messages: Message[]): BackgroundTask[] {
-  return messages.flatMap((message) => {
-    const tool = message.toolEvent;
-    if (!tool) return [];
-    return [{
-      id: tool.id,
-      title: tool.name,
-      type: 'tool' as const,
-      status: tool.status === 'started' ? 'running' as const : tool.status === 'completed' ? 'completed' as const : 'failed' as const,
-      startedAt: message.createdAt,
-      ...(tool.durationMs !== undefined ? { durationMs: tool.durationMs } : {}),
-      transcriptMessageId: message.id,
-    }];
-  });
-}

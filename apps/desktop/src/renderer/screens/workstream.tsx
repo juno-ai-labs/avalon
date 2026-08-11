@@ -4,7 +4,6 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import {
-  Activity,
   AlertTriangle,
   ArrowDown,
   ArrowUp,
@@ -31,7 +30,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
-import { ApiError, backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
+import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
 import { workstreamDraftKey } from '../lib/draft-keys';
@@ -43,7 +42,7 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
@@ -51,6 +50,7 @@ import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
+import { useRailCrossFade } from '../components/rail-surface';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
   if (!session?.workspace) return undefined;
@@ -62,11 +62,6 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
     ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
     role: session.workspace.role,
   };
-}
-
-export function mergeBackgroundTasks(persisted: BackgroundTask[], live: BackgroundTask[]): BackgroundTask[] {
-  return [...new Map([...persisted, ...live].map((task) => [task.id, task])).values()]
-    .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
 }
 
 export function workstreamRunTiming(
@@ -354,7 +349,6 @@ export function WorkstreamHeader({
   const copyEmailAddress = (): void => {
     if (workstream.emailAddress) void desktopBridge().copyText(workstream.emailAddress);
   };
-  const runningTasks = workstream.backgroundTasks.filter((task) => task.status === 'running').length;
 
   return (
     <header className="workstream-header window-drag">
@@ -453,6 +447,13 @@ export function WorkstreamHeader({
       </div>
       <div className="workstream-header-actions window-no-drag">
         <SocketStatusIndicator state={socketState} />
+        <button className="participant-header-button" onClick={onAddParticipant} type="button">
+          <AvatarStack members={workstream.participants} />
+          <UserPlus aria-hidden="true" size={13} />
+          <span className="sr-only">Add participant</span>
+        </button>
+        {/* The two controls that own the right sidebar sit side by side, in the
+            order the panels themselves are named. */}
         <IconButton
           className={clsx('panel-toggle', 'hypersight-toggle', hypersightOpen && 'is-active')}
           aria-pressed={hypersightOpen}
@@ -461,20 +462,6 @@ export function WorkstreamHeader({
           onClick={onToggleHyperSight}
         >
           <IconAugmentedReality size={16} stroke={1.7} />
-        </IconButton>
-        <button className="participant-header-button" onClick={onAddParticipant} type="button">
-          <AvatarStack members={workstream.participants} />
-          <UserPlus aria-hidden="true" size={13} />
-          <span className="sr-only">Add participant</span>
-        </button>
-        <IconButton
-          aria-pressed={showing('background')}
-          className={clsx('panel-toggle', 'header-background-tasks', showing('background') && 'is-active')}
-          label={showing('background') ? 'Hide background tasks' : 'Background tasks'}
-          onClick={() => toggleRail('background')}
-        >
-          <Activity size={15} />
-          {runningTasks > 0 && <span className="icon-count">{runningTasks}</span>}
         </IconButton>
         <IconButton
           aria-pressed={showing('context')}
@@ -741,6 +728,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   });
   const hypersightPreferred = hypersightPreference.data?.visible ?? false;
   const hypersightOpen = hypersightHoldsSidebar(hypersightPreferred, railOpen);
+  // Handing the sidebar from one panel to the other keeps the panel that lost
+  // it on screen a moment longer, fading out over the one that took it while
+  // the slot animates between their two widths.
+  const railLeaving = useRailCrossFade(hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : null);
   const hypersight = useQuery({
     queryKey: ['hypersight', id],
     queryFn: ({ signal }) => api!.getHyperSight(id, signal),
@@ -1255,15 +1246,9 @@ export function WorkstreamScreen(): React.JSX.Element {
     ? -1
     : visibleTranscript.findIndex((message) =>
       message.realtimeOrder === undefined && message.sequenceNumber >= firstUnreadSequenceNumber);
-  const liveBackgroundTasks = backgroundTasksFromMessages(transcript);
-  const backgroundTasks = mergeBackgroundTasks(
-    deferredContext.data?.backgroundTasks ?? detail.backgroundTasks,
-    liveBackgroundTasks,
-  );
   const displayedDetail: WorkstreamDetail = {
     ...detail,
     artifacts: deferredContext.data?.artifacts ?? detail.artifacts,
-    backgroundTasks,
     automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
     ...(deferredContext.data?.automationSubscription
       ? { automationSubscription: deferredContext.data.automationSubscription }
@@ -1272,23 +1257,6 @@ export function WorkstreamScreen(): React.JSX.Element {
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
-
-  const downloadArtifact = async (artifactId: string): Promise<void> => {
-    try {
-      const { blob, fileName } = await api!.downloadArtifact(id, artifactId);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = fileName;
-      anchor.style.display = 'none';
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    } catch (error) {
-      setSendError(error instanceof Error ? error.message : 'The output could not be downloaded.');
-    }
-  };
 
   return (
     <div className="workstream-screen">
@@ -1308,9 +1276,10 @@ export function WorkstreamScreen(): React.JSX.Element {
         socketState={socketState}
         workstream={displayedDetail}
       />
-      {hypersightOpen ? (
+      {hypersightOpen || railLeaving === 'hypersight' ? (
         <HyperSightRail
           blockCount={hypersight.data?.blocks.length ?? 0}
+          leaving={railLeaving === 'hypersight'}
           onClose={() => setHyperSightVisible(false)}
         >
           {hypersight.data ? (
@@ -1446,18 +1415,12 @@ export function WorkstreamScreen(): React.JSX.Element {
       <InspectorRail
         dropTarget={railDrop}
         error={deferredContext.error?.message ?? watchResource.error?.message ?? detachResource.error?.message ?? attachResource.error?.message}
-        messages={transcript}
+        leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutate(resource)}
-        onDownloadArtifact={(artifact) => void downloadArtifact(artifact.id)}
-        onJumpToMessage={(messageId) => {
-          const index = transcript.findIndex((message) => message.id === messageId);
-          if (index >= 0) transcriptVirtualizer.scrollToIndex(index, { align: 'center', behavior: 'smooth' });
-        }}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
-        tasks={displayedDetail.backgroundTasks}
         workstream={displayedDetail}
       />
 

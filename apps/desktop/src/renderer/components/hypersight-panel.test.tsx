@@ -63,7 +63,7 @@ describe('HyperSightRail', () => {
     window.innerWidth = 1_400;
   });
 
-  it('resizes from the sidebar edge, clamps to 320–560, and stops after release', () => {
+  it('tracks the pointer from wherever it was grabbed, clamps to 320–560, and stops after release', () => {
     render(
       <Tooltip.Provider>
         <HyperSightRail blockCount={2} onClose={vi.fn()}>content</HyperSightRail>
@@ -71,9 +71,12 @@ describe('HyperSightRail', () => {
     );
     const handle = screen.getByRole('separator', { name: 'Resize HyperSight' });
 
+    // The handle stands beside the sidebar rather than on its edge, so a grab
+    // that is 8 pixels short of the edge has to move the sidebar by what the
+    // pointer moves — 40 pixels — and not snap the edge under the pointer.
     fireEvent.pointerDown(handle, { clientX: 1_040, pointerId: 7 });
     fireEvent.pointerMove(handle, { clientX: 1_000, pointerId: 7 });
-    expect(useUiStore.getState().hypersightWidth).toBe(392);
+    expect(useUiStore.getState().hypersightWidth).toBe(400);
     fireEvent.pointerMove(handle, { clientX: 1_400, pointerId: 7 });
     expect(useUiStore.getState().hypersightWidth).toBe(320);
     fireEvent.pointerMove(handle, { clientX: 0, pointerId: 7 });

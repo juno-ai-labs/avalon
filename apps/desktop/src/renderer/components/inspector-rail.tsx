@@ -1,54 +1,39 @@
-import clsx from 'clsx';
 import {
   ArrowLeft,
-  Bot,
   Check,
   ChevronRight,
   CircleAlert,
   Copy,
-  Download,
   ExternalLink,
   Eye,
   File,
   FileText,
   Link2,
-  Maximize2,
-  Minimize2,
   Plus,
   Trash2,
   UserPlus,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { formatCompactNumber, formatDateTime, formatDuration, formatRelative } from '../lib/format';
+import { useEffect, useState } from 'react';
+import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
-import type {
-  ArtifactData,
-  AutomationRunSummary,
-  BackgroundTask,
-  Message,
-  WorkstreamDetail,
-  WorkstreamResource,
-} from '../lib/types';
+import type { AutomationRunSummary, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
-import { RailResizeHandle } from './rail-resize-handle';
-import '../styles/inspector-rail.css';
+import { RailSurface } from './rail-surface';
 
 interface InspectorRailProps {
   error?: string;
   workstream?: WorkstreamDetail;
   runs?: AutomationRunSummary[];
-  tasks?: BackgroundTask[];
-  messages?: Message[];
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
   onOpenRun?: (run: AutomationRunSummary) => void;
-  onJumpToMessage?: (messageId: string) => void;
-  onDownloadArtifact?: (artifact: ArtifactData) => void;
+  /** True while the inspector is fading out under HyperSight taking the slot. */
+  leaving?: boolean;
   dropTarget?: {
     dragging: boolean;
     onDragEnter: React.DragEventHandler<HTMLElement>;
@@ -275,177 +260,6 @@ function ContextContent({
   );
 }
 
-function CollectionCount({ count }: { count: number }): React.JSX.Element {
-  return <span aria-label={`${count} ${count === 1 ? 'item' : 'items'}`} className="rail-collection-count">{count}</span>;
-}
-
-function taskStatusLabel(status: BackgroundTask['status']): string {
-  if (status === 'running') return 'Running';
-  if (status === 'needs_input') return 'Needs input';
-  if (status === 'failed') return 'Failed';
-  return 'Completed';
-}
-
-function BackgroundContent({
-  tasks = [],
-  messages = [],
-  workstream,
-  onJumpToMessage,
-  onDownloadArtifact,
-}: Pick<InspectorRailProps, 'tasks' | 'messages' | 'workstream' | 'onJumpToMessage' | 'onDownloadArtifact'>): React.JSX.Element {
-  const [filter, setFilter] = useState<'all' | 'running' | 'finished'>('all');
-  const inspect = useUiStore((state) => state.inspect);
-  const filtered = tasks.filter((task) => filter === 'all' || (filter === 'running' ? task.status === 'running' : task.status !== 'running'));
-  const finished = tasks.filter((task) => task.status !== 'running').length;
-  const agentTasks = tasks.filter((task) => task.type === 'agent');
-  const outputsById = new Map<string, { artifact: ArtifactData; messageId?: string; sortAt: string }>();
-  for (const artifact of workstream?.artifacts ?? []) {
-    outputsById.set(artifact.id, { artifact, sortAt: artifact.createdAt ?? '' });
-  }
-  for (const message of messages) {
-    if (!message.artifact || outputsById.has(message.artifact.id)) continue;
-    outputsById.set(message.artifact.id, { artifact: message.artifact, messageId: message.id, sortAt: message.createdAt });
-  }
-  const outputs = [...outputsById.values()].sort((left, right) => right.sortAt.localeCompare(left.sortAt));
-  const sources = workstream?.resources ?? [];
-
-  return (
-    <div className="rail-variant-body background-rail-body">
-      <section aria-label="Background task activity" className="background-task-primary">
-        <div className="rail-toolbar" role="group" aria-label="Background task filter">
-          <button aria-pressed={filter === 'all'} className={filter === 'all' ? 'is-selected' : ''} onClick={() => setFilter('all')} type="button">All {tasks.length}</button>
-          <button aria-pressed={filter === 'running'} className={filter === 'running' ? 'is-selected' : ''} onClick={() => setFilter('running')} type="button">Running</button>
-          <button aria-pressed={filter === 'finished'} className={filter === 'finished' ? 'is-selected' : ''} onClick={() => setFilter('finished')} type="button">Finished {finished}</button>
-        </div>
-        {filtered.length === 0 ? (
-          <EmptyState title="No background tasks" description={filter === 'all' ? 'Tools and delegated work will appear here as Avalon works.' : `No ${filter} tasks.`} />
-        ) : (
-          <ul className="task-list">
-            {filtered.map((task) => (
-              <li className="task-card" key={task.id}>
-                <div className="task-title-row">
-                  <span className={clsx('task-status', task.status === 'needs_input' ? 'failed' : task.status)} aria-hidden="true" />
-                  <strong>{task.title}</strong>
-                </div>
-                <div className="task-meta">
-                  <span>{task.type === 'agent' ? 'Agent' : task.type === 'connector' ? 'Connector' : 'Tool'}</span>
-                  <span>{taskStatusLabel(task.status)}</span>
-                  {formatDuration(task.durationMs) && <span>{formatDuration(task.durationMs)}</span>}
-                </div>
-                {(task.tokenCount !== undefined || task.toolUses !== undefined || task.transcriptMessageId) && (
-                  <div className="task-details">
-                    {task.tokenCount !== undefined && <span>{formatCompactNumber(task.tokenCount)} tokens</span>}
-                    {task.toolUses !== undefined && <span>{task.toolUses} tool uses</span>}
-                    {task.transcriptMessageId && onJumpToMessage && <button onClick={() => onJumpToMessage(task.transcriptMessageId!)} type="button">View transcript</button>}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <div className="rail-durable-sections">
-        <section className="rail-durable-section">
-          <header className="rail-collection-header">
-            <h3>Outputs</h3>
-            <CollectionCount count={outputs.length} />
-          </header>
-          {outputs.length === 0 ? (
-            <p className="rail-collection-empty">Files and other deliverables created here will appear in this section.</p>
-          ) : (
-            <ul className="rail-compact-list" aria-label="Outputs">
-              {outputs.map((output) => {
-                const handleOutput = (): void => {
-                  if (onDownloadArtifact) {
-                    onDownloadArtifact(output.artifact);
-                  } else if (output.messageId && onJumpToMessage) {
-                    onJumpToMessage(output.messageId);
-                  } else {
-                    void desktopBridge().copyText(output.artifact.previewText ?? output.artifact.title);
-                  }
-                };
-                const row = (
-                  <>
-                    <span className="rail-compact-icon"><FileText aria-hidden="true" size={15} /></span>
-                    <span className="rail-compact-copy">
-                      <strong>{output.artifact.title}</strong>
-                      <small>{output.artifact.artifactType}{output.artifact.status ? ` · ${output.artifact.status}` : ''}</small>
-                    </span>
-                    {onDownloadArtifact ? <Download aria-hidden="true" size={14} /> : output.messageId && onJumpToMessage ? <ChevronRight aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-                  </>
-                );
-                return (
-                  <li key={output.artifact.id}>
-                    <button
-                      aria-label={`${onDownloadArtifact ? 'Download' : output.messageId && onJumpToMessage ? 'Show' : 'Copy'} ${output.artifact.title}`}
-                      className="rail-compact-row"
-                      onClick={handleOutput}
-                      type="button"
-                    >{row}</button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        <section className="rail-durable-section">
-          <header className="rail-collection-header">
-            <h3>Agent work</h3>
-            <CollectionCount count={agentTasks.length} />
-          </header>
-          {agentTasks.length === 0 ? (
-            <p className="rail-collection-empty">Delegated agent work will appear here when this work stream needs it.</p>
-          ) : (
-            <ul className="rail-compact-list" aria-label="Agent work">
-              {agentTasks.map((task) => (
-                <li key={task.id}>
-                  {task.transcriptMessageId && onJumpToMessage ? (
-                    <button className="rail-compact-row" onClick={() => onJumpToMessage(task.transcriptMessageId!)} type="button">
-                      <span className="rail-compact-icon"><Bot aria-hidden="true" size={15} /></span>
-                      <span className="rail-compact-copy"><strong>{task.title}</strong><small>{taskStatusLabel(task.status)}{formatDuration(task.durationMs) ? ` · ${formatDuration(task.durationMs)}` : ''}</small></span>
-                      <ChevronRight aria-hidden="true" size={14} />
-                    </button>
-                  ) : (
-                    <button aria-label={`Copy run ID for ${task.title}`} className="rail-compact-row" onClick={() => void desktopBridge().copyText(task.harnessRunId ?? task.id)} type="button">
-                      <span className="rail-compact-icon"><Bot aria-hidden="true" size={15} /></span>
-                      <span className="rail-compact-copy"><strong>{task.title}</strong><small>{taskStatusLabel(task.status)}{formatDuration(task.durationMs) ? ` · ${formatDuration(task.durationMs)}` : ''}</small></span>
-                      <Copy aria-hidden="true" size={14} />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="rail-durable-section">
-          <header className="rail-collection-header">
-            <h3>Sources</h3>
-            <CollectionCount count={sources.length} />
-          </header>
-          {sources.length === 0 ? (
-            <p className="rail-collection-empty">Files and links used by this work stream will appear here.</p>
-          ) : (
-            <ul className="rail-compact-list" aria-label="Sources">
-              {sources.map((resource) => (
-                <li key={resource.id}>
-                  <button className="rail-compact-row" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
-                    <span className="rail-compact-icon"><ResourceIcon type={resource.resourceType} /></span>
-                    <span className="rail-compact-copy"><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
-                    <ChevronRight aria-hidden="true" size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
-    </div>
-  );
-}
-
 function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' | 'onOpenRun'>): React.JSX.Element {
   const [filter, setFilter] = useState<'all' | 'scheduled' | 'manual'>('all');
   const filtered = runs.filter((run) => filter === 'all' || (filter === 'scheduled' ? run.triggerType === 'scheduled' : run.triggerType === 'manual'));
@@ -509,7 +323,6 @@ function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailPro
 
 const railTitle: Record<RailVariant, string> = {
   context: 'Work stream',
-  background: 'Background tasks',
   runs: 'Runs',
 };
 
@@ -517,78 +330,47 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
   const railWidth = useUiStore((state) => state.railWidth);
-  const railExpanded = useUiStore((state) => state.railExpanded);
   const inspector = useUiStore((state) => state.inspector);
   const closeRail = useUiStore((state) => state.closeRail);
   const setRailWidth = useUiStore((state) => state.setRailWidth);
-  const toggleRailExpanded = useUiStore((state) => state.toggleRailExpanded);
   const inspect = useUiStore((state) => state.inspect);
-  const railRef = useRef<HTMLElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  const tasks = props.tasks ?? props.workstream?.backgroundTasks ?? [];
   const runs = props.runs ?? props.workstream?.automationRuns ?? [];
 
-  useEffect(() => {
-    if (!railOpen) return;
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    requestAnimationFrame(() => railRef.current?.focus());
-    return () => previousFocus.current?.focus();
-  }, [railOpen]);
-
-  if (!railOpen) return null;
-  const displayedWidth = railExpanded ? Math.max(520, railWidth) : railWidth;
+  // The rail is already closed while it fades out under HyperSight, so the
+  // hand-off keeps it on screen for exactly as long as that fade lasts.
+  if (!railOpen && !props.leaving) return null;
 
   return (
-    <>
-      <button aria-label="Close inspector" className="rail-scrim" onClick={closeRail} type="button" />
-      <aside
-        aria-label={inspector ? 'Inspector detail' : railTitle[railVariant]}
-        className={clsx('inspector-rail', props.dropTarget?.dragging && 'is-file-dragging')}
-        onDragEnter={props.dropTarget?.onDragEnter}
-        onDragLeave={props.dropTarget?.onDragLeave}
-        onDragOver={props.dropTarget?.onDragOver}
-        onDrop={props.dropTarget?.onDrop}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape') closeRail();
-        }}
-        ref={railRef}
-        style={{ width: displayedWidth }}
-        tabIndex={-1}
-      >
-        {/* The keys step the stored width, never the expanded floor: stepping
-            from what is on screen would write the expanded 520 back over the
-            width this person chose the moment they pressed a key. */}
-        <RailResizeHandle
-          displayedWidth={displayedWidth}
-          label="Resize inspector"
-          onResize={setRailWidth}
-          width={railWidth}
-        />
-        <header className="rail-header window-drag">
-          <div className="rail-title window-no-drag">
-            {inspector && <IconButton label="Back to context" onClick={() => inspect(null)}><ArrowLeft size={15} /></IconButton>}
-            <h2>{inspector ? 'Details' : railTitle[railVariant]}</h2>
-          </div>
-          <div className="rail-header-actions window-no-drag">
-            <IconButton label={railExpanded ? 'Restore inspector width' : 'Expand inspector'} onClick={toggleRailExpanded}>
-              {railExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </IconButton>
-            <IconButton label="Close inspector" onClick={closeRail}><X size={15} /></IconButton>
-          </div>
-        </header>
-        <div className="rail-scroll">
-          {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
-          {inspector ? (
-            <InspectorDetail onDetachResource={props.onDetachResource} workstream={props.workstream} />
-          ) : railVariant === 'context' ? (
-            <ContextContent {...props} />
-          ) : railVariant === 'background' ? (
-            <BackgroundContent messages={props.messages} onDownloadArtifact={props.onDownloadArtifact} onJumpToMessage={props.onJumpToMessage} tasks={tasks} workstream={props.workstream} />
-          ) : (
-            <RunsContent onOpenRun={props.onOpenRun} runs={runs} />
-          )}
+    <RailSurface
+      className="inspector-rail"
+      dropTarget={props.dropTarget}
+      label={inspector ? 'Inspector detail' : railTitle[railVariant]}
+      leaving={props.leaving}
+      onClose={closeRail}
+      onResize={setRailWidth}
+      resizeLabel="Resize inspector"
+      scrimLabel="Close inspector"
+      width={railWidth}
+    >
+      <header className="rail-header window-drag">
+        <div className="rail-title window-no-drag">
+          {inspector && <IconButton label="Back to context" onClick={() => inspect(null)}><ArrowLeft size={15} /></IconButton>}
+          <h2>{inspector ? 'Details' : railTitle[railVariant]}</h2>
         </div>
-      </aside>
-    </>
+        <div className="rail-header-actions window-no-drag">
+          <IconButton label="Close inspector" onClick={closeRail}><X size={15} /></IconButton>
+        </div>
+      </header>
+      <div className="rail-scroll">
+        {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
+        {inspector ? (
+          <InspectorDetail onDetachResource={props.onDetachResource} workstream={props.workstream} />
+        ) : railVariant === 'context' ? (
+          <ContextContent {...props} />
+        ) : (
+          <RunsContent onOpenRun={props.onOpenRun} runs={runs} />
+        )}
+      </div>
+    </RailSurface>
   );
 }

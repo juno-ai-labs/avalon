@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { HyperSight, HyperSightBlock } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { Button, IconButton, Modal } from './primitives';
-import { RailResizeHandle } from './rail-resize-handle';
+import { RailSurface } from './rail-surface';
 import { MarkdownBody } from './workstream-blocks';
 
 interface HyperSightPanelProps {
@@ -257,57 +257,42 @@ export function HyperSightPanel({
 export function HyperSightRail({
   blockCount,
   children,
+  leaving,
   onClose,
 }: {
   blockCount: number;
   children: React.ReactNode;
+  /** True while HyperSight is fading out under the inspector taking the slot. */
+  leaving?: boolean;
   onClose: () => void;
 }): React.JSX.Element {
   const width = useUiStore((state) => state.hypersightWidth);
   const setWidth = useUiStore((state) => state.setHyperSightWidth);
-  const railRef = useRef<HTMLElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    requestAnimationFrame(() => railRef.current?.focus());
-    return () => previousFocus.current?.focus();
-  }, []);
 
   return (
-    <>
-      {/* Distinct from the header's control so the two do not read as one
-          repeated button when a screen reader lists them. */}
-      <button aria-label="Dismiss HyperSight" className="rail-scrim" onClick={onClose} type="button" />
-      <aside
-        aria-label="HyperSight"
-        className="hypersight-rail"
-        onKeyDown={(event) => {
-          // The block prompt's dialog is portalled to the document body, but a
-          // React synthetic event still bubbles up the React tree to here — so
-          // without this, dismissing that dialog would also close the sidebar
-          // and persist HyperSight off. Only Escapes raised inside the sidebar
-          // itself close it.
-          if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node)) return;
-          onClose();
-        }}
-        ref={railRef}
-        style={{ width }}
-        tabIndex={-1}
-      >
-        <RailResizeHandle label="Resize HyperSight" onResize={setWidth} width={width} />
-        <header className="rail-header window-drag">
-          <div className="rail-title window-no-drag">
-            <span aria-hidden="true" className="hypersight-rail-icon"><IconAugmentedReality size={15} stroke={1.7} /></span>
-            <h2>HyperSight</h2>
-            <span className="hypersight-block-count">{blockCount === 1 ? '1 block' : `${blockCount} blocks`}</span>
-          </div>
-          <div className="rail-header-actions window-no-drag">
-            <IconButton label="Close HyperSight" onClick={onClose}><X size={15} /></IconButton>
-          </div>
-        </header>
-        <div className="rail-scroll">{children}</div>
-      </aside>
-    </>
+    <RailSurface
+      className="hypersight-rail"
+      label="HyperSight"
+      leaving={leaving}
+      onClose={onClose}
+      onResize={setWidth}
+      resizeLabel="Resize HyperSight"
+      // Distinct from the header's control so the two do not read as one
+      // repeated button when a screen reader lists them.
+      scrimLabel="Dismiss HyperSight"
+      width={width}
+    >
+      <header className="rail-header window-drag">
+        <div className="rail-title window-no-drag">
+          <span aria-hidden="true" className="hypersight-rail-icon"><IconAugmentedReality size={15} stroke={1.7} /></span>
+          <h2>HyperSight</h2>
+          <span className="hypersight-block-count">{blockCount === 1 ? '1 block' : `${blockCount} blocks`}</span>
+        </div>
+        <div className="rail-header-actions window-no-drag">
+          <IconButton label="Close HyperSight" onClick={onClose}><X size={15} /></IconButton>
+        </div>
+      </header>
+      <div className="rail-scroll">{children}</div>
+    </RailSurface>
   );
 }
