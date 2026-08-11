@@ -37,10 +37,20 @@ Rerunning until green, skipping it, or setting `retry` in a Vitest config hides
 a real race that will fail for someone else; none of those are an accepted
 resolution here.
 
-- Reproduce it first, in isolation and in bulk:
-  `for i in $(seq 20); do pnpm --filter @avalon/<pkg> exec vitest run <file> || break; done`,
-  and add `--sequence.shuffle` or `--no-file-parallelism` to separate an
-  order-dependent test from a genuinely racy one.
+- Reproduce it first, in isolation and in bulk, capturing the output to a file
+  as the section below requires — the failing iteration is the evidence, and it
+  is the one that gets truncated away:
+
+  ```bash
+  (for i in $(seq 20); do
+     pnpm --filter @avalon/<pkg> exec vitest run <file> || exit 1
+   done) &> /tmp/flake.log
+  ```
+
+  The subshell makes the loop exit nonzero on the first failing run instead of
+  reporting the success of `break`. Add `--sequence.shuffle` or
+  `--no-file-parallelism` to separate an order-dependent test from a genuinely
+  racy one.
 - Confirm the fix by looping the test again, then run the full `pnpm test` once
   more before calling the change done.
 - If the cause is genuinely outside the change, still fix it or say plainly in
