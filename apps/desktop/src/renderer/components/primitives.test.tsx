@@ -39,6 +39,37 @@ describe('StatusDot', () => {
     expect(screen.getByText('Running')).toBeVisible();
     expect(screen.getByText('Running').parentElement).toHaveClass('status-running');
   });
+
+  it('explains what the color means on hover when asked for a tooltip', async () => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    render(
+      <Tooltip.Provider>
+        <StatusDot compact status="failed" tooltip />
+      </Tooltip.Provider>,
+    );
+
+    const indicator = screen.getByText('Needs intervention').parentElement as HTMLElement;
+    fireEvent.pointerMove(indicator, { pointerType: 'mouse' });
+
+    expect(await screen.findByText('Needs intervention — the last run failed and stopped.')).toBeVisible();
+  });
+
+  it('leaves the dot untouched when no tooltip is asked for', () => {
+    render(
+      <Tooltip.Provider>
+        <StatusDot compact status="failed" />
+      </Tooltip.Provider>,
+    );
+
+    const indicator = screen.getByText('Needs intervention').parentElement as HTMLElement;
+    fireEvent.pointerMove(indicator, { pointerType: 'mouse' });
+
+    expect(screen.queryByText(/the last run failed and stopped/u)).not.toBeInTheDocument();
+  });
 });
 
 describe('SocketStatusIndicator', () => {
