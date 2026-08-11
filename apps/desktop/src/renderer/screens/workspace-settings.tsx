@@ -1094,7 +1094,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                         <span className="settings-row-icon"><Power aria-hidden="true" size={18} /></span>
                         <span className="settings-row-copy">
                           <strong>Open Avalon at login</strong>
-                          <small>Start Avalon when you log in. It opens quietly in the menu bar with no window, so it is ready before you ask for it.</small>
+                          <small>Start Avalon when you log in. With Avalon in the menu bar it starts there quietly, with no window; without it, a window opens as usual.</small>
                         </span>
                         <span className="settings-toggle">
                           <input

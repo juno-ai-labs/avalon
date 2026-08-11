@@ -114,6 +114,16 @@ behind them — [`workstream-pinning.md`](workstream-pinning.md) owns that
 behaviour. The store partitions on `pinPosition`, sorts the pinned half by it,
 and takes five from each.
 
+Opening the drop-down reports its suggestions through
+`POST /work-opportunities/impressions`. That is what keeps them moving: the
+ranking treats an impression as evidence a suggestion was put in front of
+someone and passed over, and asks for a re-rank on it — see
+[`SUGGESTED_WORK.md`](SUGGESTED_WORK.md). Reporting happens on the **open**, not
+on the fetch, because the fetch is triggered by the pointer reaching the status
+item and would otherwise count suggestions that were never on screen. A set is
+reported once, matching the home screen, whose effect is keyed on the ids and
+versions rather than on each render.
+
 `MenuBarContentStore` fetches both halves through `avalonApiRequest`, the main
 process's authorized request helper, which renews once through the shared
 coalescing refresh on a 401 and always settles. Refreshes happen when the pointer
@@ -176,7 +186,14 @@ destination, so the hidden state is not sticky.
   has to carry the same check.
 - **A launch opens no window only when there is a status item to hide into.**
   Otherwise Avalon starts invisible with no menu bar presence, reachable only by
-  hunting for it in the Dock.
+  hunting for it in the Dock. The Startup toggle's own copy says so, because the
+  quiet start is what it promises.
+- **A surface that shows suggestions reports them.** The ranking cannot tell a
+  suggestion nobody wanted from one nobody was shown, so a surface that displays
+  without reporting freezes its own list.
+- **The login item is read from macOS, never from a field.** It can be removed,
+  added, or approved in System Settings while Avalon runs, and nothing announces
+  it; `enabled()` therefore re-reads on every call.
 - **The `Template` filename suffix and `@2x` sibling are load-bearing.** Losing
   the suffix gives a black square on a dark menu bar; losing the `@2x` file gives
   a blurred mark on every Retina Mac. Neither fails a build, so
@@ -235,6 +252,8 @@ the link there first, not a second navigation channel here.
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
 | Sign-out, or a suggestion started, while a refresh is in flight | The generation moves, so that answer is discarded on arrival and a caller asking again gets a new request rather than the superseded one. |
 | The login item registers but the marker fails to write | The registration is reported as it stands, not as off. The marker is retried on the next launch. |
+| The login item cannot be read | The last answer is kept rather than reported as off, which would be a claim about a system this cannot see. |
+| An impression report fails | Logged, and the set is forgotten so the next open reports it again. Nothing on screen waits on it. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
 | The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
 | Not macOS | No status item; `menuBarAvailable` is false and Settings omits the toggle. The preference is still stored, so the same profile on a Mac gets the choice rather than the default. |
@@ -350,6 +369,37 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 `sendDeepLink` and `activate` already do.
 
 **Not done:** a submenu for older work streams.
+
+### 2026-08-11 — Review round two: impressions, a stale login item, and a promise the copy could not keep
+
+**What changed:** Opening the drop-down now reports its suggestions through
+`POST /work-opportunities/impressions`. `LaunchAtLoginController.enabled()` reads
+the login item from macOS on every call instead of returning the value this
+process last wrote. The Startup toggle's copy no longer promises a windowless
+login unconditionally.
+
+**Why:** the menu was a free rider on the suggestion ranking. Impressions are
+what tell it a suggestion was shown and passed over, and the ranking re-ranks on
+them, so somebody who used only the menu bar would have seen the same four
+suggestions indefinitely. The login item is owned by macOS and changeable from
+System Settings at any moment with nothing announcing it, so a cached answer had
+Settings offering to turn on something already on — and this document's own
+acceptance step already told a tester to expect otherwise. The copy became untrue
+the moment the launch started opening a window when no status item exists.
+
+**Considered and rejected:** reporting impressions when the content is fetched.
+It is one line and needs no menu event, and it is wrong in the direction that
+matters — the fetch is triggered by the pointer reaching the status item, so it
+would report suggestions nobody ever saw and push the ranking away from work
+nobody has declined.
+
+**Consequences:** the report is raised from both `menu-will-show` and the tray's
+`click`, because which of the two macOS raises for a status item's own menu
+cannot be checked here and reporting nothing is the failure being avoided; the
+per-set key makes the pair idempotent, and anything that adds a third trigger
+inherits that. `enabled()` now performs a synchronous `SMAppService` query on
+every settings read — cheap, but it is no longer a field read, so a caller in a
+hot path should hold the value rather than call it repeatedly.
 
 ### 2026-08-11 — Five defects found in review of the original build
 

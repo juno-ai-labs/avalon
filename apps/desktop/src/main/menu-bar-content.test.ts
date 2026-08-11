@@ -293,6 +293,48 @@ describe('menu bar content', () => {
     expect(subject.store.content().suggestions).toEqual([]);
   });
 
+  it('reports the suggestions the menu shows, once per set', async () => {
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([]),
+      '/work-opportunities/impressions': {},
+      '/work-opportunities': { items: [{ id: 'o1', version: 2, displayPrompt: 'Reply to Dana' }] },
+    });
+    await subject.store.refresh();
+    subject.requestJson.mockClear();
+
+    await subject.store.recordImpressions();
+    await subject.store.recordImpressions();
+
+    // Seeing the same four twice is one impression, which is what the home
+    // screen records: its effect is keyed on the ids and versions.
+    expect(subject.requestJson).toHaveBeenCalledTimes(1);
+    expect(subject.requestJson).toHaveBeenCalledWith('/work-opportunities/impressions', {
+      method: 'POST',
+      body: { opportunityIds: ['o1'] },
+    });
+  });
+
+  it('reports nothing when the menu is showing no suggestions', async () => {
+    await subject.store.recordImpressions();
+    expect(subject.requestJson).not.toHaveBeenCalled();
+  });
+
+  it('tries again after a failed report rather than treating it as delivered', async () => {
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([]),
+      '/work-opportunities/impressions': new Error('offline'),
+      '/work-opportunities': { items: [{ id: 'o1', version: 2, displayPrompt: 'Reply to Dana' }] },
+    });
+    await subject.store.refresh();
+    subject.requestJson.mockClear();
+
+    await subject.store.recordImpressions();
+    await subject.store.recordImpressions();
+
+    expect(subject.requestJson).toHaveBeenCalledTimes(2);
+    expect(subject.logWarning).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects an unreadable response rather than emptying the menu', async () => {
     respond(subject.requestJson, {
       '/workstreams': { items: [{ id: 'a' }] },
