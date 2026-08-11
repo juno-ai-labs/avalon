@@ -242,22 +242,28 @@ export async function fireWorkstreamWakeup(
 ): Promise<{ fired: boolean; harnessRunId?: string }> {
   if (!await claimDueWorkstreamWakeup(env, row)) return { fired: false };
 
-  const principal = wakeupExecutionPrincipal(row);
-  const workstream = await env.DB.prepare(
-    `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
-  ).bind(row.workstream_id, row.workspace_id).first<{ archived_at: string | null }>();
-  if (!workstream || workstream.archived_at !== null) {
-    // The work stream this wake-up belongs to is gone. Leave the row claimed:
-    // there is nothing left to wake, and a retry cannot change that.
-    return { fired: false };
-  }
-  if (!await wakeupPrincipalStillAuthorized(env, row.workspace_id, principal)) {
-    return { fired: false };
-  }
-
-  await appendWakeupSystemMessage(env, row);
-
+  // Everything after the claim runs under one release-on-throw path. A claim is
+  // only safe to hold if every way out of this function either starts a run or
+  // hands the row back: once the row leaves `pending` the scheduler's own retry
+  // gate is useless, because `refresh()` no longer sees it as a due target.
+  // Returning `fired: false` below is the deliberate exception — those are
+  // decisions, not failures, and retrying them would only reach the same answer.
   try {
+    const principal = wakeupExecutionPrincipal(row);
+    const workstream = await env.DB.prepare(
+      `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
+    ).bind(row.workstream_id, row.workspace_id).first<{ archived_at: string | null }>();
+    if (!workstream || workstream.archived_at !== null) {
+      // The work stream this wake-up belongs to is gone. Leave the row claimed:
+      // there is nothing left to wake, and a retry cannot change that.
+      return { fired: false };
+    }
+    if (!await wakeupPrincipalStillAuthorized(env, row.workspace_id, principal)) {
+      return { fired: false };
+    }
+
+    await appendWakeupSystemMessage(env, row);
+
     const harnessRunId = await launchWorkstreamHarness(env, {
       workspaceId: row.workspace_id,
       workstreamId: row.workstream_id,
@@ -268,9 +274,10 @@ export async function fireWorkstreamWakeup(
     });
     return { fired: true, harnessRunId };
   } catch (error) {
-    // The harness never started, so the wake-up has not happened. Hand it back
-    // to the scheduler's retry backoff rather than consuming it.
-    await releaseClaimedWorkstreamWakeup(env, row);
+    // Nothing durable ran, so the wake-up has not happened. Hand it back to the
+    // scheduler's retry backoff rather than consuming it. A failure to release
+    // must not replace the diagnosis of what actually went wrong.
+    await releaseClaimedWorkstreamWakeup(env, row).catch(() => undefined);
     throw error;
   }
 }
