@@ -826,11 +826,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           return;
         }
         setStreamingAssistant((current) => {
-          // A reset that restores nothing has to leave no bubble behind: an
-          // abandoned first turn resets to empty text, and an empty agent
-          // block would read as Avalon having said something blank.
+          // Text with nothing in it has to leave no bubble behind: an
+          // abandoned first turn resets to empty, and a model that opens a
+          // narration turn with a bare newline sends whitespace before it
+          // sends a word. Either would render as Avalon having said something
+          // blank, so the bubble waits for a visible character.
           const text = event.reset ? event.delta : current.text + event.delta;
-          return { hasText: text.length > 0, text };
+          return { hasText: text.trim().length > 0, text };
         });
       }),
     onMutate: (payload) => {
