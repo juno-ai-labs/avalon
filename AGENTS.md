@@ -39,23 +39,28 @@ resolution here.
 
 - Reproduce it first, in isolation and in bulk, capturing the output to a file
   as the section below requires — the failing iteration is the evidence, and it
-  is the one that gets truncated away:
+  is the one that gets truncated away. `--filter … exec` runs in the package
+  directory, so the path is package-relative; pasting the repo-relative path a
+  failure reports fails as `No test files found`, naming the file rather than
+  the working directory:
 
   ```bash
   (for i in $(seq 20); do
-     pnpm --filter @avalon/<pkg> exec vitest run <file> || exit 1
+     pnpm --filter @avalon/<pkg> exec vitest run <path-within-the-package> \
+       || { echo "failed on run $i"; exit 1; }
    done) &> /tmp/flake.log
   ```
 
-  The subshell makes the loop exit nonzero on the first failing run instead of
-  reporting the success of `break`. Add `--sequence.shuffle` or
-  `--no-file-parallelism` to separate an order-dependent test from a genuinely
-  racy one.
+  The subshell makes the loop exit nonzero on the first failing run rather than
+  reporting the success of `break`, and the iteration number characterizes how
+  often the flake fires. Add `--sequence.shuffle` to catch a test that depends
+  on another in the same file having run first; cross-file interference only
+  appears in a suite-wide rerun, where `--no-file-parallelism` isolates it.
 - Confirm the fix by looping the test again, then run the full `pnpm test` once
   more before calling the change done.
-- If the cause is genuinely outside the change, still fix it or say plainly in
-  the report and the pull request description that it is unfixed and why. Never
-  leave an intermittent failure unmentioned.
+- Fix the cause. A flake rooted in code the change does not touch may be left
+  unfixed — only then, and only if it is named in the report and the pull
+  request description. Never leave an intermittent failure unmentioned.
 
 ## Capturing command output
 
