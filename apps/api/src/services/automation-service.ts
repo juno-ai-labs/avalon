@@ -624,7 +624,10 @@ export class AutomationService {
       `SELECT * FROM schedules WHERE workspace_id = ? AND automation_subscription_id = ? AND enabled = 1
        ORDER BY next_run_at LIMIT 1`,
     ).bind(this.auth.workspaceId, id).first<Record<string, unknown>>();
-    if (!schedule) return { scheduledFor: null, workstream: null };
+    // Both branches return the same keys. They did not: the unscheduled one
+    // omitted `automation` entirely, which nothing caught because the response
+    // met no contract and the desktop client does not call this route.
+    if (!schedule) return { scheduledFor: null, workstream: null, automation: String(subscription.name) };
     const workstream = await this.env.DB.prepare(
       `SELECT * FROM workstreams WHERE workspace_id = ? AND automation_subscription_id = ? AND planned_for = ?`,
     ).bind(this.auth.workspaceId, id, schedule.next_run_at).first<Record<string, unknown>>();

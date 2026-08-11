@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { zValidator } from "../middleware/validation";
-import { DesktopExchangeRequestSchema, RefreshRequestSchema, RefreshTokenSchema } from "@avalon/contracts";
+import {
+  DesktopExchangeRequestSchema,
+  RefreshRequestSchema,
+  RefreshTokenSchema,
+  SessionSchema,
+  WorkspaceInvitationPreviewSchema,
+} from "@avalon/contracts";
 import { HttpOrAvalonUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -30,15 +36,19 @@ const refreshBodyLimit = bodyLimit({
   },
 });
 
+/** The opaque provider URL the desktop opens; the route owns this shape. */
+const IdentityStartResponseSchema = z.object({ url: z.string().min(1) });
+
 export const authRoutes = new Hono<HonoAppEnv>();
 
 authRoutes.post("/dev/session", zValidator("json", developmentSessionBody), async (c) =>
-  c.json(await new AuthService(c.env).createDevelopmentSession(c.req.valid("json").workspaceName), 201),
+  c.json(SessionSchema.parse(
+    await new AuthService(c.env).createDevelopmentSession(c.req.valid("json").workspaceName)), 201),
 );
 
 authRoutes.get("/invitations/preview", zValidator("query", invitationPreviewQuery), async (c) => {
   c.header("Cache-Control", "no-store");
-  return c.json(await previewInvitation(c.env, c.req.valid("query").token));
+  return c.json(WorkspaceInvitationPreviewSchema.parse(await previewInvitation(c.env, c.req.valid("query").token)));
 });
 
 // Desktop uses POST so organization names and invitation tokens never enter
@@ -51,7 +61,7 @@ authRoutes.post("/google/start", zValidator("json", startBody), async (c) => {
     desktopCodeChallenge: body.desktopCodeChallenge,
   });
   c.header("Cache-Control", "no-store");
-  return c.json({ url });
+  return c.json(IdentityStartResponseSchema.parse({ url }));
 });
 
 authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c) => {
@@ -83,11 +93,11 @@ authRoutes.get("/google/callback", zValidator("query", callbackQuery), async (c)
 
 authRoutes.post("/desktop/exchange", zValidator("json", DesktopExchangeRequestSchema), async (c) => {
   const body = c.req.valid("json");
-  return c.json(await new AuthService(c.env).exchangeDesktopTicket(body));
+  return c.json(SessionSchema.parse(await new AuthService(c.env).exchangeDesktopTicket(body)));
 });
 
 authRoutes.post("/refresh", refreshBodyLimit, zValidator("json", RefreshRequestSchema), async (c) => {
-  return c.json(await new AuthService(c.env).refresh(c.req.valid("json").refreshToken));
+  return c.json(SessionSchema.parse(await new AuthService(c.env).refresh(c.req.valid("json").refreshToken)));
 });
 
 authRoutes.post("/logout", refreshBodyLimit, zValidator("json", logoutBody), async (c) => {

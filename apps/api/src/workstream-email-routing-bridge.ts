@@ -3,12 +3,16 @@ import type { Env } from "./env";
 import { ApiError } from "./lib/api-error";
 import {
   WorkstreamEmailRoutingService,
-  type AutomationEmailRouteInput,
-  type AutomationEmailRouteStatusInput,
   type WorkstreamEmailRouterRpcResult,
-  type WorkstreamEmailRouteInput,
-  type WorkstreamEmailRouteStatusInput,
 } from "./services/workstream-email-routing-service";
+import {
+  AutomationEmailRouteInputSchema,
+  AutomationEmailRouteStatusInputSchema,
+  WorkstreamEmailRouteInputSchema,
+  WorkstreamEmailRouteStatusInputSchema,
+  parseRpcInput,
+  rpcBatch,
+} from "./lib/rpc-contracts";
 
 /** Global-only address registry used by both regional data planes. */
 export class WorkstreamEmailRoutingBridge extends WorkerEntrypoint<Env> {
@@ -16,36 +20,52 @@ export class WorkstreamEmailRoutingBridge extends WorkerEntrypoint<Env> {
     return rpcResult(() => new WorkstreamEmailRoutingService(this.env).pingGlobalRegistry());
   }
 
-  reserve(input: WorkstreamEmailRouteInput) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveInGlobalRegistry(input));
+  reserve(input: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveInGlobalRegistry(
+      parseRpcInput(WorkstreamEmailRouteInputSchema, input, "reserve"),
+    ));
   }
 
-  reserveMany(inputs: WorkstreamEmailRouteInput[]) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveManyInGlobalRegistry(inputs));
+  reserveMany(inputs: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveManyInGlobalRegistry(
+      parseRpcInput(rpcBatch(WorkstreamEmailRouteInputSchema), inputs, "reserveMany"),
+    ));
   }
 
-  activateMany(inputs: WorkstreamEmailRouteInput[]) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).activateManyInGlobalRegistry(inputs));
+  activateMany(inputs: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).activateManyInGlobalRegistry(
+      parseRpcInput(rpcBatch(WorkstreamEmailRouteInputSchema), inputs, "activateMany"),
+    ));
   }
 
-  setStatus(input: WorkstreamEmailRouteStatusInput) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).setStatus(input));
+  setStatus(input: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).setStatus(
+      parseRpcInput(WorkstreamEmailRouteStatusInputSchema, input, "setStatus"),
+    ));
   }
 
-  reserveAutomation(input: AutomationEmailRouteInput) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveAutomationInGlobalRegistry(input));
+  reserveAutomation(input: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveAutomationInGlobalRegistry(
+      parseRpcInput(AutomationEmailRouteInputSchema, input, "reserveAutomation"),
+    ));
   }
 
-  reserveAutomations(inputs: AutomationEmailRouteInput[]) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveAutomationsInGlobalRegistry(inputs));
+  reserveAutomations(inputs: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveAutomationsInGlobalRegistry(
+      parseRpcInput(rpcBatch(AutomationEmailRouteInputSchema), inputs, "reserveAutomations"),
+    ));
   }
 
-  activateAutomations(inputs: AutomationEmailRouteInput[]) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).activateAutomationsInGlobalRegistry(inputs));
+  activateAutomations(inputs: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).activateAutomationsInGlobalRegistry(
+      parseRpcInput(rpcBatch(AutomationEmailRouteInputSchema), inputs, "activateAutomations"),
+    ));
   }
 
-  setAutomationStatuses(inputs: AutomationEmailRouteStatusInput[]) {
-    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).setAutomationStatusesInGlobalRegistry(inputs));
+  setAutomationStatuses(inputs: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).setAutomationStatusesInGlobalRegistry(
+      parseRpcInput(rpcBatch(AutomationEmailRouteStatusInputSchema), inputs, "setAutomationStatuses"),
+    ));
   }
 }
 
@@ -59,8 +79,13 @@ async function rpcResult<T>(operation: () => Promise<T>): Promise<WorkstreamEmai
         error: {
           status: error.status,
           code: error.code,
+          // `details` deliberately does not travel. `unwrapRpcResult` rebuilds
+          // an `ApiError` from this envelope and `errorHandler` echoes its
+          // details into the HTTP body, so forwarding them would put internal
+          // RPC method names and schema field paths in front of the client.
+          // The other four bridge serializers already project to these three
+          // fields; this one was the outlier.
           message: error.message,
-          ...(error.details ? { details: error.details } : {}),
         },
       };
     }

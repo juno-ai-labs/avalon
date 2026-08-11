@@ -1,4 +1,4 @@
-import { UpdateDigestScheduleRequestSchema } from "@avalon/contracts";
+import { DigestScheduleSchema, UpdateDigestScheduleRequestSchema } from "@avalon/contracts";
 import { Hono } from "hono";
 
 import type { HonoAppEnv } from "../env";
@@ -13,7 +13,8 @@ import { DigestService } from "../services/digest-service";
  */
 export const digestRoutes = new Hono<HonoAppEnv>();
 
-digestRoutes.get("/", async (c) => c.json(await new DigestService(c.env, getAuth(c)).get()));
+digestRoutes.get("/", async (c) =>
+  c.json(DigestScheduleSchema.parse(await new DigestService(c.env, getAuth(c)).get())));
 digestRoutes.put("/", zValidator("json", UpdateDigestScheduleRequestSchema), async (c) =>
-  c.json(await new DigestService(c.env, getAuth(c)).replace(c.req.valid("json"))),
+  c.json(DigestScheduleSchema.parse(await new DigestService(c.env, getAuth(c)).replace(c.req.valid("json")))),
 );

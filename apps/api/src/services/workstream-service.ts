@@ -15,7 +15,7 @@ import type {
   WorkstreamDetail,
   WorkstreamWorkflowInput,
 } from "@avalon/contracts";
-import type { z } from "zod";
+import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { truncateUtf16Safe } from "../lib/text";
@@ -343,6 +343,140 @@ const ACTIVITY_EVENT_BODY_LIMIT = 2_000;
  * reads as a rendering bug rather than as a summary of something longer, and
  * the full prompt is the run's own trigger anyway.
  */
+/**
+ * Row contracts for the reads behind a work-stream detail.
+ *
+ * The rest of this file used to hand-coerce every column — `String(row.title)`,
+ * `String(row.harness_status) as "running" | …` — which converts anything at all
+ * into something type-shaped. A row that did not match went undetected until the
+ * response schema rejected it on the way out, where a mismatch is a 500 naming
+ * neither the route nor the field. That is not hypothetical: an activity title
+ * longer than `ActivitySuggestionSchema` allows made this work stream
+ * unopenable for a whole workspace for 67 minutes, and identifying the field
+ * afterwards took a deployment timeline and a database replay.
+ *
+ * Each schema below mirrors what the table already guarantees — the enums are
+ * the columns' own CHECK constraints, not new invention — so parsing costs
+ * nothing a correct row would fail. Where a column has *no* constraint and a
+ * contract downstream does, the bound is applied here, at the read, which is the
+ * only place that knows both.
+ */
+const rowText = z.string();
+const rowId = z.string().min(1);
+const rowTimestamp = z.string().min(1);
+const rowCount = z.number().int().nonnegative();
+/** SQLite has no boolean; the queries above project 1/0. */
+const rowFlag = z.union([z.literal(0), z.literal(1)]);
+
+/** Bounded for a contract downstream that the column itself does not enforce. */
+const displayText = (max: number) => z.string().transform((value) => truncateUtf16Safe(value, max));
+
+
+const ParticipantRowSchema = z.object({
+  id: rowId,
+  email: rowText,
+  name: rowText,
+  avatar_url: rowText.nullish(),
+  timezone: rowText,
+  created_at: rowTimestamp,
+  participation_reason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
+  joined_at: rowTimestamp,
+});
+
+const ResourceRowSchema = z.object({
+  id: rowId,
+  workspace_id: rowId,
+  connection_id: rowId.nullish(),
+  resource_type: rowText,
+  provider: rowText,
+  provider_resource_id: rowText.nullish(),
+  // `resources.title` carries no length constraint, and `ResourceSchema` caps it.
+  title: displayText(300),
+  // Bounded for the same reason as `title`, and easier to miss: `mime_type` is
+  // written from a client-supplied header, so it is the one an ordinary member
+  // controls most directly.
+  mime_type: displayText(160).nullish(),
+  canonical_url: rowText.nullish(),
+  watch_enabled: rowFlag,
+  watch_status: z.enum(["unsupported", "watching", "paused"]),
+  last_hydrated_at: rowText.nullish(),
+  created_at: rowTimestamp,
+  updated_at: rowTimestamp,
+});
+
+const ArtifactRowSchema = z.object({
+  id: rowId,
+  workspace_id: rowId,
+  workstream_id: rowId,
+  harness_run_id: rowId.nullish(),
+  artifact_type: rowText,
+  // Safe today only because `workstream_create_artifact` is the sole writer and
+  // bounds it to 300. Bounding it here too makes the context panel structurally
+  // safe against a second writer rather than conventionally safe.
+  title: displayText(300),
+  preview_text: rowText.nullish(),
+  status: rowText,
+  metadata_json: rowText.nullish(),
+  created_at: rowTimestamp,
+  updated_at: rowTimestamp,
+});
+
+const HarnessTaskRowSchema = z.object({
+  id: rowId,
+  origin: rowText,
+  status: rowText,
+  usage_json: rowText.nullish(),
+  tool_uses: rowCount.nullish(),
+  transcript_message_id: rowId.nullish(),
+  started_at: rowTimestamp.nullish(),
+  completed_at: rowText.nullish(),
+  created_at: rowTimestamp,
+});
+
+const ToolTaskRowSchema = z.object({
+  id: rowId,
+  harness_run_id: rowId,
+  tool_name: rowText,
+  status: rowText,
+  connection_id: rowId.nullish(),
+  started_at: rowTimestamp.nullish(),
+  completed_at: rowText.nullish(),
+  harness_created_at: rowTimestamp,
+});
+
+const ElicitationRowSchema = z.object({
+  id: rowId,
+  workstream_id: rowId,
+  harness_run_id: rowId,
+  prompt: rowText,
+  response_type: z.enum(["text", "radio", "single_select", "multi_select"]),
+  options_json: rowText.nullish(),
+  minimum_selections: rowCount,
+  maximum_selections: rowCount.nullish(),
+  target_user_id: rowId.nullish(),
+  status: z.enum(["open", "answered", "cancelled"]),
+  answer_json: rowText.nullish(),
+  answered_by_user_id: rowId.nullish(),
+  created_at: rowTimestamp,
+  answered_at: rowText.nullish(),
+});
+
+const SuggestionRowSchema = z.object({
+  id: rowId,
+  activity_id: rowId,
+  workstream_id: rowId,
+  // Joined from `activities`, whose title and summary carry no length
+  // constraint. A GitHub push title is the whole commit body, so these run past
+  // what `ActivitySuggestionSchema` accepts as a matter of course.
+  title: displayText(300),
+  summary: displayText(2_000),
+  confidence: z.number().min(0).max(1),
+  reason: displayText(1_200),
+  status: z.enum(["pending", "accepted", "dismissed"]),
+  created_at: rowTimestamp,
+  resolved_at: rowText.nullish(),
+});
+
 function wakeupPromptPreview(prompt: string): string {
   const collapsed = prompt.replace(/\s+/gu, " ").trim();
   if (collapsed.length <= WAKEUP_PROMPT_PREVIEW_LENGTH) return collapsed;
@@ -1091,7 +1225,13 @@ export class WorkstreamService {
     await this.assertMembersExist([userId]);
     await this.database.workstreams.addParticipant(this.auth.workspaceId, id, userId, this.auth.userId, "explicit");
     const participant = (await this.loadParticipants(id)).find((item) => item.user.id === userId);
-    if (participant) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
+    // The reload can miss if the membership changed underneath this request.
+    // The route parses this against `ParticipantSchema`, so returning undefined
+    // produced an anonymous 500 on a path whose write had already committed.
+    if (!participant) {
+      throw new ApiError(409, "participant_reload_failed", "The participant was added but could not be read back");
+    }
+    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
     return participant;
   }
 
@@ -1131,7 +1271,13 @@ export class WorkstreamService {
     // A private note is only visible to its creator. The attaching request
     // returns refreshed canonical state to that user, but broadcasting the
     // resource would expose its title to every socket in a shared work stream.
-    if (attached && resource.note_scope !== "personal") {
+    // Same reason as `addParticipant`: `WORKSTREAM_RESOURCES_SQL` filters notes
+    // archived since the authorization check, so the reload can legitimately
+    // miss. A typed conflict beats a 500 whose log says only `internal_error`.
+    if (!attached) {
+      throw new ApiError(409, "resource_reload_failed", "The resource was attached but could not be read back");
+    }
+    if (resource.note_scope !== "personal") {
       await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
     }
     return attached;
@@ -1750,11 +1896,21 @@ export class WorkstreamService {
        FROM workstream_participants p JOIN users u ON u.id = p.user_id
        WHERE p.workstream_id = ? AND p.removed_at IS NULL ORDER BY p.joined_at`,
     ).bind(id).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => ({
-      user: { id: String(row.id), email: String(row.email), name: String(row.name), avatarUrl: row.avatar_url == null ? null : String(row.avatar_url), timezone: String(row.timezone), createdAt: String(row.created_at) },
-      participationReason: String(row.participation_reason),
-      joinedAt: String(row.joined_at),
-    }));
+    return (result.results ?? []).map((input) => {
+      const row = ParticipantRowSchema.parse(input);
+      return {
+        user: {
+          id: row.id,
+          email: row.email,
+          name: row.name,
+          avatarUrl: row.avatar_url ?? null,
+          timezone: row.timezone,
+          createdAt: row.created_at,
+        },
+        participationReason: row.participation_reason,
+        joinedAt: row.joined_at,
+      };
+    });
   }
 
   private async activeParticipantCount(id: string): Promise<number> {
@@ -1770,13 +1926,25 @@ export class WorkstreamService {
     const result = await this.env.DB.prepare(
       WORKSTREAM_RESOURCES_SQL,
     ).bind(id, this.auth.userId).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => ({
-      id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
-      resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
-      title: truncateUtf16Safe(String(row.title), 300), mimeType: row.mime_type == null ? null : String(row.mime_type), canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
-      watchEnabled: Number(row.watch_enabled) === 1, watchStatus: String(row.watch_status), lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),
-      createdAt: String(row.created_at), updatedAt: String(row.updated_at),
-    }));
+    return (result.results ?? []).map((input) => {
+      const row = ResourceRowSchema.parse(input);
+      return {
+        id: row.id,
+        workspaceId: row.workspace_id,
+        connectionId: row.connection_id ?? null,
+        resourceType: row.resource_type,
+        provider: row.provider,
+        providerResourceId: row.provider_resource_id ?? null,
+        title: row.title,
+        mimeType: row.mime_type ?? null,
+        canonicalUrl: row.canonical_url ?? null,
+        watchEnabled: row.watch_enabled === 1,
+        watchStatus: row.watch_status,
+        lastHydratedAt: row.last_hydrated_at ?? null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
   }
 
   private async loadConnections(): Promise<Connection[]> {
@@ -1790,20 +1958,21 @@ export class WorkstreamService {
   private async loadArtifacts(id: string) {
     const result = await this.env.DB.prepare(WORKSTREAM_ARTIFACTS_SQL)
       .bind(this.auth.workspaceId, id).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => {
+    return (result.results ?? []).map((input) => {
+      const row = ArtifactRowSchema.parse(input);
       const metadata = json<{ mimeType?: string }>(row.metadata_json, {});
       return {
-        id: String(row.id),
-        workspaceId: String(row.workspace_id),
-        workstreamId: String(row.workstream_id),
-        harnessRunId: row.harness_run_id == null ? null : String(row.harness_run_id),
-        artifactType: String(row.artifact_type),
-        title: String(row.title),
-        previewText: row.preview_text == null ? null : String(row.preview_text).slice(0, 4_000),
-        status: String(row.status),
-        mimeType: metadata.mimeType ?? mimeTypeForArtifact(String(row.artifact_type)),
-        createdAt: String(row.created_at),
-        updatedAt: String(row.updated_at),
+        id: row.id,
+        workspaceId: row.workspace_id,
+        workstreamId: row.workstream_id,
+        harnessRunId: row.harness_run_id ?? null,
+        artifactType: row.artifact_type,
+        title: row.title,
+        previewText: row.preview_text == null ? null : row.preview_text.slice(0, 4_000),
+        status: row.status,
+        mimeType: metadata.mimeType ?? mimeTypeForArtifact(row.artifact_type),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
       };
     });
   }
@@ -1815,7 +1984,8 @@ export class WorkstreamService {
       this.env.DB.prepare(WORKSTREAM_TOOL_TASKS_SQL)
         .bind(this.auth.workspaceId, id).all<Record<string, unknown>>(),
     ]);
-    const harnessTasks = (harnessResult.results ?? []).map((row) => {
+    const harnessTasks = (harnessResult.results ?? []).map((input) => {
+      const row = HarnessTaskRowSchema.parse(input);
       const usage = json<Record<string, unknown>>(row.usage_json, {});
       const promptTokens = numericTokenCount(usage.prompt_tokens ?? usage.input_tokens);
       const completionTokens = numericTokenCount(usage.completion_tokens ?? usage.output_tokens);
@@ -1824,30 +1994,33 @@ export class WorkstreamService {
         ? (promptTokens ?? 0) + (completionTokens ?? 0)
         : null);
       return {
-        id: String(row.id),
-        harnessRunId: String(row.id),
-        title: harnessTaskTitle(String(row.origin)),
+        id: row.id,
+        harnessRunId: row.id,
+        title: harnessTaskTitle(row.origin),
         taskType: "agent" as const,
-        status: backgroundTaskStatus(String(row.status)),
-        startedAt: String(row.started_at ?? row.created_at),
-        completedAt: row.completed_at == null ? null : String(row.completed_at),
+        status: backgroundTaskStatus(row.status),
+        startedAt: row.started_at ?? row.created_at,
+        completedAt: row.completed_at ?? null,
         tokenCount,
-        toolUses: Number(row.tool_uses ?? 0),
-        transcriptMessageId: row.transcript_message_id == null ? null : String(row.transcript_message_id),
+        toolUses: row.tool_uses ?? 0,
+        transcriptMessageId: row.transcript_message_id ?? null,
       };
     });
-    const toolTasks = (toolResult.results ?? []).map((row) => ({
-      id: String(row.id),
-      harnessRunId: String(row.harness_run_id),
-      title: toolTaskTitle(String(row.tool_name)),
-      taskType: row.connection_id == null ? "tool" as const : "connector" as const,
-      status: backgroundTaskStatus(String(row.status)),
-      startedAt: String(row.started_at ?? row.harness_created_at),
-      completedAt: row.completed_at == null ? null : String(row.completed_at),
-      tokenCount: null,
-      toolUses: null,
-      transcriptMessageId: null,
-    }));
+    const toolTasks = (toolResult.results ?? []).map((input) => {
+      const row = ToolTaskRowSchema.parse(input);
+      return {
+        id: row.id,
+        harnessRunId: row.harness_run_id,
+        title: toolTaskTitle(row.tool_name),
+        taskType: row.connection_id == null ? "tool" as const : "connector" as const,
+        status: backgroundTaskStatus(row.status),
+        startedAt: row.started_at ?? row.harness_created_at,
+        completedAt: row.completed_at ?? null,
+        tokenCount: null,
+        toolUses: null,
+        transcriptMessageId: null,
+      };
+    });
     return [...harnessTasks, ...toolTasks]
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
   }
@@ -1856,13 +2029,25 @@ export class WorkstreamService {
     const result = await this.env.DB.prepare(
       `SELECT * FROM elicitations WHERE workstream_id = ? ${includeResolved ? "" : "AND status = 'open'"} ORDER BY created_at`,
     ).bind(id).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => ({
-      id: String(row.id), workstreamId: String(row.workstream_id), harnessRunId: String(row.harness_run_id), prompt: String(row.prompt),
-      responseType: String(row.response_type), options: json(row.options_json, []), minimumSelections: Number(row.minimum_selections),
-      maximumSelections: row.maximum_selections == null ? null : Number(row.maximum_selections), targetUserId: row.target_user_id == null ? null : String(row.target_user_id),
-      status: String(row.status), answer: json(row.answer_json, null), answeredByUserId: row.answered_by_user_id == null ? null : String(row.answered_by_user_id),
-      createdAt: String(row.created_at), answeredAt: row.answered_at == null ? null : String(row.answered_at),
-    }));
+    return (result.results ?? []).map((input) => {
+      const row = ElicitationRowSchema.parse(input);
+      return {
+        id: row.id,
+        workstreamId: row.workstream_id,
+        harnessRunId: row.harness_run_id,
+        prompt: row.prompt,
+        responseType: row.response_type,
+        options: json(row.options_json, []),
+        minimumSelections: row.minimum_selections,
+        maximumSelections: row.maximum_selections ?? null,
+        targetUserId: row.target_user_id ?? null,
+        status: row.status,
+        answer: json(row.answer_json, null),
+        answeredByUserId: row.answered_by_user_id ?? null,
+        createdAt: row.created_at,
+        answeredAt: row.answered_at ?? null,
+      };
+    });
   }
 
   private async loadSuggestions(id: string, includeResolved = false) {
@@ -1870,11 +2055,21 @@ export class WorkstreamService {
       `SELECT s.*, a.title, a.summary FROM activity_suggestions s JOIN activities a ON a.id = s.activity_id
        WHERE s.workstream_id = ? ${includeResolved ? "" : "AND s.status = 'pending'"} ORDER BY s.created_at DESC`,
     ).bind(id).all<Record<string, unknown>>();
-    return (result.results ?? []).map((row) => ({
-      id: String(row.id), activityId: String(row.activity_id), workstreamId: String(row.workstream_id),
-      title: truncateUtf16Safe(String(row.title), 300), summary: truncateUtf16Safe(String(row.summary), 2_000),
-      confidence: Number(row.confidence), reason: truncateUtf16Safe(String(row.reason), 1_200), status: String(row.status), createdAt: String(row.created_at), resolvedAt: row.resolved_at == null ? null : String(row.resolved_at),
-    }));
+    return (result.results ?? []).map((input) => {
+      const row = SuggestionRowSchema.parse(input);
+      return {
+        id: row.id,
+        activityId: row.activity_id,
+        workstreamId: row.workstream_id,
+        title: row.title,
+        summary: row.summary,
+        confidence: row.confidence,
+        reason: row.reason,
+        status: row.status,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at ?? null,
+      };
+    });
   }
 
   private validateElicitationAnswer(
@@ -1940,6 +2135,15 @@ export class WorkstreamService {
     return resource.id;
   }
 }
+
+/** The row contracts, exposed so a test can hold them against real rows. */
+export const workstreamRowSchemas = {
+  participants: ParticipantRowSchema,
+  resources: ResourceRowSchema,
+  artifacts: ArtifactRowSchema,
+  elicitations: ElicitationRowSchema,
+  suggestions: SuggestionRowSchema,
+} as const;
 
 export const __workstreamServiceTesting = {
   activityResourceLookupSql: ACTIVITY_RESOURCE_LOOKUP_SQL,

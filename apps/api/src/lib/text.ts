@@ -1,13 +1,7 @@
 /**
- * Truncates to at most `maxLength` UTF-16 code units without splitting a
- * surrogate pair at the boundary. `String.prototype.slice` and Zod's
- * `z.string().max()` both count code units, so a plain `.slice(0, N)` can
- * land inside an emoji or other non-BMP character and leave a lone
- * surrogate that renders as U+FFFD.
+ * The canonical implementation lives in `@avalon/contracts`, beside the schemas
+ * whose `max()` bounds it enforces, so `@avalon/db` can apply the same bound to
+ * the same column. Re-exported here because every existing call site in this app
+ * imports it from this path.
  */
-export function truncateUtf16Safe(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  const code = value.charCodeAt(maxLength - 1);
-  const end = code >= 0xd800 && code <= 0xdbff ? maxLength - 1 : maxLength;
-  return value.slice(0, end);
-}
+export { truncateUtf16Safe } from "@avalon/contracts/text";

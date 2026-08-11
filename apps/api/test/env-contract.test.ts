@@ -1,0 +1,150 @@
+import { describe, expect, it } from "vitest";
+
+import { assertEnvContract, EnvContractError, type Env } from "../src/env";
+
+function binding(): never {
+  return {} as never;
+}
+
+function productionEnv(overrides: Partial<Env> = {}): Env {
+  return {
+    DB: binding(), PAYLOADS: binding(), IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
+    WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
+    WORKSTREAM_LOOP_WORKFLOW: binding(), CONNECTOR_POLL_WORKFLOW: binding(),
+    APP_ENV: "production",
+    AVALON_REGION: "global",
+    LOG_LEVEL: "info",
+    PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+    PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    ALLOWED_ORIGINS: "app://avalon",
+    DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
+    OPENROUTER_API_KEY: "sk-or-secret",
+    OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
+    OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
+    OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
+    OPENROUTER_STRUCTURED_MODEL: "google/gemini-2.5-flash-lite",
+    OPENROUTER_AUTOMATION_MODEL: "x-ai/grok-4.5",
+    SESSION_SIGNING_KEY: "session-secret",
+    OAUTH_STATE_ENCRYPTION_KEY: "oauth-secret",
+    CONNECTOR_CREDENTIALS_KEY: "credentials-secret",
+    CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    GOOGLE_OAUTH_CLIENT_ID: "google-client",
+    GOOGLE_OAUTH_CLIENT_SECRET: "google-secret",
+    HARNESS_MAX_MODEL_ITERATIONS: "8",
+    HARNESS_MAX_TOOL_CALLS: "24",
+    HARNESS_MAX_WALL_CLOCK_MS: "240000",
+    TOOL_DEFAULT_TIMEOUT_MS: "30000",
+    WEB_SEARCH_MAX_RESULTS: "8",
+    WEB_FETCH_MAX_BYTES: "2000000",
+    MAX_ATTACHMENT_BYTES: "25000000",
+    WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
+    CONNECTOR_POLL_TIMEOUT_MS: "20000",
+    ...overrides,
+  } as Env;
+}
+
+describe("environment contract", () => {
+  it("accepts the production configuration", () => {
+    expect(() => assertEnvContract(productionEnv())).not.toThrow();
+  });
+
+  it("names a missing required variable without echoing any value", () => {
+    const env = productionEnv();
+    delete (env as Partial<Env>).SESSION_SIGNING_KEY;
+
+    let thrown: unknown;
+    try { assertEnvContract(env); } catch (error) { thrown = error; }
+
+    expect(thrown).toBeInstanceOf(EnvContractError);
+    expect((thrown as EnvContractError).keys).toEqual(["SESSION_SIGNING_KEY is missing"]);
+    // Nearly every key here is a secret, so the message carries names and rules
+    // only. A leaked value would land in Workers Logs and in Logpush.
+    const message = (thrown as Error).message;
+    for (const secret of ["sk-or-secret", "session-secret", "oauth-secret", "credentials-secret", "google-secret"]) {
+      expect(message).not.toContain(secret);
+    }
+  });
+
+  it("rejects a numeric ceiling that would silently fall back to its default", () => {
+    // The real failure mode: `numericEnv` reads this as unparseable and
+    // substitutes 240000, so the configured ceiling never takes effect and
+    // nothing anywhere says so.
+    expect(() => assertEnvContract(productionEnv({ HARNESS_MAX_WALL_CLOCK_MS: "24O000" })))
+      .toThrow(/HARNESS_MAX_WALL_CLOCK_MS is invalid/u);
+    expect(() => assertEnvContract(productionEnv({ CONNECTOR_POLL_TIMEOUT_MS: "20s" })))
+      .toThrow(/CONNECTOR_POLL_TIMEOUT_MS is invalid/u);
+  });
+
+  it("accepts a ceiling of zero, which `numericEnv` already reads as the default", () => {
+    // Readability is the check, not policy. Zero is a value an operator may
+    // legitimately set to drop a ceiling during an incident, and `numericEnv`
+    // treats a non-positive value as "use the default" — so rejecting it here
+    // would turn a documented mitigation into a region-wide 503.
+    expect(() => assertEnvContract(productionEnv({ HARNESS_MAX_TOOL_CALLS: "0" }))).not.toThrow();
+  });
+
+  it("says whether a key is missing or merely wrong", () => {
+    // Read from the environment, not from `issue.input`, which Zod does not
+    // populate — testing it reported a key that is set but malformed as
+    // missing, sending whoever reads the log after a variable that is there.
+    expect(() => assertEnvContract(productionEnv({ APP_ENV: "prod" as Env["APP_ENV"] })))
+      .toThrow(/APP_ENV is invalid/u);
+    const withoutLogLevel = productionEnv();
+    delete (withoutLogLevel as Partial<Env>).LOG_LEVEL;
+    expect(() => assertEnvContract(withoutLogLevel)).toThrow(/LOG_LEVEL is missing/u);
+  });
+
+  it("leaves an absent optional ceiling alone", () => {
+    const env = productionEnv();
+    delete (env as Partial<Env>).CONNECTOR_POLL_TIMEOUT_MS;
+    expect(() => assertEnvContract(env)).not.toThrow();
+  });
+
+  it("reports every offending key at once", () => {
+    const env = productionEnv({ AVALON_REGION: "us" as never, PUBLIC_API_BASE_URL: "not-a-url" });
+    delete (env as Partial<Env>).OPENROUTER_API_KEY;
+
+    let thrown: EnvContractError | undefined;
+    try { assertEnvContract(env); } catch (error) { thrown = error as EnvContractError; }
+
+    expect(thrown?.keys).toEqual([
+      "AVALON_REGION is invalid",
+      "OPENROUTER_API_KEY is missing",
+      "PUBLIC_API_BASE_URL is invalid",
+    ]);
+  });
+
+  it("requires the Google OAuth secrets in production but not in development", () => {
+    const withoutGoogle = productionEnv();
+    delete (withoutGoogle as Partial<Env>).GOOGLE_OAUTH_CLIENT_ID;
+    delete (withoutGoogle as Partial<Env>).GOOGLE_OAUTH_CLIENT_SECRET;
+
+    expect(() => assertEnvContract(withoutGoogle))
+      .toThrow(/GOOGLE_OAUTH_CLIENT_ID is missing, GOOGLE_OAUTH_CLIENT_SECRET is missing/u);
+    // `.dev.vars` has never carried them, so requiring them locally would break
+    // `pnpm dev:api:local` rather than catch a real misconfiguration.
+    expect(() => assertEnvContract({ ...withoutGoogle, APP_ENV: "development" })).not.toThrow();
+  });
+
+  it("lets a sandbox boot without an OpenRouter key, but not a deployment", () => {
+    // `scripts/seed-sandbox-env.mjs` leaves the key empty whenever no real one
+    // is available, which is every sandbox session. Enforcing it unconditionally
+    // turned that into a 503 on every route of both regions — including
+    // `/health`, the one endpoint that models its absence as a supported state
+    // and could have named it.
+    const withoutKey = productionEnv();
+    delete (withoutKey as Partial<Env>).OPENROUTER_API_KEY;
+
+    expect(() => assertEnvContract(withoutKey)).toThrow(/OPENROUTER_API_KEY is missing/u);
+    expect(() => assertEnvContract({ ...withoutKey, APP_ENV: "development" })).not.toThrow();
+  });
+
+  it("validates a given environment object once", () => {
+    const env = productionEnv();
+    assertEnvContract(env);
+    // Memoised on identity, so the per-isolate cost is one parse rather than
+    // one per request.
+    (env as { PUBLIC_API_BASE_URL: string }).PUBLIC_API_BASE_URL = "not-a-url";
+    expect(() => assertEnvContract(env)).not.toThrow();
+  });
+});

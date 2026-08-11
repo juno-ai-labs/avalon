@@ -112,6 +112,28 @@ export function createAgentInferenceLogger(
       });
     }),
     onAttempt: (attempt) => bestEffort(env, context, "attempt", attempt.inferenceRequestId, async () => {
+      // A provider rejection is an operational event, not payload capture, so it
+      // is recorded for every workspace. The gated block below is the opt-in
+      // payload ledger and stays behind the flag.
+      if (!attempt.success && attempt.disposition !== "cancelled") {
+        logStructuredEvent(env, "warn", "agent_inference_attempt_failed", {
+          request_id: context.requestId,
+          inference_request_id: attempt.inferenceRequestId,
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          source: context.source,
+          provider: attempt.provider,
+          model: attempt.model,
+          turn_id: attempt.turnId,
+          disposition: attempt.disposition,
+          failure_kind: attempt.failureKind,
+          latency_ms: attempt.latencyMs,
+          fallback_attempt: attempt.cursor.stageIndex,
+          attempt: attempt.cursor.endpointAttempt,
+          provider_error_code: attempt.providerError?.code,
+          provider_error_provider: attempt.providerError?.providerName,
+        });
+      }
       if (!await isEnabled()) return;
       const completedAt = new Date().toISOString();
       await env.DB.prepare(
