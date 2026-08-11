@@ -1707,6 +1707,136 @@ describe("connectors", () => {
     expect(requests.filter((request) => request.url.pathname.startsWith("/drive/v3/files/"))).toHaveLength(3);
   });
 
+  it("searches Drive file contents, not only names, and narrows with its own parameters", async () => {
+    let query = "";
+    let orderBy: string | null = null;
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      query = url.searchParams.get("q") ?? "";
+      orderBy = url.searchParams.get("orderBy");
+      return googleJson({ files: [{ id: "file-1", name: "Q3 pricing", webViewLink: "https://drive.example/1" }] });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "drive.search",
+      {
+        query: "Q3 pricing",
+        fileType: "spreadsheet",
+        modifiedAfter: "2026-08-01T00:00:00Z",
+        orderBy: "modified"
+      },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    // Contents as well as names: a search for what a document says used to come
+    // back empty, which the plugin message then licensed reporting as absent.
+    expect(query).toContain("fullText contains 'Q3 pricing'");
+    expect(query).toContain("name contains 'Q3 pricing'");
+    expect(query).toContain("mimeType = 'application/vnd.google-apps.spreadsheet'");
+    expect(query).toContain("modifiedTime > '2026-08-01T00:00:00Z'");
+    expect(query).toContain("trashed = false");
+    expect(orderBy).toBe("modifiedTime desc");
+    // One name for the address a person opens, across every Google tool.
+    expect(result.output).toMatchObject({ items: [{ id: "file-1", webUrl: "https://drive.example/1" }] });
+  });
+
+  it("returns computable values from Sheets when asked for them", async () => {
+    const requests: URL[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(requestUrl(input));
+      return googleJson({ range: "Sheet1!A1:B2", majorDimension: "ROWS", values: [[1234.5, 0.45]] });
+    };
+    const context = {
+      connection: googleConnection(["sheets.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    await googleAdapter(fetcher).executeTool(
+      "sheets.read_values",
+      { spreadsheetId: "sheet-1", range: "Sheet1!A1:B2", valueRenderOption: "UNFORMATTED_VALUE" },
+      context
+    );
+    expect(requests[0]?.searchParams.get("valueRenderOption")).toBe("UNFORMATTED_VALUE");
+    // Serial dates belong with unformatted numbers; pairing them with display
+    // strings would return two spellings of the same date.
+    expect(requests[0]?.searchParams.get("dateTimeRenderOption")).toBe("SERIAL_NUMBER");
+
+    await googleAdapter(fetcher).executeTool(
+      "sheets.read_values",
+      { spreadsheetId: "sheet-1", range: "Sheet1!A1:B2" },
+      context
+    );
+    expect(requests[1]?.searchParams.get("valueRenderOption")).toBe("FORMATTED_VALUE");
+    expect(requests[1]?.searchParams.get("dateTimeRenderOption")).toBe("FORMATTED_STRING");
+  });
+
+  it("names the tool that reads an id rather than passing a Workspace mismatch through", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({ mimeType: "application/vnd.google-apps.spreadsheet" });
+      }
+      return googleJson({ error: { code: 404, message: "Requested entity was not found." } }, 404);
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      {
+        connection: googleConnection(["docs.read", "drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", expected: "spreadsheet" }
+    });
+  });
+
+  it("leaves the provider failure alone when Drive cannot say what the id is", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") return googleJson({ error: { code: 404 } }, 404);
+      return googleJson({ error: { code: 404, message: "Requested entity was not found." } }, 404);
+    };
+    // Without drive.read there is nothing to diagnose with, and diagnosing must
+    // never replace the original failure with a different one.
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "missing" },
+      {
+        connection: googleConnection(["docs.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({ code: "provider_error" });
+  });
+
+  it("hands back an openable address from every Google create", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "sheets.googleapis.com") {
+        return googleJson({
+          spreadsheetId: "sheet-created",
+          spreadsheetUrl: "https://docs.google.com/spreadsheets/d/sheet-created/edit",
+          properties: { title: "Budget" },
+          sheets: []
+        });
+      }
+      return googleJson({ documentId: "doc-created", title: "Notes" });
+    };
+    const context = {
+      connection: googleConnection(["docs.write", "sheets.write"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    const doc = await googleAdapter(fetcher).executeTool("docs.create_document", { title: "Notes" }, context);
+    expect(doc.output).toMatchObject({ webUrl: "https://docs.google.com/document/d/doc-created/edit" });
+    const sheet = await googleAdapter(fetcher).executeTool("sheets.create_spreadsheet", { title: "Budget" }, context);
+    expect(sheet.output).toMatchObject({ webUrl: "https://docs.google.com/spreadsheets/d/sheet-created/edit" });
+  });
+
   it("reports per-file Drive writability and blocks unauthorized Docs and Sheets writes", async () => {
     const mutationUrls: URL[] = [];
     const fetcher: typeof fetch = async (input, init) => {

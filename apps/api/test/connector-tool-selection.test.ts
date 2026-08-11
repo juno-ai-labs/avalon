@@ -223,13 +223,22 @@ function workflowInput(automationSubscriptionId: string | null = null): Workstre
  * now fails.
  */
 function workedExampleCallsAgainstSchemas(
-  systemMessage: string,
-  tools: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"],
+  plugin: {
+    modelId: string;
+    systemMessage?: string | undefined;
+    tools: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"];
+  },
 ): string[] {
+  const { tools } = plugin;
+  const systemMessage = plugin.systemMessage ?? "";
+  // Derived, not assumed: a second credential of the same provider is
+  // `google_2_…`, and hardcoding the first one's prefix made this check
+  // silently validate nothing for every plugin but the first.
+  const wirePrefix = plugin.modelId.replace(/^plugin_/u, "");
   const schemas = new Map(tools.map((tool) => {
     const schema = tool.definition.inputSchema as { properties?: Record<string, unknown> };
     return [
-      `google_${tool.definition.name.replace(".", "_")}`,
+      `${wirePrefix}_${tool.definition.name.replace(".", "_")}`,
       new Set(Object.keys(schema.properties ?? {})),
     ];
   }));
@@ -697,7 +706,11 @@ describe("connector tools selected for harness runs", () => {
     // Every argument a worked example demonstrates has to exist on the tool it
     // names. Asserting on substrings alone let an example keep teaching
     // `attendeeEmails` after that parameter was removed from the update schema.
-    expect(workedExampleCallsAgainstSchemas(mail?.systemMessage ?? "", mail?.tools ?? [])).toEqual([]);
+    expect(workedExampleCallsAgainstSchemas({
+      modelId: mail!.modelId,
+      systemMessage: mail!.systemMessage,
+      tools: mail!.tools,
+    })).toEqual([]);
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
       "gmail.search",
       "gmail.find_contacts",
@@ -712,6 +725,15 @@ describe("connector tools selected for harness runs", () => {
       "calendar.update_event",
     ]);
 
+    // The files plugin's examples are checked against its schemas too, so an
+    // example cannot outlive the parameter it demonstrates.
+    expect(drive?.systemMessage).toContain("Worked examples:");
+    expect(drive?.systemMessage).toContain("writableByAvalon");
+    expect(workedExampleCallsAgainstSchemas({
+      modelId: drive!.modelId,
+      systemMessage: drive!.systemMessage,
+      tools: drive!.tools,
+    })).toEqual([]);
     expect(drive).toMatchObject({
       modelId: "plugin_google_2",
       displayName: "Google Drive + Docs + Sheets",

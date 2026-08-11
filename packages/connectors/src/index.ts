@@ -234,6 +234,45 @@ const googleScopes = {
 
 export const GoogleCapabilityScopes = googleScopes;
 
+/**
+ * The file kinds `drive.search` can filter by, named as a person would.
+ *
+ * A caller knows it wants a spreadsheet, not
+ * `application/vnd.google-apps.spreadsheet`, and an enum of the friendly names
+ * both spares it the MIME string and makes a typo a validation error rather
+ * than a silent zero-result search.
+ */
+const GOOGLE_DRIVE_FILE_TYPES = [
+  "document",
+  "spreadsheet",
+  "presentation",
+  "form",
+  "drawing",
+  "folder",
+  "pdf",
+] as const;
+
+const GOOGLE_DRIVE_FILE_TYPE_MIME: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[number], string> = {
+  document: "application/vnd.google-apps.document",
+  spreadsheet: "application/vnd.google-apps.spreadsheet",
+  presentation: "application/vnd.google-apps.presentation",
+  form: "application/vnd.google-apps.form",
+  drawing: "application/vnd.google-apps.drawing",
+  folder: "application/vnd.google-apps.folder",
+  pdf: "application/pdf",
+};
+
+/** Which tool reads each file type, so a rejection names the way forward. */
+const GOOGLE_DRIVE_FILE_TYPE_TOOL: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[number], string> = {
+  document: "Read it with the Docs document reader.",
+  spreadsheet: "Read it with the Sheets spreadsheet reader.",
+  presentation: "Presentations have no dedicated reader; export it through Drive instead.",
+  form: "Forms have no dedicated reader; open it in Google Forms.",
+  drawing: "Drawings have no dedicated reader; export it through Drive instead.",
+  folder: "That id is a folder. Search inside it rather than reading it as a file.",
+  pdf: "Read it with the Drive downloader, which returns bounded text.",
+};
+
 export const GoogleFileWriteAuthorizationGuidance =
   "Only files with writableByAvalon=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
 
@@ -398,7 +437,8 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "drive.search",
-    description: "Search accessible Google Drive files.",
+    description:
+      "Search accessible Google Drive files by name and by content. `query` is matched as plain text against both the file name and the indexed contents of Docs, Sheets, Slides, and PDFs — it is not a Drive query expression, so operators written into it are matched literally. Narrow with `fileType` and `modifiedAfter` rather than by describing the filter in `query`, and use `orderBy: \"modified\"` for the most recent rather than the most relevant.",
     capability: "drive.read",
     mode: "read",
     idempotency: "safe",
@@ -406,7 +446,25 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        query: { type: "string" },
+        query: {
+          type: "string",
+          description: "Plain text matched against file names and file contents.",
+        },
+        fileType: {
+          type: "string",
+          enum: ["document", "spreadsheet", "presentation", "form", "drawing", "folder", "pdf"],
+          description: "Restrict results to one kind of file.",
+        },
+        modifiedAfter: {
+          type: "string",
+          format: "date-time",
+          description: "Only files modified after this RFC 3339 timestamp, for example 2026-08-01T00:00:00Z.",
+        },
+        orderBy: {
+          type: "string",
+          enum: ["relevance", "modified"],
+          description: "Result order. Defaults to relevance.",
+        },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
         pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
       },
@@ -534,7 +592,8 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "sheets.read_values",
-    description: "Read bounded cell values from an A1 range in Google Sheets.",
+    description:
+      "Read bounded cell values from an A1 range in Google Sheets. Values default to what the sheet displays, so numbers arrive as locale-formatted strings such as \"1,234.50\" or \"45%\" and dates as text. Pass valueRenderOption UNFORMATTED_VALUE to get numbers and serial dates you can compute with.",
     capability: "sheets.read",
     mode: "read",
     idempotency: "safe",
@@ -544,7 +603,12 @@ export const googleTools: ToolDefinition[] = [
       properties: {
         spreadsheetId: { type: "string" },
         range: { type: "string", minLength: 1, maxLength: 1000 },
-        majorDimension: { type: "string", enum: ["ROWS", "COLUMNS"] }
+        majorDimension: { type: "string", enum: ["ROWS", "COLUMNS"] },
+        valueRenderOption: {
+          type: "string",
+          enum: ["FORMATTED_VALUE", "UNFORMATTED_VALUE"],
+          description: "FORMATTED_VALUE returns what the sheet displays; UNFORMATTED_VALUE returns computable numbers and serial dates. Defaults to FORMATTED_VALUE.",
+        }
       },
       required: ["spreadsheetId", "range"]
     }
@@ -1160,6 +1224,57 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       return normalizeGmailActivity(connection, change, message);
     });
+  }
+
+  /**
+   * Run a Workspace-file read, and on refusal say which tool the id belongs to.
+   *
+   * A Doc, a Sheet, and any other Drive file all carry the same opaque id, so a
+   * caller holding one from a Drive search cannot tell by looking which reader
+   * accepts it, and the provider answers a mismatch with a bare 400 or 404.
+   * Unlike Gmail's message and thread ids, this family *is* determinable —
+   * Drive records the MIME type — so the lookup happens on the failure path
+   * only, and is skipped when the connection cannot read Drive.
+   */
+  async function withGoogleFileFamilyHint<T>(
+    context: ConnectorToolContext,
+    fileId: string,
+    expected: (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
+    read: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await read();
+    } catch (error) {
+      if (!(error instanceof ConnectorError) || error.code === "unauthorized") throw error;
+      if (!context.connection.grantedScopes.includes("drive.read")) throw error;
+      const actual = await googleDriveFileType(context, fileId);
+      if (!actual || actual === expected) throw error;
+      throw new ConnectorError(
+        "invalid_payload",
+        `That id is a ${actual}, not a ${expected}. ${GOOGLE_DRIVE_FILE_TYPE_TOOL[actual]}`,
+        { reason: "wrong_id_family", field: `${expected}Id`, expected: actual }
+      );
+    }
+  }
+
+  /** The Drive file type behind an id, or null when it cannot be determined. */
+  async function googleDriveFileType(
+    context: ConnectorToolContext,
+    fileId: string
+  ): Promise<(typeof GOOGLE_DRIVE_FILE_TYPES)[number] | null> {
+    try {
+      const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+      url.searchParams.set("supportsAllDrives", "true");
+      url.searchParams.set("fields", "mimeType");
+      const response = await api(context.connection, url.toString(), { signal: context.signal }, [403, 404]);
+      if (!response.ok) return null;
+      const payload = await safeJsonBounded(response, 4_000);
+      const mimeType = readString(payload, "mimeType");
+      return GOOGLE_DRIVE_FILE_TYPES.find((type) => GOOGLE_DRIVE_FILE_TYPE_MIME[type] === mimeType) ?? null;
+    } catch {
+      // Diagnosing a failure must never replace it with a different one.
+      return null;
+    }
   }
 
   /**
@@ -2142,12 +2257,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "docs.read_document") {
         const args = z.object({ documentId: z.string().min(1).max(500) }).strict().parse(rawArgs);
-        const payload = await readGoogleDocument(
-          api,
-          context.connection,
-          args.documentId,
-          context.signal
-        );
+        const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
+          readGoogleDocument(api, context.connection, args.documentId, context.signal));
         return {
           output: boundedToolOutput(sanitizeGoogleDocument(payload)),
           summary: "Read bounded Google Doc content",
@@ -2175,7 +2286,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             resourceType: "google_doc",
             documentId,
             title: readString(created, "title") ?? args.title,
-            url: `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`,
+            webUrl: `https://docs.google.com/document/d/${encodeURIComponent(documentId)}/edit`,
             initialTextCharacters: args.text?.length ?? 0,
             writableByAvalon: true
           }),
@@ -2232,12 +2343,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "sheets.read_spreadsheet") {
         const args = z.object({ spreadsheetId: z.string().min(1).max(500) }).strict().parse(rawArgs);
-        const payload = await readGoogleSpreadsheet(
-          api,
-          context.connection,
-          args.spreadsheetId,
-          context.signal
-        );
+        const payload = await withGoogleFileFamilyHint(context, args.spreadsheetId, "spreadsheet", () =>
+          readGoogleSpreadsheet(api, context.connection, args.spreadsheetId, context.signal));
         return {
           output: boundedToolOutput(sanitizeGoogleSpreadsheet(payload)),
           summary: "Read Google Sheets metadata",
@@ -2248,14 +2355,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           spreadsheetId: z.string().min(1).max(500),
           range: z.string().min(1).max(1_000),
-          majorDimension: z.enum(["ROWS", "COLUMNS"]).default("ROWS")
+          majorDimension: z.enum(["ROWS", "COLUMNS"]).default("ROWS"),
+          valueRenderOption: z.enum(["FORMATTED_VALUE", "UNFORMATTED_VALUE"]).default("FORMATTED_VALUE")
         }).strict().parse(rawArgs);
         const url = new URL(
           `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(args.spreadsheetId)}/values/${encodeURIComponent(args.range)}`
         );
         url.searchParams.set("majorDimension", args.majorDimension);
-        url.searchParams.set("valueRenderOption", "FORMATTED_VALUE");
-        url.searchParams.set("dateTimeRenderOption", "FORMATTED_STRING");
+        url.searchParams.set("valueRenderOption", args.valueRenderOption);
+        // Serial numbers only make sense alongside unformatted values; asking
+        // for them next to display strings would return two spellings of a date
+        // in the same result.
+        url.searchParams.set(
+          "dateTimeRenderOption",
+          args.valueRenderOption === "UNFORMATTED_VALUE" ? "SERIAL_NUMBER" : "FORMATTED_STRING"
+        );
         const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
         );
@@ -2318,11 +2432,22 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (name === "drive.search") {
         const args = z.object({
           query: z.string().max(1_000),
+          fileType: z.enum(GOOGLE_DRIVE_FILE_TYPES).optional(),
+          modifiedAfter: z.string().datetime({ offset: true }).optional(),
+          orderBy: z.enum(["relevance", "modified"]).default("relevance"),
           maxResults: z.number().int().min(1).max(100).default(25),
           pageToken: z.string().min(1).max(2_000).optional()
         }).strict().parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
-        url.searchParams.set("q", `name contains '${escapeDriveQuery(args.query)}' and trashed = false`);
+        // Names *and* contents. Matching names alone made a search for what a
+        // document says come back empty, which the plugin message then licensed
+        // the caller to report as the content not existing.
+        const term = escapeDriveQuery(args.query);
+        const clauses = [`(name contains '${term}' or fullText contains '${term}')`, "trashed = false"];
+        if (args.fileType) clauses.push(`mimeType = '${GOOGLE_DRIVE_FILE_TYPE_MIME[args.fileType]}'`);
+        if (args.modifiedAfter) clauses.push(`modifiedTime > '${escapeDriveQuery(args.modifiedAfter)}'`);
+        url.searchParams.set("q", clauses.join(" and "));
+        if (args.orderBy === "modified") url.searchParams.set("orderBy", "modifiedTime desc");
         url.searchParams.set("pageSize", String(args.maxResults));
         url.searchParams.set("supportsAllDrives", "true");
         url.searchParams.set("includeItemsFromAllDrives", "true");
@@ -3256,7 +3381,7 @@ function sanitizeCalendarEvent(payload: Record<string, unknown>, calendarId: str
     id: readString(payload, "id"),
     iCalUID: readString(payload, "iCalUID"),
     status: readString(payload, "status"),
-    htmlLink: readString(payload, "htmlLink"),
+    webUrl: readString(payload, "htmlLink"),
     created: readString(payload, "created"),
     updated: readString(payload, "updated"),
     summary: truncateNullable(readString(payload, "summary"), 1000),
@@ -3421,7 +3546,7 @@ function sanitizeGoogleSpreadsheet(payload: Record<string, unknown>): Record<str
   return {
     resourceType: "google_sheet",
     spreadsheetId: readString(payload, "spreadsheetId"),
-    spreadsheetUrl: readString(payload, "spreadsheetUrl"),
+    webUrl: readString(payload, "spreadsheetUrl"),
     title: properties ? truncateNullable(readString(properties, "title"), 1_000) : null,
     locale: properties ? readString(properties, "locale") : null,
     timeZone: properties ? readString(properties, "timeZone") : null,
@@ -3500,7 +3625,7 @@ function sanitizeDriveFile(payload: Record<string, unknown>): Record<string, unk
     mimeType,
     modifiedTime: readString(payload, "modifiedTime"),
     createdTime: readString(payload, "createdTime"),
-    webViewLink: readString(payload, "webViewLink"),
+    webUrl: readString(payload, "webViewLink"),
     trashed: readBoolean(payload, "trashed") ?? false,
     owners: recordArray(payload, "owners").slice(0, 20).map(sanitizeGooglePerson),
     lastModifyingUser: sanitizeGooglePerson(readRecord(payload, "lastModifyingUser")),
