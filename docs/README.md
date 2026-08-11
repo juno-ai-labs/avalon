@@ -13,6 +13,10 @@ update it in the same change.
   to read before running any setup, server, or browser-automation command.
 - **Investigating a bug?** The owning document usually states the invariant that
   was violated, and often names the exception you are looking at.
+- **Investigating what an agent actually did in production?**
+  [`RUNBOOK.md`](RUNBOOK.md#inspecting-a-runs-raw-inference) turns a work-stream
+  URL into the exact request the model received, using credentials the
+  environment already holds.
 - **Onboarding?** [the Avalon implementation
   brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) for what Avalon is,
   then [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it is put together, then

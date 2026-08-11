@@ -96,7 +96,7 @@ Google identity and connector authorization are separate. Connector authorizatio
 
 The capability check is enforced for every tool invocation. The current Google tools are:
 
-- Gmail: `google_gmail_search`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`.
+- Gmail: `google_gmail_search`, `google_gmail_find_contacts`, `google_gmail_read_thread`, `google_gmail_read_message`, `google_gmail_create_draft`, and `google_gmail_send`. Search returns each hit's sender, recipients, subject, date, labels, snippet, and RFC `Message-ID` by hydrating the metadata headers behind the bare identifiers Gmail's list endpoint returns, so a result is answerable without a read per hit and a threaded reply has the `inReplyTo` value `google_gmail_create_draft` requires. `google_gmail_find_contacts` resolves a person's name to ranked candidate addresses by scanning the address headers of prior correspondence, each returned with the message it was drawn from; it needs no People API scope, excludes the authorized mailbox's own address, and returns an empty list rather than a guess when nothing matches.
 - Calendar: `google_calendar_list_calendars`, `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event`. Event tools accept an explicit calendar ID and otherwise use the primary calendar; scheduled activity polling currently follows the configured calendar, which defaults to primary.
 - Drive: `google_drive_search`, `google_drive_get_metadata`, `google_drive_download`, and `google_drive_export`.
 - Docs: `google_docs_read_document`, `google_docs_create_document`, `google_docs_append_text`, and `google_docs_replace_text`.
