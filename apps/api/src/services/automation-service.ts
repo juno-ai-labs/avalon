@@ -509,12 +509,35 @@ export class AutomationService {
 
   /** Removes an automation for good. The row stays so its runs, work streams,
    * memory scope, and permanent email tombstone keep their referent, but every
-   * trigger path is closed: the schedules are disabled, the address stops
-   * accepting mail, and nothing lists or reads it again. */
+   * way it could still fire is closed in one transaction:
+   *
+   * - Calendar and interval triggers: every schedule is disabled and the
+   *   workspace alarm is recomputed, so the Durable Object stops waking for it.
+   * - Activity, webhook, and resource-watch triggers: matching selects only
+   *   visible, active subscriptions, so nothing routes to it again.
+   * - Inbound email: the route is disabled and ingestion requires the same
+   *   visible-and-active subscription. The address stays reserved forever.
+   * - Manual runs and pre-opened runs: both load the subscription, which no
+   *   longer resolves.
+   * - A run already in flight loses tool authority at its next revalidation,
+   *   exactly as a pause does.
+   */
   async deleteAutomation(id: string): Promise<void> {
     const subscription = await this.loadSubscription(id);
     this.assertCanManageSubscription(subscription);
     const at = nowIso();
+    // A run opened ahead of its planned time is a queued trigger of its own:
+    // the work stream and run already exist and only wait for the alarm.
+    // Nothing would start them once the schedule is disabled, so they would sit
+    // in the sidebar claiming to be scheduled forever.
+    const planned = await this.env.DB.prepare(
+      `SELECT w.id FROM workstreams w
+       JOIN automation_runs r ON r.workstream_id = w.id AND r.workspace_id = w.workspace_id
+       WHERE w.workspace_id = ? AND w.automation_subscription_id = ?
+         AND w.harness_status = 'scheduled' AND w.archived_at IS NULL
+         AND r.status = 'scheduled' AND r.started_at IS NULL`,
+    ).bind(this.auth.workspaceId, id).all<{ id: string }>();
+    const plannedWorkstreamIds = (planned.results ?? []).map((row) => String(row.id));
     await this.env.DB.batch([
       this.env.DB.prepare(
         `UPDATE automation_subscriptions SET lifecycle_state = 'deleted', updated_at = ?
@@ -523,15 +546,34 @@ export class AutomationService {
       this.env.DB.prepare(
         "UPDATE schedules SET enabled = 0, updated_at = ?, version = version + 1 WHERE automation_subscription_id = ?",
       ).bind(at, id),
+      this.env.DB.prepare(
+        `UPDATE automation_runs SET status = 'failed', completed_at = ?,
+           result_summary = COALESCE(result_summary, 'The automation was deleted before this run started')
+         WHERE workspace_id = ? AND automation_subscription_id = ?
+           AND status = 'scheduled' AND started_at IS NULL`,
+      ).bind(at, this.auth.workspaceId, id),
+      this.env.DB.prepare(
+        `UPDATE workstreams SET archived_at = ?, email_route_status = 'reserved', updated_at = ?
+         WHERE workspace_id = ? AND automation_subscription_id = ?
+           AND harness_status = 'scheduled' AND archived_at IS NULL`,
+      ).bind(at, at, this.auth.workspaceId, id),
     ]);
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
     try {
-      await new WorkstreamEmailRoutingService(this.env)
-        .ensureAutomationAddress(this.automationRouteInput(id));
+      await emailRouting.ensureAutomationAddress(this.automationRouteInput(id));
+      for (const workstreamId of plannedWorkstreamIds) {
+        await emailRouting.ensureWorkstreamAddress({
+          region: this.env.AVALON_REGION,
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+        });
+      }
     } catch (error) {
       if (!isRecoverableEmailRouteTransition(error)) throw error;
       // The Global lifecycle marker stays stale rather than replaying the
-      // deletion. Inbound mail is rejected regardless: ingestion requires a
-      // visible, active subscription.
+      // deletion. Inbound mail is rejected regardless: automation ingestion
+      // requires a visible, active subscription, and work-stream ingestion
+      // rejects an archived owner.
     }
     await this.refreshScheduler();
   }
