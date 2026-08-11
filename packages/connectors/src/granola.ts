@@ -508,7 +508,12 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
   ): Promise<Record<string, unknown>> {
     if (connection.scope !== "personal") return connection.credentials;
     const refreshToken = stringValue(connection.credentials, "refreshToken");
-    if (!refreshToken) throw new ConnectorError("unauthorized", "Granola authorization must be reconnected");
+    if (!refreshToken) {
+      throw new ConnectorError("unauthorized", "Granola authorization must be reconnected", {
+        reconnectRequired: true,
+        reason: "missing_refresh_token",
+      });
+    }
     const authorizationState = parseOAuthState({
       resource: connection.credentials.resource,
       authorizationEndpoint: "https://unused.invalid",

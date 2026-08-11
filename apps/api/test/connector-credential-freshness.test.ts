@@ -11,6 +11,7 @@ import {
 } from "@avalon/connectors";
 import { describe, expect, it, vi } from "vitest";
 import { encryptString } from "../src/lib/crypto";
+import { __connectionServiceTesting } from "../src/services/connection-service";
 import { withAuthorizedConnection } from "../src/services/connector-connection-access";
 import { __integrationTesting } from "../src/services/integrations";
 
@@ -311,6 +312,35 @@ describe("refresh rejection classification", () => {
   });
 });
 
+describe("repairing a connection under test", () => {
+  const identity = { connectionId: "connection", connectorType: "granola" };
+  const connection = authorizedConnection(connectionContext({}, "workspace"));
+  const env = { LOG_LEVEL: "error" } as never;
+
+  it("reports what a successful repair did", async () => {
+    const adapter = { repair: async () => ({ repaired: true, message: "Re-enabled the webhook" }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBe("Re-enabled the webhook");
+  });
+
+  it("says nothing when there was nothing to repair", async () => {
+    const adapter = { repair: async () => ({ repaired: false }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBeNull();
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, {}, connection, identity))
+      .resolves.toBeNull();
+  });
+
+  it("reports a failed repair without failing the test", async () => {
+    // The health check that follows is still the answer being asked for, so
+    // this must not throw — but a connection whose delivery is still broken
+    // must not read the same as one that was fixed.
+    const adapter = { repair: async () => { throw new Error("Granola refused the PATCH"); } };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBe("A repair was attempted and failed: Granola refused the PATCH");
+  });
+});
+
 describe("provider writes", () => {
   it("keeps the Granola webhook repair out of the health check", async () => {
     // A health check runs on every plugin activation. Re-enabling a webhook is
@@ -407,6 +437,57 @@ describe("revalidation between model turns", () => {
 });
 
 describe("continuation revalidation respects its deadline", () => {
+  it("does not answer authorized when the deadline fires while D1 is answering", async () => {
+    const controller = new AbortController();
+    const database = {
+      prepare(sql: string) {
+        return {
+          bind() { return this; },
+          async first() {
+            if (sql.includes("FROM workspace_members")) return { status: "active" };
+            if (sql.includes("FROM workstreams")) {
+              return { archived_at: null, automation_subscription_id: null, automation_run_id: null };
+            }
+            if (sql.includes("FROM connector_connections")) {
+              // Every authority check passes, and the deadline lands while the
+              // last of them is being answered — after the branch's own first
+              // check has already gone by.
+              controller.abort();
+              return {
+                id: FROZEN.connectionId,
+                workspace_id: FROZEN.workspaceId,
+                connector_type: "granola",
+                scope: "personal",
+                owner_user_id: OWNER,
+                granted_scopes_json: JSON.stringify(["granola.personal.read"]),
+                encrypted_credentials: "ciphertext",
+                credential_iv: "iv",
+                cursor_json: "{}",
+                config_json: "{}",
+                status: "healthy",
+              };
+            }
+            return null;
+          },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+
+    await expect(__integrationTesting.reauthorizeFrozenPlugin(
+      { DB: database } as never,
+      {
+        workspaceId: FROZEN.workspaceId,
+        workstreamId: "00000000-0000-7000-8000-0000000000ws",
+        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        executionPrincipal: { type: "user", userId: OWNER },
+      } as never,
+      FROZEN as never,
+      controller.signal,
+      "continuation",
+    )).resolves.toBe("indeterminate");
+  });
+
   it("does not answer authorized once the run has been aborted", async () => {
     const aborted = AbortSignal.abort();
     await expect(__integrationTesting.reauthorizeFrozenPlugin(

@@ -2096,7 +2096,12 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     async refreshCredentials(connection, signal) {
       const refreshToken = stringValue(connection.credentials, "refreshToken");
-      if (!refreshToken) throw new ConnectorError("unauthorized", "Slack authorization must be reconnected");
+      if (!refreshToken) {
+        throw new ConnectorError("unauthorized", "Slack authorization must be reconnected", {
+          reconnectRequired: true,
+          reason: "missing_refresh_token",
+        });
+      }
       const endpoint = connection.scope === "personal" ? `${SLACK_API}/oauth.v2.user.access` : `${SLACK_API}/oauth.v2.access`;
       const response = parseSlackSuccess(await providerJson(fetcher, endpoint, {
         method: "POST",
