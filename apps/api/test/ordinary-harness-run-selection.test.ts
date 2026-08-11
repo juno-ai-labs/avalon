@@ -39,7 +39,10 @@ describe("ordinary harness-run selection", () => {
 
     const room = source("../src/durable-objects/workstream-room.ts");
     expect(room).toMatch(
-      /SELECT id FROM harness_runs WHERE workstream_id = \?1 AND parent_tool_call_id IS NULL AND origin != 'hypersight_block' ORDER BY started_at DESC LIMIT 1/u,
+      // `created_at`, matching the REST read: a `scheduled` run carries a NULL
+      // `started_at`, which SQLite sorts last under DESC, so ordering by it
+      // would hand a subscriber an older run than the one it is watching.
+      /SELECT id, origin, status, model, error_json, started_at, completed_at, created_at FROM harness_runs WHERE workstream_id = \?1 AND parent_tool_call_id IS NULL AND origin != 'hypersight_block' ORDER BY created_at DESC LIMIT 1/u,
     );
   });
 });

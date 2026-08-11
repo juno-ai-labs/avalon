@@ -223,6 +223,16 @@ export async function launchWorkstreamHarness(
       : {}),
     reason: input.origin,
   };
+  /*
+   * The Workflows round trip stays on the caller's path, and it is the slowest
+   * step in a create. Handing it to `waitUntil` was tried and reverted: the run
+   * row above already says `running` while `attempt_id` and `lease_expires_at`
+   * stay NULL until the Workflow admits the run, and nothing reaps that shape.
+   * A dropped deferral therefore left a work stream permanently "working" —
+   * `stop` only records a request a live workflow has to observe, `retry`
+   * refuses a `running` stream, and no screen offers either. Losing the start
+   * here instead fails loudly, in front of the person who asked for it.
+   */
   try {
     await startWorkstreamWorkflow(env, workflowInput);
   } catch (error) {
@@ -246,6 +256,13 @@ export async function launchWorkstreamHarness(
         "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
       ).bind(nowIso(), input.workstreamId),
     ]);
+    // The work stream and its run exist whatever the caller does with the 503,
+    // so anyone already watching is told the run failed rather than left on a
+    // `running` row that nothing will move.
+    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+      type: "harness_status_changed",
+      status: "failed",
+    });
     throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
   }
   await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
@@ -623,9 +640,24 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
     slackSearchAuthorization?: SlackSearchAuthorization,
   ) {
-    await this.assertMembersExist(input.participantUserIds);
     const attachmentIds = [...new Set(input.attachmentIds)];
-    await this.assertDraftAttachments(attachmentIds);
+    // Two independent reads, and both return without touching D1 when there is
+    // nothing to check — which is the common case, so this costs nothing there
+    // and saves a round trip whenever a create names people or carries files.
+    // They still run ahead of the reservation below: a create that is going to
+    // be refused should not leave an email address reserved for a work stream
+    // that never exists.
+    //
+    // Settled rather than raced, and rethrown in a fixed order: a request that
+    // violates both would otherwise get whichever 422 happened to reject first,
+    // so the code a client sees for one bad request would not be stable.
+    const preflight = await Promise.allSettled([
+      this.assertMembersExist(input.participantUserIds),
+      this.assertDraftAttachments(attachmentIds),
+    ]);
+    for (const outcome of preflight) {
+      if (outcome.status === "rejected") throw outcome.reason;
+    }
     const objective = input.objective
       ?? (input.openingMessage.trim() || "Review the attached files");
     const title = input.title ?? provisionalWorkstreamTitle(objective, "New work stream");
@@ -657,9 +689,18 @@ export class WorkstreamService {
       // run this create starts already resolve to the pinned model.
       modelOverride: input.modelOverride ?? null,
     });
+    // Deferring this was tried and reverted. It costs a second hop to the
+    // Global registry outside Global, but the create that would have saved it
+    // immediately invalidates the work-stream list, and `list` backfills every
+    // route that is not yet `active` — so the same hop was paid a moment later
+    // by the refresh, against extra D1 reads, with two activations of one route
+    // able to overlap and fail each other's reconcile.
     await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
+    // Ahead of the harness launch below rather than beside it: both land in the
+    // same Durable Object log, and a client resyncing from a sequence must not
+    // see the run start before the message that triggered it.
     if (message) await publishWorkstreamEvent(this.env, this.auth.workspaceId, created.workstream.id, { type: "message_created", message });
     const harnessRunId = await this.launchHarness(
       created.workstream.id,
@@ -2339,7 +2380,14 @@ export const __workstreamServiceTesting = {
   safeArtifactFileName,
 };
 
-function memberSafeHarnessError(value: unknown): { code: string; message: string } | null {
+/**
+ * The run failure a member may be shown, or null when there is none.
+ *
+ * Exported because the work-stream room's snapshot has to describe the latest
+ * run exactly as `GET /workstreams/:id` does. Two mappings would drift, and the
+ * one that drifted would be the one deciding what an error says to a person.
+ */
+export function memberSafeHarnessError(value: unknown): { code: string; message: string } | null {
   if (value == null) return null;
   const parsed = typeof value === "string" ? json<unknown>(value, null) : value;
   const rawCode = parsed && typeof parsed === "object" && !Array.isArray(parsed)
