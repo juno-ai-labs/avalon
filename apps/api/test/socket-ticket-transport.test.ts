@@ -26,7 +26,10 @@ class FakeResponse {
 }
 
 function upgradeResponse(): Response {
-  return new FakeResponse(null, { status: 101 }) as unknown as Response;
+  return new FakeResponse(null, {
+    status: 101,
+    webSocket: {} as unknown as WebSocket,
+  }) as unknown as Response;
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -75,6 +78,30 @@ describe("socket ticket transport", () => {
     expect(accepted.status).toBe(101);
     expect(accepted.headers.get("sec-websocket-protocol")).toBe(SOCKET_TICKET_SUBPROTOCOL);
     expect(accepted.headers.get("sec-websocket-protocol")).not.toContain(TICKET);
+  });
+
+  it("refuses a malformed offer rather than falling back to the URL it distrusts", () => {
+    // The client named the scheme, so its offer is the one that counts. Reading
+    // the query here would let a stale URL credential stand in for the ticket
+    // the client meant to present.
+    expect(() => socketTicketFromRequest(upgradeRequest([SOCKET_TICKET_SUBPROTOCOL, "short"]), OLD_TICKET))
+      .toThrow(ApiError);
+  });
+
+  it("leaves a room rejection alone rather than rebuilding it as an upgrade", () => {
+    // A replayed ticket is refused by the room with a JSON 401. Negotiating a
+    // subprotocol onto it would return a bodyless 101 carrying no socket, so
+    // the case this path exists to refuse would arrive as a broken handshake.
+    vi.stubGlobal("Response", FakeResponse);
+    const rejection = new FakeResponse(JSON.stringify({ error: "socket_ticket_replayed" }), {
+      status: 401,
+    }) as unknown as Response;
+
+    const answered = withNegotiatedSubprotocol(upgradeRequest(socketTicketProtocols(TICKET)), rejection);
+
+    expect(answered).toBe(rejection);
+    expect(answered.status).toBe(401);
+    expect(answered.headers.get("sec-websocket-protocol")).toBeNull();
   });
 
   it("selects no subprotocol for a client that offered none", () => {
