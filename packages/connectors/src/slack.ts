@@ -2,6 +2,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
+  isCredentialRejection,
   isRecord,
   jsonHeaders,
   providerJson,
@@ -9,6 +10,7 @@ import {
   readResponseBytes,
   sha256Hex,
   stringValue,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -1812,7 +1814,27 @@ function slackProviderErrorName(error: unknown): string | null {
 export function createSlackConnector(config: SlackConnectorConfig): ConnectorAdapter {
   const fetcher = config.fetch ?? fetch;
   const now = config.now ?? Date.now;
-  return {
+  /**
+   * Slack reports a token it will not accept as HTTP 200 with an error code,
+   * which `slackApiResponse` raises as `unauthorized`. Rotation is opt-in, so
+   * only a connection actually holding a refresh token can recover; the rest
+   * surface the rejection unchanged.
+   */
+  const reauthorizing = <T>(
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+    call: () => Promise<T>,
+  ): Promise<T> => withProviderReauthorization(
+    connection,
+    {
+      refresh: (candidate, refreshSignal) => adapter.refreshCredentials!(candidate, refreshSignal),
+      isRejection: isCredentialRejection,
+      canRefresh: (candidate) => Boolean(stringValue(candidate.credentials, "refreshToken")),
+      signal,
+    },
+    call,
+  );
+  const adapter: ConnectorAdapter = {
     manifest: {
       type: "slack",
       displayName: "Slack",
@@ -2127,21 +2149,35 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       const definition = slackTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) throw new ConnectorError("unsupported_capability", `The Slack connection has not granted ${definition?.capability ?? name}`);
       if (isSlackDirectTool(name)) {
-        return executeSlackDirectTool(name, rawArgs, context, fetcher);
+        return reauthorizing(
+          context.connection,
+          context.signal,
+          () => executeSlackDirectTool(name, rawArgs, context, fetcher),
+        );
       }
       if (context.connection.scope !== "personal") {
         throw new ConnectorError("unsupported_capability", `Slack workspace tool ${name} is unsupported`);
       }
       if (!isSlackMcpTool(name)) throw new ConnectorError("unsupported_capability", `Slack MCP tool ${name} is unsupported`);
       const args = SlackMcpInputSchemas[name].parse(rawArgs) as Record<string, unknown>;
-      const output = await callSlackMcp(userToken(context.connection), name, args, context.signal, fetcher);
+      const output = await reauthorizing(
+        context.connection,
+        context.signal,
+        () => callSlackMcp(userToken(context.connection), name, args, context.signal, fetcher),
+      );
       return { output, summary: `${definition.mode === "read" ? "Read from" : "Updated"} Slack with ${name}` };
     },
     async healthCheck(connection) {
       if (!connection) return { ok: Boolean(config.clientId && config.clientSecret && config.signingSecret), message: "Slack connector configuration is available" };
+      const signal = AbortSignal.timeout(10_000);
       try {
-        const token = connection.scope === "workspace" ? botToken(connection) : userToken(connection);
-        const authentication = await slackApiResponse(token, "auth.test", {}, AbortSignal.timeout(10_000), fetcher);
+        const authentication = await reauthorizing(connection, signal, () => slackApiResponse(
+          connection.scope === "workspace" ? botToken(connection) : userToken(connection),
+          "auth.test",
+          {},
+          signal,
+          fetcher,
+        ));
         if (connection.scope === "workspace") {
           if (authentication.oauthScopes == null) {
             return {
@@ -2170,6 +2206,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       }
     },
   };
+  return adapter;
 }
 
 function botToken(connection: ConnectorConnectionContext): string {

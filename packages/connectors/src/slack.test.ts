@@ -18,9 +18,10 @@ import {
 } from "./slack";
 import type { FetchLike } from "./provider-utils";
 import {
+  type AuthorizedConnectorConnection,
   acknowledgeConnectorAgentActivation,
+  authorizedConnection,
   connectorCapabilitySupportsScope,
-  type ConnectorConnectionContext,
 } from "./types";
 
 describe("Slack connector", () => {
@@ -925,7 +926,7 @@ describe("Slack connector", () => {
       fetch: fetcher,
     });
 
-    await expect(adapter.revoke!({
+    await expect(adapter.revoke!(authorizedConnection({
       id: "connection",
       workspaceId: "workspace",
       scope: "workspace",
@@ -934,7 +935,7 @@ describe("Slack connector", () => {
       credentials: { botAccessToken: "xoxb-access", refreshToken: "xoxe-refresh" },
       cursor: {},
       config: {},
-    }, AbortSignal.timeout(1_000))).rejects.toThrow(/ratelimited/iu);
+    }), AbortSignal.timeout(1_000))).rejects.toThrow(/ratelimited/iu);
   });
 
   it("parses verified event, interaction, and slash-command invocations", () => {
@@ -1140,8 +1141,8 @@ function json(value: unknown, headers: HeadersInit = {}, status = 200): Response
   return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json", ...Object.fromEntries(new Headers(headers)) } });
 }
 
-function slackWorkspaceConnection(): ConnectorConnectionContext {
-  return {
+function slackWorkspaceConnection(): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: "connection-slack",
     workspaceId: "workspace-avalon",
     scope: "workspace",
@@ -1150,12 +1151,12 @@ function slackWorkspaceConnection(): ConnectorConnectionContext {
     credentials: { botAccessToken: "xoxb-test" },
     cursor: {},
     config: {},
-  };
+  });
 }
 
-function slackWorkspaceToolConnection(): ConnectorConnectionContext {
-  return {
+function slackWorkspaceToolConnection(): AuthorizedConnectorConnection {
+  return authorizedConnection({
     ...slackWorkspaceConnection(),
     grantedScopes: [...SlackWorkspaceCapabilities],
-  };
+  });
 }
