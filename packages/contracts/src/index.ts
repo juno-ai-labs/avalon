@@ -152,14 +152,43 @@ export const AcceptWorkspaceInvitationRequestSchema = z.object({
 });
 
 /**
+ * How often Control Tower rewrites its briefing while a meeting records, in
+ * seconds. One definition for the three places that need it: the flag resolver
+ * that clamps what Flagship serves, the response schema below, and the desktop
+ * timer that falls back to it.
+ *
+ * The bounds are what makes a served cadence safe to act on. Every refresh is
+ * an inference, so a mistyped flag at the low end is a bill and a rate limit;
+ * at the high end it is a briefing so stale the feature stops being live. The
+ * default reproduces the behavior of a client that never asked.
+ */
+export const CONTROL_TOWER_REFRESH_SECONDS = {
+  default: 60,
+  minimum: 15,
+  maximum: 600
+} as const;
+
+/**
  * Every server-decided feature flag a client is allowed to see, resolved for
- * the signed-in person. Each field defaults to the closed state so a response
- * from an older service — or one whose flag provider was unreachable — leaves
- * the feature off rather than absent.
+ * the signed-in person. Each field defaults to the answer an unreachable flag
+ * provider — or a response from an older service that does not know the field —
+ * has to reproduce: off for a feature, and today's behavior for a setting that
+ * has no off.
  */
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
-  developerSettings: z.boolean().default(false)
+  developerSettings: z.boolean().default(false),
+  /**
+   * Control Tower's refresh cadence in seconds. `catch` rather than a bare
+   * bound: a value outside the range is a provisioning mistake, and degrading
+   * it to the default keeps one bad flag from failing the whole response and
+   * taking every other flag down with it.
+   */
+  controlTowerRefreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .catch(CONTROL_TOWER_REFRESH_SECONDS.default)
+    .default(CONTROL_TOWER_REFRESH_SECONDS.default)
 });
 
 export const ParticipantSchema = z.object({
@@ -174,6 +203,7 @@ export const ViewerSchema = z.object({
 });
 
 export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
+
 export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -219,7 +249,18 @@ export const WorkstreamSchema = z.object({
    * surfaces leave these out unless the reader has asked to see them, and render
    * them as secondary when they do.
    */
-  systemKind: z.enum(["digest"]).nullable().default(null)
+  systemKind: z.enum(["digest"]).nullable().default(null),
+  /**
+   * Where this work stream sits in *the reader's* pinned list, or `null` when
+   * they have not pinned it. Per-viewer the way the read-state fields above are:
+   * the same row is pinned for one member and not for another, so a client must
+   * never treat it as a property of the work stream itself.
+   *
+   * A position is an index into a dense ascending run, so it is only meaningful
+   * relative to the reader's other pins and changes whenever they rearrange
+   * them. Sort by it; do not store it as an identity.
+   */
+  pinPosition: z.number().int().nonnegative().nullable().default(null)
 });
 
 export const ExternalActorSchema = z.object({
@@ -364,6 +405,18 @@ export const AppendNoteTranscriptSegmentRequestSchema = z.object({
 export const GenerateNoteNotesRequestSchema = z.object({
   mode: z.enum(["live", "final"]).default("live"),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /**
+   * The refresh cadence the client is actually keeping, in seconds, so the live
+   * briefing can be written for it. The client asks for the served cadence once
+   * per meeting and holds it; the server would otherwise re-resolve the flag on
+   * every pass and describe a schedule nobody is on for the rest of any meeting
+   * the flag moved under. Omitted by a client that does not know it, which
+   * leaves the server resolving the flag as before.
+   */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .optional(),
 }).strict();
 
 // Every run is always delivered to its Avalon work stream. These are the
@@ -819,6 +872,13 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("completed"),
+    /**
+     * The draft subscription this turn wrote. It is the automation's real id
+     * from the first turn onward — the row the sidebar lists, the next turn
+     * updates, and creation promotes — so the client adopts it rather than
+     * keeping the key it opened the conversation with.
+     */
+    draftId: IdSchema,
     draft: AutomationDraftSchema,
     assistantMessage: z.string().min(1)
   }),
@@ -833,6 +893,24 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     })
   })
 ]);
+
+export const AutomationCompilerMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string()
+});
+
+/**
+ * A draft automation as the compiler left it: the transcript so far, the
+ * resources it was given, and the draft it last produced. It is what the
+ * builder screen needs to pick a draft back up out of the sidebar, and exactly
+ * what the next compile turn sends back.
+ */
+export const AutomationDraftStateSchema = z.object({
+  draftId: IdSchema,
+  messages: z.array(AutomationCompilerMessageSchema),
+  attachmentIds: z.array(IdSchema).default([]),
+  draft: AutomationDraftSchema
+});
 
 export const AutomationSummarySchema = z.object({
   id: IdSchema,
@@ -1068,6 +1146,27 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   observedManualUnreadGeneration: z.number().int().nonnegative(),
 });
 
+/**
+ * The whole pinned list in its new order, not a move of one row.
+ *
+ * A drag produces a complete arrangement, and sending that arrangement is what
+ * lets the server write a dense run without inferring one from an index whose
+ * meaning depends on a list state the client may no longer share. Ids the
+ * caller has since unpinned elsewhere are ignored rather than rejected, and
+ * pins the caller does not name keep their relative order behind the ones it
+ * did — a second window that pinned something a moment ago loses its position,
+ * never its pin.
+ *
+ * Deliberately unbounded. Nothing limits how many work streams a person may
+ * pin, so any count this array could be capped at would be a number the server
+ * can legitimately exceed — and the arrangement is all-or-nothing, so a cap
+ * would not truncate a drag, it would refuse one and leave the list
+ * unreorderable for as long as the person stayed above it.
+ */
+export const ReorderWorkstreamPinsRequestSchema = z.object({
+  workstreamIds: z.array(IdSchema),
+});
+
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
@@ -1094,6 +1193,13 @@ export const AnswerElicitationRequestSchema = z.union([
   }).strict()
 ]);
 export const CreateAutomationRequestSchema = z.object({
+  /**
+   * The draft this automation was built from. Creating promotes that row in
+   * place — same id, same sidebar position — instead of leaving the draft
+   * behind beside the automation it became. Absent only when an automation is
+   * created without ever having been a draft.
+   */
+  draftId: IdSchema.optional(),
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
@@ -1120,8 +1226,14 @@ export const CreateAutomationRequestSchema = z.object({
   }
 });
 export const CompileAutomationRequestSchema = z.object({
+  /**
+   * The draft subscription this conversation is already writing to. Absent on
+   * the first turn, and ignored when it names anything but a visible draft the
+   * caller owns — a compile turn may update a draft, never an automation that
+   * runs.
+   */
   draftId: IdSchema.optional(),
-  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
+  messages: z.array(AutomationCompilerMessageSchema).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null),
   attachmentIds: z.array(IdSchema).max(10).default([]),
 });
@@ -1247,12 +1359,31 @@ export const GenerateMeetingNotesRequestSchema = z.object({
   startedAt: TimestampSchema.nullable().default(null),
   endedAt: TimestampSchema.nullable().default(null),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /** The cadence the client is keeping; null means resolve the flag instead. */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .nullable()
+    .default(null),
 }).strict();
 
 export const MeetingNotesResponseSchema = z.object({
   notes: z.string().trim().min(1).max(50_000),
   generatedAt: TimestampSchema
 });
+
+/**
+ * Set on a normalized activity's metadata when the polling stream that produced
+ * it is not digestible, so the withholding survives the queue and the
+ * `activities` row into the moment the activity log is written.
+ *
+ * A metadata key rather than a column because it is a stream's veto over its own
+ * output, not a property of the activity that any other surface reads: nothing
+ * queries on it, and the event type remains the authority on what a digest may
+ * contain. The leading underscore is the same convention the activity
+ * consumer's processing-claim keys already use for host-owned metadata.
+ */
+export const ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY = "_streamNotDigestible";
 
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
@@ -1545,6 +1676,22 @@ export const ConnectorActivityTriggerDescriptorSchema = z.object({
   label: z.string().min(1).max(160),
   description: z.string().min(1).max(800),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
+  /**
+   * Whether a person should be told about this activity in a digest.
+   *
+   * There is deliberately no default. A connector declares dozens of event
+   * types, and most providers emit far more machinery than news: a repository
+   * that reports every check run and every workflow transition will fill a
+   * digest window with its own continuous integration before a single review
+   * comment reaches the reader. Which of the two an event type is can only be
+   * answered by whoever designed the connector, at the moment they added it, so
+   * the contract asks then and refuses a manifest that stays quiet.
+   *
+   * `false` is not a lesser event. It still ingests, still routes, still
+   * triggers automations and watches, and still appears in the activity log.
+   * It just does not interrupt a person on a schedule.
+   */
+  digestible: z.boolean(),
 });
 
 /**
@@ -1729,6 +1876,12 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 }).transform((manifest) => ({
   ...manifest,
   activityTypes: manifest.activityTriggers.map((trigger) => trigger.eventType),
+  // Derived rather than declared a second time: the descriptor is the single
+  // authority on digestibility, and a consumer asking "may this event type
+  // reach a digest" should not have to scan a list of descriptors to find out.
+  digestibleActivityTypes: manifest.activityTriggers
+    .filter((trigger) => trigger.digestible)
+    .map((trigger) => trigger.eventType),
 }));
 
 export type Region = z.infer<typeof RegionSchema>;
@@ -1779,6 +1932,8 @@ export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
 export type MemoryTableColumnType = z.infer<typeof MemoryTableColumnTypeSchema>;
 export type AutomationDraftStreamEvent = z.infer<typeof AutomationDraftStreamEventSchema>;
+export type AutomationCompilerMessage = z.infer<typeof AutomationCompilerMessageSchema>;
+export type AutomationDraftState = z.infer<typeof AutomationDraftStateSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;

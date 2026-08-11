@@ -11,12 +11,19 @@ Three surfaces cache a draft, and they are the only ones that do:
 | --- | --- | --- |
 | A work stream's composer | `WorkstreamComposer` | `workstream:<workstreamId>` |
 | **New work stream** | `NewWorkstreamScreen` | `new-workstream:<workspaceId>` |
-| **New automation** | `NewAutomationScreen` | `new-automation:<workspaceId>` |
+| **New automation** | `NewAutomationScreen` | `new-automation:<workspaceId>`, and `new-automation:<workspaceId>:<draftAutomationId>` once the conversation has a draft automation |
 
 `lib/draft-keys.ts` is the single place those strings are built. A draft's text
 and its attachments share one key, so the two halves of a composer can never
 drift apart, and the launchers are scoped per workspace so switching workspaces
 does not surface another workspace's words.
+
+**New automation** is one screen serving many conversations, so its key gains the
+draft automation being written the moment a turn names one — otherwise an unsent
+sentence, and the files staged beside it, follow the screen into the next
+automation. The key moves on a settled turn rather than with the address bar, and
+the text typed while that turn was compiling is carried across by hand;
+[`automation-drafts.md`](automation-drafts.md) has the reasoning.
 
 ## What is stored, and where
 
@@ -86,7 +93,10 @@ reset by hand.
 changes — it resets, reads the cached row, and applies it **unless the user has
 already typed**, which they own outright however late the read lands. Saves are
 debounced by 250 ms and flushed when the composer unmounts or switches keys, so
-quitting mid-word still commits the word.
+quitting mid-word still commits the word — including a word typed *before* the
+read landed, which the debounce never held because saving stands down until
+hydration. That one is written by its own unmount-only commit; without it, a
+composer opened, typed into, and left inside the read window lost the sentence.
 
 `useFileAttachments(api, draftKey)` owns the files. On mount it restores the
 cached rows in insertion order, rebuilds each `File`, and regenerates image
@@ -123,7 +133,11 @@ are still on disk to try again with.
 
 - Automation drafts under construction — the compiled `AutomationDraftResponse`,
   the assistant conversation, and the plugin or activity-source choices. Only the
-  input component is cached; the rest belongs to the API's draft.
+  input component is cached; the conversation is saved on the draft automation
+  itself, which is a real subscription row from its first compiled turn
+  ([`automation-drafts.md`](automation-drafts.md)). The plugin and
+  activity-source choices are cached nowhere, because they are re-derived from
+  the connections in force under the scope in force.
 - Files that could never be sent. An empty file, or one over the 25 MB limit, is
   shown as failed and never written to disk.
 - Attachments beyond the ten a message may carry, whether they were found on
@@ -151,3 +165,35 @@ composer must call `clearAllDrafts()` in its `beforeEach`; the suites that do ar
 the ones that render a composer. Do not clear it globally — a live IndexedDB
 connection perturbs React's `act` scheduling enough to break unrelated screens'
 assertions.
+
+## Changelog
+
+### 2026-08-11 — An edit made before the cache read lands is no longer lost
+
+**What changed:** `useDraftText` commits on unmount even when hydration never
+completed. The save effect still stands down until the cached row has been read;
+what is new is a second, unmount-only commit for exactly the case that effect
+cannot cover.
+
+**Why:** `use-draft-text.test.tsx > commits an unsaved draft when the composer
+unmounts` fails about one run in seven, in isolation. It is not a test defect.
+Typing arms nothing until `readDraftText` resolves, and the hydration handler
+that would have saved the text bails when the composer is already gone — so an
+edit made and abandoned inside the read window has no writer at all. The window
+is milliseconds on a warm cache and much longer on a cold one, which is exactly
+when someone opens a composer, types, and thinks better of it. The hook's own
+comment already claimed this text was the user's "however late the read lands";
+that was true for one order of events and not the other.
+
+**Considered and rejected:** Making the test wait for hydration before typing.
+That is the change that makes a green suite out of a real defect — the sentence
+would still be dropped in the product, and nothing would be left to catch it.
+
+**Consequences:** Unmount now has two cleanups that can write, and they are
+ordered: the keyed one flushes what the debounce holds, and the unmount-only one
+covers the unhydrated case and returns immediately in every other. The second is
+deliberately not keyed on `draftKey` — a key-change cleanup runs when `latest`
+already describes the key being switched *to*, so firing it there would write one
+draft's text under another's key.
+
+Shipped in #99.

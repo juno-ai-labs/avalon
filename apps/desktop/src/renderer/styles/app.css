@@ -578,6 +578,14 @@ pre {
 .sidebar-context-target { min-width: 0; }
 .sidebar-context-target .sidebar-row { width: 100%; }
 
+/* The pinned list is arranged by hand, so the grab cursor is the only standing
+   sign that it can be. The row keeps its place in the flow while it is dragged
+   and is faded instead of hidden, so the list's height never changes underneath
+   the pointer mid-drag. */
+.sidebar-context-target.is-draggable { cursor: grab; }
+.sidebar-context-target.is-dragging { cursor: grabbing; opacity: 0.45; }
+.sidebar-context-target.is-dragging .sidebar-row { background: #22231f; }
+
 .sidebar-row {
   font-size: 12.5px;
   gap: 5px;

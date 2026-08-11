@@ -15,7 +15,7 @@ describe("Bind host durability boundaries", () => {
       ["connection:preload", "connection:revoked", "connection:preload"],
       async (pluginId) => {
         order.push(`reauthorize:${pluginId}`);
-        return pluginId !== "connection:revoked";
+        return pluginId === "connection:revoked" ? "denied" : "authorized";
       },
       async (pluginId) => {
         order.push(`persist:start:${pluginId}`);

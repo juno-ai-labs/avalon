@@ -47,6 +47,17 @@ export interface ActivityEventInput {
   body?: string;
   canonicalUrl?: string | null;
   audience: ActivityEventAudience;
+  /**
+   * Whether a person should be told about this in their digest.
+   *
+   * Required, and deliberately not defaulted. Audience answers who *may* hear
+   * about an event; this answers whether anybody *wants* to. Most of what a
+   * connector reports is machinery — a check run, an autosave, a reaction — and
+   * a producer that has not decided which kind it is writing should not get the
+   * benefit of the doubt in somebody's inbox. A connector producer resolves
+   * this from its manifest; a first-party producer knows at the call site.
+   */
+  digestible: boolean;
   occurredAt: string;
   sourceKind: string;
   sourceId?: string | null;
@@ -127,8 +138,9 @@ export async function recordActivityEventOrThrow(
        (id, workspace_id, event_type, subject_type, subject_id, subject_sequence_number,
         actor_type, actor_user_id, actor_label, title, body, canonical_url,
         audience_kind, audience_user_id, audience_workstream_id,
-        occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json,
+        digestible)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING
      RETURNING id`,
   ).bind(
@@ -153,6 +165,7 @@ export async function recordActivityEventOrThrow(
     input.sourceId ?? null,
     input.dedupeKey,
     JSON.stringify(input.metadata ?? {}),
+    input.digestible ? 1 : 0,
   ).first<{ id: string }>();
 
   // A conflict means an earlier attempt already wrote this event, and its id is
@@ -208,6 +221,17 @@ export async function listActivityEventsForUser(
      * provider event that is older than that.
      */
     notBefore?: string | null;
+    /**
+     * Whether to return only what a person should be *told* about, as opposed
+     * to everything that happened and they may see.
+     *
+     * Required rather than defaulted, because the two readings are both
+     * legitimate and the wrong one is invisible: a surface showing an activity
+     * feed wants all of it, and a surface that interrupts somebody wants the
+     * subset. A new consumer has to say which it is instead of inheriting
+     * whichever answer the digest happened to need.
+     */
+    digestibleOnly: boolean;
     limit: number;
   },
 ): Promise<ActivityEventRow[]> {
@@ -229,6 +253,7 @@ export async function listActivityEventsForUser(
         AND (?3 IS NULL OR e.log_sequence > ?3)
         AND e.log_sequence <= ?4
         AND (?5 IS NULL OR e.created_at >= ?5)
+        AND (?7 = 0 OR e.digestible = 1)
         AND (
           e.audience_kind = 'workspace'
           OR (e.audience_kind = 'user' AND e.audience_user_id = ?2)
@@ -259,6 +284,7 @@ export async function listActivityEventsForUser(
     input.through,
     input.notBefore ?? null,
     input.limit,
+    input.digestibleOnly ? 1 : 0,
   ).all<ActivityEventRow>();
   return result.results ?? [];
 }

@@ -20,6 +20,7 @@ import {
   toWorkstream,
   WORKSTREAM_VIEWER_COLUMNS_SQL,
   WORKSTREAM_VIEWER_JOINS_SQL,
+  workstreamViewerBindings,
 } from "../mappers/workstream";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
 import { memberSafeHarnessError } from "../services/workstream-service";
@@ -1000,7 +1001,7 @@ export async function loadWorkstreamRoomSnapshot(
        ${WORKSTREAM_VIEWER_JOINS_SQL}
       WHERE w.id = ? AND w.workspace_id = ? LIMIT 1`
   )
-    .bind(viewerUserId, workstreamId, workspaceId)
+    .bind(...workstreamViewerBindings(viewerUserId), workstreamId, workspaceId)
     .first<WorkstreamRow>();
   if (!row) throw new Error("Work stream not found");
 

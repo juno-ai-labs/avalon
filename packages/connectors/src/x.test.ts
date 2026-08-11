@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createXConnector, XCapabilities } from "./x";
 import type { FetchLike } from "./provider-utils";
-import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
+import {
+  type AuthorizedConnectorConnection,
+  authorizedConnection,
+  connectorCapabilitySupportsScope,
+} from "./types";
 
 describe("X connector", () => {
   it("supports workspace connections only", () => {
@@ -221,8 +225,16 @@ describe("X connector", () => {
     const rejected = xAdapter(async () => jsonResponse({ message: "Invalid API key" }, 401));
     await expect(rejected.healthCheck()).resolves.toEqual({ ok: false, message: "Invalid API key" });
 
-    const empty = xAdapter(async () => jsonResponse({ recharge_credits: 0 }));
-    await expect(empty.healthCheck()).resolves.toEqual({ ok: false, message: "TwitterAPI.io has no remaining credits" });
+    // A balance is not a health signal. TwitterAPI.io bills against more than
+    // one, documents only one, and is the authority on whether any given call
+    // can be paid for — so an account reporting zero recharge credits while
+    // holding spendable bonus credits stays usable, and a call that genuinely
+    // cannot be funded fails as a call.
+    const zeroRecharge = xAdapter(async () => jsonResponse({ recharge_credits: 0 }));
+    await expect(zeroRecharge.healthCheck()).resolves.toEqual({ ok: true, message: "TwitterAPI.io access is healthy" });
+
+    const noBalanceReported = xAdapter(async () => jsonResponse({}));
+    await expect(noBalanceReported.healthCheck()).resolves.toEqual({ ok: true, message: "TwitterAPI.io access is healthy" });
 
     const throttled = xAdapter(async () => jsonResponse({ message: "Slow down" }, 429, { "retry-after": "5" }));
     await expect(throttled.healthCheck()).rejects.toMatchObject({
@@ -286,8 +298,8 @@ async function execute(
 
 function xConnection(
   grantedScopes: string[],
-): ConnectorConnectionContext {
-  return {
+): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: "x-connection",
     workspaceId: "avalon-workspace",
     scope: "workspace",
@@ -296,15 +308,15 @@ function xConnection(
     credentials: {},
     cursor: {},
     config: {},
-  };
+  });
 }
 
-function personalXConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function personalXConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     ...xConnection(grantedScopes),
     scope: "personal",
     ownerUserId: "avalon-user",
-  };
+  });
 }
 
 function requestUrl(input: string | URL | Request): URL {

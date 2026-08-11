@@ -28,6 +28,7 @@ import {
   toWorkstream,
   WORKSTREAM_VIEWER_COLUMNS_SQL,
   WORKSTREAM_VIEWER_JOINS_SQL,
+  workstreamViewerBindings,
 } from "../mappers/workstream";
 import {
   isCanonicalPersonMention,
@@ -581,19 +582,40 @@ export class WorkstreamService {
     // decides whether it is listed at all; `scope` says who may read it, and is
     // enforced below whatever the caller asked to see.
     const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
+    // A pinned work stream leaves the recency order altogether rather than
+    // being paged with everything else, which is the same thing the sidebar
+    // does when it lifts one out of the recent list into the Pinned section.
+    // Being in both would mean being returned twice — once appended to the
+    // first page below, and again on whichever cursor page its own
+    // `last_activity_at` falls in.
     const statement = this.env.DB.prepare(
       `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
        FROM workstreams w
        ${WORKSTREAM_VIEWER_JOINS_SQL}
-       WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND pin.user_id IS NULL
+         ${systemClause} ${cursorClause}
          AND ${WORKSTREAM_VISIBILITY_SQL}
        ORDER BY w.last_activity_at DESC LIMIT ?`,
     );
     const visibility = workstreamVisibilityBindings(this.auth.userId);
+    const viewer = workstreamViewerBindings(this.auth.userId);
     const result = before
-      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, ...visibility, limit + 1).all<Record<string, unknown>>()
-      : await statement.bind(this.auth.userId, this.auth.workspaceId, ...visibility, limit + 1).all<Record<string, unknown>>();
+      ? await statement.bind(...viewer, this.auth.workspaceId, before, ...visibility, limit + 1).all<Record<string, unknown>>()
+      : await statement.bind(...viewer, this.auth.workspaceId, ...visibility, limit + 1).all<Record<string, unknown>>();
     const rows = result.results ?? [];
+    const hasMore = rows.length > limit;
+    if (hasMore) rows.pop();
+    const nextCursor = hasMore ? String(rows.at(-1)?.last_activity_at ?? "") || null : null;
+    // Every pin arrives on the first page, whatever its activity, because it is
+    // rendered in a section the recency order does not reach: one that has gone
+    // quiet would otherwise fall past `limit` and vanish from the one place the
+    // reader deliberately put it. They are appended after the paged rows and
+    // are excluded from the query above, so each work stream is returned
+    // exactly once across the whole pagination. The first page can therefore
+    // hold more than `limit` items — one more per pin, and nothing caps how
+    // many a person has — which is why `nextCursor` comes from the paged rows
+    // rather than from the last item returned.
+    if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
     if (unreconciledAddressRows.length > 0) {
@@ -610,10 +632,7 @@ export class WorkstreamService {
         row.email_route_status = "active";
       }
     }
-    const items = rows.map(toWorkstream);
-    const hasMore = items.length > limit;
-    if (hasMore) items.pop();
-    return { items, nextCursor: hasMore ? items.at(-1)?.lastActivityAt ?? null : null };
+    return { items: rows.map(toWorkstream), nextCursor };
   }
 
   async create(
@@ -1115,6 +1134,159 @@ export class WorkstreamService {
       at,
     ).run();
     return this.requireWorkstream(id);
+  }
+
+  /**
+   * Pin a work stream for the calling user, at the end of their pinned list.
+   *
+   * The end rather than the top: the list is arranged by hand, so the only
+   * position Avalon can pick without overruling that arrangement is the one
+   * that disturbs none of it. Pinning something already pinned changes nothing,
+   * so a second window acting on a stale menu cannot move a row.
+   *
+   * There is no limit on how many a person may pin. A cap here was tried and
+   * removed: counting stored rows let pins whose work streams had gone out of
+   * sight spend slots nobody could free, and counting only the visible ones
+   * meant the list could legitimately grow past the number the reorder request
+   * would accept, which left it unreorderable. Both failures came from the cap
+   * rather than from the size of anyone's list.
+   */
+  async pin(id: string) {
+    // Only a work stream this person may read may be pinned. Everything after
+    // this point is the viewer's own row, and is not gated again.
+    await this.requireWorkstream(id);
+    const at = nowIso();
+    // The position is chosen inside the statement rather than read out first
+    // and bound back in. A read-then-write hands the same number to two pins
+    // made at once, and it also collides with a hole — a work stream deleted
+    // outright takes its pin with it by cascade, leaving a run whose length is
+    // no longer its next free position.
+    await this.env.DB.prepare(
+      `INSERT INTO workstream_pins
+       (workspace_id, workstream_id, user_id, position, created_at, updated_at)
+       SELECT ?, ?, ?, COALESCE(
+         (SELECT MAX(existing.position) + 1 FROM workstream_pins existing
+           WHERE existing.workspace_id = ? AND existing.user_id = ?), 0), ?, ?
+       ON CONFLICT(workstream_id, user_id) DO NOTHING`,
+    ).bind(
+      this.auth.workspaceId,
+      id,
+      this.auth.userId,
+      this.auth.workspaceId,
+      this.auth.userId,
+      at,
+      at,
+    ).run();
+    return this.pinnedList();
+  }
+
+  /**
+   * Unpin a work stream for the calling user and close the gap it leaves, so
+   * the surviving positions stay the dense run every other path assumes.
+   *
+   * Deliberately not gated on `requireWorkstream`: a pin is the viewer's own
+   * row, so removing one is never a question about the work stream. A pin whose
+   * work stream has gone out of sight renders nothing and cannot be reached
+   * from the sidebar at all — the way to be rid of it is a caller that already
+   * knows the id, and refusing them a 404 would be refusing the only route left.
+   */
+  async unpin(id: string) {
+    const removed = await this.env.DB.prepare(
+      "DELETE FROM workstream_pins WHERE workstream_id = ? AND user_id = ? AND workspace_id = ?",
+    ).bind(id, this.auth.userId, this.auth.workspaceId).run();
+    if ((removed.meta?.changes ?? 0) > 0) await this.rewritePinPositions(await this.loadPinnedWorkstreamIds());
+    return this.pinnedList();
+  }
+
+  /**
+   * Rearrange the caller's pinned list into the order they dropped it in.
+   *
+   * Tolerant by construction, because a client sending an arrangement is
+   * describing a list it painted some moments ago: an id it names that is no
+   * longer pinned is dropped, and a pin it does not name is appended behind the
+   * ones it did, keeping its position relative to its unnamed neighbours.
+   * Rejecting the whole call instead would turn a pin made in another window
+   * into a failed drag here, which is the one outcome that loses an
+   * arrangement the person can see.
+   */
+  async reorderPins(workstreamIds: string[]) {
+    const current = await this.loadPinnedWorkstreamIds();
+    const pinned = new Set(current);
+    const requested = [...new Set(workstreamIds)].filter((id) => pinned.has(id));
+    const requestedSet = new Set(requested);
+    await this.rewritePinPositions([...requested, ...current.filter((id) => !requestedSet.has(id))]);
+    return this.pinnedList();
+  }
+
+  /**
+   * What every pin mutation answers with: the caller's whole pinned list, in
+   * order. One shape for all three, because a client that replaces its pinned
+   * list wholesale cannot end up holding a position the server disagrees with —
+   * which is exactly what a response describing only the row that moved would
+   * let it do after a concurrent change from another window.
+   */
+  private async pinnedList() {
+    return { items: await this.loadPinnedWorkstreams() };
+  }
+
+  /**
+   * The caller's pins, in their stored order — every row, including any whose
+   * work stream this person can no longer see, because a rewrite that skipped
+   * those would strand them at positions the visible run is about to reuse.
+   *
+   * The `workstream_id` tiebreak matches {@link loadPinnedWorkstreamRows}. Two
+   * readers of one list that break a tie differently disagree about the order,
+   * and the disagreement only becomes visible when a rewrite silently swaps a
+   * pair the reader never touched.
+   */
+  private async loadPinnedWorkstreamIds(): Promise<string[]> {
+    const result = await this.env.DB.prepare(
+      `SELECT workstream_id FROM workstream_pins
+        WHERE workspace_id = ? AND user_id = ?
+        ORDER BY position, workstream_id`,
+    ).bind(this.auth.workspaceId, this.auth.userId).all<{ workstream_id: string }>();
+    return (result.results ?? []).map((row) => row.workstream_id);
+  }
+
+  /**
+   * The caller's pinned work streams, as work streams.
+   *
+   * Filtered by the same visibility rule every other read applies, so a pin
+   * left behind by a work stream that has been archived, or made private
+   * without this person in it, contributes a row to nothing. The pin itself
+   * survives, because the work stream may come back and its place with it,
+   * which is also why `unpin` refuses to check visibility.
+   */
+  private async loadPinnedWorkstreams(includeSystem = true) {
+    return (await this.loadPinnedWorkstreamRows(includeSystem)).map(toWorkstream);
+  }
+
+  /** {@link loadPinnedWorkstreams} before mapping, for callers that merge rows. */
+  private async loadPinnedWorkstreamRows(includeSystem: boolean): Promise<Record<string, unknown>[]> {
+    const result = await this.env.DB.prepare(
+      `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
+       FROM workstreams w
+       ${WORKSTREAM_VIEWER_JOINS_SQL}
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND pin.user_id IS NOT NULL
+         ${includeSystem ? "" : "AND w.system_kind IS NULL"}
+         AND ${WORKSTREAM_VISIBILITY_SQL}
+       ORDER BY pin.position, pin.workstream_id`,
+    ).bind(
+      ...workstreamViewerBindings(this.auth.userId),
+      this.auth.workspaceId,
+      ...workstreamVisibilityBindings(this.auth.userId),
+    ).all<Record<string, unknown>>();
+    return result.results ?? [];
+  }
+
+  /** Write `ids` as positions `0..n-1`. The caller decides the order. */
+  private async rewritePinPositions(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    const at = nowIso();
+    await this.env.DB.batch(ids.map((id, position) => this.env.DB.prepare(
+      `UPDATE workstream_pins SET position = ?, updated_at = ?
+        WHERE workstream_id = ? AND user_id = ? AND workspace_id = ?`,
+    ).bind(position, at, id, this.auth.userId, this.auth.workspaceId)));
   }
 
   async createMessage(
@@ -1628,8 +1800,12 @@ export class WorkstreamService {
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
          AND ${WORKSTREAM_VISIBILITY_SQL}`,
-    ).bind(this.auth.userId, id, this.auth.workspaceId, ...workstreamVisibilityBindings(this.auth.userId))
-      .first<Record<string, unknown>>();
+    ).bind(
+      ...workstreamViewerBindings(this.auth.userId),
+      id,
+      this.auth.workspaceId,
+      ...workstreamVisibilityBindings(this.auth.userId),
+    ).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
   }
@@ -1812,6 +1988,10 @@ export class WorkstreamService {
       body: truncateUtf16Safe(message.textContent, ACTIVITY_EVENT_BODY_LIMIT),
       canonicalUrl: this.workstreamLinkOrNull(workstream.id),
       audience: { kind: "workstream", workstreamId: workstream.id },
+      // A person wrote this to a work stream someone is a participant of.
+      // There is no first-party equivalent of a check run: everything Avalon
+      // records here is somebody addressing somebody.
+      digestible: true,
       occurredAt: message.createdAt,
       sourceKind: "message",
       sourceId: message.id,
