@@ -758,7 +758,7 @@ describe("connectors", () => {
       }
     );
     expect(result.output).toMatchObject({
-      messages: [
+      items: [
         {
           id: "message-1",
           threadId: "thread-1",
@@ -831,7 +831,7 @@ describe("connectors", () => {
     expect(queries[0]).toContain("to:(\"Alex\")");
     expect(result.output).toMatchObject({
       scannedMessages: 2,
-      contacts: [{
+      items: [{
         email: "alex.rivera@mucker.example",
         occurrences: 2,
         matchedHeaders: ["from", "to"],
@@ -841,7 +841,7 @@ describe("connectors", () => {
         lastSubject: "Tuesday call"
       }]
     });
-    const contacts = (result.output as { contacts: Array<{ email: string; displayNames: string[] }> }).contacts;
+    const contacts = (result.output as { items: Array<{ email: string; displayNames: string[] }> }).items;
     expect(contacts[0]?.displayNames).toEqual(expect.arrayContaining(["Alex Rivera", "Rivera Alex"]));
     // The mailbox owner and an unrelated correspondent are both left out.
     expect(contacts.map((contact) => contact.email)).not.toContain("adam@example.com");
@@ -867,7 +867,7 @@ describe("connectors", () => {
     expect(result.output).toMatchObject({
       query: "Danny",
       scannedMessages: 0,
-      contacts: [],
+      items: [],
       reason: "no_messages_matched"
     });
     expect((result.output as { hint: string }).hint).toContain("differently spelled name");
@@ -897,7 +897,7 @@ describe("connectors", () => {
     );
     expect(result.output).toMatchObject({
       scannedMessages: 1,
-      contacts: [],
+      items: [],
       reason: "no_address_matched_name"
     });
   });
@@ -928,7 +928,7 @@ describe("connectors", () => {
         signal: AbortSignal.timeout(1_000)
       }
     );
-    expect((result.output as { contacts: unknown[] }).contacts).toHaveLength(1);
+    expect((result.output as { items: unknown[] }).items).toHaveLength(1);
   });
 
   it("creates and updates Google Calendar events with bounded event fields", async () => {
@@ -970,7 +970,7 @@ describe("connectors", () => {
       connection: googleConnection(["calendar.read"])
     });
     expect(calendars.output).toMatchObject({
-      calendars: [{ id: "primary", primary: true }, { id: "team@example.com", accessRole: "writer" }]
+      items: [{ id: "primary", primary: true }, { id: "team@example.com", accessRole: "writer" }]
     });
 
     const created = await adapter.executeTool("calendar.create_event", {
@@ -1005,6 +1005,128 @@ describe("connectors", () => {
     });
   });
 
+  it("adds an attendee without dropping the ones the event already has", async () => {
+    const requests: Array<{ method: string; url: URL; body: Record<string, unknown> }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = requestUrl(input);
+      const method = init?.method ?? "GET";
+      requests.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {} });
+      if (method === "GET") {
+        return googleJson({
+          attendees: [{ email: "existing@example.com" }, { email: "Second@example.com" }]
+        });
+      }
+      return googleJson({ id: "event-existing", summary: "Tuesday call" });
+    };
+    await googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", addAttendeeEmails: ["new@example.com"] },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    const patch = requests.find((request) => request.method === "PATCH");
+    expect(patch?.body).toMatchObject({
+      attendees: [
+        { email: "existing@example.com" },
+        { email: "Second@example.com" },
+        { email: "new@example.com" }
+      ]
+    });
+    expect(patch?.url.searchParams.get("sendUpdates")).toBe("all");
+  });
+
+  it("refuses the create-shaped attendee parameter on an update instead of wiping the guest list", async () => {
+    const fetcher: typeof fetch = async () => googleJson({ id: "event-existing" });
+    await expect(googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", attendeeEmails: ["new@example.com"] },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toThrow(/attendeeEmails/u);
+  });
+
+  it("rejects an undeclared argument rather than silently dropping it", async () => {
+    const fetcher: typeof fetch = async () => googleJson({ messages: [] });
+    await expect(googleAdapter(fetcher).executeTool(
+      "gmail.search",
+      { query: "is:unread", limit: 5 },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toThrow(/limit/u);
+  });
+
+  it("resolves a calendar by name and refuses an ambiguous one by naming the candidates", async () => {
+    const calendarList = {
+      items: [
+        { id: "work@example.com", summary: "Work" },
+        { id: "personal@example.com", summary: "Personal" }
+      ]
+    };
+    const byName: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/calendarList")) return googleJson(calendarList);
+      return googleJson({ items: [] });
+    };
+    const context = {
+      connection: googleConnection(["calendar.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    const listed = await googleAdapter(byName).executeTool(
+      "calendar.list_events",
+      { calendarId: "Work", timeMin: "2026-08-01T00:00:00Z", timeMax: "2026-08-02T00:00:00Z" },
+      context
+    );
+    expect(listed.summary).toContain("0 calendar events");
+
+    const ambiguous: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/calendarList")) {
+        return googleJson({ items: [{ id: "a@example.com", summary: "Work" }, { id: "b@example.com", summary: "work" }] });
+      }
+      return googleJson({ items: [] });
+    };
+    await expect(googleAdapter(ambiguous).executeTool(
+      "calendar.list_events",
+      { calendarId: "Work", timeMin: "2026-08-01T00:00:00Z", timeMax: "2026-08-02T00:00:00Z" },
+      context
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "ambiguous_calendar_name" }
+    });
+  });
+
+  it("names the identifier family it expected instead of passing a swap to Google", async () => {
+    const fetcher: typeof fetch = async () => googleJson({ error: { code: 404 } }, 404);
+    const context = {
+      connection: googleConnection(["calendar.read", "calendar.write", "gmail.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "gmail.read_message",
+      { messageId: "thread-1" },
+      context
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", field: "messageId" }
+    });
+    await expect(googleAdapter(async () => googleJson({ items: [] })).executeTool(
+      "calendar.read_event",
+      { calendarId: "primary", eventId: "team@example.com" },
+      context
+    )).rejects.toMatchObject({ details: { reason: "wrong_id_family", expected: "eventId" } });
+  });
+
   it("requires RFC reply headers when creating a Gmail draft in an existing thread", async () => {
     let requestBody: Record<string, unknown> | null = null;
     const fetcher: typeof fetch = async (_input, init) => {
@@ -1033,6 +1155,12 @@ describe("connectors", () => {
       references: ["<earlier@example.com>"]
     }, context);
     expect(result.providerOperationId).toBe("draft-1");
+    // A draft a person is meant to review comes back with somewhere to open it,
+    // the way every calendar write already does.
+    expect(result.output).toMatchObject({
+      id: "draft-1",
+      webUrl: "https://mail.google.com/mail/u/0/#all/thread-1"
+    });
     expect(requestBody).not.toBeNull();
     const message = ((requestBody as unknown as Record<string, unknown>).message ?? {}) as Record<string, unknown>;
     const raw = String(message.raw ?? "");
@@ -1295,7 +1423,7 @@ describe("connectors", () => {
         signal: AbortSignal.timeout(1_000)
       }
     );
-    expect(result.output).toMatchObject({ messages: [{ id: "message-1" }] });
+    expect(result.output).toMatchObject({ items: [{ id: "message-1" }] });
     // The list call is refused, refreshed, and retried; the third authorization
     // is the header hydration for the single hit it returned.
     expect(authorizations).toEqual(["Bearer access-old", "Bearer access-new", "Bearer access-new"]);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  readStructuredFailure,
   ActivityQueueMessageSchema,
   AnswerElicitationRequestSchema,
   AppendNoteTranscriptSegmentRequestSchema,
@@ -775,5 +776,27 @@ describe("boundary contracts", () => {
       supportsWebhooks: false
     });
     expect(manifest.capabilities).toEqual([{ id: "provider.read", kind: "tool" }]);
+  });
+
+  it("reads a thrown failure's machine-readable half without knowing its error class", () => {
+    class ProviderError extends Error {
+      constructor(readonly code: string, message: string, readonly details?: unknown) {
+        super(message);
+      }
+    }
+    expect(readStructuredFailure(new ProviderError("invalid_payload", "Wrong id family", {
+      reason: "wrong_id_family",
+      field: "messageId",
+    }))).toEqual({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", field: "messageId" },
+    });
+    // A code with no details is still worth surfacing; anything without a code
+    // carries nothing the caller could branch on.
+    expect(readStructuredFailure(new ProviderError("unauthorized", "Reconnect"))).toEqual({ code: "unauthorized" });
+    expect(readStructuredFailure(new ProviderError("payload_too_large", "Too big", ["not", "a", "record"])))
+      .toEqual({ code: "payload_too_large" });
+    expect(readStructuredFailure(new Error("plain"))).toBeNull();
+    expect(readStructuredFailure("not an error")).toBeNull();
   });
 });
