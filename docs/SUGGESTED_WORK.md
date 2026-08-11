@@ -78,6 +78,11 @@ candidate the member is eligible for. It is the *only* freshness signal, and it
 is sufficient: it detects an admission, a revision, an expiry, a dismissal, and
 an opportunity leaving `active`.
 
+The one thing it cannot see is impressions, which feed the ranking but are not
+candidates. That is why the impression trigger blanks `candidate_fingerprint`
+along with setting `due_at` — asking for a ranking the cache will skip is not
+asking for anything.
+
 There used to be a `workspace_opportunity_versions` counter beside it, ANDed
 into the same check. It was redundant on every axis and wrong on one — being
 workspace-wide, it invalidated every member's set when an opportunity was
@@ -95,15 +100,28 @@ written. They are dropped in a follow-up migration, once a release has passed.
 
 | Trigger | Delay | Who |
 | --- | --- | --- |
-| Opportunity admitted or revised | `DUE_DEBOUNCE_MS` (2 min) | The window's audience — one member, or all active members |
+| Opportunity admitted or revised | `DUE_DEBOUNCE_MS` (2 min) | The window's audience — one member, or every active member |
 | Opportunity names a member | none | That member |
-| Member dismisses a suggestion | none | That member |
+| Member dismisses or starts a suggestion | none | That member |
 | Impressions, at most hourly | none | That member |
-| Read finds nothing stored | none | That member |
+| Read finds eligible candidates the stored set does not account for | none | That member |
+| Read finds a ranked suggestion no longer showable | `DUE_DEBOUNCE_MS` | That member |
 
-Setting a due time never delays one already outstanding — `MIN` wins. Clearing
-one matters as much as setting it: a due time left behind is re-claimed on every
-scheduler pass forever, which is why the cache-hit path clears it explicitly.
+A workspace-scope admission marks **every** active member, set-based over
+`workspace_members` — not the member list admission was given, which is capped
+at 250 by name and would leave the rest of a large workspace never re-ranked.
+
+The two read-path rules are what catch a hole nothing on the write path sees: a
+workspace suggestion started or dismissed by *somebody else*, or one that simply
+expired. Note the second is about a gap, not an absence — a member with no
+eligible opportunities has an empty set as their steady state, and asking for a
+ranking on that would cost a write and a scheduler claim on every read forever.
+
+Setting a due time never delays one already outstanding — `MIN` wins. Answering
+one is the scheduler's job alone, and it answers **only the request it claimed**:
+`settleRankingRequest` compares `due_at` against the value it claimed, so a
+dismissal arriving during a four-minute tournament survives it. Clearing matters
+as much as setting: a due time left behind is re-claimed on every pass forever.
 
 ### What the scheduler will not do
 
@@ -112,6 +130,9 @@ scheduler pass forever, which is why the cache-hit path clears it explicitly.
 - **Overwrite `status` when it claims.** Claiming is lease-only. `status` is the
   record of how the last ranking ended, and the fingerprint cache reads it — a
   claim that clobbered it would guarantee a full tournament every time.
+- **Release the lease before the run is over.** `storeRankingSet` writes the
+  ranking and touches neither `due_at` nor the lease, because it is also called
+  mid-run for the provisional write. Only `settleRankingRequest` ends a claim.
 - **Rank more than `MAX_RANKINGS_PER_TICK` members per cron pass.**
 
 ## Member activity

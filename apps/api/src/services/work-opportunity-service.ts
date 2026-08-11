@@ -734,18 +734,29 @@ async function markSuggestedWorkDue(
 }
 
 /**
- * Mark a member's set as current without touching the suggestions in it.
+ * The same request, for every active member of a workspace.
  *
- * Reached when a ranking was asked for and the candidates turned out not to have
- * changed. Clearing the request matters as much as doing the work: a due time
- * left behind is re-claimed on every scheduler pass forever.
+ * Set-based rather than a statement per member, because the caller's member list
+ * is the admission prompt's, which is capped at 250 by name — past that the
+ * remainder would never be re-ranked at all, which is worse than the
+ * workspace-wide invalidation this replaced.
  */
-async function clearSuggestedWorkDue(env: Env, workspaceId: string, userId: string): Promise<void> {
+async function markWorkspaceSuggestedWorkDue(
+  env: Env,
+  workspaceId: string,
+  delayMs: number = DUE_DEBOUNCE_MS,
+): Promise<void> {
+  const at = nowIso();
+  const dueAt = new Date(Date.now() + delayMs).toISOString();
   await env.DB.prepare(
-    `UPDATE suggested_work_sets SET due_at = NULL, status = 'ready', lease_id = NULL,
-     lease_expires_at = NULL, last_ranked_at = ?, updated_at = ?
-     WHERE workspace_id = ? AND user_id = ?`,
-  ).bind(nowIso(), nowIso(), workspaceId, userId).run();
+    `INSERT INTO suggested_work_sets
+     (workspace_id, user_id, candidate_fingerprint, due_at, created_at, updated_at)
+     SELECT workspace_id, user_id, '', ?, ?, ? FROM workspace_members
+      WHERE workspace_id = ? AND status = 'active'
+     ON CONFLICT(workspace_id, user_id) DO UPDATE SET
+      due_at = MIN(COALESCE(suggested_work_sets.due_at, excluded.due_at), excluded.due_at),
+      updated_at = excluded.updated_at`,
+  ).bind(dueAt, at, at, workspaceId).run();
 }
 
 async function provenanceNodeForSource(
@@ -1089,13 +1100,11 @@ async function persistDecision(
       eagerUserIds.push(storedUserId);
     }
   }
-  await markSuggestedWorkDue(
-    env,
-    window.workspace_id,
-    window.audience_scope === "personal"
-      ? (window.audience_user_id ? [window.audience_user_id] : [])
-      : members.map((member) => member.id),
-  );
+  if (window.audience_scope === "personal") {
+    await markSuggestedWorkDue(env, window.workspace_id, window.audience_user_id ? [window.audience_user_id] : []);
+  } else {
+    await markWorkspaceSuggestedWorkDue(env, window.workspace_id);
+  }
   return { opportunityId: id, eagerUserIds };
 }
 
@@ -1421,7 +1430,6 @@ export async function rankWorkOpportunitiesForUser(
   if (!force && cached?.status === "ready" && cached.candidate_fingerprint === fingerprint) {
     const ids = parseArray(cached.opportunity_ids_json).filter((id): id is string => typeof id === "string");
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate.public]));
-    await clearSuggestedWorkDue(env, workspaceId, userId);
     return ids.map((id) => byId.get(id)).filter((item): item is WorkOpportunity => Boolean(item)).slice(0, 4);
   }
   if (candidates.length === 0) {
@@ -1440,7 +1448,7 @@ export async function rankWorkOpportunitiesForUser(
     await storeRankingSet(
       env, workspaceId, userId, "", recencyOrder,
       "Provisional order, most recently revised first, while the ranking runs.",
-      "ready", { clearDue: false },
+      "ready",
     );
   }
   const deadline = Date.now() + RANK_BUDGET_MS;
@@ -1512,40 +1520,64 @@ async function storeRankingSet(
   ids: string[],
   reasoning: string,
   status: "ready" | "failed",
-  // A completed ranking answers the request that was outstanding and clears it.
-  // A provisional write does not: the request has to survive so the scheduler
-  // comes back and does the real thing.
-  options: { clearDue?: boolean } = {},
 ): Promise<void> {
   const at = nowIso();
-  const clearDue = options.clearDue !== false;
   // The ranking agent's flagged model, so this column names the model the set
   // would be produced with rather than a variable the agent may not be using.
   // Still nullable: a deployment with no structured model configured resolves an
   // empty default, and the column has always recorded that as NULL.
   const { model } = await resolveAgentModelRouting(env, "work_opportunity_ranking", { workspaceId, userId });
+  // Writes the ranking and nothing else. The outstanding request and the lease
+  // that claims it belong to the scheduler, which settles both once the run it
+  // claimed is actually over — this is called mid-run for the provisional write
+  // too, and clearing either here released a claim while its tournament was
+  // still going.
   await env.DB.prepare(
     `INSERT INTO suggested_work_sets
      (workspace_id, user_id, candidate_fingerprint, opportunity_ids_json,
-      ranking_reasoning, model, status, due_at, last_ranked_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ranking_reasoning, model, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(workspace_id, user_id) DO UPDATE SET
       candidate_fingerprint = excluded.candidate_fingerprint,
       opportunity_ids_json = excluded.opportunity_ids_json, ranking_reasoning = excluded.ranking_reasoning,
-      model = excluded.model, status = excluded.status, lease_id = NULL, lease_expires_at = NULL,
-      due_at = CASE WHEN excluded.due_at IS NULL THEN NULL ELSE suggested_work_sets.due_at END,
-      last_ranked_at = COALESCE(excluded.last_ranked_at, suggested_work_sets.last_ranked_at),
-      updated_at = excluded.updated_at`,
+      model = excluded.model, status = excluded.status, updated_at = excluded.updated_at`,
   ).bind(
     workspaceId, userId, fingerprint, JSON.stringify(ids), reasoning.slice(0, 20_000),
-    model.length > 0 ? model : null, status,
-    clearDue ? null : at, clearDue ? at : null, at, at,
+    model.length > 0 ? model : null, status, at, at,
   ).run();
+}
+
+/**
+ * Release the claim, and answer the request only if it is the one that was
+ * claimed.
+ *
+ * `due_at` is compared rather than cleared outright because a dismissal, a
+ * start, or an admission arriving during a four-minute tournament sets a *new*
+ * request while that tournament runs. Clearing unconditionally discarded it and
+ * left the member on a set that was already out of date the moment it was
+ * written.
+ */
+async function settleRankingRequest(
+  env: Env,
+  workspaceId: string,
+  userId: string,
+  leaseId: string,
+  claimedDueAt: string,
+): Promise<void> {
+  const at = nowIso();
+  await env.DB.prepare(
+    `UPDATE suggested_work_sets
+        SET lease_id = NULL, lease_expires_at = NULL, last_ranked_at = ?,
+            due_at = CASE WHEN due_at = ? THEN NULL ELSE due_at END,
+            updated_at = ?
+      WHERE workspace_id = ? AND user_id = ? AND lease_id = ?`,
+  ).bind(at, claimedDueAt, at, workspaceId, userId, leaseId).run();
 }
 
 interface DueRankingRow {
   workspace_id: string;
   user_id: string;
+  due_at: string;
 }
 
 /**
@@ -1567,7 +1599,7 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
   const activeSince = new Date(Date.now() - ACTIVE_MEMBER_WINDOW_MS).toISOString();
   const dormantBefore = new Date(Date.now() - DORMANT_MEMBER_AFTER_MS).toISOString();
   const due = await env.DB.prepare(
-    `SELECT s.workspace_id, s.user_id
+    `SELECT s.workspace_id, s.user_id, s.due_at
        FROM suggested_work_sets s
        JOIN workspace_members m ON m.workspace_id = s.workspace_id AND m.user_id = s.user_id
       WHERE s.due_at IS NOT NULL AND s.due_at <= ?1
@@ -1596,6 +1628,9 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
     if (Number(claimed.meta.changes ?? 0) !== 1) continue;
     try {
       await rankWorkOpportunitiesForUser(env, row.workspace_id, row.user_id);
+      // Answers the request this pass claimed, and only that one. A request
+      // raised while the tournament ran survives and is served on a later pass.
+      await settleRankingRequest(env, row.workspace_id, row.user_id, leaseId, row.due_at);
     } catch (error) {
       // The lease is released rather than left to expire, and the request is
       // pushed out instead of dropped: a member whose ranking fails should get
@@ -1646,13 +1681,25 @@ export class WorkOpportunityService {
     const ranked = await this.showableOpportunities(rankedIds);
     const items = ranked.length > 0 ? ranked : await this.showableOpportunities();
     if (!stored || stored.due_at === null) {
-      const nothingRanked = !stored || rankedIds.length === 0;
-      // A set that was never built, or one whose every suggestion has since gone
-      // away, is not something a later admission is guaranteed to come along and
-      // fix. Ask for a ranking now. Deferred, because this is a read.
-      if (nothingRanked || ranked.length === 0) {
+      // Two things are worth a ranking, and the difference between them is the
+      // difference between a member who is missing suggestions and one who
+      // simply has none.
+      //
+      // A hole: fewer of the ranked suggestions are showable than were ranked,
+      // because one expired, was started, or was dismissed. This is the general
+      // form of the case `dismiss()` handles directly, and the only thing that
+      // catches a workspace-scope suggestion started by somebody else.
+      //
+      // Unranked candidates: eligible opportunities exist that the stored set
+      // does not account for. Asking on "nothing is stored" alone meant a member
+      // with no opportunities at all — whose steady state is an empty set —
+      // requested a ranking on every single read, and got a scheduler claim and
+      // a pair of writes each time, forever.
+      const hole = ranked.length < rankedIds.length;
+      const unranked = ranked.length === 0 && items.length > 0;
+      if (hole || unranked) {
         const request = markSuggestedWorkDue(
-          this.env, this.auth.workspaceId, [this.auth.userId], nothingRanked ? 0 : DUE_DEBOUNCE_MS,
+          this.env, this.auth.workspaceId, [this.auth.userId], unranked ? 0 : DUE_DEBOUNCE_MS,
         ).catch((error: unknown) => {
           console.warn("Could not schedule a suggested-work ranking", {
             workspace_id: this.auth.workspaceId,
@@ -1723,8 +1770,15 @@ export class WorkOpportunityService {
       // thing that asks for a re-rank when the candidates have not changed, and
       // it is rate-limited to once an hour because that is the only reason it
       // exists.
+      //
+      // Which is also why it clears the fingerprint. Asking for a ranking is not
+      // enough on its own: the scheduler skips a run whose candidates hash to
+      // what is already stored, and by definition that is every run this asks
+      // for. Blanking the hash is what makes the request survive that check —
+      // the stored suggestions are left alone, so nothing changes on screen
+      // until a real ranking replaces them.
       this.env.DB.prepare(
-        `UPDATE suggested_work_sets SET due_at = COALESCE(due_at, ?), updated_at = ?
+        `UPDATE suggested_work_sets SET due_at = COALESCE(due_at, ?), candidate_fingerprint = '', updated_at = ?
          WHERE workspace_id = ? AND user_id = ? AND due_at IS NULL
            AND COALESCE(last_ranked_at, created_at) <= ?`,
       ).bind(at, at, this.auth.workspaceId, this.auth.userId, rerankBefore),
@@ -1885,6 +1939,18 @@ export class WorkOpportunityService {
           created_workstream_id = excluded.created_workstream_id, updated_at = excluded.updated_at`,
       ).bind(this.auth.workspaceId, opportunityId, this.auth.userId, at, durable.workstreamId, at),
     ]);
+    // Starting one leaves the same hole dismissing one does, so it asks for a
+    // refill the same way. The read path would notice on this member's next
+    // visit regardless; asking here means the space is usually already filled by
+    // the time they come back from the work stream they just started.
+    await markSuggestedWorkDue(this.env, this.auth.workspaceId, [this.auth.userId], 0)
+      .catch((error: unknown) => {
+        console.warn("Could not schedule a suggested-work ranking after a start", {
+          workspace_id: this.auth.workspaceId,
+          opportunity_id: opportunityId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+      });
   }
 
   private async startedResponse(durable: { workstreamId: string; messageId: string }) {
@@ -1923,6 +1989,7 @@ export class WorkOpportunityService {
 export const __workOpportunityTesting = {
   admissionJsonSchema,
   parseAdmissionResult: (value: unknown) => AdmissionResultSchema.parse(value),
+  markWorkspaceSuggestedWorkDue,
   packBatches,
   mapConcurrent,
   boundRankingCandidate,
