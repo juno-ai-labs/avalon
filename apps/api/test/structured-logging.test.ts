@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { logError, logInfo, logStructuredEvent, logWarn, summarizeEvent } from "../src/observability/logger";
+import { logError, logEvent, logInfo, logStructuredEvent, logWarn, summarizeEvent } from "../src/observability/logger";
 
 const env = {
   AVALON_REGION: "global",
@@ -20,7 +20,43 @@ function capture(level: "info" | "warn" | "error", emit: () => void): Record<str
   }
 }
 
+// `logEvent` reads only these three off the context.
+function requestContext(values: { requestId?: string; workspaceId?: string }): Parameters<typeof logEvent>[0] {
+  return {
+    env,
+    get: (key: string) => key === "auth"
+      ? (values.workspaceId === undefined ? undefined : { workspaceId: values.workspaceId })
+      : values.requestId,
+  } as unknown as Parameters<typeof logEvent>[0];
+}
+
 describe("structured logging", () => {
+  it("keeps the request context authoritative over caller-supplied correlation", () => {
+    const c = requestContext({ requestId: "req-1", workspaceId: "workspace-1" });
+    const entry = capture("warn", () => logEvent(c, "warn", "connector_oauth_callback_failed", {
+      request_id: "spoofed",
+      workspace_id: "someone-elses-workspace",
+      code: "connector_unauthorized",
+    }));
+
+    expect(entry).toMatchObject({
+      code: "connector_unauthorized",
+      request_id: "req-1",
+      workspace_id: "workspace-1",
+    });
+  });
+
+  it("lets an unauthenticated route name the workspace the context does not know", () => {
+    // A connector OAuth callback carries no session, so overwriting the field
+    // with the context's `undefined` would erase what the caller knows.
+    const c = requestContext({ requestId: "req-2" });
+    const entry = capture("warn", () => logEvent(c, "warn", "connector_oauth_callback_failed", {
+      workspace_id: "workspace-2",
+    }));
+
+    expect(entry).toMatchObject({ request_id: "req-2", workspace_id: "workspace-2" });
+  });
+
   it("logs an object so Workers Logs indexes each field", () => {
     const entry = capture("info", () =>
       logStructuredEvent(env, "info", "http_request", {

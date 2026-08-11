@@ -39,11 +39,19 @@ export function logEvent(
   event: string,
   fields: LogFields = {},
 ): void {
-  const auth = c.get("auth");
+  // The request context is authoritative for correlation: a caller must not be
+  // able to relabel which request an entry belongs to, or which workspace it
+  // authenticated as. Both are absent on an unauthenticated route — a connector
+  // OAuth callback carries no session, and an error thrown before
+  // `requestContext` has no request id — so they are spread only when present,
+  // leaving a caller that knows the workspace able to fill the gap rather than
+  // having its value overwritten with `undefined`.
+  const requestId = c.get("requestId");
+  const workspaceId = c.get("auth")?.workspaceId;
   logStructuredEvent(c.env, level, event, {
-    request_id: c.get("requestId"),
-    workspace_id: auth?.workspaceId,
     ...fields,
+    ...(requestId === undefined ? {} : { request_id: requestId }),
+    ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
   });
 }
 
