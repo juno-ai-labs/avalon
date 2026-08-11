@@ -123,7 +123,11 @@ are still on disk to try again with.
 
 - Automation drafts under construction — the compiled `AutomationDraftResponse`,
   the assistant conversation, and the plugin or activity-source choices. Only the
-  input component is cached; the rest belongs to the API's draft.
+  input component is cached; the conversation is saved on the draft automation
+  itself, which is a real subscription row from its first compiled turn
+  ([`automation-drafts.md`](automation-drafts.md)). The plugin and
+  activity-source choices are cached nowhere, because they are re-derived from
+  the connections in force under the scope in force.
 - Files that could never be sent. An empty file, or one over the 25 MB limit, is
   shown as failed and never written to disk.
 - Attachments beyond the ten a message may carry, whether they were found on

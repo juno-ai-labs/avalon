@@ -2,6 +2,7 @@ import {
   ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
+  AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
   ConnectionSchema as WireConnectionSchema,
@@ -1558,8 +1559,13 @@ export class AvalonApi {
     input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
-    const draftId = input.draftId ?? crypto.randomUUID();
-    const previous = this.drafts.get(draftId) ?? { attachmentIds: [], messages: [], draft: null };
+    // The first turn has no draft to continue. Every later one names the draft
+    // subscription the API wrote, which is the automation's real id — the
+    // renderer never mints one, because a key only this process knows could not
+    // put the draft in the sidebar or bring it back after a restart.
+    const previous = input.draftId
+      ? this.drafts.get(input.draftId) ?? { attachmentIds: [], messages: [], draft: null }
+      : { attachmentIds: [], messages: [], draft: null };
     const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
     const attachmentIds = [...new Set([...previous.attachmentIds, ...(input.attachmentIds ?? [])])];
     const response = await this.execute('/automations/draft/stream', {
@@ -1569,7 +1575,7 @@ export class AvalonApi {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        draftId,
+        ...(input.draftId ? { draftId: input.draftId } : {}),
         messages,
         currentDraft: previous.draft,
         attachmentIds,
@@ -1612,11 +1618,23 @@ export class AvalonApi {
     }
     const raw = WireAutomationDraftSchema.parse(completed.draft);
     const assistantMessage = completed.assistantMessage;
+    const draftId = completed.draftId;
     this.drafts.set(draftId, {
       attachmentIds,
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
+    return this.automationDraftResponse(draftId, raw, assistantMessage);
+  }
+
+  /** The one place a compiled draft becomes what the builder screen renders,
+   * so a draft picked back up out of the sidebar reads exactly like the turn
+   * that produced it. */
+  private automationDraftResponse(
+    draftId: string,
+    raw: WireAutomationDraft,
+    assistantMessage: string,
+  ): AutomationDraftResponse {
     const elicitation = raw.elicitation;
     return {
       draftId,
@@ -1657,6 +1675,30 @@ export class AvalonApi {
     };
   }
 
+  /** Reopens a draft left in the sidebar. The conversation comes back from the
+   * API rather than from this process's memory, which is the whole point: the
+   * draft outlived the screen it was written on. */
+  async resumeAutomationDraft(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<{ draft: AutomationDraftResponse; messages: Array<{ role: 'user' | 'assistant'; content: string }> }> {
+    const state = await this.request(`/automations/${encodeURIComponent(id)}/draft`, {
+      schema: WireAutomationDraftStateSchema,
+      signal,
+    });
+    this.drafts.set(state.draftId, {
+      attachmentIds: state.attachmentIds,
+      messages: state.messages,
+      draft: state.draft,
+    });
+    const assistantMessage = [...state.messages].reverse()
+      .find((message) => message.role === 'assistant')?.content ?? '';
+    return {
+      draft: this.automationDraftResponse(state.draftId, state.draft, assistantMessage),
+      messages: state.messages,
+    };
+  }
+
   async createAutomation(
     draftId: string,
     defaultPluginIds: string[],
@@ -1669,6 +1711,7 @@ export class AvalonApi {
     const raw = await this.request('/automations', {
       method: 'POST',
       body: {
+        draftId,
         draft: state.draft,
         scope: options.scope === undefined
           ? state.draft.suggestedScope
