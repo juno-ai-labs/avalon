@@ -368,11 +368,16 @@ export class SlackAgentService {
       ? payload.actions[0] as Record<string, unknown>
       : null;
     const callbackId = String(payload.callback_id ?? action?.action_id ?? "");
+    // Avalon's own buttons are matched on the action id, never on `callbackId`.
+    // That fallback prefers any top-level `callback_id`, which a block action
+    // raised from inside a view can carry — so a connect button placed in a
+    // modal would miss its branch and fall through to the shortcut path, and a
+    // handoff button would open a task modal on top of the link it just
+    // followed. The action id is the button, whatever it is embedded in.
+    const actionId = String(action?.action_id ?? "");
     // Slack follows a `url` button's link itself, so the interaction it also
-    // sends needs nothing but an acknowledgement. Matched on the action id
-    // rather than `callbackId`: one of these buttons now sits inside a modal,
-    // and a view-sourced payload can carry that view's callback id instead.
-    if (type === "block_actions" && String(action?.action_id ?? "").startsWith("avalon_open_")) return {};
+    // sends needs nothing but an acknowledgement.
+    if (type === "block_actions" && actionId.startsWith("avalon_open_")) return {};
     if (type === "block_actions" && callbackId === "avalon_claim_workstream") {
       if (typeof action?.value !== "string" || !action.value) {
         throw new ApiError(422, "slack_claim_invalid", "The Slack task claim is invalid");
@@ -388,17 +393,21 @@ export class SlackAgentService {
     }
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
       if (callbackId.startsWith("avalon_open_") || callbackId === "avalon_create_automation") return {};
-      if (callbackId === "avalon_connect") {
+      if (actionId === "avalon_connect") {
+        if (connection.status !== "healthy") {
+          await slackApi(token, "views.open", { trigger_id: triggerId, view: reconnectRequiredModal() }, AbortSignal.timeout(1_500));
+          return {};
+        }
         // The click is the mint. Slack signed this payload and named the member
         // in it, which is the same authority App Home had when it published the
         // button — but a challenge issued now is redeemed seconds later instead
         // of however long the view has been on screen.
+        const challenge = await this.createLink(connection, slackUserId);
         await slackApi(token, "views.open", {
           trigger_id: triggerId,
-          view: connection.status === "healthy"
-            ? connectModal(await this.createLink(connection, slackUserId))
-            : reconnectRequiredModal(),
+          view: connectModal(challenge.url),
         }, AbortSignal.timeout(1_500));
+        await this.supersedeOtherLinks(connection.id, slackUserId, challenge.tokenHash);
         return {};
       }
       if (callbackId === "avalon_preferences") {
@@ -2572,23 +2581,37 @@ export class SlackAgentService {
     ));
   }
 
-  private async createLink(connection: SlackConnectionRow, slackUserId: string): Promise<string> {
+  private async createLink(
+    connection: SlackConnectionRow,
+    slackUserId: string,
+  ): Promise<{ url: string; tokenHash: string }> {
     const token = randomToken(32);
+    const tokenHash = await sha256(token);
     const at = nowIso();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `UPDATE slack_link_challenges SET consumed_at = ?
-         WHERE connection_id = ? AND slack_user_id = ? AND consumed_at IS NULL`,
-      ).bind(at, connection.id, slackUserId),
-      this.env.DB.prepare(
-        `INSERT INTO slack_link_challenges
-         (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).bind(await sha256(token), connection.id, connection.provider_account_id, slackUserId, new Date(Date.now() + 15 * 60_000).toISOString(), at),
-    ]);
+    await this.env.DB.prepare(
+      `INSERT INTO slack_link_challenges
+       (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(tokenHash, connection.id, connection.provider_account_id, slackUserId, new Date(Date.now() + 15 * 60_000).toISOString(), at).run();
     const url = new URL("/slack/link", this.env.PUBLIC_WEB_BASE_URL);
     url.hash = new URLSearchParams({ token }).toString();
-    return url.toString();
+    return { url: url.toString(), tokenHash };
+  }
+
+  /**
+   * Retires the member's earlier challenges, once a newer one has reached them.
+   *
+   * Deliberately separate from minting, and called only after the modal
+   * carrying the new link has opened. Minting used to invalidate in the same
+   * batch, so a `views.open` that failed — an abort, a Slack error, a spent ack
+   * budget — took the previous modal's still-valid link down with it and left
+   * the member holding nothing that works and no way to see why.
+   */
+  private async supersedeOtherLinks(connectionId: string, slackUserId: string, keepTokenHash: string): Promise<void> {
+    await this.env.DB.prepare(
+      `UPDATE slack_link_challenges SET consumed_at = ?
+       WHERE connection_id = ? AND slack_user_id = ? AND consumed_at IS NULL AND token_hash <> ?`,
+    ).bind(nowIso(), connectionId, slackUserId, keepTokenHash).run();
   }
 
   private async deactivateTeamRoute(connection: SlackConnectionRow): Promise<void> {
