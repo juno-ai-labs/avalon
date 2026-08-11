@@ -86,7 +86,11 @@ they do not.
   configuration is not applied before merge.
 - **Related or new documentation** — The `docs/` files added or updated in this
   change. When a PR changes a subsystem, the matching doc update ships in the
-  same PR.
+  same PR. A PR that creates or substantially changes an architecture or large
+  module also carries that module's document and a new entry in its **Changelog**
+  saying why the change was made, per
+  [`module-documents.md`](module-documents.md); a reviewer who sees neither
+  should ask for them.
 - **Reviewer notes** — What the reviewer needs that is not part of the change:
   a merge-time migration collision, deferred work, a known-failing check.
 - **Validation** — How it was verified. Name the commands and their outcome:
