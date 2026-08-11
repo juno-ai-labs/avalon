@@ -140,6 +140,7 @@ describe('menu bar controller', () => {
       content: {
         suggestions: [],
         recents: [{ id: 'a', title: 'Acme renewal' }],
+        pinned: [],
       },
     });
     await subject.controller.initialize();

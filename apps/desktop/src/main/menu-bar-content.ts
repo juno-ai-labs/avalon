@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { emptyMenuBarContent, MENU_BAR_RECENT_LIMIT, type MenuBarContent, type MenuBarSuggestion } from './menu-bar-menu';
+import {
+  emptyMenuBarContent,
+  MENU_BAR_PINNED_LIMIT,
+  MENU_BAR_RECENT_LIMIT,
+  type MenuBarContent,
+  type MenuBarSuggestion,
+  type MenuBarWorkstream,
+} from './menu-bar-menu';
 
 /**
  * Deliberately narrower than `@avalon/contracts` describes these responses. The
@@ -12,6 +19,9 @@ const MenuBarWorkstreamPageSchema = z.object({
     id: z.string().min(1),
     title: z.string(),
     titleStatus: z.enum(['naming', 'automatic', 'settled']).default('settled'),
+    // The reader's own place for this work stream in their arrangement, or null
+    // if they have not pinned it. See `workstream-pinning.md`.
+    pinPosition: z.number().int().nonnegative().nullable().default(null),
   })),
 });
 
@@ -100,20 +110,41 @@ export class MenuBarContentStore {
   private async refreshNow(): Promise<void> {
     // Each half is independent: a failing suggestion poll must not blank the
     // recent list, which is the part a person actually navigates with.
-    const [recents, suggestions] = await Promise.all([
+    // One request answers both work-stream sections. `GET /workstreams` leaves
+    // pins out of the recency order and appends every one of them to the first
+    // page, so a page of five carries the five most recent *unpinned* streams
+    // and the whole pinned list behind them.
+    const [page, suggestions] = await Promise.all([
       this.load('recent work streams', `/workstreams?limit=${MENU_BAR_RECENT_LIMIT}`, MenuBarWorkstreamPageSchema),
       this.load('suggested work streams', '/work-opportunities?limit=4', MenuBarOpportunityPageSchema),
     ]);
-    if (!recents && !suggestions) return;
+    if (!page && !suggestions) return;
+    const workstreams = page?.items.map((workstream) => ({
+      pinPosition: workstream.pinPosition,
+      entry: {
+        id: workstream.id,
+        title: workstream.titleStatus === 'naming' || workstream.title.trim().length === 0
+          ? UNNAMED_WORKSTREAM_LABEL
+          : workstream.title,
+      } satisfies MenuBarWorkstream,
+    }));
     this.cached = {
-      recents: recents
-        ? recents.items.slice(0, MENU_BAR_RECENT_LIMIT).map((workstream) => ({
-            id: workstream.id,
-            title: workstream.titleStatus === 'naming' || workstream.title.trim().length === 0
-              ? UNNAMED_WORKSTREAM_LABEL
-              : workstream.title,
-          }))
+      recents: workstreams
+        ? workstreams
+            .filter((workstream) => workstream.pinPosition === null)
+            .slice(0, MENU_BAR_RECENT_LIMIT)
+            .map((workstream) => workstream.entry)
         : this.cached.recents,
+      // The arrangement is the person's own, so the menu takes the top of it
+      // rather than re-sorting. Sorted here because the append is by position
+      // already but the order of an appended block is not part of the contract.
+      pinned: workstreams
+        ? workstreams
+            .filter((workstream) => workstream.pinPosition !== null)
+            .sort((left, right) => left.pinPosition! - right.pinPosition!)
+            .slice(0, MENU_BAR_PINNED_LIMIT)
+            .map((workstream) => workstream.entry)
+        : this.cached.pinned,
       suggestions: suggestions
         ? suggestions.items.map((opportunity) => ({
             id: opportunity.id,

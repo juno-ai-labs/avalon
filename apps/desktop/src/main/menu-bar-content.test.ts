@@ -10,12 +10,15 @@ interface Harness {
   advance: (milliseconds: number) => void;
 }
 
-function workstreamPage(titles: { id: string; title: string; titleStatus?: string }[]): unknown {
+function workstreamPage(
+  titles: { id: string; title: string; titleStatus?: string; pinPosition?: number }[],
+): unknown {
   return {
     items: titles.map((entry) => ({
       id: entry.id,
       title: entry.title,
       titleStatus: entry.titleStatus ?? 'settled',
+      pinPosition: entry.pinPosition ?? null,
       // A field the menu never reads. Present so the narrow schema is shown to
       // ignore what it does not need rather than reject it.
       harnessStatus: 'idle',
@@ -77,9 +80,56 @@ describe('menu bar content', () => {
     expect(subject.requestJson).toHaveBeenCalledWith('/workstreams?limit=5');
     expect(subject.store.content()).toEqual<MenuBarContent>({
       recents: [{ id: 'a', title: 'Acme renewal' }, { id: 'b', title: 'Quarterly report' }],
+      pinned: [],
       suggestions: [{ id: 'o1', version: 2, label: 'Reply to Dana' }],
     });
     expect(subject.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('splits the one page into the recent list and the pinned arrangement', async () => {
+    // `GET /workstreams` leaves pins out of the recency order and appends the
+    // whole pinned list to the first page, in no contractually fixed order.
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([
+        { id: 'r1', title: 'Quarterly report' },
+        { id: 'r2', title: 'Investigate ENG-142' },
+        { id: 'p2', title: 'Board deck', pinPosition: 1 },
+        { id: 'p1', title: 'Acme renewal', pinPosition: 0 },
+      ]),
+      '/work-opportunities': { items: [] },
+    });
+
+    await subject.store.refresh();
+
+    expect(subject.store.content().recents).toEqual([
+      { id: 'r1', title: 'Quarterly report' },
+      { id: 'r2', title: 'Investigate ENG-142' },
+    ]);
+    expect(subject.store.content().pinned).toEqual([
+      { id: 'p1', title: 'Acme renewal' },
+      { id: 'p2', title: 'Board deck' },
+    ]);
+  });
+
+  it('shows at most five pins without capping how many exist', async () => {
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage(
+        Array.from({ length: 9 }, (_value, index) => ({
+          id: `p${index}`,
+          title: `Pinned ${index}`,
+          pinPosition: 8 - index,
+        })),
+      ),
+      '/work-opportunities': { items: [] },
+    });
+
+    await subject.store.refresh();
+
+    // The top of the arrangement, by position — not the first five the server
+    // happened to append.
+    expect(subject.store.content().pinned.map((workstream) => workstream.title))
+      .toEqual(['Pinned 8', 'Pinned 7', 'Pinned 6', 'Pinned 5', 'Pinned 4']);
+    expect(subject.store.content().recents).toEqual([]);
   });
 
   it('names a work stream Avalon has not finished titling', async () => {
@@ -151,7 +201,7 @@ describe('menu bar content', () => {
 
     subject.store.clear();
 
-    expect(subject.store.content()).toEqual({ recents: [], suggestions: [] });
+    expect(subject.store.content()).toEqual({ recents: [], pinned: [], suggestions: [] });
     expect(subject.onChange).toHaveBeenCalledTimes(1);
     // The staleness window is cleared with it, so the next account's menu is
     // not held on an empty cache for another fifteen seconds.

@@ -3,8 +3,9 @@
 Avalon puts a status item in the macOS menu bar. Clicking it drops down a menu
 that starts a meeting or note, a work stream, or an automation, starts whatever
 Avalon is currently suggesting, and reopens any of the five most recent work
-streams — plus the two controls that keep the app reachable when nothing else is
-on screen: open Avalon, and quit.
+streams or the top five of the reader's own pinned arrangement — plus the two
+controls that keep the app reachable when nothing else is on screen: open
+Avalon, and quit.
 
 It is the one Avalon surface that outlives every window. Avalon registers itself
 to open at login by default and, on a login launch, opens **no** window at all,
@@ -61,7 +62,10 @@ always produces a menu immediately. In order:
    whether that is because there is nothing to show or because nobody is signed
    in; the header stays, which is what makes that row read as an answer rather
    than a stray disabled item.
-7. A separator, then **Open Avalon** and **Quit Avalon**.
+7. A separator, a **Pinned** header, and the top five of the reader's own
+   arrangement, from the same response. Omitted whole — header and rule included
+   — when nothing is pinned, which is most people.
+8. A separator, then **Open Avalon** and **Quit Avalon**.
 
 Both headers use `type: 'header'`, which macOS added in 14 and which AppKit
 styles as a real section header. `supportsSectionHeaders` reads
@@ -94,6 +98,13 @@ not activate the application the way a Dock click does, so a window opened
 without it appears behind whatever is frontmost.
 
 ### The content
+
+One request answers both work-stream sections. `GET /workstreams` leaves pins out
+of the recency order and appends every one of them to the first page, so a page
+of five carries the five most recent *unpinned* streams and the whole pinned list
+behind them — [`workstream-pinning.md`](workstream-pinning.md) owns that
+behaviour. The store partitions on `pinPosition`, sorts the pinned half by it,
+and takes five from each.
 
 `MenuBarContentStore` fetches both halves through `avalonApiRequest`, the main
 process's authorized request helper, which renews once through the shared
@@ -194,13 +205,16 @@ the link there first, not a second navigation channel here.
 | Signed out | All three fixed actions remain; the recent section becomes one disabled **Sign in to Avalon** row. Content refreshes are skipped entirely rather than failing twice per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
 | Nothing to suggest | The suggestion group, its header, and both of its rules are omitted, leaving one rule between the fixed actions and **Recent**. |
+| Nothing pinned | The **Pinned** group, its header, and its rule are omitted. |
+| More than five pins | The top five of the arrangement are shown. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
 | macOS 13 or older | Both headers fall back to disabled rows. Everything else is unchanged. |
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
 | The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
 | Not macOS | No status item; `menuBarAvailable` is false and Settings omits the toggle. The preference is still stored, so the same profile on a Mac gets the choice rather than the default. |
 
-Numbers: five recent work streams (`MENU_BAR_RECENT_LIMIT`), at most four
+Numbers: five recent work streams (`MENU_BAR_RECENT_LIMIT`), five pinned
+(`MENU_BAR_PINNED_LIMIT`), at most four
 suggestions (what `GET /work-opportunities` returns), 60-character labels
 (`MENU_BAR_LABEL_MAX_LENGTH`) with a word boundary honoured from 40
 (`MENU_BAR_LABEL_WORD_BOUNDARY_FLOOR`), a 15 s content staleness window
@@ -300,6 +314,28 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 `sendDeepLink` and `activate` already do.
 
 **Not done:** a submenu for older work streams.
+
+### 2026-08-11 — A Pinned section below Recent
+
+**What changed:** A **Pinned** group under **Recent**, holding the top five of
+the reader's own pinned arrangement, from the same `GET /workstreams` response.
+Omitted whole when nothing is pinned.
+
+**Why:** Pinning landed on `main` the same day (#95) and gave people a place to
+put the work streams they return to. Recency is what moved today; a pin is a
+standing choice, and the menu had no way to reach one that had gone quiet enough
+to fall off the recent five — which is the case pinning exists for.
+
+**Considered and rejected:** a second request for the pinned list. `GET
+/workstreams` already appends every pin to the first page precisely so a quiet
+one is not lost to paging, so the page the menu already fetches carries both. The
+store partitions on `pinPosition` rather than asking twice.
+
+**Consequences:** `recents` now means *unpinned* recents, because the server
+excludes pins from the recency order — a pinned work stream appears in the menu
+once, under **Pinned**, exactly as it does in the sidebar. The five-pin display
+limit here must not grow into a cap on pinning: `workstream-pinning.md` records
+two attempts at a real limit and why both failed.
 
 ### 2026-08-11 — Both lists get a section header
 
