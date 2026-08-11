@@ -22,6 +22,7 @@ import {
   type HyperSightBlockRunRow,
 } from "../services/hypersight-service";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
+import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 
@@ -308,6 +309,17 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       : undefined;
     const text = message?.textContent ?? terminalSlackText(outcome);
     const deliveryKey = `${input.harnessRunId}:${outcome.status}`;
+    // A digest run has no work stream anyone reads and no Slack session behind
+    // it; the written digest is the entire product of the run, so it settles
+    // here and returns rather than falling through the work-stream paths below.
+    if (input.digestDeliveryId) {
+      // `text` above falls back to a sentence describing the run's outcome,
+      // which is right for a work stream someone is watching and wrong for a
+      // digest — mailing it would consume the window and say nothing. Pass what
+      // the run actually wrote, or nothing.
+      await settleDigestRun(this.env, input.digestDeliveryId, outcome.status, message?.textContent ?? null);
+      return;
+    }
     const slack = new SlackAgentService(this.env);
     await slack.deliverWorkstreamOutcome(
       input.workspaceId,

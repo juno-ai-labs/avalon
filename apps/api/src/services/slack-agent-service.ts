@@ -1060,6 +1060,55 @@ export class SlackAgentService {
     }
   }
 
+  /**
+   * Sends one written digest to a person's Avalon Agent DM.
+   *
+   * Unlike an automation result, a digest is not a work stream anybody should be
+   * sent to — the run that wrote it lives in hidden machinery — so this posts the
+   * text and nothing else. The identity is re-checked against a live
+   * `slack_user_links` row rather than trusted from the frozen target: a person
+   * who has since unlinked their Slack account must stop receiving DMs at once.
+   */
+  async deliverDigest(input: {
+    workspaceId: string;
+    userId: string;
+    deliveryId: string;
+    targetId: string;
+    connectionId: string;
+    slackUserId: string;
+    title: string;
+    markdown: string;
+  }): Promise<void> {
+    const rawConnection = await this.env.DB.prepare(
+      `SELECT cc.*, cc.status AS connection_status
+         FROM connector_connections cc
+         JOIN slack_user_links link ON link.connection_id = cc.id
+           AND link.workspace_id = cc.workspace_id AND link.user_id = ?
+           AND link.slack_user_id = ? AND link.status = 'active'
+        WHERE cc.id = ? AND cc.workspace_id = ?`,
+    ).bind(input.userId, input.slackUserId, input.connectionId, input.workspaceId)
+      .first<Record<string, unknown>>();
+    if (!rawConnection) {
+      throw new ApiError(422, "slack_digest_target_unavailable", "The Slack destination is no longer linked", {
+        retryable: false,
+      });
+    }
+    if (rawConnection.connection_status !== "healthy") {
+      throw new ApiError(503, "slack_connection_unhealthy", "The Slack installation needs to be reconnected", {
+        retryable: false,
+      });
+    }
+    const token = await this.tokenFromEncrypted({ ...rawConnection, connection_id: input.connectionId });
+    const opened = await slackApi(token, "conversations.open", { users: input.slackUserId }, AbortSignal.timeout(10_000));
+    await postSlackTextChunks(
+      token,
+      opened.channel.id,
+      `*${input.title}*\n${input.markdown}`,
+      undefined,
+      `digest:${input.targetId}:${input.deliveryId}`,
+    );
+  }
+
   private async markAutomationDelivery(target: Record<string, unknown>, status: "active" | "needs_input", error: unknown): Promise<void> {
     await this.env.DB.prepare(
       `UPDATE automation_delivery_targets SET status = ?, last_error_json = ?, updated_at = ? WHERE id = ?`,
