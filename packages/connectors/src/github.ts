@@ -4,6 +4,7 @@ import {
   base64,
   booleanValue,
   isRecord,
+  isRevokedGrantCode,
   numberValue,
   providerJson,
   recordArray,
@@ -1369,7 +1370,15 @@ function normalizeUserToken(
   const error = typeof payload.error === "string" ? payload.error : null;
   if (error) {
     const description = typeof payload.error_description === "string" ? payload.error_description : error;
-    throw new ConnectorError("unauthorized", `GitHub OAuth failed: ${description}`, { reason: error, reconnectRequired: true });
+    // GitHub reports a token failure as HTTP 200 with an `error` body, so the
+    // code is the only thing that separates a dead grant from Avalon's own
+    // malformed request. Marking every one of them `reconnectRequired` sent
+    // members to reconnect working accounts over an `invalid_client` of ours.
+    throw new ConnectorError("unauthorized", `GitHub OAuth failed: ${description}`, {
+      reason: error,
+      providerError: error,
+      reconnectRequired: isRevokedGrantCode(error),
+    });
   }
   if (typeof payload.access_token !== "string" || !payload.access_token) {
     throw new ConnectorError("provider_error", "GitHub did not return an access token");
