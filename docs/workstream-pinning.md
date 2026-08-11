@@ -41,9 +41,16 @@ survivors so the positions stay a dense `0..n-1` run.
 
 ### Ordering
 
-Positions are dense and are rewritten in full on every change. `PUT
-/workstreams/pins` takes the **entire arrangement**, not a move of one row: a
-drag produces a complete list, and sending that list is what lets the server
+Positions are unique and ascending per person, and `unpin` and `reorderPins`
+rewrite them as a dense `0..n-1` run. `pin` chooses its position inside the
+insert statement, as `MAX(position) + 1`, rather than reading the list and
+binding a number back in — a read-then-write hands the same position to two pins
+made at once, and it also collides with a hole left by a work stream that was
+deleted outright and took its pin with it by cascade. A hole is harmless and
+closes on the next rewrite.
+
+`PUT /workstreams/pins` takes the **entire arrangement**, not a move of one row:
+a drag produces a complete list, and sending that list is what lets the server
 write positions without inferring them from an index whose meaning depends on a
 list state the client may no longer share.
 
@@ -65,30 +72,47 @@ after the round trip; it is discarded once the response lands, whether the
 response accepted the arrangement or refused it.
 
 A pinned work stream is removed from the recency-grouped list entirely rather
-than shown in both places. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused
-pinned row moves it one step, and each row announces its position to a screen
-reader, so the order is not reachable by pointer alone. Plain arrows are left to
-move focus.
+than shown in both places — which is the same thing `GET /workstreams` does, so
+the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row moves
+it one step, and each row announces its position to a screen reader, so the
+order is not reachable by pointer alone. Plain arrows are left to move focus.
+
+A drag is committed only when something accepted the drop. `dragend` fires
+whatever ended the drag, so the handler reads `dataTransfer.dropEffect`: `none`
+means Escape, or a release outside the pinned list, and the arrangement built
+while the pointer passed over other rows is abandoned. The pinned list is itself
+a drop target, so a release in the gap between two rows still counts as a drop.
 
 ## Invariants
 
 - **A pin is per person.** Nothing about `workstream_pins` is readable by, or
   visible to, anybody but its owner. A surface that treated `pinPosition` as a
   property of the work stream would show one member's arrangement to another.
-- **Positions are a dense ascending run per person.** Every path that removes or
-  reorders rewrites the whole run. A gap or a tie makes "what order is this list
-  in" ambiguous, and the sidebar's sort would then depend on row-arrival order.
+- **Positions are unique and ascending per person.** A tie makes "what order is
+  this list in" ambiguous, and the sidebar's sort would then depend on
+  row-arrival order. Both readers of the list —
+  `loadPinnedWorkstreamIds` and `loadPinnedWorkstreamRows` — break a tie on
+  `workstream_id` for the same reason: two readers that break it differently
+  disagree, and the disagreement only surfaces when a rewrite silently swaps a
+  pair nobody touched.
+- **A rewrite covers every stored pin, not just the visible ones.** Skipping a
+  pin whose work stream has gone out of sight strands it at a position the
+  visible run is about to reuse.
 - **`WORKSTREAM_VIEWER_JOINS_SQL` binds the viewer's id twice.** Use
   `workstreamViewerBindings`. A call site that binds one id where two are
   consumed shifts every binding after it, which SQLite reports as a type error
   somewhere unrelated rather than as the missing parameter it is.
-- **The first page of `GET /workstreams` carries every visible pin**, whatever
-  its activity. Without that, pinning something quiet and reloading loses it from
-  the section it was deliberately put in. Cursor pages do not repeat them.
-- **Pinning is gated on readability; unpinning is not.** A pin left behind by a
-  work stream that has since been archived, or made private without this person
-  in it, must stay removable — the row is the viewer's own, and there is no other
-  way to be rid of it.
+- **A work stream is returned exactly once across `GET /workstreams`.** Pins are
+  excluded from the paged query and appended to the first page instead. Leaving
+  them in both would return a quiet pin twice — once appended, once on whichever
+  cursor page its `last_activity_at` falls in.
+- **The pin limit counts what the section can show.** A pin whose work stream is
+  archived or no longer visible renders nothing and offers no menu, so counting
+  it would spend a slot its owner cannot free; 50 of them would wedge pinning
+  shut behind an empty section.
+- **Pinning is gated on readability; unpinning is not.** Removing a pin is never
+  a question about the work stream, and a pin that has gone dark can only be
+  reached by a caller that already knows the id.
 
 ## Boundary
 
@@ -109,10 +133,13 @@ It deliberately does not:
 
 ## Failure modes and limits
 
-- **50 pins per person** (`MAX_PINNED_WORKSTREAMS`). The 51st is refused with
-  `422 pin_limit_reached`, and the sidebar raises it as an error dialog naming
-  the limit. It is a product limit — the section's whole value is that a glance
-  takes it in — not a storage one.
+- **50 *visible* pins per person** (`MAX_PINNED_WORKSTREAMS`). The 51st is
+  refused with `422 pin_limit_reached`, and the sidebar raises it as an error
+  dialog naming the limit. It is a product limit — the section's whole value is
+  that a glance takes it in — not a storage one, and the stored row count may
+  exceed it by however many pins have gone dark. The check is a read followed by
+  a write, so two pins made at the same instant can both pass at 49 and leave 51;
+  overshooting a soft product limit was judged not worth a trigger or a lock.
 - **A refused drag reverts.** The local arrangement is dropped and the section
   re-renders from what the server holds, which is what the person's other
   devices are showing. The dialog says so rather than leaving a list that
@@ -120,9 +147,14 @@ It deliberately does not:
 - **A pin whose work stream is gone contributes nothing.** Archived or no longer
   readable, it is filtered out of every read; the row survives, so a work stream
   reopened to the workspace comes back in its old place.
-- **A drag that ends where it started sends nothing.** `dragend` fires on a
-  cancelled drag too, and rewriting every position for a drag that went nowhere
-  is a write with no change behind it.
+- **A drag that ends where it started, or that was cancelled, sends nothing.**
+  Rewriting every position for a drag that went nowhere is a write with no change
+  behind it, and committing one that was backed out of would make Escape the
+  slowest way to reorder rather than the way to stop.
+- **Overlapping moves keep the newer arrangement.** Two `Alt`+arrow moves in
+  quick succession overlap; the local order is cleared only if it is still the
+  one that call set, so the first response cannot snap the list back to an order
+  the reader has already moved past.
 
 ## Testing
 
@@ -148,9 +180,53 @@ statements, because the position rewrite uses one.
 `workstream_pins_user_idx` on `(workspace_id, user_id, position)`. It is
 deliberately **not** uniquely indexed on `(user_id, position)`: a reorder
 rewrites every row of the run, and any intermediate state of that rewrite
-collides with itself.
+collides with itself. Positions are therefore kept unique by how they are
+allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-11 — Pins leave the recency order, and a position is allocated in SQL
+
+**What changed:** Four corrections to the design in the entry below, all found in
+review before it shipped.
+
+- A pinned work stream is now excluded from the paged `GET /workstreams` query
+  rather than merely appended to the first page. It was being returned twice —
+  once appended, once on whichever cursor page its `last_activity_at` fell in.
+- `pin` allocates its position as `MAX(position) + 1` inside the insert instead
+  of binding the row count read a moment earlier. The count is wrong whenever
+  the run has a hole in it, which a work stream deleted outright produces by
+  cascade, and two pins made at once both read the same number.
+- `MAX_PINNED_WORKSTREAMS` counts pins the reader can actually see. A pin whose
+  work stream is archived or no longer visible renders nothing and offers no
+  menu, so counting it spent a slot with no way to free it; fifty of them wedged
+  pinning shut behind an empty section.
+- A cancelled drag no longer commits. `dragend` fires on Escape and on a release
+  outside the list, and the rows have already moved by then, so the handler now
+  reads `dropEffect` and abandons the arrangement when nothing accepted it. The
+  pinned list became a drop target of its own so a release in a gap between rows
+  still counts as a drop, and an in-flight reorder no longer clears a local order
+  a later move has replaced.
+
+**Why:** Each was a case where the first design read correctly and behaved
+differently. The paging one is the instructive one: the rule "a pin appended to
+page one is older than that page's last row" is true, and it is exactly why the
+row reappears further down the same walk — being older is what puts it on a later
+cursor page. Appending to one page cannot be the whole answer to "this row is not
+sorted by activity"; taking it out of the activity order is.
+
+**Considered and rejected:** Deduplicating on the client instead of fixing the
+pagination. The desktop reads only the first page, so nothing visible was broken
+— which is the argument for leaving an API that returns the same row twice, and
+it is worth nothing to the next caller that pages properly.
+
+**Consequences:** A cursor page never contains a pinned work stream, so a caller
+walking the whole list gets pins on the first page and the recency order
+everywhere else. Positions are unique and ascending rather than strictly dense:
+a hole is now possible between rewrites and must stay harmless. The pin cap is
+enforced against a visibility-filtered read, so the stored row count may exceed
+`MAX_PINNED_WORKSTREAMS`, and the check remains a read-then-write that two
+simultaneous pins can both pass.
 
 ### 2026-08-11 — Work streams can be pinned, and the pinned list is arranged by hand
 
