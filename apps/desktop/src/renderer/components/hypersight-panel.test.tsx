@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { HyperSight } from '../lib/types';
-import { HyperSightPanel, HyperSightResizeHandle } from './hypersight-panel';
+import { useUiStore } from '../lib/ui-store';
+import { HyperSightPanel, HyperSightRail } from './hypersight-panel';
 
 const hypersight: HyperSight = {
   versionId: '11111111-1111-4111-8111-111111111111',
@@ -56,41 +57,60 @@ function renderPanel(onChange = vi.fn(async () => {})) {
   };
 }
 
-describe('HyperSightPanel', () => {
-  it('resizes linearly, clamps to 18–58 percent, and stops after release', () => {
-    const onResize = vi.fn();
-    const { container } = render(
-      <div className="workstream-screen">
-        <div className="hypersight-shell">
-          <HyperSightResizeHandle onResize={onResize} />
-        </div>
-      </div>,
-    );
-    const mainView = container.querySelector('.workstream-screen') as HTMLElement;
-    const shell = container.querySelector('.hypersight-shell') as HTMLElement;
-    const handle = screen.getByRole('separator', { name: 'Resize HyperSight' });
-    vi.spyOn(mainView, 'getBoundingClientRect').mockReturnValue({ height: 1_000 } as DOMRect);
-    vi.spyOn(shell, 'getBoundingClientRect').mockReturnValue({ height: 300 } as DOMRect);
-
-    fireEvent.pointerDown(handle, { clientY: 300, pointerId: 7 });
-    fireEvent.pointerMove(handle, { clientY: 350, pointerId: 7 });
-    expect(onResize).toHaveBeenLastCalledWith(350);
-    fireEvent.pointerMove(handle, { clientY: 400, pointerId: 7 });
-    expect(onResize).toHaveBeenLastCalledWith(400);
-    fireEvent.pointerMove(handle, { clientY: 1_000, pointerId: 7 });
-    expect(onResize).toHaveBeenLastCalledWith(580);
-    fireEvent.pointerMove(handle, { clientY: -1_000, pointerId: 7 });
-    expect(onResize).toHaveBeenLastCalledWith(180);
-    fireEvent.pointerUp(handle, { pointerId: 7 });
-    fireEvent.pointerMove(handle, { clientY: 450, pointerId: 7 });
-    expect(onResize).toHaveBeenCalledTimes(4);
-    expect(document.body).not.toHaveClass('is-resizing-hypersight');
+describe('HyperSightRail', () => {
+  beforeEach(() => {
+    useUiStore.setState({ hypersightOpen: true, hypersightWidth: 360 });
+    window.innerWidth = 1_400;
   });
 
+  it('resizes from the sidebar edge, clamps to 320–560, and stops after release', () => {
+    render(
+      <Tooltip.Provider>
+        <HyperSightRail blockCount={2} onClose={vi.fn()}>content</HyperSightRail>
+      </Tooltip.Provider>,
+    );
+    const handle = screen.getByRole('separator', { name: 'Resize HyperSight' });
+
+    fireEvent.pointerDown(handle, { clientX: 1_040, pointerId: 7 });
+    fireEvent.pointerMove(handle, { clientX: 1_000, pointerId: 7 });
+    expect(useUiStore.getState().hypersightWidth).toBe(392);
+    fireEvent.pointerMove(handle, { clientX: 1_400, pointerId: 7 });
+    expect(useUiStore.getState().hypersightWidth).toBe(320);
+    fireEvent.pointerMove(handle, { clientX: 0, pointerId: 7 });
+    expect(useUiStore.getState().hypersightWidth).toBe(560);
+    fireEvent.pointerUp(handle, { pointerId: 7 });
+    fireEvent.pointerMove(handle, { clientX: 1_100, pointerId: 7 });
+    expect(useUiStore.getState().hypersightWidth).toBe(560);
+    expect(document.body).not.toHaveClass('is-resizing-rail');
+  });
+
+  it('resizes from the keyboard and closes on Escape', () => {
+    const onClose = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <HyperSightRail blockCount={1} onClose={onClose}>content</HyperSightRail>
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize HyperSight' }), { key: 'ArrowLeft' });
+    expect(useUiStore.getState().hypersightWidth).toBe(376);
+
+    expect(screen.getByText('1 block')).toBeVisible();
+    fireEvent.keyDown(screen.getByRole('complementary', { name: 'HyperSight' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // The scrim behind the sidebar and the header control close it alike.
+    const closeControls = screen.getAllByRole('button', { name: 'Close HyperSight' });
+    expect(closeControls).toHaveLength(2);
+    fireEvent.click(closeControls[1]!);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('HyperSightPanel', () => {
   it('renders model Markdown and live refresh state inside separate blocks', () => {
     renderPanel();
 
-    expect(screen.getByRole('heading', { name: 'HyperSight' })).toBeVisible();
     expect(screen.getByText('Ship the release')).toBeVisible();
     expect(screen.getByText('Review telemetry')).toBeVisible();
     expect(screen.getByText('Refreshing…')).toBeVisible();
@@ -151,7 +171,7 @@ describe('HyperSightPanel', () => {
 
     fireEvent.dragStart(grips[0]!, { dataTransfer });
     fireEvent.dragEnter(secondArticle!, { dataTransfer });
-    expect(within(screen.getByRole('region', { name: 'HyperSight' }))
+    expect(within(screen.getByRole('region', { name: 'HyperSight blocks' }))
       .getAllByRole('article').map((article) => article.textContent)).toEqual([
       expect.stringContaining('Refreshing'),
       expect.stringContaining('Ship the release'),
@@ -193,7 +213,7 @@ describe('HyperSightPanel', () => {
       </Tooltip.Provider>,
     );
 
-    const panel = screen.getByRole('region', { name: 'HyperSight' });
+    const panel = screen.getByRole('region', { name: 'HyperSight blocks' });
     expect(within(panel).getAllByRole('article').map((article) => article.textContent)).toEqual([
       expect.stringContaining('Fresh summary'),
       expect.stringContaining('Ship the release'),
