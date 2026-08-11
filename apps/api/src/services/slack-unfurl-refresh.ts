@@ -13,8 +13,8 @@ import {
   WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
   slackUnfurlErrorReason,
-  unfurlStatusLabel,
   workstreamUnfurlBlocks,
+  workstreamUnfurlCardHash,
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
 
@@ -62,6 +62,7 @@ const StaleUnfurlRowSchema = z.object({
   rendered_status: z.string(),
   // SQLite has no boolean type; the column is a 0/1 integer.
   rendered_anonymous: z.number().int(),
+  rendered_hash: z.string().nullable(),
 });
 
 interface SlackUnfurlConnection {
@@ -89,7 +90,7 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   const stale = await env.DB.prepare(
     `SELECT * FROM (
        SELECT l.connection_id, l.slack_channel_id, l.slack_message_ts, l.url, l.workstream_id,
-              l.rendered_status AS rendered_status, l.rendered_anonymous,
+              l.rendered_status AS rendered_status, l.rendered_anonymous, l.rendered_hash,
               w.id, ${WORKSTREAM_UNFURL_COLUMNS},
               w.last_activity_at AS ordered_activity_at,
               ROW_NUMBER() OVER (
@@ -101,7 +102,9 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
          ${WORKSTREAM_UNFURL_JOINS}
         WHERE l.shared_at >= ?1
           AND w.archived_at IS NULL
-          AND (w.harness_status <> l.rendered_status OR l.audience_checked_at < ?2)
+          AND (w.harness_status <> l.rendered_status
+               OR l.audience_checked_at < ?2
+               OR l.rendered_hash IS NULL)
      )
      WHERE connection_rank <= ?3
      ORDER BY ordered_activity_at DESC
@@ -183,22 +186,25 @@ async function refreshConnectionUnfurls(
       continue;
     }
 
-    // Rewriting an identical card would burn the workspace's `chat.unfurl`
-    // budget for no visible change, so compare what the card actually renders
-    // rather than the raw status. Most states share the same empty badge, so a
-    // move between two of them — `completed` to `idle`, say — drifts the row
-    // without changing a pixel. Record the new status and post nothing.
-    const wasAnonymous = row.rendered_anonymous === 1;
-    const badgeUnchanged = unfurlStatusLabel(row.harness_status) === unfurlStatusLabel(row.rendered_status);
-    if (badgeUnchanged && external === wasAnonymous) {
-      await markCardCurrent(env, connectionId, row, at);
-      continue;
-    }
-
     const blocks = workstreamUnfurlBlocks(
       external ? null : workstreamUnfurlSummary(raw),
       workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, row.workstream_id),
     );
+    const hash = await workstreamUnfurlCardHash(blocks);
+
+    // Ask the only question that matters — would this card render differently?
+    // — by comparing what it would emit against what is posted. No stored field
+    // answers that on its own: the drawing code can change, the title and
+    // activity stamp both render, and an anonymous card is identical whatever
+    // the status does. Rewriting an identical card would spend a `chat.unfurl`
+    // from the workspace's Tier 3 budget to change nothing.
+    //
+    // A row recorded before hashing shipped has no hash, which never matches,
+    // so it is rewritten exactly once and then settles.
+    if (row.rendered_hash === hash) {
+      await markCardCurrent(env, connectionId, row, at, hash);
+      continue;
+    }
 
     try {
       await slackApi(token, "chat.unfurl", {
@@ -227,11 +233,13 @@ async function refreshConnectionUnfurls(
 
     await env.DB.prepare(
       `UPDATE slack_unfurled_links
-          SET rendered_status = ?, rendered_anonymous = ?, audience_checked_at = ?, refreshed_at = ?
+          SET rendered_status = ?, rendered_anonymous = ?, rendered_hash = ?,
+              audience_checked_at = ?, refreshed_at = ?
         WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
     ).bind(
       row.harness_status,
       external ? 1 : 0,
+      hash,
       at,
       at,
       connectionId,
@@ -243,20 +251,23 @@ async function refreshConnectionUnfurls(
 }
 
 /**
- * Record that the posted card is current without touching Slack. Advancing
- * `rendered_status` matters even though nothing was posted: leaving it behind
- * would re-select the row on every sweep for as long as the raw status differs.
+ * Record that the posted card is already correct, without touching Slack.
+ * Advancing `rendered_status` matters even though nothing was posted: leaving
+ * it behind would re-select the row on every sweep for as long as the raw
+ * status differs from it, even though the card itself needs no change.
  */
 async function markCardCurrent(
   env: Env,
   connectionId: string,
   row: { slack_channel_id: string; slack_message_ts: string; url: string; harness_status: string },
   at: string,
+  hash: string,
 ): Promise<void> {
   await env.DB.prepare(
-    `UPDATE slack_unfurled_links SET rendered_status = ?, audience_checked_at = ?
+    `UPDATE slack_unfurled_links
+        SET rendered_status = ?, rendered_hash = ?, audience_checked_at = ?
       WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
-  ).bind(row.harness_status, at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
+  ).bind(row.harness_status, hash, at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
 }
 
 async function workspaceBotToken(env: Env, connection: SlackUnfurlConnection): Promise<string> {
