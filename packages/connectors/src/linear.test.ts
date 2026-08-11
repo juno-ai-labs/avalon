@@ -371,6 +371,155 @@ describe("Linear connector", () => {
     expect((updateSchema as { properties: Record<string, unknown> }).properties).not.toHaveProperty("statusId");
   });
 
+  it("refuses an argument it does not declare instead of dropping it", async () => {
+    // The canonical trap: `create_issue` used to take a subset of what
+    // `update_issue` takes, and a non-strict parse dropped the rest silently.
+    // A model that had learned `dueDate` on update sent it to create, the field
+    // vanished, and the tool reported the issue created — wrong, with nothing
+    // in the run able to notice.
+    // The provider call succeeds, so the only thing that can reject here is the
+    // argument parse. A fetcher that threw would let this pass whether or not
+    // the schema is strict, which is how a drop stays invisible.
+    let reached = false;
+    const adapter = linearAdapter(async () => {
+      reached = true;
+      return jsonResponse({
+        data: { issueCreate: { success: true, issue: { id: "issue-1", identifier: "AVA-1", title: "Ship" } } },
+      });
+    });
+    const context = {
+      connection: linearConnection([LinearCapabilities.issueCreate]),
+      principal: { type: "workspace" as const, workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    };
+
+    await expect(adapter.executeTool("create_issue", {
+      teamId: "team-1",
+      title: "Ship",
+      notARealField: "dropped",
+    }, context)).rejects.toThrow(/unrecognized|unexpected|not.*allowed/iu);
+    expect(reached, "the write must not happen when an argument was refused").toBe(false);
+
+    // Every write on this connector, not just the one above.
+    for (const [tool, args] of [
+      ["update_issue", { issueId: "issue-1", title: "Ship", notARealField: "dropped" }],
+      ["create_comment", { issueId: "issue-1", body: "hello", notARealField: "dropped" }],
+    ] as const) {
+      await expect(
+        adapter.executeTool(tool, args, {
+          ...context,
+          connection: linearConnection([LinearCapabilities.write, LinearCapabilities.commentCreate]),
+        }),
+        `${tool} accepted an undeclared argument`,
+      ).rejects.toThrow(/unrecognized|unexpected|not.*allowed/iu);
+    }
+    expect(reached).toBe(false);
+  });
+
+  it("takes the same issue fields on create that it takes on update", async () => {
+    let variables: Record<string, unknown> | null = null;
+    const adapter = linearAdapter(async (_input, init) => {
+      variables = (JSON.parse(String(init?.body)) as { variables: Record<string, unknown> }).variables;
+      return jsonResponse({
+        data: { issueCreate: { success: true, issue: { id: "issue-9", identifier: "AVA-9", title: "Ship" } } },
+      });
+    });
+
+    await adapter.executeTool("create_issue", {
+      teamId: "team-1",
+      title: "Ship",
+      stateId: "state-started",
+      dueDate: "2026-09-01",
+    }, {
+      connection: linearConnection([LinearCapabilities.issueCreate]),
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(variables).toEqual({
+      input: { teamId: "team-1", title: "Ship", stateId: "state-started", dueDate: "2026-09-01" },
+    });
+    const create = adapter.manifest.tools.find((tool) => tool.name === "create_issue")!.inputSchema as {
+      properties: Record<string, unknown>;
+    };
+    const update = adapter.manifest.tools.find((tool) => tool.name === "update_issue")!.inputSchema as {
+      properties: Record<string, unknown>;
+    };
+    // Every field an update can set, a create can set. The reverse does not
+    // hold — `teamId` is a create-only choice — so this is one-directional.
+    expect(Object.keys(update.properties).filter((key) => key !== "issueId")
+      .filter((key) => !Object.hasOwn(create.properties, key))).toEqual([]);
+  });
+
+  it("searches issue descriptions, not just titles", async () => {
+    let query = "";
+    let variables: Record<string, unknown> | null = null;
+    const adapter = linearAdapter(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      query = request.query;
+      variables = request.variables;
+      return jsonResponse({ data: { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } });
+    });
+
+    await adapter.executeTool("search_issues", { query: "flaky rebase" }, {
+      connection: linearConnection([LinearCapabilities.read]),
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    // Titles alone made "the issue about the flaky rebase test" unfindable
+    // whenever the title was "Fix CI", and the empty result reads as the work
+    // not being tracked at all.
+    expect(query).toContain("title: { containsIgnoreCase: $query }");
+    expect(query).toContain("description: { containsIgnoreCase: $query }");
+    expect(query).toContain("or:");
+    expect(variables).toMatchObject({ query: "flaky rebase" });
+  });
+
+  it("can discover the workflow states an update takes, without reading an unrelated issue", async () => {
+    let variables: Record<string, unknown> | null = null;
+    const adapter = linearAdapter(async (_input, init) => {
+      const request = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      expect(request.query).toContain("AvalonListWorkflowStates");
+      variables = request.variables;
+      return jsonResponse({
+        data: {
+          workflowStates: {
+            nodes: [{ id: "state-started", name: "In Progress", type: "started", position: 1 }],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        },
+      });
+    });
+
+    const result = await adapter.executeTool("list_workflow_states", { teamId: "team-1" }, {
+      connection: linearConnection([LinearCapabilities.read]),
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    });
+
+    expect(variables).toMatchObject({ filter: { team: { id: { eq: "team-1" } } } });
+    expect(result.output).toMatchObject({ nodes: [{ id: "state-started", name: "In Progress" }] });
+  });
+
+  it("names what the connection can do when it refuses a tool it cannot", async () => {
+    const adapter = linearAdapter(async () => {
+      throw new Error("A refused tool must never reach Linear");
+    });
+
+    // A bare "not granted" is the one fact the model already knew. What it can
+    // act on is the list of capabilities the connection does hold.
+    await expect(adapter.executeTool("create_issue", { teamId: "team-1", title: "Ship" }, {
+      connection: linearConnection([LinearCapabilities.read]),
+      principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
+      signal: AbortSignal.timeout(1_000),
+    })).rejects.toMatchObject({
+      code: "unsupported_capability",
+      message: expect.stringContaining(LinearCapabilities.read),
+      details: { reason: "capability_not_granted", available: [LinearCapabilities.read] },
+    });
+  });
+
   it("proves personal webhook visibility against the signed resource or parent and fails closed", async () => {
     const queries: string[] = [];
     const fetcher: FetchLike = async (_input, init) => {

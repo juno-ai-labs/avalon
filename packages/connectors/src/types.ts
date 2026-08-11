@@ -474,6 +474,15 @@ export interface ConnectorAgentPluginDescriptor {
   readonly wireNamePrefix: string;
   /** Compact trusted description shown in the progressive plugin catalog. */
   readonly description: string;
+  /**
+   * Words a request would use for this provider's work, matched by plugin
+   * search. Without them a connector is reachable only by its own product name,
+   * so "file a ticket" finds nothing and the run concludes the capability is
+   * absent — the recorded failure mode that catalog wording exists to prevent.
+   * The provider type and wire prefix are added by the host; list the task
+   * vocabulary here, not the brand.
+   */
+  readonly searchAliases?: readonly string[];
   /** Static provider guidance included only while this plugin is active. */
   readonly systemMessage: string;
   /** Provider tool definitions. Runtime capability grants may narrow this set. */
@@ -579,6 +588,33 @@ export function connectorCapabilitySupportsScope(
 export type ResolvedConnectorAdapter = Omit<ConnectorAdapter, "manifest"> & {
   manifest: ConnectorManifest;
 };
+
+/**
+ * The refusal every connector gives when a run reaches for a tool this
+ * credential does not carry.
+ *
+ * It used to name only the missing capability, which is the one thing the model
+ * cannot act on: it already asked for that tool, and a bare "not granted"
+ * leaves it guessing whether to retry, rephrase, or give up. Naming what the
+ * connection *does* hold turns a dead end into a one-step correction, and
+ * `available` is forwarded to the model with the failure. A run cannot widen
+ * its own grants, so this discloses nothing it could not already see in its own
+ * tool list.
+ */
+export function connectorCapabilityRefused(
+  providerLabel: string,
+  requested: string,
+  grantedCapabilities: readonly string[],
+): ConnectorError {
+  const available = [...grantedCapabilities].sort();
+  return new ConnectorError(
+    "unsupported_capability",
+    available.length
+      ? `The ${providerLabel} connection has not granted ${requested}. It has granted: ${available.join(", ")}.`
+      : `The ${providerLabel} connection has not granted ${requested}, and holds no capabilities on this run.`,
+    { reason: "capability_not_granted", field: requested, available },
+  );
+}
 
 export class ConnectorError extends Error {
   constructor(

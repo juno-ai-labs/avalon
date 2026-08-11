@@ -1129,7 +1129,7 @@ async function loadAutomationCreatorPluginCatalog(
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
-      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     catalog.push({
@@ -3748,7 +3748,7 @@ async function loadHarnessTools(
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
-      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     const frozen: FrozenConnectorPlugin = {
@@ -3903,6 +3903,23 @@ function googleFilesWorkedExamples(wirePrefix: string, granted: ReadonlySet<stri
     );
   }
   return examples.length ? `Worked examples:\n${examples.map((example) => `- ${example}`).join("\n")}` : "";
+}
+
+/**
+ * What a request has to say to find a connector in the plugin catalog.
+ *
+ * The provider type and wire prefix were once the whole list, which made every
+ * connector reachable only by its own product name: "file a ticket" matched no
+ * plugin, and a run whose visible tool list held no connector tools reads that
+ * as the capability being absent. A connector declares the vocabulary of the
+ * work it does; the brand is added here so a descriptor never has to repeat it.
+ */
+function connectorSearchAliases(adapter: { manifest: { type: string }; agentPlugin: { wireNamePrefix: string; searchAliases?: readonly string[] } }): string[] {
+  return [...new Set([
+    adapter.manifest.type,
+    adapter.agentPlugin.wireNamePrefix,
+    ...(adapter.agentPlugin.searchAliases ?? []),
+  ])];
 }
 
 function connectorPluginPresentation(
