@@ -1177,6 +1177,30 @@ function sendDeepLink(rawUrl: string): void {
   targetWindow.focus();
 }
 
+/**
+ * Takes the main window to one note and raises it, for the meeting window that
+ * is about to close behind it.
+ *
+ * It travels as a deep link on the channel every other navigation uses, so the
+ * renderer needs no second dispatcher — but it is sent only to the main window,
+ * unlike `sendDeepLink`. A note is a main-window destination, and the settings
+ * renderer has no business navigating because a meeting ended. A main window
+ * that is gone or not yet listening leaves the link queued, which is how the
+ * cold-start path already works.
+ */
+function revealNoteInMainWindow(noteId: string): void {
+  const target = `${customProtocol}://notes/${noteId}`;
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
+    if (!pendingDeepLinks.includes(target)) pendingDeepLinks.push(target);
+    if ((!mainWindow || mainWindow.isDestroyed()) && app.isReady()) void createMainWindow();
+    return;
+  }
+  mainWindow.webContents.send('auth:deep-link', target);
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 function emitDeepLink(rawUrl: string): void {
   try {
     const deepLink = new URL(rawUrl);
@@ -1414,10 +1438,16 @@ function registerIpc(): void {
     if (!url) throw new Error('Open this platform’s privacy settings to change recording access.');
     await shell.openExternal(url);
   });
-  ipcMain.handle('system:close-meeting-notes', (event) => {
+  ipcMain.handle('system:close-meeting-notes', (event, rawNoteId: unknown) => {
     assertTrustedIpcSender(event);
+    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
+      throw new Error('Invalid note ID');
+    }
     const meetingWindow = [...meetingWindows].find((window) => window.webContents === event.sender);
     if (!meetingWindow) throw new Error('Only a meeting-notes window can close itself');
+    // Raise the note before the window goes, so the person is handed to it
+    // rather than left looking at whatever the meeting window was covering.
+    if (typeof rawNoteId === 'string') revealNoteInMainWindow(rawNoteId);
     forceCloseMeetingWindow(meetingWindow);
   });
 }

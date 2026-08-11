@@ -658,6 +658,46 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
+  it('opens the note a closing meeting window hands back', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    await dispatchDeepLink('avalon://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
+
+    await waitFor(() => expect(window.location.hash).toBe('#/notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
+  it('refuses a note link that names no readable note', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+    const before = window.location.hash;
+
+    await dispatchDeepLink('avalon://notes/not-a-note');
+
+    await waitFor(() => expect(screen.getByTestId('deep-link-error'))
+      .toHaveTextContent('Sign in before opening this note.'));
+    expect(window.location.hash).toBe(before);
+  });
+
   it.each([
     'avalon://settings/workspace?section=connections',
     'avalon://settings/Workspace',

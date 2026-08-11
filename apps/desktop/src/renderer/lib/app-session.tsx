@@ -355,6 +355,18 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         window.location.hash = `/workstreams/${workstreamId}`;
         return;
       }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'notes') {
+        // Sent by the main process when a meeting window closes, so that the
+        // recording a person just ended hands them to the note it produced.
+        const noteId = deepLink.pathname.slice(1);
+        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
+          setDeepLinkError('Sign in before opening this note.');
+          return;
+        }
+        setDeepLinkError(null);
+        window.location.hash = `/notes/${noteId}`;
+        return;
+      }
       if (
         deepLink.protocol === 'avalon:'
         && deepLink.hostname === 'settings'
