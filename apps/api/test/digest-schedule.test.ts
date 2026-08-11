@@ -2,7 +2,14 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
-import { DigestService, dayMaskFromDays, daysFromDayMask, digestRRule } from "../src/services/digest-service";
+import {
+  DigestService,
+  dayMaskFromDays,
+  daysFromDayMask,
+  digestRRule,
+  rebuildDigestSchedulesForTimezone,
+  reconcileDigestDefaults,
+} from "../src/services/digest-service";
 import {
   latestActivityEventCursor,
   listActivityEventsForUser,
@@ -87,8 +94,42 @@ describe("digest schedule", () => {
 
     expect(schedule.enabled).toBe(false);
     expect(schedule.days).toEqual([1, 2, 3, 4, 5]);
+    // Mirrored from the account, never stored a second time.
     expect(schedule.timezone).toBe("Europe/London");
     expect(schedule.deliveryTargets).toEqual([]);
+  });
+
+  it("runs in the account timezone and follows it when that changes", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await new DigestService(env, auth).replace({
+      enabled: true,
+      days: [1],
+      times: [9 * 60],
+      deliveryTargets: [{ type: "email", connectionId: null }],
+    });
+    const before = database.prepare(
+      "SELECT timezone, next_run_at FROM schedules WHERE digest_schedule_id IS NOT NULL",
+    ).get() as { timezone: string; next_run_at: string };
+    expect(before.timezone).toBe("Europe/London");
+
+    database.exec(`UPDATE users SET timezone = 'Asia/Tokyo' WHERE id = '${OWNER}'`);
+    await rebuildDigestSchedulesForTimezone(env, {
+      workspaceId: WORKSPACE, userId: OWNER, timezone: "Asia/Tokyo",
+    });
+
+    const after = database.prepare(
+      "SELECT timezone, next_run_at FROM schedules WHERE digest_schedule_id IS NOT NULL",
+    ).get() as { timezone: string; next_run_at: string };
+    // Same configured hour, a different instant: 09:00 is 09:00 in whichever
+    // day the person is actually living in.
+    expect(after.timezone).toBe("Asia/Tokyo");
+    expect(after.next_run_at).not.toBe(before.next_run_at);
+    expect(await new DigestService(env, auth).get()).toMatchObject({
+      timezone: "Asia/Tokyo",
+      times: [9 * 60],
+      days: [1],
+    });
   });
 
   it("derives one schedule row per time and freezes the account email", async () => {
@@ -98,7 +139,6 @@ describe("digest schedule", () => {
       enabled: true,
       days: [1, 3, 5],
       times: [16 * 60, 9 * 60, 12 * 60],
-      timezone: "America/Los_Angeles",
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
 
@@ -127,7 +167,6 @@ describe("digest schedule", () => {
       enabled: true,
       days: [1],
       times: [9 * 60],
-      timezone: "America/Los_Angeles",
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
 
@@ -135,7 +174,6 @@ describe("digest schedule", () => {
       enabled: false,
       days: [1],
       times: [9 * 60],
-      timezone: "America/Los_Angeles",
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
 
@@ -154,7 +192,6 @@ describe("digest schedule", () => {
       enabled: true,
       days: [1, 2],
       times,
-      timezone: "America/Los_Angeles",
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
 
@@ -173,7 +210,6 @@ describe("digest schedule", () => {
       enabled: true,
       days: [1],
       times: [9 * 60],
-      timezone: "America/Los_Angeles",
       // No Slack connection exists, so the frozen identity cannot be resolved.
       deliveryTargets: [{ type: "slack_agent_dm", connectionId: WORKSTREAM }],
     })).rejects.toMatchObject({ status: 422, code: "delivery_target_unavailable" });
@@ -201,7 +237,6 @@ describe("digest schedule", () => {
       enabled: true,
       days: [1],
       times: [9 * 60],
-      timezone: "America/Los_Angeles",
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
 
@@ -358,5 +393,88 @@ describe("activity event visibility", () => {
     expect(await listActivityEventsForUser(env, {
       workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
     })).toEqual([]);
+  });
+});
+
+describe("digests are on by default", () => {
+  it("gives every active member a weekday digest delivered to their address", async () => {
+    const database = seededDatabase();
+
+    const result = await reconcileDigestDefaults(envFor(database));
+
+    expect(result).toEqual({ created: 2, derived: 2 });
+    expect(await new DigestService(envFor(database), auth).get()).toMatchObject({
+      enabled: true,
+      days: [1, 2, 3, 4, 5],
+      times: [9 * 60],
+      timezone: "Europe/London",
+      deliveryTargets: [expect.objectContaining({ type: "email", displayName: "owner@example.com" })],
+    });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM schedules WHERE digest_schedule_id IS NOT NULL",
+    ).get()).toEqual({ count: 2 });
+  });
+
+  it("is idempotent, so a second tick changes nothing", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await reconcileDigestDefaults(env);
+
+    expect(await reconcileDigestDefaults(env)).toEqual({ created: 0, derived: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 2 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_delivery_targets").get()).toEqual({ count: 2 });
+  });
+
+  it("never resurrects a digest somebody switched off", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await reconcileDigestDefaults(env);
+    await new DigestService(env, auth).replace({
+      enabled: false,
+      days: [1, 2, 3, 4, 5],
+      times: [9 * 60],
+      deliveryTargets: [{ type: "email", connectionId: null }],
+    });
+
+    await reconcileDigestDefaults(env);
+
+    // Switching off keeps the row with enabled = 0, so absence stays an
+    // unambiguous signal that nobody has ever had one.
+    expect(await new DigestService(env, auth).get()).toMatchObject({ enabled: false, nextRunAt: null });
+  });
+
+  it("gives a member who joins later one too", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await reconcileDigestDefaults(env);
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-00000000000f', 'g-late', 'late@example.com', 'Late', 'Asia/Tokyo',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES ('${WORKSPACE}', '00000000-0000-7000-8000-00000000000f', 'member', 'active', '2026-01-01T00:00:00.000Z');
+    `);
+
+    expect(await reconcileDigestDefaults(env)).toEqual({ created: 1, derived: 1 });
+    expect(database.prepare(
+      "SELECT timezone FROM schedules WHERE digest_schedule_id = (SELECT id FROM digest_schedules WHERE user_id = ?)",
+    ).get("00000000-0000-7000-8000-00000000000f")).toEqual({ timezone: "Asia/Tokyo" });
+  });
+
+  it("repairs a save that wrote the configuration but not its schedule rows", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await reconcileDigestDefaults(env);
+    database.exec("DELETE FROM schedules");
+
+    expect(await reconcileDigestDefaults(env)).toEqual({ created: 0, derived: 2 });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 2 });
+  });
+
+  it("skips a member with no address to send to", async () => {
+    const database = seededDatabase();
+    database.exec(`UPDATE users SET email = '  ' WHERE id = '${OTHER}'`);
+
+    expect(await reconcileDigestDefaults(envFor(database))).toEqual({ created: 1, derived: 1 });
   });
 });

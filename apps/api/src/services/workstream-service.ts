@@ -410,8 +410,12 @@ export class WorkstreamService {
     this.database = createDatabase(env.DB);
   }
 
-  async list(limit: number, before?: string) {
+  async list(limit: number, before?: string, includeSystem = false) {
     const cursorClause = before ? "AND w.last_activity_at < ?" : "";
+    // A system work stream is machinery — a digest run's transcript, say — so it
+    // is out of the sidebar by default and only ever reachable by the person it
+    // belongs to. `includeSystem` decides whether to show it, never who may.
+    const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
     const statement = this.env.DB.prepare(
       `SELECT w.*, t.name AS origin_label,
          rs.user_id AS viewer_read_state_user_id,
@@ -423,7 +427,13 @@ export class WorkstreamService {
        LEFT JOIN automation_templates t ON t.id = s.template_id
        LEFT JOIN workstream_read_states rs
          ON rs.workstream_id = w.id AND rs.user_id = ?
-       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND w.system_kind IS NULL ${cursorClause}
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
+         AND (
+           w.system_kind IS NULL OR EXISTS (
+             SELECT 1 FROM workstream_participants p
+             WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
+           )
+         )
          AND (
            w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
            OR EXISTS (
@@ -434,8 +444,8 @@ export class WorkstreamService {
        ORDER BY w.last_activity_at DESC LIMIT ?`,
     );
     const result = before
-      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
-      : await statement.bind(this.auth.userId, this.auth.workspaceId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
+      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, this.auth.userId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
+      : await statement.bind(this.auth.userId, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
     const rows = result.results ?? [];
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
@@ -1267,10 +1277,15 @@ export class WorkstreamService {
          ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
-         -- Machinery, not somebody's work. A digest's hidden work stream holds a
-         -- brief assembled from one person's private activity, so it is not just
-         -- absent from the sidebar: it cannot be opened by id either.
-         AND w.system_kind IS NULL
+         -- Machinery, not somebody's work. A digest's system work stream holds a
+         -- brief assembled from one person's private activity, so knowing its id
+         -- is not enough — only its own participant can open it.
+         AND (
+           w.system_kind IS NULL OR EXISTS (
+             SELECT 1 FROM workstream_participants p
+             WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
+           )
+         )
          AND (
          w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
          OR EXISTS (
@@ -1278,7 +1293,7 @@ export class WorkstreamService {
            WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
          )
        )`,
-    ).bind(this.auth.userId, id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
+    ).bind(this.auth.userId, id, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
   }
@@ -1878,5 +1893,6 @@ function toWorkstream(row: Record<string, unknown>) {
     firstUnreadSequenceNumber: manualUnreadFromSequenceNumber
       ?? (hasUnread ? Math.min(latestAttentionSequenceNumber, readThroughSequenceNumber + 1) : null),
     lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
+    systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
   };
 }

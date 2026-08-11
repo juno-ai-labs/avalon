@@ -152,6 +152,7 @@ async function deliverToTarget(
         bodyMarkdown: context.bodyMarkdown,
         itemCount: context.itemCount,
         highlightCount: context.highlightCount,
+        appUrl: env.PUBLIC_WEB_BASE_URL,
         settingsUrl: `${env.PUBLIC_WEB_BASE_URL}/app/settings/digest`,
       }),
       text: [digestTitle(context), "", digestMarkdownToText(context.bodyMarkdown)].join("\n"),

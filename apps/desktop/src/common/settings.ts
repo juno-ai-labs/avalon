@@ -1,7 +1,7 @@
 export const desktopSettingsSections = [
   'account',
-  'workspace',
   'digest',
+  'workspace',
   'connections',
   'application',
 ] as const;

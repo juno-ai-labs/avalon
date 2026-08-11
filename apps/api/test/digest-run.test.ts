@@ -61,9 +61,9 @@ function seededDatabase(enabled = 1): DatabaseSync {
     VALUES ('${WORKSPACE}', '${OWNER}', 'owner', 'active', '2026-01-01'),
            ('${WORKSPACE}', '${OTHER}', 'member', 'active', '2026-01-01');
     INSERT INTO digest_schedules
-      (id, workspace_id, user_id, day_mask, timezone, enabled, system_workstream_id,
+      (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
        execution_principal_json, version, created_at, updated_at)
-    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, 'Europe/London', ${enabled}, NULL,
+    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, ${enabled}, NULL,
             '{"type":"user","userId":"${OWNER}"}', 1, '2026-01-01', '2026-01-01');
   `);
   return database;
@@ -303,8 +303,8 @@ describe("the brief a digest run is triggered with", () => {
     ]);
 
     expect(brief.match(/^### /gmu)).toHaveLength(2);
-    expect(brief).toContain("### Launch (workstream)");
-    expect(brief).toContain("### Pricing (workstream)");
+    expect(brief).toContain("### Launch — workstream");
+    expect(brief).toContain("### Pricing — workstream");
   });
 
   it("marks the items that name the reader so the model can lead with them", () => {
@@ -313,8 +313,8 @@ describe("the brief a digest run is triggered with", () => {
       event({ id: "b2", log_sequence: 2, is_target: 1, target_relations: "mentioned" }),
     ]);
 
-    expect(brief).toContain("[mentioned — you]");
-    expect(brief).toContain("(1 such item below)");
+    expect(brief).toContain("[mentioned — THIS NAMES THEM]");
+    expect(brief).toContain("`## Needs you` covering the 1 item");
   });
 
   it("tells the run to summarize only what is new", () => {
@@ -324,5 +324,21 @@ describe("the brief a digest run is triggered with", () => {
     expect(brief).toContain("Ada");
     expect(brief).toContain("Europe/London");
     expect(brief).toContain("(1 item)");
+  });
+
+  it("hands the run the real link so the digest can point rather than describe", () => {
+    const brief = renderDigestBrief(schedule, [
+      event({ canonical_url: "https://with-avalon.com/app/workstreams/c1" }),
+    ]);
+
+    expect(brief).toContain("link: https://with-avalon.com/app/workstreams/c1");
+    expect(brief).toContain("Never invent a URL");
+  });
+
+  it("suppresses the priority section when nothing names the reader", () => {
+    const brief = renderDigestBrief(schedule, [event()]);
+
+    expect(brief).toContain('do not write a "Needs you" section');
+    expect(brief).not.toContain("THIS NAMES THEM");
   });
 });
