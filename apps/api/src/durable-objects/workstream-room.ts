@@ -13,6 +13,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { truncateUtf16Safe } from "../lib/text";
+import { workstreamVisibilitySql } from "../lib/workstream-visibility";
 import { connectionFromRow } from "../mappers/connection";
 import {
   toWorkstream,
@@ -393,27 +394,20 @@ export class WorkstreamRoom {
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
 
+    // The same rule the REST reads enforce, not a copy of it. This authorizer
+    // was a copy, and it had drifted: it checked the automation clause and not
+    // `scope`, so a member who was not a participant could open a socket onto a
+    // private work stream and be sent its transcript.
     const authorized = await this.env.DB.prepare(
       `SELECT 1
          FROM workstreams w
          JOIN workspace_members wm ON wm.workspace_id = w.workspace_id
-         LEFT JOIN automation_subscriptions automation ON automation.id = w.automation_subscription_id
         WHERE w.id = ?1
           AND w.workspace_id = ?2
           AND wm.user_id = ?3
           AND wm.status = 'active'
           AND w.archived_at IS NULL
-          AND (
-            w.automation_subscription_id IS NULL
-            OR automation.scope = 'workspace'
-            OR automation.owner_user_id = ?3
-            OR EXISTS (
-              SELECT 1 FROM workstream_participants participant
-              WHERE participant.workstream_id = w.id
-                AND participant.user_id = ?3
-                AND participant.removed_at IS NULL
-            )
-          )
+          AND ${workstreamVisibilitySql("?3")}
         LIMIT 1`
     )
       .bind(identity.data.workstreamId, identity.data.workspaceId, identity.data.userId)
@@ -531,11 +525,80 @@ export class WorkstreamRoom {
     }
 
     this.recordRecentEvent(event.data);
+    // Authorization was decided when each socket connected, and this event is
+    // the one thing that can retract it. Closing first means the people the
+    // change excluded do not receive it — they are simply disconnected, and
+    // their client resynchronizes over REST, where the work stream is now a 404.
+    if (event.data.type === "workstream_scope_changed" && event.data.scope === "personal") {
+      await this.evictReadersWhoMayNoLongerRead();
+    }
     this.broadcast(event.data);
     if (HYPERSIGHT_REFRESH_EVENT_TYPES.has(event.data.type)) {
       await this.scheduleHyperSightRefresh(event.data.sequence);
     }
     return jsonResponse({ accepted: true, sequence: event.data.sequence }, 202);
+  }
+
+  /**
+   * Disconnect every socket whose user may no longer read this work stream.
+   *
+   * A socket is authorized once, when it connects, and then lives for as long
+   * as the window stays open. Narrowing a work stream to its participants has
+   * to reach the connections already inside it, or the change would apply to
+   * everyone who opens it next and to nobody who is reading it now.
+   *
+   * The question is asked of the whole connected set in one query rather than
+   * per socket, and it is the same rule the connection itself was checked
+   * against.
+   */
+  private async evictReadersWhoMayNoLongerRead(): Promise<void> {
+    const sockets = this.state.getWebSockets();
+    const byUserId = new Map<string, WebSocket[]>();
+    for (const socket of sockets) {
+      const attachment = this.readAttachment(socket);
+      if (!attachment) continue;
+      const existing = byUserId.get(attachment.userId);
+      if (existing) existing.push(socket);
+      else byUserId.set(attachment.userId, [socket]);
+    }
+    if (byUserId.size === 0) return;
+
+    const identity = RoomIdentitySchema.safeParse(await this.state.storage.get("roomIdentity"));
+    if (!identity.success) return;
+    const userIds = [...byUserId.keys()];
+    const placeholders = userIds.map(() => "?").join(",");
+    let permitted: Set<string>;
+    try {
+      const result = await this.env.DB.prepare(
+        `SELECT wm.user_id
+           FROM workspace_members wm
+           JOIN workstreams w ON w.id = ? AND w.workspace_id = ?
+          WHERE wm.workspace_id = w.workspace_id
+            AND wm.status = 'active'
+            AND wm.user_id IN (${placeholders})
+            AND ${workstreamVisibilitySql("wm.user_id")}`
+      )
+        .bind(identity.data.workstreamId, identity.data.workspaceId, ...userIds)
+        .all<{ user_id: string }>();
+      permitted = new Set((result.results ?? []).map((row) => row.user_id));
+    } catch {
+      // A read that failed says nothing about who may stay. Leaving every
+      // socket open would keep serving the work stream to people it was just
+      // closed to, so the room errs the other way and lets them all reconnect,
+      // where the connection itself is authorized against D1 again.
+      permitted = new Set();
+    }
+
+    for (const [userId, userSockets] of byUserId) {
+      if (permitted.has(userId)) continue;
+      for (const socket of userSockets) {
+        try {
+          socket.close(1008, "This work stream is now private");
+        } catch {
+          // Already gone; the runtime delivers the close separately.
+        }
+      }
+    }
   }
 
   private async scheduleHyperSightRefresh(triggerSequence: number): Promise<void> {

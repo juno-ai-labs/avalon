@@ -938,6 +938,48 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('carries a visibility change to the header and the sidebar row', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000403';
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      title: 'Compensation review',
+      scope: 'workspace',
+      harnessStatus: 'completed',
+    } as WorkstreamDetail);
+    queryClient.setQueryData(['workstreams'], [
+      { id: workstreamId, title: 'Compensation review', scope: 'workspace' },
+      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
+    ] as WorkstreamSummary[]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workstream_scope_changed',
+      sequence: 1,
+      occurredAt: '2026-08-11T09:00:01.000Z',
+      scope: 'personal',
+    }));
+
+    // Anyone the change excluded has been disconnected by the room, so everyone
+    // who receives this may still read it and only needs the lock to appear.
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
+      .toMatchObject({ title: 'Compensation review', scope: 'personal' });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
+      { id: workstreamId, title: 'Compensation review', scope: 'personal' },
+      { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
+    ]);
+  });
+
   it('refreshes run metadata when a new run starts in another client', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();

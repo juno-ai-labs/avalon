@@ -91,6 +91,12 @@ export interface WorkstreamSummary {
   emailAddress?: string;
   origin: 'ad_hoc' | 'automation';
   automationName?: string;
+  /**
+   * Set when an automation generated this work stream, which is what makes its
+   * audience that automation's rather than its own: `scope` is not the rule
+   * that decides who reads it, so it is not offered as one.
+   */
+  automationSubscriptionId?: string;
   harnessStatus: HarnessStatus;
   latestAttentionSequenceNumber: number;
   readThroughSequenceNumber: number;

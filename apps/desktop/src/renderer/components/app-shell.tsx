@@ -161,6 +161,16 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             } : current,
           );
         }}
+        onChangeWorkstreamScope={async (workstream, scope) => {
+          if (!api) return;
+          const updated = await api.setWorkstreamScope(workstream.id, scope);
+          queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+            current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+          );
+          queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
+            current ? { ...current, scope: updated.scope } : current,
+          );
+        }}
         onDeleteAutomation={async (automation) => {
           if (!api) return;
           await api.deleteAutomation(automation.id);
