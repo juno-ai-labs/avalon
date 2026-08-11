@@ -35,7 +35,7 @@ Create independent resource sets for `global` and `eu`:
 - An activity Queue and dead-letter Queue
 - The Worker, Durable Object namespaces, and Workflows declared in the regional Wrangler file
 
-One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data.
+One account-wide Flagship app, `avalon-api`, holds the agent model-routing flags and is bound by both regional Workers; it is not a per-region resource because a flag holds model ids rather than workspace data. Both regions do send it an evaluation context carrying workspace, work-stream, and user *attributes* — slugs, counts, ages, roles, origins, email domains — bounded by the rules in [`FEATURE_FLAGS.md`](FEATURE_FLAGS.md#what-may-become-an-attribute).
 
 The checked-in regional Wrangler files reference the provisioned Avalon resources. If a database is intentionally recreated, update only that region's `database_id` and keep the EU R2 jurisdiction and every region-specific name intact.
 
