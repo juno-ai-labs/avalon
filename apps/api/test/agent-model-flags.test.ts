@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HYPERSIGHT_MODEL, type Env } from "../src/env";
 import type { AgentModelRouting } from "../src/services/agent-model-flags";
 import {
@@ -9,6 +9,8 @@ import {
   resolveAgentModelRouting,
   scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
+import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
 // quiet the way it does in development.
@@ -39,7 +41,48 @@ function serving(value: unknown, variant = "current"): DetailsStub {
   return async (flagKey) => ({ flagKey, value, variant, reason: "STATIC" });
 }
 
+/**
+ * A workspace, its owner, and one work stream — enough for every attribute the
+ * resolver adds to the evaluation context to have a fact behind it.
+ */
+function seededEnv(env: Env): { env: Env; close: () => void } {
+  const database = migratedSqliteDatabase();
+  const at = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
+       VALUES (?1, 'google-1', 'ada@dogfood.example', 'Ada Lovelace', NULL, ?2, ?2)`,
+    )
+    .run("00000000-0000-4000-8000-000000000011", at);
+  database
+    .prepare(
+      `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+       VALUES (?1, 'Dogfood', 'dogfood', 'global', ?2, ?3, ?3)`,
+    )
+    .run("ws-1", "00000000-0000-4000-8000-000000000011", at);
+  database
+    .prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+       VALUES (?1, ?2, 'owner', 'active', ?3)`,
+    )
+    .run("ws-1", "00000000-0000-4000-8000-000000000011", at);
+  database
+    .prepare(
+      `INSERT INTO workstreams (
+         id, workspace_id, title, objective, origin_type, created_by_user_id,
+         automation_subscription_id, automation_run_id, planned_for, harness_status,
+         next_sequence_number, last_activity_at, created_at, updated_at, archived_at
+       ) VALUES (?1, ?2, 'Ship it', '', 'ad_hoc', ?3, NULL, NULL, NULL, 'idle', 1, ?4, ?4, ?4, NULL)`,
+    )
+    .run("wst-1", "ws-1", "00000000-0000-4000-8000-000000000011", at);
+  return { env: { ...env, DB: sqliteD1(database) }, close: () => { database.close(); } };
+}
+
 describe("agent model flags", () => {
+  beforeEach(() => {
+    clearFlagTargetingAttributeCache();
+  });
+
   it("gives every agent its own flag key", () => {
     const keys = AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role]);
     expect(new Set(keys).size).toBe(AGENT_MODEL_ROLES.length);
@@ -94,6 +137,65 @@ describe("agent model flags", () => {
         userId: "usr-1",
       },
     );
+  });
+
+  // Identifiers alone target nothing a human can reason about: a rule has to be
+  // able to say "the dogfooding workspace", "teams", "work streams a person
+  // started" without anybody pasting a uuid into Flagship.
+  it("describes the workspace, the person, and the work stream to targeting rules", async () => {
+    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "DEFAULT",
+    }));
+    const seeded = seededEnv(envWithFlags(getObjectDetails));
+
+    await resolveAgentModelRouting(seeded.env, "workstream", {
+      workspaceId: "ws-1",
+      workstreamId: "wst-1",
+      userId: "00000000-0000-4000-8000-000000000011",
+    });
+
+    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
+      agent: "workstream",
+      region: "global",
+      appEnv: "production",
+      workspaceId: "ws-1",
+      workstreamId: "wst-1",
+      userId: "00000000-0000-4000-8000-000000000011",
+      workspaceSlug: "dogfood",
+      workspaceMemberCount: 1,
+      workspaceAgeDays: 0,
+      workspaceOwnerEmailDomain: "dogfood.example",
+      userEmailDomain: "dogfood.example",
+      userRole: "owner",
+      workstreamOrigin: "ad_hoc",
+      workstreamScope: "workspace",
+      workstreamFromOpportunity: false,
+      workstreamIsSystem: false,
+      workstreamCreatedByUserId: "00000000-0000-4000-8000-000000000011",
+      workstreamCreatorEmailDomain: "dogfood.example",
+    });
+    seeded.close();
+  });
+
+  // An attribute is a fact about the subject, never a redefinition of it: the
+  // ids and the region are what bucketing and per-region staging depend on.
+  it("keeps an attribute from shadowing the identity the evaluation buckets on", async () => {
+    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "DEFAULT",
+    }));
+    const seeded = seededEnv(envWithFlags(getObjectDetails));
+
+    await resolveAgentModelRouting(seeded.env, "workstream", { workspaceId: "ws-1" });
+
+    const sent = getObjectDetails.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(sent.workspaceId).toBe("ws-1");
+    expect(sent.region).toBe("global");
+    expect(sent.agent).toBe("workstream");
+    seeded.close();
   });
 
   it("uses the flag's OpenRouter model ids when the flag is served", async () => {
