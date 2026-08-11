@@ -59,6 +59,21 @@ describe('useDraftText', () => {
     await waitFor(async () => expect((await readDraftText(draftKey))?.text).toBe('typed and gone'));
   });
 
+  it('commits a draft typed before the cache answered, when the composer unmounts', async () => {
+    // Nothing is awaited between the render and the edit, so the hydration read
+    // cannot have resolved: the save effect is still standing down and the
+    // unmount flush has nothing armed to write. This ordering used to lose the
+    // draft outright, and it reached CI as an intermittent failure of the test
+    // below — which types after an `await` and so usually hydrates first.
+    const { result, unmount } = renderHook(() => useDraftText(draftKey));
+    act(() => result.current.setText('typed before the cache answered'));
+
+    unmount();
+
+    await waitFor(async () =>
+      expect((await readDraftText(draftKey))?.text).toBe('typed before the cache answered'));
+  });
+
   it('does not restamp a draft it only read, so the expiry clock keeps running', async () => {
     await writeDraftText(draftKey, 'written once');
     const writtenAt = (await readDraftText(draftKey))!.updatedAt;
