@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { RELEASE_RECORD_PATH, planRelease, planningCommit } from './plan-release.mjs';
+
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+// Resolves to nothing, so `git show <sha>:<path>` cannot serve the record and
+// the script is left with its working-tree fallback.
+const UNRESOLVABLE_SHA = '0000000000000000000000000000000000000000';
 
 const RELEASED = '1111111111111111111111111111111111111111';
 
@@ -26,6 +36,57 @@ test('an unreadable tip falls back to the checkout rather than failing the plan'
   // the tip should still cut a release, because skipping retires desktop work
   // silently and that is the failure this planner exists to prevent.
   assert.equal(planningCommit('trigger-sha', null), 'trigger-sha');
+});
+
+test('a dispatch plans without reading the release record at all', () => {
+  // The property rather than the shape. A dispatch is the break-glass path, so
+  // a record that cannot be read must not be able to fail it — the same reason
+  // planRelease refuses to judge whether the named tag exists. Proved by running
+  // the real script in a throwaway worktree with the record deleted and a commit
+  // nothing resolves to, which leaves neither the git read nor the working-tree
+  // fallback able to produce one. Before the dispatch returned early this exact
+  // invocation exited 1 on ENOENT.
+  const worktree = mkdtempSync(join(tmpdir(), 'plan-release-'));
+  try {
+    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
+      cwd: repositoryRoot,
+      stdio: 'ignore',
+    });
+    rmSync(join(worktree, RELEASE_RECORD_PATH));
+    // The worktree is checked out at HEAD, so without this the test would run
+    // the committed script rather than the one under test — and pass or fail on
+    // the wrong code.
+    cpSync(
+      resolve(repositoryRoot, 'apps/desktop/scripts'),
+      join(worktree, 'apps/desktop/scripts'),
+      { recursive: true },
+    );
+    const run = (env) => execFileSync(
+      process.execPath,
+      [join(worktree, 'apps/desktop/scripts/plan-release.mjs')],
+      { env: { ...process.env, GITHUB_OUTPUT: '', ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+
+    const dispatched = run({
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      RELEASE_INPUT_TAG: 'v9.9.0',
+      GITHUB_SHA: UNRESOLVABLE_SHA,
+    });
+    assert.match(dispatched, /should_release=true/u);
+    assert.match(dispatched, /tag=v9\.9\.0/u);
+    assert.match(dispatched, /create_tag=false/u);
+
+    // The control: the same tree still plans a branch push, which does read the
+    // record — from main's tip through git, where deleting the working-tree copy
+    // cannot reach it. Without this the dispatch case could pass on a worktree
+    // too broken to run anything.
+    assert.match(run({ GITHUB_EVENT_NAME: 'push', GITHUB_SHA: UNRESOLVABLE_SHA }), /should_release=/u);
+  } finally {
+    execFileSync('git', ['worktree', 'remove', '--force', worktree], {
+      cwd: repositoryRoot,
+      stdio: 'ignore',
+    });
+  }
 });
 
 test('desktop work since the released commit releases the next minor', () => {
