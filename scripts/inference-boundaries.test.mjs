@@ -37,9 +37,15 @@ test("rejects API-side OpenRouter client construction", () => {
 });
 
 test("rejects model environment reads outside the resolver", () => {
-  const messages = lint("const model = env.OPENROUTER_STRUCTURED_MODEL;", "no-direct-model-env-read");
-  assert.equal(messages.length, 1);
-  assert.match(messages[0].message, /resolveAgentModelRouting/u);
+  for (const source of [
+    "const model = env.OPENROUTER_STRUCTURED_MODEL;",
+    "const { OPENROUTER_STRUCTURED_MODEL } = env;",
+    "const { OPENROUTER_STRUCTURED_MODEL: model } = env;",
+  ]) {
+    const messages = lint(source, "no-direct-model-env-read");
+    assert.equal(messages.length, 1);
+    assert.match(messages[0].message, /resolveAgentModelRouting/u);
+  }
 });
 
 test("requires cancellation and diagnostics on inference calls", () => {

@@ -73,7 +73,11 @@ export function measureProviderJsonSchema(schema) {
   const metrics = { arrayExpansion: 1, constraints: 0, depth: 0, nodes: 0 };
 
   function visit(candidate, depth, parentArrayExpansion) {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return;
+    if (!candidate || typeof candidate !== "object") return;
+    if (Array.isArray(candidate)) {
+      for (const child of candidate) visit(child, depth, parentArrayExpansion);
+      return;
+    }
     metrics.depth = Math.max(metrics.depth, depth);
     metrics.nodes += 1;
     metrics.constraints += Object.keys(candidate).filter((key) => CONSTRAINT_KEYS.has(key)).length;
