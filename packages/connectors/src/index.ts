@@ -17,6 +17,7 @@ import {
   type ConnectorAdapter,
   type ConnectorConnectionContext,
   type ConnectorPollingActivitySource,
+  type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "./types";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
@@ -284,7 +285,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.read_thread",
-    description: "Read a Gmail thread by provider thread ID.",
+    description: "Read every message in one Gmail thread, with bounded body text and attachment metadata. Takes the `threadId` of a search hit, not its `id` — the two are both bare hex and are not interchangeable.",
     capability: "gmail.read",
     mode: "read",
     idempotency: "safe",
@@ -297,7 +298,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.read_message",
-    description: "Read one Gmail message with bounded text content and attachment metadata.",
+    description: "Read one Gmail message's body, headers, and attachment metadata. Takes the `id` of a search hit, not its `threadId`. Search results already carry sender, recipients, subject, date, and snippet, so call this only when the body itself is needed.",
     capability: "gmail.read",
     mode: "read",
     idempotency: "safe",
@@ -310,7 +311,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.create_draft",
-    description: "Create a Gmail draft for the authorized user.",
+    description: "Create a Gmail draft for the authorized user and return its id and a link to open it. Drafts are not sent. To reply inside an existing thread, pass both that thread's `threadId` and the original message's RFC `Message-ID` as `inReplyTo`, taking both from the same search hit; a `threadId` without an `inReplyTo` is rejected.",
     capability: "gmail.draft",
     mode: "write",
     idempotency: "record_before_execute",
@@ -318,7 +319,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "gmail.send",
-    description: "Send an email as the authorized user.",
+    description: "Send an email immediately as the authorized user; it leaves the mailbox and cannot be recalled. Threading works as it does for a draft: pass the thread's `threadId` together with the original message's RFC `Message-ID` as `inReplyTo`. Create a draft instead when a person is expected to review the message first.",
     capability: "gmail.send",
     mode: "write",
     idempotency: "record_before_execute",
@@ -326,7 +327,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.list_calendars",
-    description: "List calendars visible to the authorized Google account.",
+    description: "List the calendars this account can see, each with the id and name the other calendar tools accept. Call this to discover a calendar id, or pass a calendar's name directly to those tools and they will resolve it.",
     capability: "calendar.read",
     mode: "read",
     idempotency: "safe",
@@ -341,7 +342,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.list_events",
-    description: "List authorized calendar events in a time range.",
+    description: "List events in a time range, expanding recurring events into their individual occurrences and ordering them by start time. `timeMin` and `timeMax` are required and must be RFC 3339 timestamps that include an offset, for example 2026-08-11T00:00:00-07:00.",
     capability: "calendar.read",
     mode: "read",
     idempotency: "safe",
@@ -349,7 +350,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        calendarId: { type: "string", description: "Calendar ID; defaults to primary" },
+        calendarId: { type: "string", description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
         timeMin: { type: "string", format: "date-time" },
         timeMax: { type: "string", format: "date-time" },
         query: { type: "string" },
@@ -361,7 +362,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.read_event",
-    description: "Read one event from the connection's configured Google Calendar.",
+    description: "Read one event, including its current attendee list. Read the event before changing its guests so a relative change is applied to who is actually on it.",
     capability: "calendar.read",
     mode: "read",
     idempotency: "safe",
@@ -369,7 +370,7 @@ export const googleTools: ToolDefinition[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        calendarId: { type: "string", description: "Calendar ID; defaults to primary" },
+        calendarId: { type: "string", description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
         eventId: { type: "string" }
       },
       required: ["eventId"]
@@ -377,7 +378,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.create_event",
-    description: "Create an event on the connection's configured Google Calendar.",
+    description: "Create a calendar event. Listing anyone in `attendeeEmails` sends them a real invitation email, so treat this as an outward-facing write and source every address from a tool result rather than composing one. Start and end are RFC 3339 timestamps that include an offset.",
     capability: "calendar.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -385,7 +386,7 @@ export const googleTools: ToolDefinition[] = [
   },
   {
     name: "calendar.update_event",
-    description: "Update selected fields on an existing Google Calendar event.",
+    description: "Update selected fields on an existing event. To change who is invited, say what changes — `addAttendeeEmails` and `removeAttendeeEmails` are applied to the event's current guest list — and use `replaceAllAttendeeEmails` only to set the entire list, dropping anyone left out. Any attendee change emails everyone who remains on the event.",
     capability: "calendar.write",
     mode: "write",
     idempotency: "record_before_execute",
@@ -599,7 +600,7 @@ export const GoogleAgentPluginDescriptor = defineConnectorAgentPlugin({
 
 function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, unknown> {
   const properties: Record<string, unknown> = {
-    calendarId: { type: "string", description: "Calendar ID; defaults to primary" },
+    calendarId: { type: "string", description: "Calendar ID, \"primary\", or a calendar's name, which is resolved against this account's calendars. Defaults to the connection's configured calendar." },
     summary: { type: "string", minLength: 1, maxLength: 1000 },
     description: { type: "string", maxLength: 20000 },
     location: { type: "string", maxLength: 2000 },
@@ -612,7 +613,28 @@ function calendarEventWriteInputSchema(includeEventId: boolean): Record<string, 
       maxItems: 50
     }
   };
-  if (includeEventId) properties.eventId = { type: "string" };
+  if (includeEventId) {
+    properties.eventId = { type: "string", description: "The event's own id, not a calendar id." };
+    delete properties.attendeeEmails;
+    properties.addAttendeeEmails = {
+      type: "array",
+      items: { type: "string", format: "email" },
+      maxItems: 50,
+      description: "Addresses to add to the event's current guest list. Everyone already invited stays."
+    };
+    properties.removeAttendeeEmails = {
+      type: "array",
+      items: { type: "string", format: "email" },
+      maxItems: 50,
+      description: "Addresses to remove from the event's current guest list."
+    };
+    properties.replaceAllAttendeeEmails = {
+      type: "array",
+      items: { type: "string", format: "email" },
+      maxItems: 50,
+      description: "The event's complete guest list after the update. Anyone omitted is removed. Cannot be combined with addAttendeeEmails or removeAttendeeEmails."
+    };
+  }
   return {
     type: "object",
     additionalProperties: false,
@@ -675,7 +697,7 @@ const EmailArgsSchema = z.object({
   threadId: z.string().optional(),
   inReplyTo: RfcMessageIdSchema.optional(),
   references: z.array(RfcMessageIdSchema).max(50).default([])
-}).superRefine((value, context) => {
+}).strict().superRefine((value, context) => {
   if (value.threadId && !value.inReplyTo) {
     context.addIssue({
       code: "custom",
@@ -694,11 +716,21 @@ const CalendarEventCreateArgsSchema = z.object({
   end: z.string().datetime({ offset: true }),
   timeZone: z.string().min(1).max(100).optional(),
   attendeeEmails: z.array(z.string().email()).max(50).default([])
-}).refine((value) => Date.parse(value.end) > Date.parse(value.start), {
+}).strict().refine((value) => Date.parse(value.end) > Date.parse(value.start), {
   message: "Calendar event end must be after its start",
   path: ["end"]
 });
 
+/**
+ * Updating an event states which attendees change, never the resulting list.
+ *
+ * Google's PATCH replaces `attendees` wholesale, so a single `attendeeEmails`
+ * array made "add Katherine to the Tuesday call" silently remove everyone else
+ * and mail them about it. `attendeeEmails` is therefore absent from this schema
+ * rather than reinterpreted: a caller reaching for the create-shaped parameter
+ * gets a strict-parse error naming the three that exist, instead of a
+ * successful call that deletes the guest list.
+ */
 const CalendarEventUpdateArgsSchema = z.object({
   calendarId: z.string().min(1).max(1_024).optional(),
   eventId: z.string().min(1).max(1_024),
@@ -708,10 +740,22 @@ const CalendarEventUpdateArgsSchema = z.object({
   start: z.string().datetime({ offset: true }).optional(),
   end: z.string().datetime({ offset: true }).optional(),
   timeZone: z.string().min(1).max(100).optional(),
-  attendeeEmails: z.array(z.string().email()).max(50).optional()
-}).superRefine((value, context) => {
+  addAttendeeEmails: z.array(z.string().email()).max(50).optional(),
+  removeAttendeeEmails: z.array(z.string().email()).max(50).optional(),
+  replaceAllAttendeeEmails: z.array(z.string().email()).max(50).optional()
+}).strict().superRefine((value, context) => {
   if (Object.keys(value).every((key) => key === "eventId" || key === "calendarId")) {
     context.addIssue({ code: "custom", message: "Choose at least one event field to update" });
+  }
+  if (
+    value.replaceAllAttendeeEmails
+    && (value.addAttendeeEmails || value.removeAttendeeEmails)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Use replaceAllAttendeeEmails alone, or use addAttendeeEmails and removeAttendeeEmails together",
+      path: ["replaceAllAttendeeEmails"]
+    });
   }
   if ((value.start && !value.end) || (!value.start && value.end)) {
     context.addIssue({ code: "custom", message: "Update event start and end together", path: ["end"] });
@@ -736,7 +780,7 @@ const SheetValuesWriteArgsSchema = z.object({
   values: SheetValuesSchema,
   valueInputOption: z.enum(["RAW", "USER_ENTERED"]).default("USER_ENTERED"),
   insertDataOption: z.enum(["INSERT_ROWS", "OVERWRITE"]).optional()
-});
+}).strict();
 
 const GOOGLE_POLL_PAGE_SIZE = 50;
 const GOOGLE_MAX_POLL_PAGES = 3;
@@ -1093,6 +1137,64 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         if (response.ok) message = await safeJsonBounded(response, GOOGLE_POLL_RESPONSE_BYTES);
       }
       return normalizeGmailActivity(connection, change, message);
+    });
+  }
+
+  /**
+   * Resolve whatever the caller had for a calendar into a calendar ID.
+   *
+   * Calendar IDs are addresses — `primary`, an account address, or a
+   * `…@group.calendar.google.com` — so anything else is a name the caller knew
+   * and this resolves it against the account's own list. A name matching two
+   * calendars is an error naming both: picking the first would write to the
+   * wrong calendar with nothing for the caller to notice.
+   */
+  async function resolveGoogleCalendarId(
+    context: ConnectorToolContext,
+    requested: string | undefined
+  ): Promise<string> {
+    if (!requested) return googleCalendarId(context.connection);
+    if (requested === "primary" || requested.includes("@")) return requested;
+    const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
+    url.searchParams.set("maxResults", "250");
+    url.searchParams.set("fields", "items(id,summary,summaryOverride)");
+    const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
+      safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
+    );
+    const calendars = recordArray(payload, "items").map((calendar) => ({
+      id: readString(calendar, "id"),
+      name: readString(calendar, "summaryOverride") ?? readString(calendar, "summary")
+    }));
+    const wanted = requested.trim().toLocaleLowerCase();
+    const matches = calendars.filter((calendar) => calendar.name?.trim().toLocaleLowerCase() === wanted);
+    if (matches.length === 1 && matches[0]!.id) return matches[0]!.id;
+    const available = calendars.flatMap((calendar) => (calendar.name ? [calendar.name] : [])).slice(0, 25);
+    throw new ConnectorError(
+      "invalid_payload",
+      matches.length > 1
+        ? `More than one calendar is named “${requested}”; pass one of their IDs instead: ${matches.map((match) => match.id).join(", ")}`
+        : `No calendar is named “${requested}”. Pass a calendar ID, "primary", or one of these names: ${available.join(", ")}`,
+      { reason: matches.length > 1 ? "ambiguous_calendar_name" : "unknown_calendar_name", available }
+    );
+  }
+
+  /** The event's current guest list, so a relative attendee change can be applied to it. */
+  async function readCalendarAttendeeEmails(
+    context: ConnectorToolContext,
+    calendarId: string,
+    eventId: string
+  ): Promise<string[]> {
+    const url = new URL(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+    );
+    url.searchParams.set("maxAttendees", "250");
+    url.searchParams.set("fields", "attendees(email,resource)");
+    const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
+      safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
+    );
+    return recordArray(payload, "attendees").flatMap((attendee) => {
+      const email = readString(attendee, "email");
+      return email ? [email] : [];
     });
   }
 
@@ -1624,7 +1726,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           query: z.string().max(2_000),
           maxResults: z.number().int().min(1).max(25).default(10),
           pageToken: z.string().min(1).max(2_000).optional()
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         url.searchParams.set("q", args.query);
         url.searchParams.set("maxResults", String(args.maxResults));
@@ -1644,7 +1746,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         );
         return {
           output: boundedToolOutput({
-            messages,
+            items: messages,
             nextPageToken: readString(payload, "nextPageToken"),
             resultSizeEstimate: readNumber(payload, "resultSizeEstimate")
           }),
@@ -1655,7 +1757,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           name: z.string().min(1).max(200),
           maxResults: z.number().int().min(1).max(25).default(10)
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
         url.searchParams.set("q", gmailContactQuery(args.name));
         url.searchParams.set("maxResults", String(GOOGLE_TOOL_CONTACT_SCAN_MESSAGES));
@@ -1675,7 +1777,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           output: boundedToolOutput({
             query: args.name,
             scannedMessages: hits.length,
-            contacts,
+            items: contacts,
             // The recovery path belongs here rather than in `summary`, which the
             // host shows a person and never serializes into the tool message.
             // An empty result is exactly where the caller needs to be told what
@@ -1688,7 +1790,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.read_thread") {
-        const args = z.object({ threadId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.object({ threadId: z.string().min(1).max(500) }).strict().parse(rawArgs);
         const url = new URL(
           `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(args.threadId)}`
         );
@@ -1697,9 +1799,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "fields",
           "id,historyId,messages(id,threadId,labelIds,snippet,historyId,internalDate,payload(mimeType,filename,headers,body,parts))"
         );
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const response = await api(context.connection, url.toString(), { signal: context.signal }, [404]);
+        if (!response.ok) {
+          throw new ConnectorError("invalid_payload", gmailIdentifierHint("threadId"), {
+            reason: "wrong_id_family",
+            field: "threadId"
+          });
+        }
+        const payload = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
         return {
           output: boundedToolOutput(sanitizeGmailThreadForTool(payload)),
           summary: "Read bounded Gmail thread content",
@@ -1707,7 +1814,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "gmail.read_message") {
-        const args = z.object({ messageId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.object({ messageId: z.string().min(1).max(500) }).strict().parse(rawArgs);
         const url = new URL(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(args.messageId)}`
         );
@@ -1716,9 +1823,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "fields",
           "id,threadId,labelIds,snippet,historyId,internalDate,payload(mimeType,filename,headers,body,parts)"
         );
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const response = await api(context.connection, url.toString(), { signal: context.signal }, [404]);
+        if (!response.ok) {
+          throw new ConnectorError("invalid_payload", gmailIdentifierHint("messageId"), {
+            reason: "wrong_id_family",
+            field: "messageId"
+          });
+        }
+        const payload = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
         return {
           output: boundedToolOutput(sanitizeGmailMessageForTool(payload, GOOGLE_TOOL_TEXT_BYTES)),
           summary: "Read bounded Gmail message content",
@@ -1739,15 +1851,20 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           { method: "POST", body: JSON.stringify(body), signal: context.signal }
         ).then((response) => safeJsonBounded(response, 256_000));
         const operationId = readString(payload, "id") ?? readNestedString(payload, "message", "id");
+        const createdThreadId = readNestedString(payload, "message", "threadId");
         return {
           output: boundedToolOutput({
             id: readString(payload, "id"),
             message: readRecord(payload, "message")
               ? {
                   id: readNestedString(payload, "message", "id"),
-                  threadId: readNestedString(payload, "message", "threadId")
+                  threadId: createdThreadId
                 }
-              : null
+              : null,
+            // Every calendar write hands back an openable address; a draft a
+            // person is expected to review should not be the one result they
+            // have to go hunting for.
+            webUrl: gmailThreadWebUrl(createdThreadId)
           }),
           summary: isDraft ? `Created draft “${args.subject}”` : `Sent “${args.subject}”`,
           ...(operationId ? { providerOperationId: operationId } : {})
@@ -1757,7 +1874,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           maxResults: z.number().int().min(1).max(250).default(100),
           pageToken: z.string().min(1).max(2_000).optional()
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
         url.searchParams.set("maxResults", String(args.maxResults));
         if (args.pageToken) url.searchParams.set("pageToken", args.pageToken);
@@ -1770,7 +1887,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         );
         const calendars = recordArray(payload, "items").slice(0, args.maxResults).map(sanitizeGoogleCalendar);
         return {
-          output: boundedToolOutput({ calendars, nextPageToken: readString(payload, "nextPageToken") }),
+          output: boundedToolOutput({ items: calendars, nextPageToken: readString(payload, "nextPageToken") }),
           summary: `Found ${calendars.length} Google calendars`
         };
       }
@@ -1783,9 +1900,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
             query: z.string().max(2_000).optional(),
             maxResults: z.number().int().min(1).max(100).default(25),
             pageToken: z.string().min(1).max(2_000).optional()
-          })
+          }).strict()
           .parse(rawArgs);
-        const calendarId = args.calendarId ?? googleCalendarId(context.connection);
+        const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
         );
@@ -1815,8 +1932,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           calendarId: z.string().min(1).max(1_024).optional(),
           eventId: z.string().min(1).max(1024)
-        }).parse(rawArgs);
-        const calendarId = args.calendarId ?? googleCalendarId(context.connection);
+        }).strict().parse(rawArgs);
+        const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
+        assertGoogleIdFamily("eventId", args.eventId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(args.eventId)}`
         );
@@ -1836,7 +1954,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "calendar.create_event") {
         const args = CalendarEventCreateArgsSchema.parse(rawArgs);
-        const calendarId = args.calendarId ?? googleCalendarId(context.connection);
+        const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`
         );
@@ -1856,14 +1974,29 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "calendar.update_event") {
         const args = CalendarEventUpdateArgsSchema.parse(rawArgs);
-        const calendarId = args.calendarId ?? googleCalendarId(context.connection);
+        const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
+        assertGoogleIdFamily("eventId", args.eventId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(args.eventId)}`
         );
-        if (args.attendeeEmails !== undefined) url.searchParams.set("sendUpdates", "all");
+        // A relative attendee change is resolved against the event's current
+        // guest list before it is sent, because Calendar's PATCH replaces the
+        // whole array: sending only the additions is what deletes the rest.
+        let attendeeEmails: string[] | undefined = args.replaceAllAttendeeEmails;
+        if (args.addAttendeeEmails || args.removeAttendeeEmails) {
+          const existing = await readCalendarAttendeeEmails(context, calendarId, args.eventId);
+          const removed = new Set((args.removeAttendeeEmails ?? []).map((email) => email.toLocaleLowerCase()));
+          const merged = new Map<string, string>();
+          for (const email of [...existing, ...(args.addAttendeeEmails ?? [])]) {
+            const key = email.toLocaleLowerCase();
+            if (!removed.has(key)) merged.set(key, email);
+          }
+          attendeeEmails = [...merged.values()];
+        }
+        if (attendeeEmails !== undefined) url.searchParams.set("sendUpdates", "all");
         const payload = await api(context.connection, url.toString(), {
           method: "PATCH",
-          body: JSON.stringify(calendarEventWriteBody(args)),
+          body: JSON.stringify(calendarEventWriteBody({ ...args, attendeeEmails })),
           signal: context.signal
         }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         return {
@@ -1873,7 +2006,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "docs.read_document") {
-        const args = z.object({ documentId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.object({ documentId: z.string().min(1).max(500) }).strict().parse(rawArgs);
         const payload = await readGoogleDocument(
           api,
           context.connection,
@@ -1890,7 +2023,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           title: z.string().min(1).max(500),
           text: z.string().max(100_000).optional()
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         const created = await api(context.connection, "https://docs.googleapis.com/v1/documents", {
           method: "POST",
           body: JSON.stringify({ title: args.title }),
@@ -1920,7 +2053,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           documentId: z.string().min(1).max(500),
           tabId: z.string().min(1).max(500).optional(),
           text: z.string().min(1).max(100_000)
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         await assertGoogleDriveFileWritable(api, context.connection, args.documentId, context.signal);
         const payload = await updateGoogleDocument(api, context.connection, args.documentId, [{
           insertText: {
@@ -1944,7 +2077,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           find: z.string().min(1).max(10_000),
           replace: z.string().max(100_000),
           matchCase: z.boolean().default(true)
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         await assertGoogleDriveFileWritable(api, context.connection, args.documentId, context.signal);
         const payload = await updateGoogleDocument(api, context.connection, args.documentId, [{
           replaceAllText: {
@@ -1963,7 +2096,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "sheets.read_spreadsheet") {
-        const args = z.object({ spreadsheetId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.object({ spreadsheetId: z.string().min(1).max(500) }).strict().parse(rawArgs);
         const payload = await readGoogleSpreadsheet(
           api,
           context.connection,
@@ -1981,7 +2114,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           spreadsheetId: z.string().min(1).max(500),
           range: z.string().min(1).max(1_000),
           majorDimension: z.enum(["ROWS", "COLUMNS"]).default("ROWS")
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         const url = new URL(
           `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(args.spreadsheetId)}/values/${encodeURIComponent(args.range)}`
         );
@@ -2001,7 +2134,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = z.object({
           title: z.string().min(1).max(500),
           sheetTitles: z.array(z.string().min(1).max(100)).max(25).default([])
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         if (new Set(args.sheetTitles).size !== args.sheetTitles.length) {
           throw new ConnectorError("invalid_configuration", "Google Sheet titles must be unique");
         }
@@ -2052,7 +2185,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           query: z.string().max(1_000),
           maxResults: z.number().int().min(1).max(100).default(25),
           pageToken: z.string().min(1).max(2_000).optional()
-        }).parse(rawArgs);
+        }).strict().parse(rawArgs);
         const url = new URL("https://www.googleapis.com/drive/v3/files");
         url.searchParams.set("q", `name contains '${escapeDriveQuery(args.query)}' and trashed = false`);
         url.searchParams.set("pageSize", String(args.maxResults));
@@ -2065,12 +2198,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         );
         const files = recordArray(payload, "files").slice(0, args.maxResults).map(sanitizeDriveFile);
         return {
-          output: boundedToolOutput({ files, nextPageToken: readString(payload, "nextPageToken") }),
+          output: boundedToolOutput({ items: files, nextPageToken: readString(payload, "nextPageToken") }),
           summary: `Found ${files.length} Drive files`
         };
       }
       if (name === "drive.get_metadata" || name === "drive.download") {
-        const args = z.object({ fileId: z.string().min(1).max(500) }).parse(rawArgs);
+        const args = z.object({ fileId: z.string().min(1).max(500) }).strict().parse(rawArgs);
         const metadataUrl = googleDriveMetadataUrl(args.fileId);
         const payload = await api(context.connection, metadataUrl.toString(), { signal: context.signal }).then((response) =>
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
@@ -2091,7 +2224,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         };
       }
       if (name === "drive.export") {
-        const args = z.object({ fileId: z.string().min(1).max(500), mimeType: z.enum(["text/plain", "application/pdf"]) }).parse(rawArgs);
+        const args = z.object({ fileId: z.string().min(1).max(500), mimeType: z.enum(["text/plain", "application/pdf"]) }).strict().parse(rawArgs);
         if (args.mimeType === "application/pdf") {
           return {
             output: {
@@ -2592,6 +2725,38 @@ function summarizeGmailSearchHit(
  * the header, while bare `dana` also matches every message that merely says the
  * word, which is what makes an unscoped search useless for resolving a person.
  */
+/**
+ * Reject an identifier from the wrong family, naming the one that was expected.
+ *
+ * A calendar ID is an address and an event ID is not, so the two are separable
+ * on sight and a swap is caught here rather than as a Google 404 several layers
+ * down. Gmail's message and thread IDs are both bare hex and cannot be told
+ * apart this way — `gmailIdentifierHint` handles that confusion after the fact,
+ * where the provider's own 404 is the only evidence available.
+ */
+function assertGoogleIdFamily(field: "eventId" | "calendarId", value: string): void {
+  const looksLikeAddress = value === "primary" || value.includes("@");
+  if (field === "eventId" && looksLikeAddress) {
+    throw new ConnectorError(
+      "invalid_payload",
+      `Expected an event ID for eventId, got what looks like a calendar ID (“${value}”). Pass the calendar as calendarId and the event's own id as eventId.`,
+      { reason: "wrong_id_family", field, expected: "eventId" }
+    );
+  }
+}
+
+/**
+ * The remediation for a Gmail 404, which is nearly always a thread ID sent where
+ * a message ID goes. Both are bare hex and a search hit returns one of each, so
+ * the model cannot tell them apart by looking and needs to be told which is
+ * which when the provider refuses.
+ */
+function gmailIdentifierHint(field: "messageId" | "threadId"): string {
+  return field === "messageId"
+    ? "No message has that id. A search hit's `threadId` is a different identifier from its `id`; pass the `id` to read one message, or use the thread reader for the whole thread."
+    : "No thread has that id. A search hit's `id` identifies one message rather than its thread; pass the hit's `threadId` here, or use the message reader for a single message.";
+}
+
 function gmailContactQuery(name: string): string {
   const escaped = name.replaceAll(/["()]/gu, " ").trim();
   const term = escaped ? `"${escaped}"` : name;

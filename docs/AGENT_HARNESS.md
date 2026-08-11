@@ -91,6 +91,8 @@ Image attachments retain their exact original object for display and download. B
 
 Wall-time, iteration, tool-call, and cost ceilings use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded`. Limits never silently reinterpret a write as successful.
 
+A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half is serialized alongside the message rather than dropped, so the remediation a tool attached is readable by the caller that has to act on it. The harness reads this by shape through `readStructuredFailure` in `@avalon/contracts` rather than importing any provider package's error class.
+
 Workspace admins may opt into **Log agent inference** from Workspace preferences. The default is off. When enabled, the exact regional OpenRouter request body—including messages, tools, plugins, and reasoning settings—is written to the workspace region's R2 bucket, while D1 indexes routing metadata, hashes, outcomes, latency, and the actual token counts returned by OpenRouter. This diagnostic path is best-effort and cannot fail an agent run. Reading a captured payload back — turning a work-stream URL into the exact request a model received — is [`RUNBOOK.md`](RUNBOOK.md#inspecting-a-runs-raw-inference).
 
 ## Elicitation

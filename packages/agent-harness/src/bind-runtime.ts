@@ -37,7 +37,7 @@ import { createRunDeadline } from "@juno-ai/bind/run";
 import { validateAndHealMessages } from "@juno-ai/bind/transcript";
 import type OpenAI from "openai";
 import { z } from "zod";
-import type { HarnessFailureCode } from "@avalon/contracts";
+import { readStructuredFailure, type HarnessFailureCode } from "@avalon/contracts";
 import {
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
@@ -623,11 +623,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             toolCallId: receiptId,
             state: toolSignal.aborted ? "timed_out" : "failed",
           }));
+          // A tool's remediation is attached to the error it throws, and
+          // dropping it here leaves the model a prose sentence where the fix
+          // was structured: which identifier family was expected, whether the
+          // connection needs reconnecting, what values were available.
+          const structured = readStructuredFailure(error);
           return {
             toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: "external",
               error: message,
+              ...(structured ? { code: structured.code } : {}),
+              ...(structured?.details ? { details: structured.details } : {}),
             }),
           };
         }
