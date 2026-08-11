@@ -213,6 +213,44 @@ function workflowInput(automationSubscriptionId: string | null = null): Workstre
   };
 }
 
+/**
+ * Check every `<wire name> {json}` call in a plugin message against the input
+ * schema of the tool it names, returning one description per mismatch.
+ *
+ * A worked example is documentation the model executes, so it decays exactly
+ * like code and silently: renaming a parameter or a result key leaves the
+ * example compiling, passing a substring assertion, and teaching a call that
+ * now fails.
+ */
+function workedExampleCallsAgainstSchemas(
+  systemMessage: string,
+  tools: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"],
+): string[] {
+  const schemas = new Map(tools.map((tool) => {
+    const schema = tool.definition.inputSchema as { properties?: Record<string, unknown> };
+    return [
+      `google_${tool.definition.name.replace(".", "_")}`,
+      new Set(Object.keys(schema.properties ?? {})),
+    ];
+  }));
+  const problems: string[] = [];
+  let found = 0;
+  for (const match of systemMessage.matchAll(/`(google[a-z0-9_]*) (\{.*?\})`/gu)) {
+    const [, wireName, json] = match;
+    const properties = schemas.get(wireName!);
+    if (!properties) {
+      problems.push(`${wireName} is not a tool on this plugin`);
+      continue;
+    }
+    found += 1;
+    for (const key of Object.keys(JSON.parse(json!) as Record<string, unknown>)) {
+      if (!properties.has(key)) problems.push(`${wireName} has no ${key} parameter`);
+    }
+  }
+  if (found === 0) problems.push("no worked example calls were found to check");
+  return problems;
+}
+
 function googleToolNames(tools: Awaited<ReturnType<typeof __integrationTesting.loadHarnessTools>>["tools"]): string[] {
   return tools
     .map((tool) => tool.definition.name)
@@ -656,7 +694,10 @@ describe("connector tools selected for harness runs", () => {
     expect(mail?.systemMessage).toContain("Worked examples:");
     expect(mail?.systemMessage).toContain("google_gmail_find_contacts {\"name\"");
     expect(mail?.systemMessage).toContain("google_calendar_update_event");
-    expect(mail?.systemMessage).toContain("removes everyone else and emails them about it");
+    // Every argument a worked example demonstrates has to exist on the tool it
+    // names. Asserting on substrings alone let an example keep teaching
+    // `attendeeEmails` after that parameter was removed from the update schema.
+    expect(workedExampleCallsAgainstSchemas(mail?.systemMessage ?? "", mail?.tools ?? [])).toEqual([]);
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
       "gmail.search",
       "gmail.find_contacts",

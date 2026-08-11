@@ -1038,6 +1038,85 @@ describe("connectors", () => {
     expect(patch?.url.searchParams.get("sendUpdates")).toBe("all");
   });
 
+  it("refuses a relative attendee change when the guest list came back incomplete", async () => {
+    const requests: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      requests.push(init?.method ?? "GET");
+      if ((init?.method ?? "GET") === "GET") {
+        // Calendar truncates a large guest list and says so. Patching the
+        // prefix back would delete everyone past the cut.
+        return googleJson({ attendees: [{ email: "kept@example.com" }], attendeesOmitted: true });
+      }
+      return googleJson({ id: "event-existing" });
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", addAttendeeEmails: ["new@example.com"] },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "attendee_snapshot_incomplete" }
+    });
+    expect(requests).not.toContain("PATCH");
+  });
+
+  it("reads the whole guest list rather than a capped prefix of it", async () => {
+    let attendeeQuery: string | null = null;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = requestUrl(input);
+      if ((init?.method ?? "GET") === "GET") {
+        attendeeQuery = url.searchParams.get("maxAttendees");
+        return googleJson({ attendees: [{ email: "existing@example.com" }] });
+      }
+      return googleJson({ id: "event-existing" });
+    };
+    await googleAdapter(fetcher).executeTool(
+      "calendar.update_event",
+      { eventId: "event-existing", addAttendeeEmails: ["new@example.com"] },
+      {
+        connection: googleConnection(["calendar.read", "calendar.write"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(attendeeQuery).toBeNull();
+  });
+
+  it("matches a non-Latin name instead of returning every address in the thread", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }] });
+      }
+      return googleJson({
+        id: "message-1",
+        threadId: "thread-1",
+        payload: {
+          headers: [
+            { name: "From", value: "张伟 <wei.zhang@example.com>" },
+            { name: "To", value: "Unrelated Person <unrelated@example.com>" }
+          ]
+        }
+      });
+    };
+    const context = {
+      connection: googleConnection(["gmail.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    const matched = await googleAdapter(fetcher).executeTool("gmail.find_contacts", { name: "张伟" }, context);
+    expect((matched.output as { items: Array<{ email: string }> }).items.map((item) => item.email))
+      .toEqual(["wei.zhang@example.com"]);
+
+    // A name that yields no usable token returns nobody rather than everybody.
+    const degenerate = await googleAdapter(fetcher).executeTool("gmail.find_contacts", { name: "!!" }, context);
+    expect(degenerate.output).toMatchObject({ items: [], reason: "no_address_matched_name" });
+  });
+
   it("refuses the create-shaped attendee parameter on an update instead of wiping the guest list", async () => {
     const fetcher: typeof fetch = async () => googleJson({ id: "event-existing" });
     await expect(googleAdapter(fetcher).executeTool(

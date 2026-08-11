@@ -1187,11 +1187,23 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     const url = new URL(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
     );
-    url.searchParams.set("maxAttendees", "250");
-    url.searchParams.set("fields", "attendees(email,resource)");
+    // No `maxAttendees`: a capped read returns a prefix of the guest list, and
+    // a relative change computed against a prefix and PATCHed back deletes
+    // everyone past the cap — the same destruction this whole path exists to
+    // prevent, moved to a larger event. `attendeesOmitted` is requested as well
+    // and refused below, because correctness here must not rest on the absence
+    // of a parameter.
+    url.searchParams.set("fields", "attendees(email,resource),attendeesOmitted");
     const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
       safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
     );
+    if (payload.attendeesOmitted === true) {
+      throw new ConnectorError(
+        "invalid_payload",
+        "This event's guest list came back incomplete, so adding or removing an attendee would drop the ones that were not returned. Set the full list explicitly with replaceAllAttendeeEmails, or change the event in Google Calendar.",
+        { reason: "attendee_snapshot_incomplete", field: "addAttendeeEmails" }
+      );
+    }
     return recordArray(payload, "attendees").flatMap((attendee) => {
       const email = readString(attendee, "email");
       return email ? [email] : [];
@@ -2718,14 +2730,6 @@ function summarizeGmailSearchHit(
 }
 
 /**
- * Build the Gmail query behind `gmail.find_contacts`.
- *
- * Restricting the match to the address headers is what separates this from a
- * plain keyword search: `from:(dana)` matches a display name or an address in
- * the header, while bare `dana` also matches every message that merely says the
- * word, which is what makes an unscoped search useless for resolving a person.
- */
-/**
  * Reject an identifier from the wrong family, naming the one that was expected.
  *
  * A calendar ID is an address and an event ID is not, so the two are separable
@@ -2757,6 +2761,14 @@ function gmailIdentifierHint(field: "messageId" | "threadId"): string {
     : "No thread has that id. A search hit's `id` identifies one message rather than its thread; pass the hit's `threadId` here, or use the message reader for a single message.";
 }
 
+/**
+ * Build the Gmail query behind `gmail.find_contacts`.
+ *
+ * Restricting the match to the address headers is what separates this from a
+ * plain keyword search: `from:(dana)` matches a display name or an address in
+ * the header, while bare `dana` also matches every message that merely says the
+ * word, which is what makes an unscoped search useless for resolving a person.
+ */
 function gmailContactQuery(name: string): string {
   const escaped = name.replaceAll(/["()]/gu, " ").trim();
   const term = escaped ? `"${escaped}"` : name;
@@ -2820,11 +2832,15 @@ function rankGmailContacts(
   selfEmail: string | null,
   limit: number
 ): Record<string, unknown>[] {
+  // Split on anything that is not a letter, a digit, or an address character,
+  // by Unicode class rather than by the ASCII range: an ASCII-only split turns
+  // every character of a name like 张伟 into a separator and yields no tokens
+  // at all.
   const tokens = name
     .toLocaleLowerCase()
-    .split(/[^a-z0-9@._%+-]+/u)
+    .split(/[^\p{L}\p{N}@._%+-]+/u)
     .map((token) => token.trim())
-    .filter((token) => token.length >= 2);
+    .filter(Boolean);
   const self = selfEmail?.toLocaleLowerCase() ?? null;
   const candidates = new Map<string, GmailContactCandidate>();
 
@@ -2842,7 +2858,10 @@ function rankGmailContacts(
         if (self && email === self) continue;
         const haystack = `${entry.displayName ?? ""} ${email}`.toLocaleLowerCase();
         const matched = tokens.filter((token) => haystack.includes(token)).length;
-        if (tokens.length && matched === 0) continue;
+        // Unconditional, so a name that yields no usable token returns no
+        // candidates. Skipping the filter instead would admit every address in
+        // every matched message and rank strangers for an outward-facing email.
+        if (matched === 0) continue;
         const existing = candidates.get(email) ?? {
           email,
           displayNames: new Set<string>(),
