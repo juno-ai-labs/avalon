@@ -774,7 +774,6 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       // operational.
       activityTriggers: defineConnectorActivityTriggers("GitHub", {
         digestible: [
-          "github.push",
           "github.release.created", "github.release.published", "github.release.released",
           "github.release.prereleased", "github.release.deleted", "github.release.unpublished",
           "github.issue.opened", "github.issue.closed", "github.issue.reopened",
@@ -812,8 +811,11 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
           "github.pull_request_comment.edited", "github.pull_request_comment.deleted",
           "github.pull_request_comment.pinned", "github.pull_request_comment.unpinned",
           "github.pull_request.edited",
-          // Every push to an open branch fires this one; the pull request's own
-          // events already say the work moved.
+          // Branch traffic. `push` fires for every branch, so on a repository
+          // that reviews its work it is the same commits the pull request
+          // already reported, counted twice; `synchronize` is the same event
+          // seen from the pull request's side.
+          "github.push",
           "github.pull_request.synchronize", "github.pull_request.converted_to_draft",
           "github.pull_request.review_request_removed",
           "github.pull_request.unassigned", "github.pull_request.labeled", "github.pull_request.unlabeled",
