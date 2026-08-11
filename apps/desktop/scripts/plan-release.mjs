@@ -174,27 +174,35 @@ async function main() {
   const headSha = process.env.GITHUB_SHA;
   const inputTag = process.env.RELEASE_INPUT_TAG || undefined;
 
-  // A dispatch replays a named tag and never reads the record, so it plans from
-  // the checkout it was handed. A branch push plans from main's tip.
-  const planFrom = eventName === 'workflow_dispatch'
-    ? headSha
-    : planningCommit(headSha, gitOutput(['rev-parse', 'origin/main']));
+  // A dispatch replays the tag it names, and nothing else bears on that plan, so
+  // it reads no record at all. That is a property to hold rather than an
+  // optimisation: a dispatch is the break-glass path, and the reasoning that
+  // keeps planRelease from checking whether the tag exists — a planner that
+  // could wrongly decide a tag is missing would block a release during an
+  // incident — applies just as well to a record it never consults. Loading one
+  // anyway would let a record that is missing or malformed at the checked-out
+  // tag fail the plan step at exactly the wrong moment.
+  if (eventName === 'workflow_dispatch') {
+    return report(planRelease({ eventName, inputTag, headSha, changedPaths: [] }));
+  }
 
+  // A branch push plans from main's tip.
+  const planFrom = planningCommit(headSha, gitOutput(['rev-parse', 'origin/main']));
   const siteRelease = releaseRecordAt(planFrom)
     ?? await readFile(resolve(repositoryDirectory, RELEASE_RECORD_PATH), 'utf8').then(JSON.parse);
   const releasedCommit = typeof siteRelease.commit === 'string' ? siteRelease.commit : undefined;
 
-  const plan = planRelease({
+  return report(planRelease({
     eventName,
     inputTag,
     headSha: planFrom,
     publishedVersion: siteRelease.version,
     releasedCommit,
-    changedPaths: releasedCommit && eventName !== 'workflow_dispatch'
-      ? changedPathsSince(releasedCommit, planFrom)
-      : [],
-  });
+    changedPaths: releasedCommit ? changedPathsSince(releasedCommit, planFrom) : [],
+  }));
+}
 
+function report(plan) {
   console.log(`Release plan: ${plan.shouldRelease ? 'release' : 'skip'} — ${plan.reason}`);
   const output = [
     `should_release=${plan.shouldRelease}`,
