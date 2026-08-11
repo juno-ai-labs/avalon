@@ -1,0 +1,78 @@
+-- Who wrote the description a work stream is carrying. A person naming their own
+-- work is evidence of intent that an automatic rewrite has to overcome; a
+-- description derived at creation from the opening message, a suggested-work
+-- prompt, or an automation is not, and is the case the refresh loop below exists
+-- to correct. Without this column both look identical by the time the loop reads
+-- them.
+--
+-- `derived` is the default because it is what creation produces unless a person
+-- typed the description themselves. The backfill promotes the rows that can
+-- still be shown to have been authored: an ad-hoc work stream whose description
+-- is not simply its opening message.
+ALTER TABLE workstreams ADD COLUMN description_source TEXT NOT NULL DEFAULT 'derived'
+  CHECK (description_source IN ('authored', 'derived'));
+
+UPDATE workstreams
+SET description_source = 'authored'
+WHERE origin_type = 'ad_hoc'
+  AND created_from_opportunity_id IS NULL
+  AND trim(objective) <> ''
+  AND trim(objective) <> COALESCE((
+    SELECT trim(m.text_content)
+      FROM messages m
+     WHERE m.workstream_id = workstreams.id AND m.sequence_number = 1
+  ), '');
+
+-- A work stream's description (`workstreams.objective`) is written once, when the
+-- work stream is created, and then never again unless a person edits it. It is
+-- derived from the opening message, from a suggested-work prompt, or from a
+-- title-like fragment, so it is often a poor description of the work on day one
+-- and a wrong one by the second week: the work stream keeps its name while its
+-- reason for existing moves.
+--
+-- This table is the state behind the loop that re-reads a work stream's recent
+-- transcript and rewrites the description when it has genuinely veered. One row
+-- per work stream, holding the last evaluation rather than a history: the
+-- description in force lives on `workstreams`, and what is needed here is the
+-- throttle clock, the decision that produced the current wording, and enough
+-- provenance to explain an automatic rewrite to whoever notices it.
+CREATE TABLE IF NOT EXISTS workstream_description_refreshes (
+  workstream_id TEXT PRIMARY KEY REFERENCES workstreams(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  -- Both the throttle clock and the single-writer claim. It is stamped when an
+  -- evaluation starts, not when it finishes, so two runs terminalizing at once
+  -- cannot both reach the model: the second finds the window already taken. A
+  -- failed evaluation therefore costs one window rather than retrying in a loop
+  -- against a model that just rejected it.
+  evaluated_at TEXT NOT NULL,
+  -- The highest message sequence the last evaluation read. The next evaluation
+  -- requires enough new messages beyond it to be worth spending a model call,
+  -- so a quiet work stream is never re-evaluated on an unchanged transcript.
+  evaluated_through_sequence INTEGER NOT NULL CHECK (evaluated_through_sequence >= 0),
+  window_message_count INTEGER NOT NULL DEFAULT 0 CHECK (window_message_count >= 0),
+  -- `pending` is the claim; the rest are outcomes. `kept` is the common one and
+  -- is deliberately recorded: knowing the loop looked and left the description
+  -- alone is what separates a description that still fits from one nothing has
+  -- examined. `rejected` is a proposal the guards refused, `failed` an
+  -- evaluation that never produced one.
+  decision TEXT NOT NULL CHECK (decision IN ('pending', 'kept', 'rewritten', 'rejected', 'failed')),
+  rejection_code TEXT,
+  confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+  model TEXT,
+  previous_description TEXT,
+  description TEXT,
+  reasoning TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  -- A refusal without its reason is an unexplained description; the code is
+  -- what makes a run of them diagnosable.
+  CHECK ((decision IN ('rejected', 'failed')) = (rejection_code IS NOT NULL)),
+  CHECK (decision <> 'rewritten' OR description IS NOT NULL)
+);
+
+-- Answers "which work streams has the loop touched lately, and what did it do"
+-- for one workspace, which is the only way this table is read outside its own
+-- work stream.
+CREATE INDEX IF NOT EXISTS workstream_description_refreshes_workspace_idx
+  ON workstream_description_refreshes(workspace_id, evaluated_at DESC);

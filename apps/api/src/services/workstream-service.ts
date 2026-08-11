@@ -463,6 +463,9 @@ export class WorkstreamService {
       workspaceId: this.auth.workspaceId,
       title,
       objective,
+      // Only an explicit objective was written by a person; the fallback is the
+      // opening message, which is what the refresh loop exists to improve on.
+      descriptionSource: input.objective ? "authored" : "derived",
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
       openingAuthor: { type: "human", userId: this.auth.userId },
@@ -599,6 +602,7 @@ export class WorkstreamService {
     await this.env.DB.prepare(
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
+       description_source = CASE WHEN ? IS NULL THEN description_source ELSE 'authored' END,
        archived_at = CASE WHEN ? IS NULL THEN archived_at WHEN ? = 1 THEN ? ELSE NULL END,
        email_route_status = CASE WHEN ? IS NULL THEN email_route_status ELSE 'reserved' END,
        updated_at = ?
@@ -606,6 +610,7 @@ export class WorkstreamService {
     )
       .bind(
         input.title ?? null,
+        input.objective ?? null,
         input.objective ?? null,
         input.archived == null ? null : Number(input.archived),
         Number(input.archived ?? false),

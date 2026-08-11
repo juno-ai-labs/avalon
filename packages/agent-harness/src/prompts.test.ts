@@ -9,7 +9,9 @@ import {
   renderTriggerActivityMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
+  renderWorkstreamDescriptionMessages,
   renderWorkstreamSystemPrompt,
+  MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
 } from "./prompts";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
 
@@ -138,6 +140,35 @@ describe("prompt renderers", () => {
         }),
         hash: "4a5fd7556684af05979a2b108acd29f52a2a6187c2c9bb341ad1ab93a3aa6e8d",
       },
+      workstreamDescription: {
+        actual: renderWorkstreamDescriptionMessages({
+          title: "Investigate checkout failures",
+          currentDescription: "Look into the payment error Morgan reported on Monday.",
+          descriptionSource: "derived",
+          windowTruncated: false,
+          messages: [
+            {
+              authorType: "human",
+              authorName: "Morgan",
+              occurredAt: "2026-08-03T00:00:00.000Z",
+              text: "EU card payments are failing again.",
+            },
+            {
+              authorType: "agent",
+              authorName: null,
+              occurredAt: "2026-08-03T00:01:00.000Z",
+              text: "Three issuers time out at the 3-D Secure step.",
+            },
+            {
+              authorType: "human",
+              authorName: "Rowan",
+              occurredAt: "2026-08-03T00:02:00.000Z",
+              text: "Let us keep using this to track the whole 3-D Secure migration.",
+            },
+          ],
+        }),
+        hash: "29b71da8a5eaa754d27b9ac132e7755dfb1a3938642a564cd283d1371f72fb69",
+      },
     };
 
     expect(Object.fromEntries(
@@ -228,6 +259,60 @@ describe("prompt renderers", () => {
     expect(routingMessages[0]!.content).not.toContain(injection);
     expect(routingMessages[1]).toMatchObject({ role: "user" });
     expect(routingMessages[1]!.content).toContain(injection);
+
+    const descriptionMessages = renderWorkstreamDescriptionMessages({
+      title: injection,
+      currentDescription: injection,
+      descriptionSource: "authored",
+      windowTruncated: false,
+      messages: [{
+        authorType: "human",
+        authorName: injection,
+        occurredAt: "2026-08-03T00:00:00.000Z",
+        text: injection,
+      }],
+    });
+    expect(descriptionMessages[0]!.content).not.toContain(injection);
+    expect(descriptionMessages[1]).toMatchObject({ role: "user" });
+    expect(descriptionMessages[1]!.content).toContain(injection);
+  });
+
+  it("bounds each transcript message and marks a window that dropped its older half", () => {
+    const long = "m".repeat(MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS + 500);
+    const rendered = renderWorkstreamDescriptionMessages({
+      title: "Investigate checkout failures",
+      currentDescription: "Find and resolve EU checkout authorization failures.",
+      descriptionSource: "derived",
+      windowTruncated: true,
+      messages: [{
+        authorType: "human",
+        authorName: "Morgan",
+        occurredAt: "2026-08-03T00:00:00.000Z",
+        text: long,
+      }],
+    });
+
+    expect(rendered[1]!.content).toContain("older messages in this window were omitted");
+    const transcript = JSON.parse(rendered[1]!.content.split("\n").at(-1)!) as Array<{ text: string }>;
+    expect(Array.from(transcript[0]!.text)).toHaveLength(MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS + 1);
+    expect(transcript[0]!.text.endsWith("…")).toBe(true);
+  });
+
+  it("states the description loop's keep bias, generality ban, and confidence floor", () => {
+    const policy = renderWorkstreamDescriptionMessages({
+      title: "T",
+      currentDescription: "D",
+      descriptionSource: "derived",
+      windowTruncated: false,
+      messages: [],
+    })[0]!.content;
+
+    expect(policy).toContain("untrusted evidence");
+    expect(policy).toContain("When both decisions could apply, keep.");
+    expect(policy).toContain("smallest edit");
+    expect(policy).toContain("general discussion");
+    expect(policy).toContain("0.8 or higher");
+    expect(policy).toContain("280 characters");
   });
 
   it("renders complete saved automation behavior into runtime context", () => {
