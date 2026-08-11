@@ -1,8 +1,28 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+
+/** The probe's own shape — this route owns it, so the contract lives here. */
+const HealthCheckSchema = z.object({ ok: z.boolean(), message: z.string() });
+/**
+ * `region` and `environment` are reported as-is rather than enum-validated.
+ *
+ * This is the probe a misconfigured deployment is diagnosed with — it is exempt
+ * from the environment assertion in `index.ts` for exactly that reason. An enum
+ * here would put the two variables most likely to be wrong, `AVALON_REGION` and
+ * `APP_ENV`, into the one response that has to survive them being wrong: the
+ * parse would throw and the route would answer a bare 500 naming nothing.
+ * The probe's job is to describe the environment, not to assert it.
+ */
+const HealthResponseSchema = z.object({
+  ok: z.boolean(),
+  region: z.string(),
+  environment: z.string(),
+  checks: z.record(z.string(), HealthCheckSchema),
+});
 
 export const healthRoutes = new Hono<HonoAppEnv>();
 
@@ -124,5 +144,8 @@ healthRoutes.get("/", async (c) => {
   if (c.env.APP_ENV === "production") required.push(checks.inboundEmail, checks.featureFlags);
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
-  return c.json({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }, ok ? 200 : 503);
+  return c.json(
+    HealthResponseSchema.parse({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }),
+    ok ? 200 : 503,
+  );
 });

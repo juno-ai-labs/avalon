@@ -53,6 +53,7 @@ import {
   type HarnessToolPolicyIdentity,
   type HarnessToolResult,
   type ModelMessage,
+  type OpenRouterProviderError,
   type RunHarnessInput,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
@@ -565,10 +566,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           input: args,
           ...(providerIdempotencyKey ? { providerIdempotencyKey } : {}),
         });
-        const toolSignal = combinedTimeoutSignal(
+        const toolDeadline = combinedDeadline(
           signal,
           dispatched.tool.definition.timeoutMs ?? input.config.toolTimeoutMs,
         );
+        const toolSignal = toolDeadline.signal;
         let toolResult: HarnessToolResult;
         try {
           toolResult = await raceWithSignal(dispatched.tool.execute(args, {
@@ -641,6 +643,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
               ...(structured ? { data: structured } : {}),
             }),
           };
+        } finally {
+          // After the catch body, so every `toolSignal.aborted` read above still
+          // sees the abort that happened; disposing only clears the pending
+          // timer, never the signal's state.
+          toolDeadline.dispose();
         }
         const persistedResult = toolResult;
         if (toolResult.providerOperationId) {
@@ -945,6 +952,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             cursor,
             latencyMs: target.durationMs,
             failureKind: classified.kind,
+            ...(error instanceof OpenRouterError
+              ? (() => {
+                const providerError = (error.details as { providerError?: OpenRouterProviderError } | undefined)
+                  ?.providerError;
+                return providerError ? { providerError } : {};
+              })()
+              : {}),
           }));
           return {
             kind: "failure",
@@ -1004,15 +1018,22 @@ async function loadOpenRouterContextCatalog(
   if (mayUseSharedCache && openRouterContextCatalogRequest) return openRouterContextCatalogRequest;
 
   const request = (async (): Promise<OpenRouterContextCatalog> => {
-    const response = await fetcher(OPENROUTER_MODELS_URL, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.any([
-        signal,
-        AbortSignal.timeout(OPENROUTER_CATALOG_TIMEOUT_MS),
-      ]),
-    });
-    if (!response.ok) throw new Error(`OpenRouter model catalog failed (${response.status})`);
-    const envelope = z.object({ data: z.array(z.unknown()) }).parse(await response.json());
+    // Cancellable: this runs inside the bind loop's Workflow step, so a timer
+    // left armed after the catalog answers holds that invocation open. The
+    // deadline covers reading the body as well as the response head.
+    const deadline = combinedDeadline(signal, OPENROUTER_CATALOG_TIMEOUT_MS);
+    const envelope = await (async () => {
+      try {
+        const response = await fetcher(OPENROUTER_MODELS_URL, {
+          headers: { accept: "application/json" },
+          signal: deadline.signal,
+        });
+        if (!response.ok) throw new Error(`OpenRouter model catalog failed (${response.status})`);
+        return z.object({ data: z.array(z.unknown()) }).parse(await response.json());
+      } finally {
+        deadline.dispose();
+      }
+    })();
     const values = new Map<string, number>();
     for (const entry of envelope.data) {
       const parsed = z.object({
@@ -1648,8 +1669,42 @@ function harnessResultOutcome(
   };
 }
 
-function combinedTimeoutSignal(parent: AbortSignal, timeoutMs: number): AbortSignal {
-  return AbortSignal.any([parent, AbortSignal.timeout(Math.max(1, timeoutMs))]);
+interface CombinedDeadline {
+  readonly signal: AbortSignal;
+  /** Clears the pending timer. Safe to call more than once. */
+  dispose: () => void;
+}
+
+/**
+ * A deadline combined with the run's own signal, whose timer can be cleared.
+ *
+ * `AbortSignal.any([parent, AbortSignal.timeout(ms)])` is the obvious spelling,
+ * but its timer cannot be cancelled: it stays armed for the full duration after
+ * the call it guarded has returned. The bind loop runs inside a Workflow step,
+ * and a Workers invocation ends when its handler returns — so a tool call that
+ * finished in a second leaves up to `toolTimeoutMs` of armed timer holding the
+ * invocation open with nothing left to do, which the runtime eventually cancels
+ * as a hang and bills as an uncaught exception. Always dispose in a `finally`.
+ *
+ * The same primitive lives at `apps/api/src/lib/deadline.ts` for the Worker;
+ * this package cannot import from the app, and the shape is small enough that a
+ * dependency for it would cost more than the twelve lines.
+ */
+function combinedDeadline(parent: AbortSignal, timeoutMs: number): CombinedDeadline {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`Operation timed out after ${timeoutMs}ms`, "TimeoutError")),
+    Math.max(1, timeoutMs),
+  );
+  let disposed = false;
+  return {
+    signal: AbortSignal.any([parent, controller.signal]),
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      clearTimeout(timer);
+    },
+  };
 }
 
 function assertCompletedTurnWithinRunLimits(input: {

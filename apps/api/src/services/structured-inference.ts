@@ -4,6 +4,7 @@ import {
   type StructuredModelDiagnostic,
 } from "@avalon/agent-harness";
 import type { Env } from "../env";
+import { createDeadline } from "../lib/deadline";
 import { logStructuredEvent } from "../observability/logger";
 import {
   resolveAgentModelRouting,
@@ -51,10 +52,14 @@ export async function runStructuredInference<T>(
     appUrl: env.PUBLIC_API_BASE_URL,
     appName: "Avalon",
   });
-  const timeoutSignal = AbortSignal.timeout(STRUCTURED_INFERENCE_TIMEOUT_MS);
+  // Most callers are queue consumers and Workflow steps, whose invocation ends
+  // when this returns. An `AbortSignal.timeout` would stay armed for the rest of
+  // its two-minute window and hold that invocation open; the deadline is
+  // disposed once the call settles instead. See `lib/deadline.ts`.
+  const deadline = createDeadline(STRUCTURED_INFERENCE_TIMEOUT_MS);
   const signal = input.signal
-    ? AbortSignal.any([input.signal, timeoutSignal])
-    : timeoutSignal;
+    ? AbortSignal.any([input.signal, deadline.signal])
+    : deadline.signal;
   const onDiagnostic = (diagnostic: StructuredModelDiagnostic): void => {
     logStructuredEvent(
       env,
@@ -78,18 +83,24 @@ export async function runStructuredInference<T>(
         output_tokens: diagnostic.outputTokens,
         success: diagnostic.success,
         failure_kind: diagnostic.failureKind,
+        provider_error_code: diagnostic.providerError?.code,
+        provider_error_provider: diagnostic.providerError?.providerName,
         validation_issues: diagnostic.validationIssues,
       },
     );
   };
-  const result = await client.structured({
-    messages: input.messages,
-    schemaName: input.schemaName,
-    jsonSchema: input.jsonSchema,
-    parse: input.parse,
-    ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
-    signal,
-    onDiagnostic,
-  });
-  return { result, model: routing.model };
+  try {
+    const result = await client.structured({
+      messages: input.messages,
+      schemaName: input.schemaName,
+      jsonSchema: input.jsonSchema,
+      parse: input.parse,
+      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+      signal,
+      onDiagnostic,
+    });
+    return { result, model: routing.model };
+  } finally {
+    deadline.dispose();
+  }
 }

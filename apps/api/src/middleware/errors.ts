@@ -1,5 +1,6 @@
 import type { ErrorHandler, NotFoundHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { z } from "zod";
 import { RepositoryError } from "@avalon/db";
 import { ConnectorError } from "@avalon/connectors";
 import type { HonoAppEnv } from "../env";
@@ -52,6 +53,24 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     status,
     error_name: error.name,
     detail_keys: details ? Object.keys(details).slice(0, 25) : [],
+    // A raw ZodError reaching here is a response that failed its own contract.
+    // Without the issue paths the log says only "internal_error", which names
+    // neither the field nor the route; the paths and codes are schema shape, not
+    // member data, so they are safe to record where the values would not be.
+    ...(error instanceof z.ZodError
+      ? {
+        path: c.req.path,
+        // The template, not the resolved path: `/workstreams/:id` is what makes
+        // 131 failures on one work stream aggregate into one line rather than
+        // one per id.
+        route: c.req.routePath,
+        method: c.req.method,
+        validation_issues: error.issues.slice(0, 25).map((issue) => ({
+          path: issue.path.map(String).join(".") || "(root)",
+          code: issue.code,
+        })),
+      }
+      : {}),
   });
 
   return c.json(

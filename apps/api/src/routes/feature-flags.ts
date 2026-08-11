@@ -1,3 +1,4 @@
+import { ClientFeatureFlagsSchema } from "@avalon/contracts";
 import { Hono } from "hono";
 import type { HonoAppEnv } from "../env";
 import { getIdentityAuth } from "../middleware/auth";
@@ -19,5 +20,5 @@ featureFlagRoutes.get("/", async (c) => {
   // or, worse, serve one person's to another. The identity routes set this for
   // the same reason.
   c.header("Cache-Control", "no-store");
-  return c.json(await resolveClientFeatureFlags(c.env, getIdentityAuth(c)));
+  return c.json(ClientFeatureFlagsSchema.parse(await resolveClientFeatureFlags(c.env, getIdentityAuth(c))));
 });

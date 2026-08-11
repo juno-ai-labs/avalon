@@ -6,9 +6,11 @@ import {
   allocateWorkstreamEmailAddressCandidate,
 } from "../lib/workstream-email-address";
 import { ApiError } from "../lib/api-error";
+import { RPC_BATCH_LIMIT } from "../lib/rpc-contracts";
 
 const MAX_ADDRESS_RESERVATION_ATTEMPTS = 1_024;
-const MAX_BULK_ADDRESS_RESERVATIONS = 512;
+/** One bound for both sides of the bridge. See `RPC_BATCH_LIMIT`. */
+const MAX_BULK_ADDRESS_RESERVATIONS = RPC_BATCH_LIMIT;
 
 export interface WorkstreamEmailRouteInput {
   region: Region;

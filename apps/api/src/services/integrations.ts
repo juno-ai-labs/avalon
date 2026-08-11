@@ -70,6 +70,7 @@ import { numericEnv } from "../env";
 import { encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
@@ -829,6 +830,33 @@ export async function classifyWorkstreamMessage(
     activeTask: input.activeTask,
     connectorMentions: input.connectorMentions,
     recentMessages: input.recentMessages,
+    // Without this the classifier is the one model caller that leaves no trace:
+    // a provider rejection here is silently absorbed into the heuristic result.
+    onDiagnostic: (diagnostic) => {
+      logStructuredEvent(
+        env,
+        diagnostic.validationIssues || diagnostic.failureKind ? "warn" : "info",
+        "structured_inference",
+        {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          role: "addressing_classifier",
+          stage: diagnostic.stage,
+          schema_name: diagnostic.schemaName,
+          provider: "openrouter",
+          model: diagnostic.model,
+          attempt: diagnostic.attempt,
+          fallback_attempt: diagnostic.fallbackAttempt,
+          repair_attempt: diagnostic.repairAttempt,
+          latency_ms: diagnostic.latencyMs,
+          success: diagnostic.success,
+          failure_kind: diagnostic.failureKind,
+          provider_error_code: diagnostic.providerError?.code,
+            provider_error_provider: diagnostic.providerError?.providerName,
+          validation_issues: diagnostic.validationIssues,
+        },
+      );
+    },
   });
 }
 
@@ -1649,11 +1677,18 @@ export async function runWorkstreamHarness(
       reauthorizePlugin: async (pluginId) => {
         const frozen = harnessTools.frozenConnections.get(pluginId);
         if (!frozen) return isLoadableBuiltinHarnessPlugin(pluginId, harnessTools);
-        const healthSignal = combineAbortSignals(
+        // Cancellable: this runs inside the bind loop's Workflow step, so an
+        // uncancellable thirty-second timer outlives the reauthorization it
+        // guarded and holds the invocation open.
+        const deadline = createChildDeadline(
           harnessSignal,
-          AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)),
+          numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         );
-        return reauthorizeFrozenPlugin(env, input, frozen, healthSignal);
+        try {
+          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal);
+        } finally {
+          deadline.dispose();
+        }
       },
     persistActivation: async (pluginId) => {
       await persistWorkstreamPluginActivation(env, input, liveness.lease, pluginId, harnessTools);
@@ -5155,12 +5190,17 @@ export async function pollConnectorConnection(
     return { activityIds: [], cursor: context.cursor, baseCursorJson, nextPollAt: null };
   }
   const pollTimeoutMs = numericEnv(env, "CONNECTOR_POLL_TIMEOUT_MS", 20_000);
-  const signal = AbortSignal.timeout(pollTimeoutMs);
-  await ensureFreshConnectorCredentials(env, context, adapter, signal);
-  const result = await withConnectorCredentialLifecycle(env, context, async () => {
-    return adapter.pollingActivity
-      ? pollCheckpointedActivityStreams(adapter.pollingActivity, context, signal)
-      : adapter.poll!(context, signal);
+  // A poll runs inside a Workflow step, which ends when this function returns.
+  // An `AbortSignal.timeout` here would stay armed for the rest of its window
+  // and hold the workflow invocation open long after the poll finished, until
+  // the runtime cancelled it as a hang. The deadline is disposed instead.
+  const result = await withDeadline(pollTimeoutMs, async (signal) => {
+    await ensureFreshConnectorCredentials(env, context, adapter, signal);
+    return withConnectorCredentialLifecycle(env, context, async () => {
+      return adapter.pollingActivity
+        ? pollCheckpointedActivityStreams(adapter.pollingActivity, context, signal)
+        : adapter.poll!(context, signal);
+    });
   });
   const activityIds = new Set<string>();
   for (const activity of result.activities) {
@@ -5212,18 +5252,22 @@ export async function hydrateConnectorActivitySource(
   };
   const adapter = connectorRegistryForEnv(env).get(String(row.connector_type));
   if (!adapter.hydrateResource) return null;
-  const signal = AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000));
-  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
-  return withConnectorCredentialLifecycle(env, connection, () => adapter.hydrateResource!(
-    connection,
-    {
-      providerResourceId: input.providerResourceId,
-      provider_resource_id: input.providerResourceId,
-      resourceType: input.resourceType,
-      resource_type: input.resourceType,
-    },
-    signal,
-  ));
+  // Hydration runs inside the activity queue consumer, which ends when this
+  // returns; see `pollConnectorConnection` for why the deadline is disposed
+  // rather than left armed.
+  return withDeadline(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000), async (signal) => {
+    await ensureFreshConnectorCredentials(env, connection, adapter, signal);
+    return withConnectorCredentialLifecycle(env, connection, () => adapter.hydrateResource!(
+      connection,
+      {
+        providerResourceId: input.providerResourceId,
+        provider_resource_id: input.providerResourceId,
+        resourceType: input.resourceType,
+        resource_type: input.resourceType,
+      },
+      signal,
+    ));
+  });
 }
 
 async function withConnectorCredentialLifecycle<T>(

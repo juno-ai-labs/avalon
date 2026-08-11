@@ -306,6 +306,15 @@ function workstreamRow(id: string, emailAddress: string | null, lastActivityAt: 
     created_at: "2026-08-01T00:00:00.000Z",
     updated_at: "2026-08-01T00:00:00.000Z",
     archived_at: null,
+    // `SELECT w.*` returns every column, and these are NOT NULL with a default
+    // in `workstreams`, so no real row can omit them. The fixture did, and the
+    // reader's old hand-coercion silently produced "workspace", "settled" and 0
+    // for the absent ones rather than saying the row was wrong.
+    scope: "workspace",
+    system_kind: null,
+    title_status: "settled",
+    latest_attention_sequence_number: 0,
+    unread_tracking_start_sequence_number: 0,
   };
 }
 

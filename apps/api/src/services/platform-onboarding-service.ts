@@ -17,7 +17,7 @@ import { ApiError } from "../lib/api-error";
 import { AuthService } from "./auth-service";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 
-const platformIdentitySchema = z.object({
+export const platformIdentitySchema = z.object({
   platformUserId: z.string().uuid(),
   googleSubject: z.string().min(1).max(255),
   email: z.string().email().max(254),
