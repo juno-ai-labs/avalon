@@ -42,6 +42,24 @@ test("rejects an inequality, which guards the same decision inverted", () => {
   assert.equal(lint("if (fileURLToPath(import.meta.url) !== process.argv[1]) return;").length, 1);
 });
 
+test("ignores an expression holding both on the same side of the comparison", () => {
+  // The defect is comparing one against the other. An operand that mentions
+  // both is doing something else, so matching "both appear somewhere across
+  // the pair" would report code that has nothing to do with an entry-point
+  // guard. Raised by review on the first cut of this rule.
+  assert.deepEqual(lint("if ((import.meta.url + process.argv[1]) === expected) { main(); }"), []);
+});
+
+test("catches the read however the process object is reached", () => {
+  // Deliberately wider than a literal `process.argv[1]`: an alias or a
+  // `globalThis` hop is the same read, and narrowing to the exact spelling
+  // would let a real instance of the bug through. It cannot cost false
+  // positives, because the other operand still has to be `import.meta` — and
+  // nothing legitimate compares that against any argv entry.
+  assert.equal(lint("if (globalThis.process.argv[1] === fileURLToPath(import.meta.url)) { main(); }").length, 1);
+  assert.equal(lint("if (nodeProcess.argv[1] === fileURLToPath(import.meta.url)) { main(); }").length, 1);
+});
+
 test("accepts the helper the rule points at", () => {
   assert.deepEqual(lint("if (isEntryPoint(import.meta.url)) { main(); }"), []);
 });
