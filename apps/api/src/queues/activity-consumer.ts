@@ -810,5 +810,6 @@ async function isWorkstreamVisibleToUser(
 export const __testing = {
   matchesFilters,
   restrictedActivityUserIds,
+  runMatchingAutomations,
   triggerMatches,
 };
