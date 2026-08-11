@@ -606,17 +606,15 @@ pre {
 }
 
 .sidebar-note-privacy {
+  align-items: center;
   color: #77766f;
   display: inline-flex;
-  flex: 0 0 19px;
-  height: 17px;
+  flex: 0 0 16px;
+  height: 16px;
+  justify-content: center;
   margin-left: 3px;
-  position: relative;
-  width: 19px;
+  width: 16px;
 }
-
-.sidebar-note-privacy-cloud { left: 0; position: absolute; top: 0; }
-.sidebar-note-privacy-lock { bottom: 0; position: absolute; right: 0; }
 
 .sidebar-row-main {
   display: flex;
