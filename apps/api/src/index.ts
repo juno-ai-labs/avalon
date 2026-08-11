@@ -9,7 +9,7 @@ import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
 import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
 import { SlackAgentService } from "./services/slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
-import { processDueOpportunityWindows } from "./services/work-opportunity-service";
+import { processDueOpportunityWindows, processDueSuggestedWork } from "./services/work-opportunity-service";
 
 const REAPER_BATCH_LIMIT = 100;
 const REAPER_MAX_BATCHES = 5;
@@ -68,6 +68,7 @@ export default {
       new SlackAgentService(env).maintainIngress(),
       refreshSlackWorkstreamUnfurls(env),
       processDueOpportunityWindows(env),
+      processDueSuggestedWork(env),
       recoverPendingActivityQueue(env),
       reapExpiredActivityEvents(env),
       reconcileDigestDefaults(env),
