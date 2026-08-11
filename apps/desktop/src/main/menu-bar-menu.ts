@@ -115,7 +115,8 @@ export function menuBarLabel(rawLabel: string): string {
  * The order is the product contract: the three things a person can always
  * start, then a rule, then **Suggestions** with whatever Avalon is currently
  * suggesting, then a rule and **Recent** with the five most recent work streams,
- * then a rule and **Pinned** with the top five of the reader's own arrangement.
+ * then a rule and **Pinned** with the top five of the reader's own arrangement,
+ * or the line that says how that section gets filled.
  * The trailing group is not part of that contract but is what makes the item
  * usable at all — Avalon can be launched hidden at login, and then this menu is
  * the only way to open a window or quit.
@@ -167,17 +168,23 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
   }
 
   // Below Recent, because a pin is a standing choice and the recent list is
-  // what moved today. Omitted whole, header and rule included, when nothing is
-  // pinned — most people never pin anything, and an empty section would cost
-  // them two rows to say so.
-  const pinned = content.pinned.slice(0, MENU_BAR_PINNED_LIMIT);
-  if (pinned.length > 0) {
+  // what moved today. The section stays with nothing under it, saying how it
+  // gets filled: most people have never pinned anything, and a section that is
+  // simply absent teaches them nothing about a feature they have not found.
+  // Signed out is the one case it is dropped — there is nothing to pin, and the
+  // Recent row above already says to sign in.
+  if (options.signedIn) {
     template.push({ type: 'separator' }, sectionHeader('Pinned', options.sectionHeaders));
-    for (const workstream of pinned) {
-      template.push({
-        label: menuBarLabel(workstream.title),
-        click: () => actions.openWorkstream(workstream.id),
-      });
+    const pinned = content.pinned.slice(0, MENU_BAR_PINNED_LIMIT);
+    if (pinned.length > 0) {
+      for (const workstream of pinned) {
+        template.push({
+          label: menuBarLabel(workstream.title),
+          click: () => actions.openWorkstream(workstream.id),
+        });
+      }
+    } else {
+      template.push({ label: 'Pin a work stream to see it here', enabled: false });
     }
   }
 
