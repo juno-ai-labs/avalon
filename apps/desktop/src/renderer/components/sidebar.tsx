@@ -299,6 +299,7 @@ export function Sidebar({
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -430,7 +431,11 @@ export function Sidebar({
                     automation={automation}
                     debugEnabled={debugEnabled}
                     key={automation.id}
-                    onArchiveDraft={(target) => void onArchiveDraftAutomation(target).catch(() => undefined)}
+                    onArchiveDraft={(target) => {
+                      void onArchiveDraftAutomation(target).catch((error: unknown) => {
+                        setArchiveError(error instanceof Error ? error.message : 'The draft could not be archived.');
+                      });
+                    }}
                     onDelete={setDeleteTarget}
                     onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
                   />
@@ -557,6 +562,17 @@ export function Sidebar({
           </label>
         </form>
         {renameError && <InlineError>{renameError}</InlineError>}
+      </Modal>
+      <Modal
+        footer={<Button onClick={() => setArchiveError(null)}>Close</Button>}
+        onOpenChange={(open) => {
+          if (!open) setArchiveError(null);
+        }}
+        open={Boolean(archiveError)}
+        title="Draft could not be archived"
+      >
+        <p className="modal-copy">The draft is still in the sidebar. Try again in a moment.</p>
+        {archiveError && <InlineError>{archiveError}</InlineError>}
       </Modal>
       <Modal
         footer={(

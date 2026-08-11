@@ -48,6 +48,19 @@ function serviceFor(database: DatabaseSync): AutomationService {
 
 /** The scheduler Durable Object, wired to the same database, with storage and
  * alarms captured so a test can see whether the workspace timer is still armed. */
+function serviceWithBrokenScheduler(database: DatabaseSync): AutomationService {
+  const env = {
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    WORKSPACE_SCHEDULERS: {
+      idFromName: () => "scheduler",
+      get: () => ({ fetch: async () => { throw new Error("scheduler unreachable"); } }),
+    },
+  } as unknown as Env;
+  return new AutomationService(env, auth);
+}
+
 function schedulerFor(database: DatabaseSync) {
   const values = new Map<string, unknown>();
   const setAlarm = vi.fn(async (at: number) => { void at; });
@@ -87,6 +100,33 @@ describe("automation lifecycle", () => {
     await expect(service.get("00000000-0000-7000-8000-000000000008")).rejects.toMatchObject({ status: 404 });
   });
 
+  it("disables any schedule a draft carries when it is archived", async () => {
+    const database = seededDatabase();
+    // Drafts are created without schedules today. If that ever changes, an
+    // archived draft must not keep firing from a schedule nobody can see.
+    database.exec(`
+      INSERT INTO schedules
+        (id, workspace_id, automation_subscription_id, schedule_type, rrule, timezone,
+         next_run_at, enabled, version, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-00000000000c', '00000000-0000-7000-8000-000000000001',
+              '00000000-0000-7000-8000-000000000008', 'calendar', 'FREQ=DAILY', 'America/Los_Angeles',
+              '2026-01-02T16:00:00.000Z', 1, 1, '2026-01-01', '2026-01-01');
+    `);
+
+    await serviceFor(database).archiveDraft("00000000-0000-7000-8000-000000000008");
+
+    expect(database.prepare(
+      "SELECT enabled FROM schedules WHERE automation_subscription_id = ?",
+    ).get("00000000-0000-7000-8000-000000000008")).toEqual({ enabled: 0 });
+    const { scheduler } = schedulerFor(database);
+    expect(await scheduler.refresh("00000000-0000-7000-8000-000000000001"))
+      .toMatchObject({ alarmAt: expect.any(String) });
+    await scheduler.alarm();
+    expect(Number((database.prepare(
+      "SELECT COUNT(*) AS count FROM automation_runs WHERE automation_subscription_id = ?",
+    ).get("00000000-0000-7000-8000-000000000008") as { count: number }).count)).toBe(0);
+  });
+
   it("refuses to archive an automation that still runs", async () => {
     const database = seededDatabase();
     const service = serviceFor(database);
@@ -117,6 +157,23 @@ describe("automation lifecycle", () => {
     expect((await service.list()).items.map((item) => item.id)).toEqual(["00000000-0000-7000-8000-000000000008"]);
     await expect(service.get("00000000-0000-7000-8000-000000000007")).rejects.toMatchObject({ status: 404 });
     await expect(service.runNow("00000000-0000-7000-8000-000000000007", "idempotency-key-1")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("still succeeds when the scheduler cannot be refreshed after the delete", async () => {
+    const database = seededDatabase();
+
+    // The write is already committed by the time the refresh runs, and a retry
+    // would 404, so a refresh failure must not surface as a failed delete.
+    await expect(serviceWithBrokenScheduler(database).deleteAutomation("00000000-0000-7000-8000-000000000007"))
+      .resolves.toBeUndefined();
+
+    expect(database.prepare(
+      "SELECT lifecycle_state FROM automation_subscriptions WHERE id = ?",
+    ).get("00000000-0000-7000-8000-000000000007")).toEqual({ lifecycle_state: "deleted" });
+    // A stale armed alarm is harmless: the alarm re-reads enabled schedules.
+    const { scheduler } = schedulerFor(database);
+    await scheduler.alarm();
+    expect(runCount(database)).toBe(0);
   });
 
   it("leaves a deleted automation unreachable to a second delete", async () => {
