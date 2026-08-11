@@ -11,7 +11,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
-import { agentModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
+import { automationModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
@@ -522,7 +522,10 @@ export class WorkspaceScheduler {
             // ones `AutomationService.createRun` builds. `ensureHarnessRun`
             // below resolves the model from this row, so copying it here is
             // what makes a scheduled run honour the choice.
-            agentModelOverride(source.model_override)
+            automationModelOverride(this.env, source.model_override, {
+              workspaceId: schedule.workspace_id,
+              automationSubscriptionId: subscriptionId,
+            })
           )
           .run();
       }

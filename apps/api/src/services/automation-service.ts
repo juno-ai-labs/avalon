@@ -16,7 +16,7 @@ import { ApiError, isConstraintError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
-import { agentModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
+import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
 import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
 import {
   buildAutomationMemoryTableStatements,
@@ -901,7 +901,10 @@ export class AutomationService {
     // Copied onto the run's work stream rather than looked up through the
     // subscription later, so the run reads its model from its own row like
     // every other work stream does.
-    const modelOverride = agentModelOverride(subscription.model_override);
+    const modelOverride = automationModelOverride(this.env, subscription.model_override, {
+      workspaceId: this.auth.workspaceId,
+      automationSubscriptionId: String(subscription.id),
+    });
     const routeInput = routeInputFor(workstreamId);
     const emailRoute = await emailRouting.reserve(routeInput);
     const principal = parseJson<ExecutionPrincipal>(subscription.execution_principal_json, { type: "user", userId: this.auth.userId });

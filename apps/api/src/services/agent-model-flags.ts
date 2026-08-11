@@ -281,6 +281,44 @@ export function agentModelOverride(value: unknown): string | null {
 }
 
 /**
+ * A stored value that was meant to be an override and is not one — a model that
+ * has left `AGENT_MODEL_OVERRIDES`, or anything a direct database write could
+ * have put there. Absent and empty are not that: they are the ordinary
+ * unpinned state and say nothing.
+ */
+function unknownStoredOverride(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  return agentModelOverride(value) === null ? value : null;
+}
+
+/**
+ * `agentModelOverride`, for a pin being copied off an automation subscription
+ * onto the work stream a run is creating.
+ *
+ * Separate from the plain validator because dropping a pin silently is only
+ * acceptable where something else will say so. The work-stream read path logs
+ * it; these paths write the column and would otherwise retire a model out from
+ * under every automation pinned to it with nothing in the logs — which is
+ * exactly the diagnostic `docs/FEATURE_FLAGS.md` promises exists.
+ */
+export function automationModelOverride(
+  env: Env,
+  value: unknown,
+  context: { workspaceId: string; automationSubscriptionId: string },
+): string | null {
+  const unknown = unknownStoredOverride(value);
+  if (unknown) {
+    logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
+      agent: "workstream",
+      workspace_id: context.workspaceId,
+      automation_subscription_id: context.automationSubscriptionId,
+      stored_model: unknown,
+    });
+  }
+  return agentModelOverride(value);
+}
+
+/**
  * The route plan for a pinned model. An override carries no fallbacks: it is a
  * request to observe one specific model, and routing onward would answer a
  * question nobody asked — the same reason HyperSight pins rather than routes.
@@ -320,12 +358,13 @@ export async function resolveWorkstreamModelRouting(
   }
   // A stored value the list no longer admits is worth saying out loud: the work
   // stream is about to run on a different model than whoever pinned it expects.
-  if (row?.model_override) {
+  const unknown = unknownStoredOverride(row?.model_override);
+  if (unknown) {
     logStructuredEvent(env, "warn", "workstream_model_override_unknown", {
       agent: "workstream",
       workspace_id: context.workspaceId,
       workstream_id: context.workstreamId,
-      stored_model: row.model_override,
+      stored_model: unknown,
     });
   }
   return resolveAgentModelRouting(env, "workstream", context);

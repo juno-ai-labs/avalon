@@ -2092,7 +2092,9 @@ pre {
 .model-selector-trigger.is-unpinned { color: var(--muted); }
 .model-selector-menu { max-width: min(300px, calc(100vw - 24px)); min-width: 220px; }
 .model-selector-menu .menu-label { color: var(--muted); font-size: 11px; }
-.model-selector-provider { font-size: 9.5px; letter-spacing: .06em; padding-top: 6px; text-transform: uppercase; }
+/* Scoped to the menu so it outweighs the rule above rather than tying with it:
+   a provider is a sub-heading under "Model" and has to read smaller than it. */
+.model-selector-menu .model-selector-provider { font-size: 9.5px; letter-spacing: .06em; padding-top: 6px; text-transform: uppercase; }
 .model-selector-item { justify-content: space-between; min-height: 30px; }
 .model-selector-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-selector-item > svg { color: var(--blue); flex: 0 0 auto; }
