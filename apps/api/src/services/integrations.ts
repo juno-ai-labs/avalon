@@ -3564,6 +3564,9 @@ function connectorAutomationPluginIcon(connectorType: string, displayName: strin
     case "notion": return "brand-notion";
     case "generic_webhook": return "webhook";
     case "google": return displayName.includes("Drive") ? "brand-google-drive" : "brand-google";
+    case "slack": return "brand-slack";
+    // `granola` and `x` have adapters but no brand glyph in the icon enum, so
+    // they intentionally share the generic plug rather than borrow one.
     default: return "plug";
   }
 }
@@ -5197,7 +5200,7 @@ async function loadToolInvocation(env: Env, harnessRunId: string, toolCallId: st
       status: status === "pending" || status === "started"
         ? "started"
         : status === "failed" ? "failed" : "completed",
-      pluginDisplayName: plugin?.displayName ?? null,
+      plugin,
     }),
     connectionId: row.connection_id == null ? null : String(row.connection_id),
     plugin,
@@ -5255,8 +5258,10 @@ export const __integrationTesting = {
   createInlineChildHarnessSurface,
   childRunLimits,
   installInlineChildAgentTool,
+  createWorkstreamCorePlugins,
   loadHarnessTools,
   loadToolInvocation,
+  stableWireToolName,
   loadTriggerFencedTranscriptMessages,
   projectModelProtocolTranscript,
   projectElicitationResponseMessage,
