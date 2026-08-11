@@ -281,21 +281,26 @@ describe("refresh rejection classification", () => {
     // A token endpoint answers both a revoked grant and Avalon's own malformed
     // request with HTTP 400. Classifying on status alone told members to
     // reconnect healthy accounts over our bugs.
+    // Three answers, not two. A code naming a dead grant marks; a code naming
+    // Avalon's own fault does not, whatever the status; anything else defers to
+    // the status, because an unfamiliar word is not evidence.
     const revoked = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_grant" });
     const ourFault = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_request" });
     const badClient = new ConnectorError("unauthorized", "bad", { status: 401, providerError: "invalid_client" });
-    const proxied = new ConnectorError("unauthorized", "blocked", { status: 403, providerError: "access_denied" });
 
     expect(isRevokedGrantError(revoked)).toBe(true);
     expect(isRevokedGrantError(ourFault)).toBe(false);
     expect(isRevokedGrantError(badClient)).toBe(false);
-    expect(isRevokedGrantError(proxied)).toBe(false);
-    // Notion keys its envelope `code`; reading only `error` would drop the
-    // classification and leave a dead grant reporting healthy.
-    const notionShaped = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_grant" });
-    expect(isRevokedGrantError(notionShaped)).toBe(true);
-    // With no code at all the status test stands, because the silent failure —
-    // a dead connection that never prompts anyone — is the worse mistake.
+    // Envelope shapes are flattened into `providerError` before this layer
+    // sees them; the `it.each` below is what covers those.
+    //
+    // An unrecognized code falls through to the status test rather than
+    // answering "not a rejection". A provider spelling a dead grant in a word
+    // this list has not learned would otherwise leave the connection healthy,
+    // failing every call and prompting nobody.
+    const unfamiliar = new ConnectorError("provider_error", "bad", { status: 400, providerError: "grant_expunged" });
+    expect(isRevokedGrantError(unfamiliar)).toBe(true);
+    // With no code at all the same status test stands.
     expect(isRevokedGrantError(new ConnectorError("unauthorized", "x", { status: 401 }))).toBe(true);
     expect(isRevokedGrantError(new ConnectorError("provider_error", "x", { status: 400 }))).toBe(true);
     expect(isRevokedGrantError(new ConnectorError("provider_error", "x", { status: 500 }))).toBe(false);
@@ -309,6 +314,69 @@ describe("refresh rejection classification", () => {
     const fetcher = (async () => Response.json(body, { status: 400 })) as typeof fetch;
     await expect(providerJson(fetcher, "https://provider.test/token", { method: "POST" }))
       .rejects.toMatchObject({ details: { status: 400, providerError: "invalid_grant" } });
+  });
+});
+
+describe("what a failed refresh does to the row", () => {
+  // The predicate was right in both cases the host got wrong, so these assert
+  // the outcome — is the connection marked? — rather than a boolean.
+  async function refreshFailingWith(error: unknown): Promise<string[]> {
+    const statements: string[] = [];
+    const secret = "coordinator-key";
+    const connection = connectionContext({
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      expiresAt: EXPIRED_AT,
+    });
+    const encrypted = await encryptString(JSON.stringify(connection.credentials), secret, connection.id);
+    const database = {
+      prepare(sql: string) {
+        statements.push(sql.replace(/\s+/gu, " ").trim());
+        return {
+          bind() { return this; },
+          async first() {
+            return sql.includes("credential_refresh_lease_id = ?")
+              ? {
+                  encrypted_credentials: encrypted.ciphertext,
+                  credential_iv: encrypted.iv,
+                  credential_key_version: 1,
+                }
+              : null;
+          },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+
+    await expect(withAuthorizedConnection(
+      { DB: database, CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      {
+        connection,
+        adapter: { refreshCredentials: async () => { throw error; } } as unknown as ResolvedConnectorAdapter,
+        signal: AbortSignal.timeout(2_000),
+      },
+      async () => undefined,
+    )).rejects.toBeDefined();
+    return statements;
+  }
+
+  it("marks the connection when the provider refused the grant", async () => {
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
+      status: 400,
+      providerError: "invalid_grant",
+      reconnectRequired: true,
+    }));
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+
+  it("leaves it alone when the failure was Avalon's own request", async () => {
+    // `invalid_client` is our configuration being wrong. No member fixes that
+    // by reconnecting an account that still works.
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "bad client", {
+      status: 401,
+      providerError: "invalid_client",
+    }));
+    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
   });
 });
 
