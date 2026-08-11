@@ -6,8 +6,10 @@ import type { AgentModelRouting } from "../src/services/agent-model-flags";
 import {
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_ROLES,
+  agentModelOverride,
   defaultAgentModelRouting,
   resolveAgentModelRouting,
+  resolveWorkstreamModelRouting,
   scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
 import type * as FlagTargetingModule from "../src/services/flag-targeting-attributes";
@@ -59,6 +61,9 @@ function serving(value: unknown, variant = "current"): DetailsStub {
   return async (flagKey) => ({ flagKey, value, variant, reason: "STATIC" });
 }
 
+const SEEDED_WORKSPACE_ID = "ws-1";
+const SEEDED_WORKSTREAM_ID = "wst-1";
+
 /**
  * A workspace, its owner, and one work stream — enough for every attribute the
  * resolver adds to the evaluation context to have a fact behind it.
@@ -100,6 +105,23 @@ function seededEnv(env: Env): Env {
     )
     .run("wst-1", "ws-1", "00000000-0000-4000-8000-000000000011", at);
   return { ...env, DB: sqliteD1(database) };
+}
+
+/**
+ * The seeded work stream, pinned to `modelOverride`.
+ *
+ * Built on `seededEnv` rather than on a hand-written `prepare` stub so the
+ * lookup runs against a real migrated schema: a query that lost its
+ * `workspace_id` predicate, or bound its two identifiers in the wrong order,
+ * fails here instead of being answered by a stub that ignores both.
+ */
+async function envWithOverride(env: Env, modelOverride: string | null): Promise<Env> {
+  const seeded = seededEnv(env);
+  await seeded.DB
+    .prepare("UPDATE workstreams SET model_override = ? WHERE id = ? AND workspace_id = ?")
+    .bind(modelOverride, SEEDED_WORKSTREAM_ID, SEEDED_WORKSPACE_ID)
+    .run();
+  return seeded;
 }
 
 describe("agent model flags", () => {
@@ -386,5 +408,47 @@ describe("agent model flags", () => {
     await expect(scheduledWorkstreamModel(env, { workspaceId: "ws-1" })).resolves.toBe(
       "anthropic/claude-opus-4.6",
     );
+  });
+
+  it("admits only the model ids a creator may choose from", () => {
+    expect(agentModelOverride("openai/gpt-5.6-luna")).toBe("openai/gpt-5.6-luna");
+    expect(agentModelOverride(null)).toBeNull();
+    expect(agentModelOverride("")).toBeNull();
+    // Not on the list: a model that has been retired from it, or anything a
+    // direct database write could have put there.
+    expect(agentModelOverride("anthropic/claude-opus-4.6")).toBeNull();
+  });
+
+  // A rollout reaching the workspace must not take a pinned work stream with it.
+  it("runs a pinned work stream on its own model rather than the flag's", async () => {
+    const flagged = envWithFlags(serving({
+      model: "x-ai/grok-4.5",
+      fallbackModels: ["google/gemini-3.6-flash"],
+    }));
+    const env = await envWithOverride(flagged, "deepseek/deepseek-v4-pro");
+
+    await expect(resolveWorkstreamModelRouting(env, { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID }))
+      .resolves.toEqual({ model: "deepseek/deepseek-v4-pro", fallbackModels: [] });
+  });
+
+  it("leaves an unpinned work stream to the flag", async () => {
+    const flagged = envWithFlags(serving({
+      model: "x-ai/grok-4.5",
+      fallbackModels: ["google/gemini-3.6-flash"],
+    }));
+    const env = await envWithOverride(flagged, null);
+
+    await expect(resolveWorkstreamModelRouting(env, { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID }))
+      .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash"] });
+  });
+
+  // Retiring a model from the list is a code change, not a migration, so the
+  // rows still naming it have to resolve somewhere sensible.
+  it("returns a work stream pinned to a model that has left the list to the flag", async () => {
+    const flagged = envWithFlags(serving({ model: "x-ai/grok-4.5", fallbackModels: [] }));
+    const env = await envWithOverride(flagged, "anthropic/claude-opus-4.6");
+
+    await expect(resolveWorkstreamModelRouting(env, { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID }))
+      .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: [] });
   });
 });

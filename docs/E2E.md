@@ -74,6 +74,15 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 9. Stop and immediately restart while the first permission or ticket request is still pending. Resolve the older request last and confirm it cannot reopen a microphone, socket, or overwrite the new draft.
 10. After Stop, deliver a transcript delta followed by a corrected completion event. Confirm the partial remains visible and Avalon waits for the completion before closing. While it waits, edit the draft or activate **Cancel dictation** and confirm the pending finalization ends immediately without overwriting the edit. Switch work streams during recording and confirm the old capture stops instead of writing into the new draft.
 
+## Desktop model-selector acceptance
+
+1. With Application → Developer → **Debug enabled** off, open **New work stream** and **New automation** and confirm neither composer shows a model control. Confirm an existing work stream's composer never shows one in either state.
+2. Turn Debug enabled on in the Settings window and confirm the control appears in both composers, immediately to the right of the microphone's arrow menu, without reopening either screen. It reads **Grok 4.3** — the model the work would run on — and its tooltip reads **Model: Grok 4.3**.
+3. Open the menu and confirm the nine models are grouped under xAI, Google, OpenAI, and DeepSeek, the check sits on Grok 4.3, and the checked entry is exposed as the checked radio item to assistive technology.
+4. Without touching the selector, create a work stream. Confirm its `harness_runs.model` is what `agent-model-workstream` serves and `workstreams.model_override` is `NULL` — displaying the default is not pinning to it.
+5. Choose a different model, confirm the trigger and tooltip both take its name, then create a work stream. Confirm `workstreams.model_override` holds the chosen id, the run's `harness_runs.model` matches it, and the inference ledger records that model with no fallbacks.
+6. Repeat in **New automation**: choose a model, create the automation, run it, and confirm the run's work stream carries the same override and the run uses it. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
+
 ## PRD flow 1 — ad hoc collaboration
 
 Use a test workspace with two members, Adam and Samantha.

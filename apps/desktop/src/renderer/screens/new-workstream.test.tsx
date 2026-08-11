@@ -21,6 +21,19 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 
+// The composer offers its model selector only while Application → Developer →
+// Debug enabled is on, so this bridge is what turns the control on and off.
+const applicationSettings = vi.hoisted(() => ({
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+}));
+
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    getApplicationSettings: () => Promise.resolve(applicationSettings.current),
+    onApplicationSettingsChanged: () => () => undefined,
+  }),
+}));
+
 const currentUser = { id: 'user-1', name: 'Morgan Ellis', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
 const teammate = { id: 'user-2', name: 'Samantha Lee', email: 'samantha@example.com', timezone: 'America/Los_Angeles' };
 const workspace: Workspace = {
@@ -78,6 +91,7 @@ function renderScreen(): QueryClient {
 describe('New work-stream home', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
     await clearAllDrafts();
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
@@ -180,6 +194,50 @@ describe('New work-stream home', () => {
     await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
       openingMessage: 'Prepare the launch brief',
       participantIds: ['user-2'],
+    }));
+  });
+
+  it('hides the model selector unless developer mode is on', async () => {
+    renderScreen();
+
+    await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    expect(screen.queryByRole('button', { name: /^Model:/ })).not.toBeInTheDocument();
+  });
+
+  it('sends no model override until developer mode picks one', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderScreen();
+
+    // Showing the default is not the same as pinning to it: an untouched
+    // selector leaves the work stream on whatever the flag serves it.
+    await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: 'Prepare the launch brief',
+      participantIds: [],
+    }));
+  });
+
+  it('pins the work stream to the model chosen in developer mode', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderScreen();
+
+    const selector = await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
+
+    await screen.findByRole('button', { name: 'Model: DeepSeek V4 Pro' });
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: 'Prepare the launch brief',
+      participantIds: [],
+      modelOverride: 'deepseek/deepseek-v4-pro',
     }));
   });
 

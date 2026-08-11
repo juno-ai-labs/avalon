@@ -18,6 +18,11 @@ const api = vi.hoisted(() => ({
   uploadResource: vi.fn(),
 }));
 const copyText = vi.hoisted(() => vi.fn());
+// The composer reads Application → Developer → Debug enabled to decide whether
+// to offer the model selector, so this bridge has to answer for it.
+const applicationSettings = vi.hoisted(() => ({
+  current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false },
+}));
 
 const session = vi.hoisted(() => ({
   user: { id: 'user-1', email: 'adam@juno-labs.com', name: 'Morgan Ellis' },
@@ -34,7 +39,13 @@ const workspace: Workspace = {
 };
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session }) }));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    copyText,
+    getApplicationSettings: () => Promise.resolve(applicationSettings.current),
+    onApplicationSettingsChanged: () => () => undefined,
+  }),
+}));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, state }: { paused?: boolean; state: string }) => (
     <span data-paused={String(paused)} data-state={state} data-testid="thinking-orb" />
@@ -64,6 +75,7 @@ describe('New automation composer', () => {
     // Restored here rather than at the end of the one test that changes it, so
     // a failure there cannot leak the role into every later test.
     session.workspace.role = 'owner';
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
     await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
@@ -634,6 +646,52 @@ describe('New automation composer', () => {
       delivery: {},
     }));
 
+  });
+
+  it('offers no model selector until developer mode is on', async () => {
+    renderScreen();
+
+    await screen.findByRole('textbox', { name: 'Describe an automation' });
+    expect(screen.queryByRole('button', { name: /^Model:/ })).not.toBeInTheDocument();
+  });
+
+  it('pins the automation’s runs to the model chosen in developer mode', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-model',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Weekly changelog',
+        description: 'Summarizes merged work.',
+        overview: 'Runs every Friday.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Every Friday',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    // The trigger names the flag's default before anything is chosen, so the
+    // model the runs will use is readable without opening the menu.
+    const selector = await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Luna' }));
+
+    await screen.findByRole('button', { name: 'Model: GPT-5.6 Luna' });
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Prepare a weekly changelog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-model', [], {}, {
+      scope: 'you',
+      modelOverride: 'openai/gpt-5.6-luna',
+      delivery: {},
+    }));
   });
 
   it('restores the personal plugin preloads when Runs as returns to You', async () => {
