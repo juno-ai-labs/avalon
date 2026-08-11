@@ -195,7 +195,17 @@ export async function listActivityEventsForUser(
     from?: ActivityEventCursor | null;
     /** Inclusive upper bound, so a run's window cannot drift while it executes. */
     through: ActivityEventCursor;
-    /** Hard floor, so a first-ever digest reads a look-back rather than all history. */
+    /**
+     * Hard floor on `created_at`, so a first-ever read gets a look-back window
+     * rather than all history.
+     *
+     * Insertion time, not `occurred_at`, deliberately: the cursor axis is
+     * insertion order, and flooring on the provider's timestamp would let a
+     * connector poll's older-but-newly-inserted events fall outside a window
+     * that has already advanced past them. A caller's "last 72 hours" therefore
+     * means 72 hours of Avalon learning about things, which can include a
+     * provider event that is older than that.
+     */
     notBefore?: string | null;
     limit: number;
   },
@@ -250,6 +260,50 @@ export async function listActivityEventsForUser(
     input.limit,
   ).all<ActivityEventRow>();
   return result.results ?? [];
+}
+
+/**
+ * How long an event stays readable. Ninety days is far longer than anything
+ * reads: a digest's first run looks back 72 hours and every run after that
+ * starts from its own cursor, so the window only has to survive a schedule
+ * being paused and resumed. It is a retention decision rather than a technical
+ * one — the log is append-only and would otherwise grow with the workspace
+ * forever.
+ */
+const ACTIVITY_EVENT_RETENTION_DAYS = 90;
+const ACTIVITY_EVENT_REAP_BATCH = 500;
+const ACTIVITY_EVENT_REAP_MAX_BATCHES = 10;
+
+/**
+ * Drops events past the retention window, oldest first.
+ *
+ * Deleting a row does not disturb a cursor: cursors are `log_sequence` values,
+ * an expired one is below every live cursor, and a window that no longer
+ * contains its rows simply reads as empty. `activity_event_targets` follows
+ * through its cascade.
+ *
+ * Insertion order and insertion time agree, so the batch scans from the bottom
+ * of the primary key and stops at the first row young enough to keep. The batch
+ * cap bounds one tick's work; whatever is left waits for the next.
+ */
+export async function reapExpiredActivityEvents(env: Env): Promise<number> {
+  const cutoff = new Date(Date.now() - ACTIVITY_EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1_000).toISOString();
+  let reaped = 0;
+  for (let batch = 0; batch < ACTIVITY_EVENT_REAP_MAX_BATCHES; batch += 1) {
+    const result = await env.DB.prepare(
+      `DELETE FROM activity_events
+        WHERE log_sequence IN (
+          SELECT log_sequence FROM activity_events
+           WHERE created_at < ?
+           ORDER BY log_sequence ASC
+           LIMIT ?
+        )`,
+    ).bind(cutoff, ACTIVITY_EVENT_REAP_BATCH).run();
+    const changes = result.meta?.changes ?? 0;
+    reaped += changes;
+    if (changes < ACTIVITY_EVENT_REAP_BATCH) break;
+  }
+  return reaped;
 }
 
 /** The newest event in a workspace, which is what a run freezes as its window's top. */

@@ -110,36 +110,50 @@ function digestScheduleRowStatements(
 }
 
 /**
- * Re-derives one person's digest schedule rows after their account timezone
+ * Re-derives a person's digest schedule rows after their account timezone
  * changes.
  *
  * A digest's times are wall-clock times in its owner's day, so moving timezone
  * moves every occurrence. Nothing about the configuration changes — the same
  * days, the same times — only the instants they resolve to, which is exactly
  * what the derived rows hold.
+ *
+ * Every workspace, not just the one the request came from: `users.timezone` is
+ * one column for the whole account, so a person in two workspaces in this region
+ * would otherwise keep receiving one of their digests at the old local time.
+ *
+ * Best effort. If this does not run, or does not finish, the reconciler repairs
+ * the drift on the next cron tick — it compares each derived row's timezone
+ * against the account and rebuilds what disagrees.
  */
 export async function rebuildDigestSchedulesForTimezone(
   env: Env,
-  input: { workspaceId: string; userId: string; timezone: string },
+  input: { userId: string; timezone: string },
 ): Promise<void> {
-  const digest = await env.DB.prepare(
-    "SELECT id, enabled, day_mask FROM digest_schedules WHERE workspace_id = ? AND user_id = ?",
-  ).bind(input.workspaceId, input.userId).first<{ id: string; enabled: number; day_mask: number }>();
-  if (!digest) return;
-  const times = await env.DB.prepare(
-    "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
-  ).bind(digest.id).all<{ minute_of_day: number }>();
+  const digests = await env.DB.prepare(
+    `SELECT d.id, d.workspace_id, d.enabled, d.day_mask
+       FROM digest_schedules d
+       JOIN workspace_members m
+         ON m.workspace_id = d.workspace_id AND m.user_id = d.user_id AND m.status = 'active'
+      WHERE d.user_id = ?`,
+  ).bind(input.userId).all<{ id: string; workspace_id: string; enabled: number; day_mask: number }>();
 
-  await env.DB.batch(digestScheduleRowStatements(env, {
-    workspaceId: input.workspaceId,
-    digestScheduleId: digest.id,
-    enabled: digest.enabled === 1,
-    days: daysFromDayMask(digest.day_mask),
-    times: (times.results ?? []).map((row) => Number(row.minute_of_day)),
-    timezone: input.timezone,
-    at: nowIso(),
-  }));
-  await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+  for (const digest of digests.results ?? []) {
+    const times = await env.DB.prepare(
+      "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
+    ).bind(digest.id).all<{ minute_of_day: number }>();
+    await env.DB.batch(digestScheduleRowStatements(env, {
+      workspaceId: digest.workspace_id,
+      digestScheduleId: digest.id,
+      enabled: digest.enabled === 1,
+      days: daysFromDayMask(digest.day_mask),
+      times: (times.results ?? []).map((row) => Number(row.minute_of_day)),
+      timezone: input.timezone,
+      at: nowIso(),
+    }));
+  }
+  await Promise.all([...new Set((digests.results ?? []).map((digest) => digest.workspace_id))]
+    .map((workspaceId) => refreshWorkspaceSchedulerAlarm(env, workspaceId)));
 }
 
 /** What a person gets before they have chosen anything: weekdays at 09:00, by email. */
@@ -147,6 +161,8 @@ const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 const DEFAULT_MINUTE_OF_DAY = 9 * 60;
 /** Bounded so one cron tick cannot spend its whole budget on a large workspace. */
 const RECONCILE_LIMIT = 200;
+/** A multiple of the three statements a default costs, so no member is split. */
+const RECONCILE_BATCH_STATEMENTS = 75;
 
 interface MemberWithoutDigestRow {
   workspace_id: string;
@@ -198,9 +214,14 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
       LIMIT ?`,
   ).bind(RECONCILE_LIMIT).all<MemberWithoutDigestRow>();
 
-  for (const member of missing.results ?? []) {
+  // One batch per member would be up to `RECONCILE_LIMIT` round trips on a tick
+  // that has real work to do. A batch runs its statements in order inside one
+  // transaction, so several members can share one: each member's insert still
+  // lands before the two statements that select the row back. The chunk keeps a
+  // single batch a reasonable size rather than growing with the workspace.
+  const statements = (missing.results ?? []).flatMap((member) => {
     const scheduleId = newId();
-    await env.DB.batch([
+    return [
       env.DB.prepare(
         `INSERT INTO digest_schedules
            (id, workspace_id, user_id, day_mask, enabled, system_workstream_id,
@@ -227,9 +248,17 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
           WHERE d.workspace_id = ? AND d.user_id = ?
          ON CONFLICT DO NOTHING`,
       ).bind(newId(), member.email.trim(), at, at, member.workspace_id, member.user_id),
-    ]);
+    ];
+  });
+  for (let index = 0; index < statements.length; index += RECONCILE_BATCH_STATEMENTS) {
+    await env.DB.batch(statements.slice(index, index + RECONCILE_BATCH_STATEMENTS));
   }
 
+  // Two ways derived rows can be wrong, repaired the same way. Missing entirely
+  // is a fresh default, or a save that failed between writing the configuration
+  // and deriving from it. Present but stamped with the wrong timezone is a
+  // timezone change whose inline rebuild did not run or did not finish — which
+  // is what keeps that path best-effort rather than load-bearing.
   const underived = await env.DB.prepare(
     `SELECT d.id, d.workspace_id, d.day_mask, u.timezone
        FROM digest_schedules d
@@ -238,7 +267,13 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
          ON m.workspace_id = d.workspace_id AND m.user_id = d.user_id AND m.status = 'active'
       WHERE d.enabled = 1 AND d.day_mask > 0
         AND EXISTS (SELECT 1 FROM digest_schedule_times t WHERE t.digest_schedule_id = d.id)
-        AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.digest_schedule_id = d.id)
+        AND (
+          NOT EXISTS (SELECT 1 FROM schedules s WHERE s.digest_schedule_id = d.id)
+          OR EXISTS (
+            SELECT 1 FROM schedules s
+             WHERE s.digest_schedule_id = d.id AND s.timezone <> u.timezone
+          )
+        )
       LIMIT ?`,
   ).bind(RECONCILE_LIMIT).all<UnderivedDigestRow>();
 
@@ -383,18 +418,28 @@ export class DigestService {
   }
 
   /**
-   * What the settings screen renders before a digest has ever been saved.
-   * Weekdays at 09:00 in the person's own timezone, switched off — a suggestion
-   * to accept, not a schedule that started running on its own.
+   * What the settings screen renders in the window between joining a workspace
+   * and the cron tick that writes the real row.
+   *
+   * It shows what the reconciler is about to create, not something different —
+   * same days, same time, same on-by-default, same email destination. Anyone who
+   * opened Settings in that gap would otherwise read "Digests are off", then find
+   * one running the next time they looked.
    */
   private async defaultSchedule(): Promise<DigestSchedule> {
+    const email = await this.env.DB.prepare("SELECT email FROM users WHERE id = ?")
+      .bind(this.auth.userId).first<{ email: string | null }>();
+    const address = email?.email?.trim();
     return DigestScheduleSchema.parse({
       id: DIGEST_UNSAVED_ID,
-      enabled: false,
-      days: [1, 2, 3, 4, 5],
-      times: [9 * 60],
+      // The reconciler skips a member with no address, so this mirrors that too.
+      enabled: Boolean(address),
+      days: DEFAULT_DAYS,
+      times: [DEFAULT_MINUTE_OF_DAY],
       timezone: await this.accountTimezone(),
-      deliveryTargets: [],
+      deliveryTargets: address
+        ? [{ type: "email", connectionId: null, displayName: address, status: "active", lastDeliveredAt: null }]
+        : [],
       nextRunAt: null,
       lastDeliveredAt: null,
     });

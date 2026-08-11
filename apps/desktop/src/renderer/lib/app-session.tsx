@@ -358,11 +358,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (
         deepLink.protocol === 'avalon:'
         && deepLink.hostname === 'settings'
-        && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections')
+        && (deepLink.pathname === '/workspace' || deepLink.pathname === '/connections'
+          || deepLink.pathname === '/digest')
         && deepLink.search === ''
       ) {
         setDeepLinkError(null);
-        void desktopBridge().openSettings(deepLink.pathname === '/connections' ? 'connections' : 'workspace');
+        const section = deepLink.pathname === '/connections'
+          ? 'connections'
+          : deepLink.pathname === '/digest' ? 'digest' : 'workspace';
+        void desktopBridge().openSettings(section);
         return;
       }
       if (

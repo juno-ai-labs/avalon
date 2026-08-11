@@ -21,6 +21,10 @@ import { ApiError } from "../lib/api-error";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
 import {
+  WORKSTREAM_VISIBILITY_SQL,
+  workstreamVisibilityBindings,
+} from "../lib/workstream-visibility";
+import {
   isCanonicalPersonMention,
   prepareMentionMarkdown,
   type MentionPerson,
@@ -428,25 +432,13 @@ export class WorkstreamService {
        LEFT JOIN workstream_read_states rs
          ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
-         -- Personal means the people in it, and nobody else.
-         AND (
-           w.scope <> 'personal' OR EXISTS (
-             SELECT 1 FROM workstream_participants p
-             WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-           )
-         )
-         AND (
-           w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
-           OR EXISTS (
-             SELECT 1 FROM workstream_participants p
-             WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-           )
-         )
+         AND ${WORKSTREAM_VISIBILITY_SQL}
        ORDER BY w.last_activity_at DESC LIMIT ?`,
     );
+    const visibility = workstreamVisibilityBindings(this.auth.userId);
     const result = before
-      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, this.auth.userId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
-      : await statement.bind(this.auth.userId, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
+      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, ...visibility, limit + 1).all<Record<string, unknown>>()
+      : await statement.bind(this.auth.userId, this.auth.workspaceId, ...visibility, limit + 1).all<Record<string, unknown>>();
     const rows = result.results ?? [];
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
@@ -1278,23 +1270,9 @@ export class WorkstreamService {
          ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
-         -- A private work stream holds what only its people should read — a
-         -- digest's brief is assembled from one person's activity — so knowing
-         -- the id is not enough.
-         AND (
-           w.scope <> 'personal' OR EXISTS (
-             SELECT 1 FROM workstream_participants p
-             WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-           )
-         )
-         AND (
-         w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
-         OR EXISTS (
-           SELECT 1 FROM workstream_participants p
-           WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-         )
-       )`,
-    ).bind(this.auth.userId, id, this.auth.workspaceId, this.auth.userId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
+         AND ${WORKSTREAM_VISIBILITY_SQL}`,
+    ).bind(this.auth.userId, id, this.auth.workspaceId, ...workstreamVisibilityBindings(this.auth.userId))
+      .first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
   }

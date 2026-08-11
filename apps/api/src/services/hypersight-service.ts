@@ -12,6 +12,10 @@ import { newId, nowIso } from "@avalon/db";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  WORKSTREAM_VISIBILITY_SQL,
+  workstreamVisibilityBindings,
+} from "../lib/workstream-visibility";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import {
   publishPersonalWorkstreamEvent,
@@ -136,24 +140,21 @@ export async function loadHyperSight(
   });
 }
 
+/**
+ * HyperSight is a public GET/PUT keyed only by work-stream id, so it authorizes
+ * for itself rather than going through `WorkstreamService`. It therefore has to
+ * apply the *same* rule, not a similar one — a block installed on a work stream
+ * someone cannot read would be executed by the next run in that work stream and
+ * hand its output back to them.
+ */
 async function requireVisibleWorkstream(env: Env, auth: AuthContext, workstreamId: string): Promise<void> {
   const row = await env.DB.prepare(
     `SELECT 1 AS visible
        FROM workstreams w
-       LEFT JOIN automation_subscriptions automation ON automation.id = w.automation_subscription_id
       WHERE w.id = ? AND w.workspace_id = ? AND w.archived_at IS NULL
-        AND (
-          w.automation_subscription_id IS NULL
-          OR automation.scope = 'workspace'
-          OR automation.owner_user_id = ?
-          OR EXISTS (
-            SELECT 1 FROM workstream_participants participant
-             WHERE participant.workstream_id = w.id
-               AND participant.user_id = ?
-               AND participant.removed_at IS NULL
-          )
-        )`,
-  ).bind(workstreamId, auth.workspaceId, auth.userId, auth.userId).first<{ visible: number }>();
+        AND ${WORKSTREAM_VISIBILITY_SQL}`,
+  ).bind(workstreamId, auth.workspaceId, ...workstreamVisibilityBindings(auth.userId))
+    .first<{ visible: number }>();
   if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
 }
 

@@ -6,6 +6,7 @@ import { __testing } from "../src/queues/activity-consumer";
 import {
   latestActivityEventCursor,
   listActivityEventsForUser,
+  reapExpiredActivityEvents,
 } from "../src/services/activity-event-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -149,6 +150,61 @@ describe("projecting connector activity into the activity log", () => {
     await projectActivityEvent(env, activity());
     await projectActivityEvent(env, activity());
 
+    expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 1 });
+  });
+});
+
+describe("activity log retention", () => {
+  function writeEvent(database: DatabaseSync, id: string, createdAt: string): void {
+    database.exec(`
+      INSERT INTO activity_events
+        (id, workspace_id, event_type, subject_type, actor_type, actor_label, title,
+         audience_kind, occurred_at, created_at, source_kind, dedupe_key)
+      VALUES ('${id}', '${WORKSPACE}', 'workstream.message.posted', 'message', 'user', 'A', 'Posted',
+              'workspace', '${createdAt}', '${createdAt}', 'workstream', 'dedupe-${id}');
+      INSERT INTO activity_event_targets (event_id, workspace_id, user_id, relation, created_at)
+      VALUES ('${id}', '${WORKSPACE}', '${MEMBER_A}', 'mentioned', '${createdAt}');
+    `);
+  }
+
+  function daysAgo(days: number): string {
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1_000).toISOString();
+  }
+
+  it("drops events past the window and takes their targets with them", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    writeEvent(database, "00000000-0000-7000-8000-0000000000e1", daysAgo(120));
+    writeEvent(database, "00000000-0000-7000-8000-0000000000e2", daysAgo(1));
+
+    expect(await reapExpiredActivityEvents(env)).toBe(1);
+
+    expect(database.prepare("SELECT id FROM activity_events").all())
+      .toEqual([{ id: "00000000-0000-7000-8000-0000000000e2" }]);
+    expect(database.prepare("SELECT event_id FROM activity_event_targets").all())
+      .toEqual([{ event_id: "00000000-0000-7000-8000-0000000000e2" }]);
+  });
+
+  // Reaping must not move a cursor: an expired sequence sits below every live
+  // one, so a window that has lost its rows reads as empty rather than as new.
+  it("leaves the cursor where it was", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    writeEvent(database, "00000000-0000-7000-8000-0000000000e1", daysAgo(120));
+    writeEvent(database, "00000000-0000-7000-8000-0000000000e2", daysAgo(1));
+    const before = await latestActivityEventCursor(env, WORKSPACE);
+
+    await reapExpiredActivityEvents(env);
+
+    expect(await latestActivityEventCursor(env, WORKSPACE)).toBe(before);
+  });
+
+  it("does nothing when everything is still inside the window", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    writeEvent(database, "00000000-0000-7000-8000-0000000000e1", daysAgo(89));
+
+    expect(await reapExpiredActivityEvents(env)).toBe(0);
     expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 1 });
   });
 });

@@ -68,6 +68,20 @@ delete and a reused one would appear beneath a cursor that has already passed.
 on `occurred_at` — a connector poll inserts events whose provider timestamp is
 hours old.
 
+### Retention
+
+`reapExpiredActivityEvents`, on the same cron tick as every other reaper, drops
+events older than ninety days oldest-first and lets the cascade take their
+targets. The log is append-only and would otherwise grow with the workspace
+forever.
+
+Ninety days is far longer than anything reads: a first run looks back 72 hours
+and every run after that starts from its own cursor, so the window only has to
+survive a schedule being paused and resumed. Reaping never disturbs a cursor —
+an expired `log_sequence` sits below every live one, so a window that has lost
+its rows reads as empty rather than as new. A surface that wants to read further
+back than ninety days needs this number raised, not a second table.
+
 ### Adding a producer
 
 Call `recordActivityEvent` with a `dedupeKey` that is stable per workspace, so a
@@ -189,12 +203,20 @@ both.
   is on. It widens what is shown, never who may read it. A private work stream
   that is not machinery is protected exactly the same way.
 
-In the interface, `scope = 'personal'` renders the private marker — the Cloud and
-Lock badge a personal note already wears in the sidebar, plus a **Private** badge
-in the work-stream header.
+In the interface, `scope = 'personal'` renders the private marker — the lock a
+personal note already wears in the sidebar, plus a **Private** badge in the
+work-stream header.
 
 Shown, they render one level down: dimmed, with a small gear, full opacity on
 hover and while active — hierarchy should not cost legibility once you are in it.
+
+The debug preference changes what the desktop *asks for*, never where the answer
+is stored. Every work-stream list reads `WORKSTREAMS_QUERY_KEY`, an
+unparameterized `['workstreams']`, because realtime handlers, renames and
+read-state callbacks patch that cache entry directly; a key that varied with the
+preference would strand every one of those writes on an entry nobody observes.
+`useWorkstreamsQuery` owns the key, the fetcher and the refetch that a toggle
+asks for.
 
 One work stream per person, not per run, so nothing accumulates and a later
 digest can see what earlier ones already said.
@@ -283,4 +305,5 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
+| The work-stream list every surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |

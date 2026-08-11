@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { nowIso } from "@avalon/db";
+import { newId, nowIso } from "@avalon/db";
 import { deliverDigest } from "./digest-delivery-service";
 
 /**
@@ -115,4 +115,55 @@ export async function settleDigestRun(
     `UPDATE digest_deliveries SET status = 'delivered', updated_at = ?
       WHERE id = ? AND status NOT IN ('delivered', 'failed')`,
   ).bind(nowIso(), deliveryId).run();
+  await noteDeliveryInTranscript(env, delivery.id, delivered.delivered);
+}
+
+/**
+ * Records in the work stream that this digest actually reached someone.
+ *
+ * Every occurrence runs in the same transcript, and the brief tells the model
+ * not to restate what earlier digests already said. Without this note that
+ * instruction would work against the failure design: a delivery that failed
+ * leaves its window unconsumed *and* leaves its summary in the transcript, so
+ * the retry would be told to skip exactly the content nobody received. A summary
+ * followed by this row was sent; one without it was not.
+ */
+async function noteDeliveryInTranscript(
+  env: Env,
+  deliveryId: string,
+  destinations: number,
+): Promise<void> {
+  const at = nowIso();
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO messages
+         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+          message_type, text_content, structured_content_json, sequence_number, created_at)
+       SELECT ?, ?, w.workspace_id, w.id, 'system', NULL, 'system', ?, NULL,
+              w.next_sequence_number, ?
+         FROM workstreams w
+         JOIN harness_runs run ON run.workstream_id = w.id
+         JOIN digest_deliveries d ON d.harness_run_id = run.id
+        WHERE d.id = ?
+       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+    ).bind(
+      newId(),
+      `digest-delivered:${deliveryId}`,
+      `Delivered to ${destinations} destination${destinations === 1 ? "" : "s"}.`,
+      at,
+      deliveryId,
+    ),
+    env.DB.prepare(
+      `UPDATE workstreams
+          SET next_sequence_number = next_sequence_number + 1, updated_at = ?
+        WHERE id = (
+          SELECT run.workstream_id FROM digest_deliveries d
+            JOIN harness_runs run ON run.id = d.harness_run_id
+           WHERE d.id = ?
+        )
+          AND EXISTS (
+            SELECT 1 FROM messages WHERE client_message_id = ? AND workstream_id = workstreams.id
+          )`,
+    ).bind(at, deliveryId, `digest-delivered:${deliveryId}`),
+  ]);
 }

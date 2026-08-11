@@ -31,6 +31,7 @@ import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationActivitySource, AutomationRunSummary, WorkstreamConnection } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
+import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { InspectorRail } from '../components/inspector-rail';
 import { AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, Modal, OpeningState, StatusDot } from '../components/primitives';
 
@@ -180,7 +181,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const runNow = useMutation({
     mutationFn: () => api!.runAutomation(id),
     onSuccess: (workstream) => {
-      void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       void navigate(`/workstreams/${workstream.id}`);
     },
   });
