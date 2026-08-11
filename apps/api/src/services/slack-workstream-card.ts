@@ -1,13 +1,16 @@
 import { ConnectorError, slackApi } from "@avalon/connectors";
 import { z } from "zod";
 
+import { sha256 } from "../lib/crypto";
+
 /**
  * The Slack unfurl card for a work-stream link, shared by the live
  * `link_shared` path and the maintenance sweep that refreshes posted cards.
  *
- * The card carries the work stream's title, status, last activity, and
- * automation origin — enough to know whether the link is worth opening and
- * whether the agent is blocked — and no work-stream contents. See
+ * The card carries the work stream's title, last activity, and automation
+ * origin, plus a status badge while it is running, needs input, or failed —
+ * enough to know whether the link is worth opening and whether the agent is
+ * blocked — and no work-stream contents. See
  * `docs/WORKSTREAM_LINKS.md` for the audience rule that decides between this
  * and the anonymous card.
  */
@@ -20,6 +23,25 @@ export interface WorkstreamUnfurlSummary {
 
 /** Slack sends at most a handful of links per message; bound the batch anyway. */
 export const SLACK_UNFURL_MAX_LINKS = 10;
+
+/**
+ * A fingerprint of the attachment posted on a message.
+ *
+ * The sweep needs to answer "would this card render differently now?", and no
+ * single stored field does: the drawing code can change, the title and activity
+ * stamp both render, and an anonymous card is identical whatever the status is.
+ * Hashing the emitted blocks answers it directly, and needs no constant that a
+ * future change has to remember to bump.
+ *
+ * `JSON.stringify` is stable here because these blocks are built by
+ * `workstreamUnfurlBlocks` with a fixed key order rather than assembled from
+ * user data.
+ */
+export async function workstreamUnfurlCardHash(
+  blocks: Record<string, unknown>[],
+): Promise<string> {
+  return sha256(JSON.stringify(blocks));
+}
 
 /**
  * Slack errors that mean this message can never carry an unfurl. Retrying is
@@ -64,8 +86,8 @@ export function workstreamUnfurlSummary(row: Record<string, unknown>): Workstrea
  * Only a work stream someone can act on wears a badge: one that is working, one
  * that is waiting on a person, and one that stopped because it broke.
  * `completed`, `scheduled`, and `idle` render none — "Completed" tells a reader
- * nothing to do, and because a card is rewritten only when its badge changes, a
- * settled work stream would carry that label for as long as the message lives.
+ * nothing to do, and a settled work stream stops producing the changes that
+ * rewrite its card, so that label would sit there for the message's whole life.
  *
  * The emoji leads the title so the state is legible before the text is read,
  * and the word follows in the detail line so the emoji is never the only
@@ -78,18 +100,8 @@ const SLACK_UNFURL_STATUS_BADGES: Record<string, { emoji: string; label: string 
   failed: { emoji: ":red_circle:", label: "Failed" },
 };
 
-export function unfurlStatusBadge(harnessStatus: string): { emoji: string; label: string } | null {
+function unfurlStatusBadge(harnessStatus: string): { emoji: string; label: string } | null {
   return SLACK_UNFURL_STATUS_BADGES[harnessStatus] ?? null;
-}
-
-/**
- * The badge's label, or null for the states that show none. The sweep compares
- * this rather than the raw status: every other state renders identically, so
- * moving between two of them must not spend a `chat.unfurl` rewriting a card
- * into itself.
- */
-export function unfurlStatusLabel(harnessStatus: string): string | null {
-  return unfurlStatusBadge(harnessStatus)?.label ?? null;
 }
 
 function escapeMrkdwn(value: string): string {
