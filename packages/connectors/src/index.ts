@@ -1155,6 +1155,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
   ): Promise<string> {
     if (!requested) return googleCalendarId(context.connection);
     if (requested === "primary" || requested.includes("@")) return requested;
+    if (!context.connection.grantedScopes.includes("calendar.read")) {
+      throw new ConnectorError(
+        "unsupported_capability",
+        `Resolving the calendar named “${requested}” needs this connection's calendar read capability, which it was not granted. Pass the calendar's ID or "primary" instead.`,
+        { reason: "calendar_name_needs_read_capability", field: "calendarId" }
+      );
+    }
     const url = new URL("https://www.googleapis.com/calendar/v3/users/me/calendarList");
     url.searchParams.set("maxResults", "250");
     url.searchParams.set("fields", "items(id,summary,summaryOverride)");
@@ -1178,12 +1185,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     );
   }
 
-  /** The event's current guest list, so a relative attendee change can be applied to it. */
-  async function readCalendarAttendeeEmails(
+  /**
+   * The event's current guest list, whole, so a relative attendee change can be
+   * applied to it without flattening what it does not touch.
+   *
+   * Each attendee is carried across intact rather than rebuilt from its
+   * address: Calendar's PATCH replaces the array, so re-sending `{email}` alone
+   * resets every guest's `responseStatus` to `needsAction`, drops `optional`,
+   * and demotes a room from `resource` to an ordinary invitee. Adding one
+   * person would clear everyone's RSVP and re-invite them.
+   */
+  async function readCalendarAttendees(
     context: ConnectorToolContext,
     calendarId: string,
     eventId: string
-  ): Promise<string[]> {
+  ): Promise<Record<string, unknown>[]> {
     const url = new URL(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
     );
@@ -1193,7 +1209,10 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     // prevent, moved to a larger event. `attendeesOmitted` is requested as well
     // and refused below, because correctness here must not rest on the absence
     // of a parameter.
-    url.searchParams.set("fields", "attendees(email,resource),attendeesOmitted");
+    url.searchParams.set(
+      "fields",
+      "attendees(email,displayName,optional,resource,responseStatus,comment,additionalGuests),attendeesOmitted"
+    );
     const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
       safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
     );
@@ -1204,10 +1223,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         { reason: "attendee_snapshot_incomplete", field: "addAttendeeEmails" }
       );
     }
-    return recordArray(payload, "attendees").flatMap((attendee) => {
-      const email = readString(attendee, "email");
-      return email ? [email] : [];
-    });
+    return recordArray(payload, "attendees").filter((attendee) => readString(attendee, "email"));
   }
 
   /**
@@ -1235,8 +1251,18 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           url.searchParams.append("metadataHeaders", header);
         }
         url.searchParams.set("fields", "id,threadId,labelIds,snippet,internalDate,payload(headers)");
-        const response = await api(connection, url.toString(), { signal }, [404]);
-        if (response.ok) message = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+        try {
+          const response = await api(connection, url.toString(), { signal }, [404]);
+          if (response.ok) message = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+        } catch (error) {
+          // The same argument the deleted-message path makes, for a rate limit
+          // rather than a 404: this fan-out is up to 50 requests wide, and one
+          // refused hit must not cost the caller every other result. The row
+          // degrades to identifiers and says so, which a caller can act on;
+          // failing the search would look like an empty mailbox.
+          if (signal.aborted) throw error;
+          return { ...summarizeGmailSearchHit(messageId, threadId, {}), headersUnavailable: true };
+        }
       }
       return summarizeGmailSearchHit(messageId, threadId, message);
     });
@@ -1643,7 +1669,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(providerResourceId)}`
         );
-        url.searchParams.set("maxAttendees", "50");
+        // No cap: past `maxAttendees` Calendar returns only the participant
+        // rather than a prefix, and this tool's description tells the model to
+        // read an event before changing its guests.
         url.searchParams.set(
           "fields",
           "id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType"
@@ -1770,8 +1798,20 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           name: z.string().min(1).max(200),
           maxResults: z.number().int().min(1).max(25).default(10)
         }).strict().parse(rawArgs);
+        const contactQuery = gmailContactQuery(args.name);
+        if (!contactQuery) {
+          return {
+            output: boundedToolOutput({
+              query: args.name,
+              scannedMessages: 0,
+              items: [],
+              ...gmailContactMiss(args.name, 0, 0)
+            }),
+            summary: `No address for “${args.name}” appears in 0 searched messages`
+          };
+        }
         const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
-        url.searchParams.set("q", gmailContactQuery(args.name));
+        url.searchParams.set("q", contactQuery);
         url.searchParams.set("maxResults", String(GOOGLE_TOOL_CONTACT_SCAN_MESSAGES));
         url.searchParams.set("fields", "messages(id,threadId),resultSizeEstimate");
         const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
@@ -1945,12 +1985,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           calendarId: z.string().min(1).max(1_024).optional(),
           eventId: z.string().min(1).max(1024)
         }).strict().parse(rawArgs);
+        assertGoogleIdFamily(args.eventId);
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
-        assertGoogleIdFamily("eventId", args.eventId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(args.eventId)}`
         );
-        url.searchParams.set("maxAttendees", "50");
+        // No cap: past `maxAttendees` Calendar returns only the participant
+        // rather than a prefix, and this tool's description tells the model to
+        // read an event before changing its guests.
         url.searchParams.set(
           "fields",
           "id,iCalUID,status,htmlLink,created,updated,summary,description,location,creator,organizer,start,end,recurrence,recurringEventId,originalStartTime,attendees(displayName,email,responseStatus,self,organizer),attendeesOmitted,attachments(fileUrl,title,mimeType,fileId),visibility,transparency,eventType"
@@ -1986,29 +2028,38 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "calendar.update_event") {
         const args = CalendarEventUpdateArgsSchema.parse(rawArgs);
+        assertGoogleIdFamily(args.eventId);
         const calendarId = await resolveGoogleCalendarId(context, args.calendarId);
-        assertGoogleIdFamily("eventId", args.eventId);
         const url = new URL(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(args.eventId)}`
         );
         // A relative attendee change is resolved against the event's current
         // guest list before it is sent, because Calendar's PATCH replaces the
         // whole array: sending only the additions is what deletes the rest.
-        let attendeeEmails: string[] | undefined = args.replaceAllAttendeeEmails;
-        if (args.addAttendeeEmails || args.removeAttendeeEmails) {
-          const existing = await readCalendarAttendeeEmails(context, calendarId, args.eventId);
+        // Length rather than truthiness: an empty array is truthy, so gating on
+        // the array alone turned `addAttendeeEmails: []` into a read, an
+        // identical write-back, and an update mail to every guest about a
+        // change that did not happen.
+        const changesAttendees = Boolean(args.addAttendeeEmails?.length || args.removeAttendeeEmails?.length);
+        let attendees: Record<string, unknown>[] | undefined = args.replaceAllAttendeeEmails
+          ?.map((email) => ({ email }));
+        if (changesAttendees) {
           const removed = new Set((args.removeAttendeeEmails ?? []).map((email) => email.toLocaleLowerCase()));
-          const merged = new Map<string, string>();
-          for (const email of [...existing, ...(args.addAttendeeEmails ?? [])]) {
-            const key = email.toLocaleLowerCase();
-            if (!removed.has(key)) merged.set(key, email);
+          const merged = new Map<string, Record<string, unknown>>();
+          for (const attendee of await readCalendarAttendees(context, calendarId, args.eventId)) {
+            const key = readString(attendee, "email")!.toLocaleLowerCase();
+            if (!removed.has(key)) merged.set(key, attendee);
           }
-          attendeeEmails = [...merged.values()];
+          for (const email of args.addAttendeeEmails ?? []) {
+            const key = email.toLocaleLowerCase();
+            if (!removed.has(key) && !merged.has(key)) merged.set(key, { email });
+          }
+          attendees = [...merged.values()];
         }
-        if (attendeeEmails !== undefined) url.searchParams.set("sendUpdates", "all");
+        if (attendees !== undefined) url.searchParams.set("sendUpdates", "all");
         const payload = await api(context.connection, url.toString(), {
           method: "PATCH",
-          body: JSON.stringify(calendarEventWriteBody({ ...args, attendeeEmails })),
+          body: JSON.stringify({ ...calendarEventWriteBody(args), ...(attendees ? { attendees } : {}) }),
           signal: context.signal
         }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
         return {
@@ -2719,9 +2770,9 @@ function summarizeGmailSearchHit(
     webUrl: gmailThreadWebUrl(resolvedThreadId),
     internalDate: readString(message, "internalDate"),
     labelIds: readStringArray(message, "labelIds"),
-    from: truncateNullable(gmailHeader(message, "From"), 320),
-    to: truncateNullable(gmailHeader(message, "To"), 640),
-    cc: truncateNullable(gmailHeader(message, "Cc"), 640),
+    from: truncateAddressHeader(gmailHeader(message, "From"), 320),
+    to: truncateAddressHeader(gmailHeader(message, "To"), 640),
+    cc: truncateAddressHeader(gmailHeader(message, "Cc"), 640),
     subject: truncateNullable(gmailHeader(message, "Subject"), 500),
     date: truncateNullable(gmailHeader(message, "Date"), 120),
     messageIdHeader: truncateNullable(gmailHeader(message, "Message-ID"), 500),
@@ -2738,15 +2789,13 @@ function summarizeGmailSearchHit(
  * apart this way — `gmailIdentifierHint` handles that confusion after the fact,
  * where the provider's own 404 is the only evidence available.
  */
-function assertGoogleIdFamily(field: "eventId" | "calendarId", value: string): void {
-  const looksLikeAddress = value === "primary" || value.includes("@");
-  if (field === "eventId" && looksLikeAddress) {
-    throw new ConnectorError(
-      "invalid_payload",
-      `Expected an event ID for eventId, got what looks like a calendar ID (“${value}”). Pass the calendar as calendarId and the event's own id as eventId.`,
-      { reason: "wrong_id_family", field, expected: "eventId" }
-    );
-  }
+function assertGoogleIdFamily(eventId: string): void {
+  if (eventId !== "primary" && !eventId.includes("@")) return;
+  throw new ConnectorError(
+    "invalid_payload",
+    `Expected an event ID for eventId, got what looks like a calendar ID (“${eventId}”). Pass the calendar as calendarId and the event's own id as eventId.`,
+    { reason: "wrong_id_family", field: "eventId", expected: "eventId" }
+  );
 }
 
 /**
@@ -2762,6 +2811,29 @@ function gmailIdentifierHint(field: "messageId" | "threadId"): string {
 }
 
 /**
+ * Truncate an address header without ever leaving a partial address behind.
+ *
+ * A character-count cut lands mid-address on a long recipient list, and the
+ * fragment it leaves — `p15@long-domain-name.example.co` from a `.com` — still
+ * satisfies the address pattern, so `rankGmailContacts` reads it back as a real
+ * correspondent and offers an address nobody has as a sourced candidate. That
+ * is the fabrication this tool exists to prevent, arriving through its own
+ * truncation, so the cut is taken at the end of the last address that fits and
+ * the elision is marked.
+ */
+function truncateAddressHeader(header: string | null, maximum: number): string | null {
+  if (header === null) return null;
+  if (header.length <= maximum) return header;
+  let cut = 0;
+  for (const match of header.matchAll(GMAIL_ADDRESS_PATTERN)) {
+    const end = (match.index ?? 0) + match[0]!.length;
+    if (end > maximum) break;
+    cut = end;
+  }
+  return cut > 0 ? `${header.slice(0, cut)} …` : "…";
+}
+
+/**
  * Build the Gmail query behind `gmail.find_contacts`.
  *
  * Restricting the match to the address headers is what separates this from a
@@ -2769,9 +2841,13 @@ function gmailIdentifierHint(field: "messageId" | "threadId"): string {
  * the header, while bare `dana` also matches every message that merely says the
  * word, which is what makes an unscoped search useless for resolving a person.
  */
-function gmailContactQuery(name: string): string {
-  const escaped = name.replaceAll(/["()]/gu, " ").trim();
-  const term = escaped ? `"${escaped}"` : name;
+function gmailContactQuery(name: string): string | null {
+  // Null rather than a fallback to the raw name: falling back would put the
+  // very characters just stripped back into the query and unbalance its
+  // parentheses, and a name made only of them cannot identify anyone anyway.
+  const escaped = name.replaceAll(/["()]/gu, " ").replaceAll(/\s+/gu, " ").trim();
+  if (!escaped) return null;
+  const term = `"${escaped}"`;
   return `(from:(${term}) OR to:(${term}) OR cc:(${term})) in:anywhere`;
 }
 
@@ -2807,6 +2883,7 @@ interface GmailContactCandidate {
   email: string;
   displayNames: Set<string>;
   headers: Set<string>;
+  messageIds: Set<string>;
   occurrences: number;
   lastSeen: string | null;
   lastMessageId: string | null;
@@ -2845,6 +2922,7 @@ function rankGmailContacts(
   const candidates = new Map<string, GmailContactCandidate>();
 
   for (const hit of hits) {
+    const messageId = readString(hit, "id");
     // Both sources are normalized to ISO 8601 before they are compared: the
     // `Date` header is RFC 2822, and ordering it lexicographically against an
     // ISO timestamp would rank by the spelling of the weekday.
@@ -2866,6 +2944,7 @@ function rankGmailContacts(
           email,
           displayNames: new Set<string>(),
           headers: new Set<string>(),
+          messageIds: new Set<string>(),
           occurrences: 0,
           lastSeen: null,
           lastMessageId: null,
@@ -2873,7 +2952,11 @@ function rankGmailContacts(
           lastSubject: null,
           tokenMatches: 0
         };
-        existing.occurrences += 1;
+        // Counted per message, not per header entry: a person on both To and Cc
+        // of one message is one occurrence, or the count would outrank someone
+        // who genuinely appeared in two separate threads.
+        existing.messageIds.add(messageId ?? `${existing.email}:${existing.occurrences}`);
+        existing.occurrences = existing.messageIds.size;
         existing.headers.add(header);
         existing.tokenMatches = Math.max(existing.tokenMatches, matched);
         if (entry.displayName) existing.displayNames.add(truncateText(entry.displayName, 200));
