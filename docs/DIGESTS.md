@@ -251,6 +251,14 @@ and the app has one appearance. Every colour is the app's own token from
 several repaint a page that declares a light scheme, so the palette is stated on
 the elements themselves and `color-scheme: dark` is declared three ways.
 
+The canvas runs the height of the reading pane rather than stopping at the last
+line, so a short digest does not end in a hard edge with the client's own white
+below it. `height: 100%` on the document, body and outer table carries the dark
+down a document the client sized itself; `min-height: 100vh` grows one the
+client sized to its content. A client that supports neither renders what it
+always did. The outer cell states `valign="top"`, because a full-height table
+cell would otherwise centre the card in the pane.
+
 The structure is: preheader (what a phone shows beside the subject, leading with
 the count that decides whether this gets opened now), wordmark, title and
 occurrence, count pills with the "for you" pill in brand, the body, a primary
