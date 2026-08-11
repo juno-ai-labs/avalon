@@ -647,8 +647,10 @@ describe("connector tools selected for harness runs", () => {
     expect(mail?.systemMessage).toContain("use the Gmail search tool first");
     expect(mail?.systemMessage).toContain("do not substitute public web search");
     expect(mail?.systemMessage).not.toContain("Drive search");
+    expect(mail?.systemMessage).toContain("never derive one from a display name");
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
       "gmail.search",
+      "gmail.find_contacts",
       "gmail.read_thread",
       "gmail.read_message",
       "gmail.create_draft",

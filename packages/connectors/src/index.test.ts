@@ -716,6 +716,157 @@ describe("connectors", () => {
     expect(requested).toHaveLength(callsBeforePdf);
   });
 
+  it("returns sender, recipients, subject, and snippet with every Gmail search hit", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({
+          messages: [{ id: "message-1", threadId: "thread-1" }, { id: "message-2", threadId: "thread-2" }],
+          resultSizeEstimate: 2
+        });
+      }
+      if (url.pathname.endsWith("/messages/message-1")) {
+        return googleJson({
+          id: "message-1",
+          threadId: "thread-1",
+          labelIds: ["INBOX"],
+          snippet: "Tuesday call agenda",
+          internalDate: "1786000000000",
+          payload: {
+            headers: [
+              { name: "From", value: "Alex Rivera <alex.rivera@mucker.example>" },
+              { name: "To", value: "Adam <adam@example.com>" },
+              { name: "Subject", value: "Tuesday sync" },
+              { name: "Date", value: "Mon, 10 Aug 2026 09:00:00 -0700" },
+              { name: "Message-ID", value: "<abc123@mail.example>" }
+            ]
+          }
+        });
+      }
+      // A hit that has been deleted since it was indexed must not cost the
+      // caller the rest of the result set.
+      if (url.pathname.endsWith("/messages/message-2")) return googleJson({ error: { code: 404 } }, 404);
+      throw new Error(`Unexpected Google fetch: ${url}`);
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.search",
+      { query: "subject:sync newer_than:30d" },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(result.output).toMatchObject({
+      messages: [
+        {
+          id: "message-1",
+          threadId: "thread-1",
+          from: "Alex Rivera <alex.rivera@mucker.example>",
+          to: "Adam <adam@example.com>",
+          subject: "Tuesday sync",
+          messageIdHeader: "<abc123@mail.example>",
+          snippet: "Tuesday call agenda"
+        },
+        { id: "message-2", threadId: "thread-2", from: null, subject: null, snippet: "" }
+      ]
+    });
+  });
+
+  it("resolves a name to ranked addresses drawn from prior Gmail correspondence", async () => {
+    const queries: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        queries.push(url.searchParams.get("q") ?? "");
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }, { id: "message-2", threadId: "thread-2" }] });
+      }
+      if (url.pathname.endsWith("/messages/message-1")) {
+        return googleJson({
+          id: "message-1",
+          threadId: "thread-1",
+          internalDate: "1785000000000",
+          snippet: "Older note",
+          payload: {
+            headers: [
+              { name: "From", value: "Alex Rivera <alex.rivera@mucker.example>" },
+              { name: "To", value: "Adam <adam@example.com>" },
+              { name: "Subject", value: "Intro" }
+            ]
+          }
+        });
+      }
+      if (url.pathname.endsWith("/messages/message-2")) {
+        return googleJson({
+          id: "message-2",
+          threadId: "thread-2",
+          internalDate: "1786000000000",
+          snippet: "Newer note",
+          payload: {
+            headers: [
+              { name: "From", value: "Adam <adam@example.com>" },
+              { name: "To", value: "\"Rivera, Alex\" <alex.rivera@mucker.example>, Katherine Wu <kwu@mucker.example>" },
+              { name: "Subject", value: "Tuesday call" }
+            ]
+          }
+        });
+      }
+      throw new Error(`Unexpected Google fetch: ${url}`);
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.find_contacts",
+      { name: "Alex" },
+      {
+        connection: {
+          ...googleConnection(["gmail.read"]),
+          credentials: { accessToken: "google-access-token", providerAccountEmail: "adam@example.com" }
+        },
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    // Scoped to the address headers: a bare keyword query would also match
+    // every message that merely mentions the name in its body.
+    expect(queries[0]).toContain("from:(\"Alex\")");
+    expect(queries[0]).toContain("to:(\"Alex\")");
+    expect(result.output).toMatchObject({
+      scannedMessages: 2,
+      contacts: [{
+        email: "alex.rivera@mucker.example",
+        occurrences: 2,
+        matchedHeaders: ["from", "to"],
+        // Ranked to the newer of the two messages it appeared in.
+        lastMessageId: "message-2",
+        lastSeen: "2026-08-06T07:06:40.000Z",
+        lastSubject: "Tuesday call"
+      }]
+    });
+    const contacts = (result.output as { contacts: Array<{ email: string; displayNames: string[] }> }).contacts;
+    expect(contacts[0]?.displayNames).toEqual(expect.arrayContaining(["Alex Rivera", "Rivera Alex"]));
+    // The mailbox owner and an unrelated correspondent are both left out.
+    expect(contacts.map((contact) => contact.email)).not.toContain("adam@example.com");
+    expect(contacts.map((contact) => contact.email)).not.toContain("kwu@mucker.example");
+  });
+
+  it("reports no candidate address rather than guessing when correspondence has none", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) return googleJson({ messages: [] });
+      throw new Error(`Unexpected Google fetch: ${url}`);
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.find_contacts",
+      { name: "Danny" },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(result.output).toMatchObject({ query: "Danny", scannedMessages: 0, contacts: [] });
+    expect(result.summary).toContain("No address");
+  });
+
   it("creates and updates Google Calendar events with bounded event fields", async () => {
     const requests: Array<{ url: URL; method: string; body: Record<string, unknown> }> = [];
     const fetcher: typeof fetch = async (input, init) => {
@@ -1081,7 +1232,9 @@ describe("connectors", () => {
       }
     );
     expect(result.output).toMatchObject({ messages: [{ id: "message-1" }] });
-    expect(authorizations).toEqual(["Bearer access-old", "Bearer access-new"]);
+    // The list call is refused, refreshed, and retried; the third authorization
+    // is the header hydration for the single hit it returned.
+    expect(authorizations).toEqual(["Bearer access-old", "Bearer access-new", "Bearer access-new"]);
     expect(connection.credentials).toMatchObject({ accessToken: "access-new", refreshToken: "refresh-token" });
   });
 

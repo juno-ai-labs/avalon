@@ -169,6 +169,11 @@ const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string;
   post: { started: "Posting", settled: "Posted", preposition: "to" },
   reply: { started: "Replying", settled: "Replied", preposition: "in" },
   comment: { started: "Commenting", settled: "Commented", preposition: "in" },
+  // The key is a tool's last name segment, which is usually its verb but not
+  // always. `gmail.find_contacts` ends in its object, and leaving it to the
+  // generic fallback would label a contact lookup with the same "Reviewed
+  // <connector>" row every other unrecognized call gets.
+  contacts: { started: "Looking up contacts in", settled: "Looked up contacts in" },
 };
 
 /**
