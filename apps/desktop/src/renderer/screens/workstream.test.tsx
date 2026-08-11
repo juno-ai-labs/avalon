@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import type { DesktopSession } from '../../common/desktop';
 import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
@@ -287,6 +288,10 @@ describe('WorkstreamHeader inline rename', () => {
       ...headerWorkstream,
       title: 'Create an email draft to Danny from Mucker that shares the download link',
       titleStatus: 'naming',
+      // A work stream is named seconds after it is created, which is the only
+      // time the skeleton is shown; the fixture's own date is days old, and
+      // past the grace the provisional title is the title.
+      createdAt: new Date().toISOString(),
     });
 
     // The heading is what carries the name, so it is the heading that has to
@@ -317,6 +322,31 @@ describe('WorkstreamHeader inline rename', () => {
       </Tooltip.Provider>,
     );
     expect(screen.getByRole('heading', { name: 'Download link email to Danny' })).toBeInTheDocument();
+  });
+
+  it('gives up on a name that never arrives rather than pulsing for the session', () => {
+    vi.useFakeTimers();
+    try {
+      const created = new Date('2026-08-07T12:00:00.000Z');
+      vi.setSystemTime(created);
+      renderWorkstreamHeader({
+        ...headerWorkstream,
+        title: 'Create an email draft to Danny from Mucker',
+        titleStatus: 'naming',
+        createdAt: created.toISOString(),
+      });
+
+      expect(screen.getByRole('heading', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+
+      // Nothing refetches this query on its own, so a rename event that never
+      // arrived would otherwise leave the skeleton up for good.
+      act(() => { vi.advanceTimersByTime(WORKSTREAM_NAMING_GRACE_MS + 1_000); });
+
+      expect(screen.queryByRole('heading', { name: 'Avalon is naming this work stream' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create an email draft to Danny from Mucker' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('stops announcing the title line while someone is typing a new name into it', () => {

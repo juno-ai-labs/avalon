@@ -1,4 +1,4 @@
-import type { Workstream } from "@avalon/contracts";
+import { WORKSTREAM_NAMING_GRACE_MS, type Workstream } from "@avalon/contracts";
 
 /**
  * The columns beyond `workstreams.*` that `toWorkstream` reads, and the joins
@@ -18,22 +18,19 @@ export const WORKSTREAM_VIEWER_JOINS_SQL = `LEFT JOIN automation_subscriptions s
   LEFT JOIN workstream_read_states rs ON rs.workstream_id = w.id AND rs.user_id = ?`;
 
 /**
- * How long a work stream may report that it is being named.
+ * The status a viewer is told, which is not always the one in the column.
  *
- * Naming takes about a second. A row still marked `naming` well after that is
- * one whose background pass never finished — the isolate went away before it
- * could settle — and its title, provisional as it is, is now the title. Saying
- * so is what stops a skeleton pulsing forever in front of a work stream nobody
- * is going to name; the column still says `naming`, so the stall stays visible
- * to whoever goes looking, and any later message or run settles it for real.
+ * A row still marked `naming` well past the grace is one whose background pass
+ * never finished, and its title — provisional as it is — is now the title.
+ * Reporting that is what stops a skeleton pulsing in front of a work stream
+ * nobody is going to name; the column keeps saying `naming`, so the stall stays
+ * visible to whoever goes looking, and any later message or run settles it.
  */
-const NAMING_GRACE_MS = 60_000;
-
 function viewerTitleStatus(row: Record<string, unknown>): "naming" | "automatic" | "settled" {
   if (row.title_status === "automatic") return "automatic";
   if (row.title_status !== "naming") return "settled";
   const createdAt = Date.parse(String(row.created_at));
-  return Number.isFinite(createdAt) && Date.now() - createdAt > NAMING_GRACE_MS
+  return Number.isFinite(createdAt) && Date.now() - createdAt > WORKSTREAM_NAMING_GRACE_MS
     ? "automatic"
     : "naming";
 }
