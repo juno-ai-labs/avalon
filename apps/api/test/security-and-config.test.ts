@@ -3,6 +3,7 @@ import {
   ConnectorError,
   createGoogleConnector,
   type ConnectorConnectionContext,
+  type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
@@ -11,6 +12,7 @@ import { decryptString, encryptString, hmacSha256, randomToken, timingSafeEqualT
 import { redact } from "../src/observability/logger";
 import { AuthService } from "../src/services/auth-service";
 import { __connectionServiceTesting } from "../src/services/connection-service";
+import { withAuthorizedConnection } from "../src/services/connector-connection-access";
 import { __integrationTesting } from "../src/services/integrations";
 import {
   isAllowedSocketOrigin,
@@ -410,18 +412,22 @@ describe("API security utilities", () => {
       }) as typeof fetch,
     });
 
-    await expect(__integrationTesting.withConnectorCredentialLifecycle(
+    await expect(withAuthorizedConnection(
       {
         DB: database,
         CONNECTOR_CREDENTIALS_KEY: encryptionKey,
         CONNECTOR_CREDENTIALS_KEY_VERSION: "7",
       },
-      connection,
-      () => adapter.executeTool(
+      {
+        connection,
+        adapter: adapter as ResolvedConnectorAdapter,
+        signal: new AbortController().signal,
+      },
+      (authorized) => adapter.executeTool(
         "gmail.search",
         { query: "from:example.com" },
         {
-          connection,
+          connection: authorized,
           principal: { type: "workspace", workspaceId: connection.workspaceId },
           signal: new AbortController().signal,
         },
@@ -469,13 +475,17 @@ describe("API security utilities", () => {
       refreshToken: "must-never-be-persisted-in-an-error",
     });
 
-    await expect(__integrationTesting.withConnectorCredentialLifecycle(
+    await expect(withAuthorizedConnection(
       {
         DB: database,
         CONNECTOR_CREDENTIALS_KEY: randomToken(32),
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
-      connection,
+      {
+        connection,
+        adapter: {} as ResolvedConnectorAdapter,
+        signal: new AbortController().signal,
+      },
       async () => {
         throw new ConnectorError("unauthorized", "Google authorization was revoked", {
           reconnectRequired: true,

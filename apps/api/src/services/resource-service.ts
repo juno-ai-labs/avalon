@@ -6,6 +6,7 @@ import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
+import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -277,10 +278,11 @@ export class ResourceService {
     const before = JSON.stringify(context.credentials);
     let hydrated: unknown;
     try {
-      hydrated = await adapter.hydrateResource(
-        context,
-        resource,
-        AbortSignal.timeout(numericEnv(this.env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)),
+      const signal = AbortSignal.timeout(numericEnv(this.env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000));
+      hydrated = await withAuthorizedConnection(
+        this.env,
+        { connection: context, adapter, signal },
+        (authorized) => adapter.hydrateResource!(authorized, resource, signal),
       );
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;

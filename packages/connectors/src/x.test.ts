@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createXConnector, XCapabilities } from "./x";
 import type { FetchLike } from "./provider-utils";
-import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
+import {
+  type AuthorizedConnectorConnection,
+  authorizedConnection,
+  connectorCapabilitySupportsScope,
+} from "./types";
 
 describe("X connector", () => {
   it("supports workspace connections only", () => {
@@ -286,8 +290,8 @@ async function execute(
 
 function xConnection(
   grantedScopes: string[],
-): ConnectorConnectionContext {
-  return {
+): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: "x-connection",
     workspaceId: "avalon-workspace",
     scope: "workspace",
@@ -296,15 +300,15 @@ function xConnection(
     credentials: {},
     cursor: {},
     config: {},
-  };
+  });
 }
 
-function personalXConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function personalXConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     ...xConnection(grantedScopes),
     scope: "personal",
     ownerUserId: "avalon-user",
-  };
+  });
 }
 
 function requestUrl(input: string | URL | Request): URL {

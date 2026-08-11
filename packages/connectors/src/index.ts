@@ -20,6 +20,7 @@ import {
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "./types";
+import { isCredentialRejection, withProviderReauthorization } from "./provider-utils";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
@@ -30,9 +31,11 @@ import { createXConnector, type XConnectorConfig } from "./x";
 export {
   assertPrincipalAccess,
   acknowledgeConnectorAgentActivation,
+  authorizedConnection,
   connectorRetryAfterMs,
   connectorCapabilitySupportsScope,
   ConnectorError,
+  type AuthorizedConnectorConnection,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAgentAdapter,
@@ -935,43 +938,46 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     init: RequestInit = {},
     allowedErrorStatuses: readonly number[] = []
   ): Promise<Response> {
-    let token = String(connection.credentials.accessToken ?? "");
-    if (!token && connection.credentials.refreshToken) {
-      await refreshGoogleCredentials(connection, init.signal);
-      token = String(connection.credentials.accessToken ?? "");
-    }
-    if (!token) {
-      throw new ConnectorError("unauthorized", "Google access token is unavailable", {
-        reconnectRequired: true,
-        reason: "missing_access_token"
-      });
-    }
-    const request = async (accessToken: string) => fetcher(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...(init.headers ?? {})
-      }
-    });
-    let response = await request(token);
-    if (response.status === 401 && connection.credentials.refreshToken) {
-      await refreshGoogleCredentials(connection, init.signal);
-      response = await request(String(connection.credentials.accessToken ?? ""));
-    }
-    if (!response.ok && !allowedErrorStatuses.includes(response.status)) {
-      const details = await safeJsonBounded(response, 256_000);
-      if (response.status === 401) {
-        throw new ConnectorError("unauthorized", "Google connection needs reconnecting", {
+    const attempt = async (): Promise<Response> => {
+      const token = String(connection.credentials.accessToken ?? "");
+      if (!token) {
+        throw new ConnectorError("unauthorized", "Google access token is unavailable", {
           reconnectRequired: true,
-          reason: "api_unauthorized",
-          provider: "google",
-          payload: details
+          reason: "missing_access_token"
         });
       }
-      throw new ConnectorError("provider_error", `Google API failed (${response.status})`, details);
-    }
-    return response;
+      const response = await fetcher(url, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...(init.headers ?? {})
+        }
+      });
+      if (!response.ok && !allowedErrorStatuses.includes(response.status)) {
+        const details = await safeJsonBounded(response, 256_000);
+        if (response.status === 401) {
+          throw new ConnectorError("unauthorized", "Google connection needs reconnecting", {
+            reconnectRequired: true,
+            reason: "api_unauthorized",
+            provider: "google",
+            payload: details
+          });
+        }
+        throw new ConnectorError("provider_error", `Google API failed (${response.status})`, details);
+      }
+      return response;
+    };
+    return withProviderReauthorization(
+      connection,
+      {
+        refresh: refreshGoogleCredentials,
+        isRejection: isCredentialRejection,
+        canRefresh: (candidate) => Boolean(candidate.credentials.refreshToken),
+        signal: init.signal ?? new AbortController().signal
+      },
+      attempt
+    );
   }
 
   async function pollGmail(

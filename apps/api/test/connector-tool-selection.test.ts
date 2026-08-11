@@ -921,7 +921,7 @@ describe("connector tools selected for harness runs", () => {
       // Connector execution performs the authoritative database check. This
       // callback remains true so Bind keeps the frozen plugin active long
       // enough to exercise that exact boundary.
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       onEvent: (event) => { events.push(event); },
     });
 

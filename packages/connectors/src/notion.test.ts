@@ -8,7 +8,10 @@ import {
   verifyNotionWebhook,
 } from "./notion";
 import type { FetchLike } from "./provider-utils";
-import type { ConnectorConnectionContext } from "./types";
+import {
+  type AuthorizedConnectorConnection,
+  authorizedConnection,
+} from "./types";
 
 const INTEGRATION_ID = "11111111-1111-4111-8111-111111111111";
 const NOTION_WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -211,8 +214,8 @@ function notionAdapter(fetcher: FetchLike) {
   });
 }
 
-function notionConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function notionConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: AVALON_CONNECTION_ID,
     workspaceId: AVALON_WORKSPACE_ID,
     scope: "personal",
@@ -227,7 +230,7 @@ function notionConnection(grantedScopes: string[]): ConnectorConnectionContext {
     },
     cursor: {},
     config: { region: "global" },
-  };
+  });
 }
 
 function requestUrl(input: string | URL | Request): URL {

@@ -1,6 +1,57 @@
-import { ConnectorError } from "./types";
+import { ConnectorError, type ConnectorConnectionContext } from "./types";
 
 const DEFAULT_RESPONSE_BYTES = 1_000_000;
+
+/**
+ * Runs a provider call and, if the provider rejects the credential it carried,
+ * refreshes that credential once and repeats the call.
+ *
+ * The host refreshes an expiring credential before an adapter is ever reached,
+ * so this is not that guard duplicated. It covers what the host cannot see: a
+ * token revoked between the two calls, a provider that expires one early or
+ * disagrees about the clock, a long-running call whose credential ages out
+ * mid-flight. Freshness at the door makes the rejection rare; recovering from
+ * it is what keeps a connector from surfacing a transient one as a revoked
+ * grant.
+ *
+ * Refreshed credentials are written back onto `connection.credentials`, which
+ * is what the host's credential door persists when the operation returns.
+ *
+ * A second rejection is a real one and is raised: it is no longer plausible
+ * that the credential was merely stale.
+ */
+export async function withProviderReauthorization<T>(
+  connection: ConnectorConnectionContext,
+  input: {
+    /** Mints replacement credentials, usually the adapter's own `refreshCredentials`. */
+    refresh: (
+      connection: ConnectorConnectionContext,
+      signal: AbortSignal,
+    ) => Promise<Record<string, unknown>>;
+    /** Whether this failure is the provider refusing the credential. */
+    isRejection: (error: unknown) => boolean;
+    /** Whether the connection holds what a refresh needs. */
+    canRefresh?: (connection: ConnectorConnectionContext) => boolean;
+    signal: AbortSignal;
+  },
+  call: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (!input.isRejection(error)) throw error;
+    if (input.canRefresh && !input.canRefresh(connection)) throw error;
+    if (isAbortError(error)) throw error;
+    input.signal.throwIfAborted();
+    connection.credentials = await input.refresh(connection, input.signal);
+    return await call();
+  }
+}
+
+/** The `unauthorized` shape every adapter raises for a refused credential. */
+export function isCredentialRejection(error: unknown): boolean {
+  return error instanceof ConnectorError && error.code === "unauthorized";
+}
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
