@@ -1740,6 +1740,9 @@ pre {
 
 .agent-work-timing { align-items: center; color: #77766f; display: flex; font-size: 11.5px; gap: 7px; margin: 2px 0 26px; min-height: 20px; }
 .agent-work-timing-label { display: inline-block; font-weight: 480; }
+/* The stop positions and `background-size` are load-bearing and duplicated on
+   `.plugin-activity.tool-started .tool-summary strong`; change them together and
+   read the constraint at `@keyframes plugin-activity-shimmer` first. */
 .agent-work-timing-active .agent-work-timing-label {
   animation: plugin-activity-shimmer 2.4s ease-in-out infinite;
   background: linear-gradient(100deg, #77766f 27%, #d5d4cf 45%, #8c8b84 55%, #77766f 73%);
@@ -2874,6 +2877,9 @@ pre {
   display: none;
 }
 
+/* The stop positions and `background-size` are load-bearing and duplicated on
+   `.agent-work-timing-active .agent-work-timing-label`; change them together and
+   read the constraint at `@keyframes plugin-activity-shimmer` below first. */
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity.tool-started .tool-summary strong {
   animation: plugin-activity-shimmer 2.4s ease-in-out infinite;
   background: linear-gradient(100deg, #77766f 27%, #d5d4cf 45%, #8c8b84 55%, #77766f 73%);
@@ -2889,7 +2895,13 @@ pre {
    at `100%` (offset -3W) the band ends at -0.08W and at `0%` (offset 0) it
    starts at 1.08W — off the left and right edges respectively. Repeating tiles
    stay 4W away, which keeps a single highlight in play and lets the neighbour
-   fill the text with the base colour rather than leaving it transparent. */
+   fill the text with the base colour rather than leaving it transparent.
+
+   The `0%` end doubles as the reduced-motion resting state: the block at the
+   top of this file cuts the animation to one 0.001ms iteration, and with
+   fill-mode left at `none` the element settles on its base `background-position`
+   of 0%. Keeping the band clear of the text there is what makes that state flat
+   base colour instead of a permanently half-lit label. */
 @keyframes plugin-activity-shimmer {
   0%, 18% { background-position: 100% 0; }
   68%, 100% { background-position: 0% 0; }
