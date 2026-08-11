@@ -19,6 +19,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isEntryPoint } from "./entry-point.mjs";
+
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = resolve(repositoryDirectory, "apps/site/release.config.json");
 
@@ -70,7 +72,7 @@ async function main() {
   );
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : "Site release config check failed");
     process.exitCode = 1;
