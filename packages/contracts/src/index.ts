@@ -151,6 +151,17 @@ export const AcceptWorkspaceInvitationRequestSchema = z.object({
   token: z.string().min(20).max(500)
 });
 
+/**
+ * Every server-decided feature flag a client is allowed to see, resolved for
+ * the signed-in person. Each field defaults to the closed state so a response
+ * from an older service — or one whose flag provider was unreachable — leaves
+ * the feature off rather than absent.
+ */
+export const ClientFeatureFlagsSchema = z.object({
+  /** Whether Application → Developer may be offered on this device. */
+  developerSettings: z.boolean().default(false)
+});
+
 export const ParticipantSchema = z.object({
   user: UserSchema,
   participationReason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
@@ -1701,6 +1712,7 @@ export type WorkspaceOnboardingState = z.infer<typeof WorkspaceOnboardingStateSc
 export type OnboardingRegionRequest = z.infer<typeof OnboardingRegionRequestSchema>;
 export type ActivateWorkspaceRequest = z.infer<typeof ActivateWorkspaceRequestSchema>;
 export type WorkspaceInvitationRole = z.infer<typeof WorkspaceInvitationRoleSchema>;
+export type ClientFeatureFlags = z.infer<typeof ClientFeatureFlagsSchema>;
 export type Workstream = z.infer<typeof WorkstreamSchema>;
 export type WorkstreamDetail = z.infer<typeof WorkstreamDetailSchema>;
 export type WorkstreamContext = z.infer<typeof WorkstreamContextSchema>;

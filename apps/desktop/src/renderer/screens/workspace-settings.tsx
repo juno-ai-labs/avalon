@@ -99,10 +99,21 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize developer debug identifiers version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
+
+/** Words that only lead somewhere while the Developer section is on offer. They
+ * are appended to Application rather than written into it, so searching "debug"
+ * cannot send someone the flag excludes to a pane that has no such section. */
+const developerSectionSearchTerms = 'developer debug identifiers';
+
+function navigationSearchTerms(item: SettingsNavItem, developerSettingsAvailable: boolean): string {
+  return item.id === 'application' && developerSettingsAvailable
+    ? `${item.searchTerms} ${developerSectionSearchTerms}`
+    : item.searchTerms;
+}
 
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
@@ -464,16 +475,20 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     () => (invitations.data ?? []).filter((invitation) => invitation.status !== 'pending'),
     [invitations.data],
   );
+  const developerSettingsAvailable = applicationSettings?.developerSettingsAvailable ?? false;
   const filteredNavigation = useMemo(() => {
     const query = navigationQuery.trim().toLowerCase();
     if (!query) return settingsNavigation;
     return settingsNavigation
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => `${item.label} ${item.searchTerms}`.toLowerCase().includes(query)),
+        items: group.items.filter((item) =>
+          `${item.label} ${navigationSearchTerms(item, developerSettingsAvailable)}`
+            .toLowerCase()
+            .includes(query)),
       }))
       .filter((group) => group.items.length > 0);
-  }, [navigationQuery]);
+  }, [navigationQuery, developerSettingsAvailable]);
   const availableSections = useMemo(
     () => new Set(filteredNavigation.flatMap((group) => group.items.map((item) => item.id))),
     [filteredNavigation],
@@ -1028,35 +1043,40 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
                 <ApplicationIconPicker />
-                <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Developer</h2><p>Extra tooling for reporting and diagnosing problems.</p></div>
-                <div className="settings-list-card">
-                  <label className="settings-preference-row">
-                    <span className="settings-row-icon"><Wrench aria-hidden="true" size={18} /></span>
-                    <span className="settings-row-copy">
-                      <strong>Debug enabled</strong>
-                      <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.</small>
-                    </span>
-                    <span className="settings-toggle">
-                      <input
-                        aria-label="Debug enabled"
-                        checked={applicationSettings?.debugEnabled ?? false}
-                        /* A Lockdown transition re-encrypts every durable session
-                         * component, so it stays pending long enough to click this.
-                         * Both preferences write one file; keep one in flight. */
-                        disabled={
-                          applicationSettings === null
-                          || updateDebugEnabled.isPending
-                          || updateLockdownMode.isPending
-                        }
-                        onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
-                        role="switch"
-                        type="checkbox"
-                      />
-                      <span aria-hidden="true" />
-                    </span>
-                  </label>
-                </div>
-                {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
+                {/* The service decides whether this section exists at all, and
+                  * answers on a poll, so it can appear or disappear without the
+                  * window reloading. It is absent rather than disabled: a
+                  * section nobody outside Juno can turn on is not a control
+                  * that happens to be unavailable. */}
+                {applicationSettings?.developerSettingsAvailable && (
+                  <>
+                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Developer</h2><p>Extra tooling for reporting and diagnosing problems.</p></div>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><Wrench aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Debug enabled</strong>
+                          <small>Show debugging actions such as copying a work stream or automation identifier from its right-click menu, and the rows describing how a work stream is wired in its Details.</small>
+                        </span>
+                        <span className="settings-toggle">
+                          <input
+                            aria-label="Debug enabled"
+                            checked={applicationSettings.debugEnabled}
+                            /* A Lockdown transition re-encrypts every durable session
+                             * component, so it stays pending long enough to click this.
+                             * Both preferences write one file; keep one in flight. */
+                            disabled={updateDebugEnabled.isPending || updateLockdownMode.isPending}
+                            onChange={(event) => updateDebugEnabled.mutate(event.currentTarget.checked)}
+                            role="switch"
+                            type="checkbox"
+                          />
+                          <span aria-hidden="true" />
+                        </span>
+                      </label>
+                    </div>
+                    {updateDebugEnabled.error && <InlineError>{updateDebugEnabled.error.message}</InlineError>}
+                  </>
+                )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>About</h2><p>Build and service details for this Avalon installation.</p></div>
                 <dl className="settings-diagnostics settings-list-card">
                   <div><dt>Version</dt><dd>{runtime?.appVersion ?? 'Unknown'}</dd></div>

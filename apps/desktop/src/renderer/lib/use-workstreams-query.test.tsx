@@ -56,6 +56,7 @@ describe('useWorkstreamsQuery', () => {
       lockdownMode: false,
       lockdownAvailable: false,
       debugEnabled: false,
+      developerSettingsAvailable: true,
     });
   });
 
@@ -75,6 +76,7 @@ describe('useWorkstreamsQuery', () => {
       lockdownMode: false,
       lockdownAvailable: false,
       debugEnabled: true,
+      developerSettingsAvailable: true,
     });
     const { result } = renderHook(() => useWorkstreamsQuery(), { wrapper });
     await waitFor(() => expect(result.current.data).toHaveLength(1));
@@ -95,7 +97,7 @@ describe('useWorkstreamsQuery', () => {
     expect(getWorkstreams).toHaveBeenCalledTimes(1);
     expect(getWorkstreams.mock.calls[0]?.[1]).toBe(false);
 
-    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true });
+    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true });
 
     await waitFor(() => expect(getWorkstreams).toHaveBeenCalledTimes(2));
     expect(getWorkstreams.mock.calls[1]?.[1]).toBe(true);
