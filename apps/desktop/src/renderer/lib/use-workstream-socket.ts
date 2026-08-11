@@ -4,7 +4,7 @@ import {
   type PersonalSocketEvent,
   type ServerSocketEvent,
 } from '@avalon/contracts';
-import { useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
   mapElicitation,
@@ -28,7 +28,7 @@ import {
   removeTranscriptMessage,
   upsertTranscriptMessage,
 } from './transcript';
-import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -313,6 +313,27 @@ function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boo
   return status === 'running' || status === 'scheduled';
 }
 
+/**
+ * A harness status change is pushed, not polled, so both views of it take the
+ * pushed value in one write: the open work stream's header reads the detail
+ * query and its sidebar row reads the list query. Invalidating the list instead
+ * would put a REST round trip between the two, and the header would pulse blue
+ * over a sidebar dot that had not caught up yet — for as long as the refetch
+ * took, and indefinitely if it raced with a poll that had already been issued.
+ */
+export function applyHarnessStatus(
+  queryClient: QueryClient,
+  workstreamId: string,
+  harnessStatus: HarnessStatus,
+): void {
+  queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+    current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
+  queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+    current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
+      ? { ...workstream, harnessStatus }
+      : workstream));
+}
+
 function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   workstream: T,
   message: Message,
@@ -493,10 +514,7 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
           applyStreamingSocketEvent(current, event, workstreamId, streamCursors));
       } else if (event.type === 'harness_status_changed') {
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-          current ? { ...current, harnessStatus: normalizeHarnessStatus(event.status) } : current,
-        );
-        void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+        applyHarnessStatus(queryClient, workstreamId, normalizeHarnessStatus(event.status));
         if (
           event.status === 'running'
           || event.status === 'needs_input'
