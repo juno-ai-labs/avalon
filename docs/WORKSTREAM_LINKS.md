@@ -99,17 +99,30 @@ Its bounds, all deliberate:
 
 | Bound | Value | Why |
 | --- | --- | --- |
-| Trigger | `harness_status` differs from `rendered_status` | Comparing last activity would mark nearly every row stale every pass, since any message bumps it |
+| Trigger | `harness_status` differs from `rendered_status`, **or** the audience has not been revalidated in 24 hours | Comparing last activity would mark nearly every row stale every pass, since any message bumps it. The audience clock is separate because a channel can become externally shared while the work stream sits still |
 | Age | Links shared in the last 30 days | Nobody is rereading an older message |
 | Per sweep | 100 rows | Bounds the work; the overflow is logged, never silently dropped |
 | Per workspace | 20 rows | `chat.unfurl` is Tier 3 (50+/min per method per workspace) and live `link_shared` unfurls, which someone is waiting on, spend the same budget |
 
 The audience is re-checked once per channel per sweep, which is also the
 redaction path: a channel that became externally shared after its card was
-posted is rewritten back to the anonymous form. A refresh that fails with a
-terminal Slack reason — the message or channel is gone — deletes the row rather
-than retrying forever; anything else leaves `rendered_status` untouched so the
-next sweep tries again.
+posted is rewritten back to the anonymous form. That check runs on its own
+24-hour clock rather than only when the status moves, because otherwise a
+channel could go externally shared and the card would keep naming the work
+stream until some unrelated status change happened to fire. A row selected only
+by the audience clock whose verdict has not changed records the check and posts
+nothing — `rendered_anonymous` tracks which form is currently on the message, so
+an identical card is never rewritten.
+
+Redaction is still bounded by the same 30-day window as the status refresh: a
+card older than that is never revisited. That is a deliberate limit rather than
+an oversight — an external party added to a channel can read its message history
+anyway, so the marginal exposure of an old card's title is small next to what
+Slack already showed them.
+
+A refresh that fails with a terminal Slack reason — the message or channel is
+gone — deletes the row rather than retrying forever; anything else leaves
+`rendered_status` untouched so the next sweep tries again.
 
 ## Where it is implemented
 

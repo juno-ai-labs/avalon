@@ -651,3 +651,47 @@ describe("App Home task rows", () => {
     expect(rendered).not.toContain("Unlinkable");
   });
 });
+
+describe("recording shared work-stream links for refresh", () => {
+  const workstreamId = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+  const summary = {
+    title: "Quarterly planning",
+    harnessStatus: "running",
+    lastActivityAt: "2026-08-10T12:00:00.000Z",
+    automationName: null,
+  };
+
+  it("records a link with the exact URL Slack reported", () => {
+    const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
+
+    expect(__slackAgentTesting.recordableUnfurlLinks(
+      new Map([[url, workstreamId]]),
+      new Map([[workstreamId, summary]]),
+    )).toEqual([{ url, workstreamId, summary }]);
+  });
+
+  it("skips an over-long link rather than storing a key that can never match", () => {
+    // Reachable through the legacy handoff form, which tolerates extra
+    // fragment parameters. Truncating to fit the column would store a URL that
+    // no longer matches the message's link, so every later refresh would look
+    // successful while the posted card stayed stale.
+    const overLong = `https://with-avalon.com/open#target=${encodeURIComponent(
+      `avalon://workstreams/${workstreamId}`,
+    )}&x=${"a".repeat(2_100)}`;
+    expect(overLong.length).toBeGreaterThan(2_000);
+
+    expect(__slackAgentTesting.recordableUnfurlLinks(
+      new Map([[overLong, workstreamId]]),
+      new Map([[workstreamId, summary]]),
+    )).toEqual([]);
+  });
+
+  it("records nothing for a link whose card showed no summary", () => {
+    const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
+
+    expect(__slackAgentTesting.recordableUnfurlLinks(
+      new Map([[url, workstreamId]]),
+      new Map(),
+    )).toEqual([]);
+  });
+});
