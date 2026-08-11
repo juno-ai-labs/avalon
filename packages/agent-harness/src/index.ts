@@ -24,7 +24,12 @@ import { toolActivityName } from "./tool-activity";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { BUILT_IN_SKILLS, DEEP_RESEARCH_SKILL } from "./built-in-skills";
+export {
+  BUILT_IN_SKILLS,
+  DEEP_RESEARCH_SKILL,
+  SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  WRITING_AN_EMAIL_SKILL,
+} from "./built-in-skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
