@@ -50,15 +50,35 @@ const headerWorkstream: WorkstreamDetail = {
   automationRuns: [],
 };
 
-function renderWorkstreamHeader(
+/**
+ * jsdom performs no layout, so every element reports a width of zero and a
+ * clipped title cannot be produced — only described. The properties are defined
+ * on the prototype because the element under measurement is created by the
+ * component; `restore` puts jsdom's own zero-width getters back, which
+ * `restoreMocks` cannot do for a plain `defineProperty`.
+ */
+function stubElementWidths(widths: { clientWidth: number; scrollWidth: number }): { restore: () => void } {
+  for (const [name, value] of Object.entries(widths)) {
+    Object.defineProperty(HTMLElement.prototype, name, { configurable: true, value });
+  }
+  return {
+    restore: (): void => {
+      for (const name of Object.keys(widths)) Reflect.deleteProperty(HTMLElement.prototype, name);
+    },
+  };
+}
+
+// One prop list for the header, so a re-render is the same tree with different
+// data rather than a second, separately maintained copy of it.
+function headerElement(
   workstream = headerWorkstream,
   overrides: {
     hypersightOpen?: boolean;
     onRename?: (title: string) => Promise<void>;
     onToggleHyperSight?: () => void;
   } = {},
-): ReturnType<typeof render> {
-  return render(
+): React.JSX.Element {
+  return (
     <Tooltip.Provider>
       <WorkstreamHeader
         hypersightOpen={overrides.hypersightOpen ?? false}
@@ -72,8 +92,12 @@ function renderWorkstreamHeader(
         socketState="connected"
         workstream={workstream}
       />
-    </Tooltip.Provider>,
+    </Tooltip.Provider>
   );
+}
+
+function renderWorkstreamHeader(...args: Parameters<typeof headerElement>): ReturnType<typeof render> {
+  return render(headerElement(...args));
 }
 
 describe('WorkstreamHeader origin affordances', () => {
@@ -236,20 +260,7 @@ describe('WorkstreamHeader inline rename', () => {
     fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Work stream name' }), { target: { value: 'Stale draft' } });
 
-    rerender(
-      <Tooltip.Provider>
-        <WorkstreamHeader
-          hypersightOpen={false}
-          hypersightPreferencePending={false}
-          onAddParticipant={vi.fn()}
-          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
-          onRename={async () => undefined}
-          onToggleHyperSight={vi.fn()}
-          socketState="connected"
-          workstream={{ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }}
-        />
-      </Tooltip.Provider>,
-    );
+    rerender(headerElement({ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }));
 
     expect(screen.queryByRole('textbox', { name: 'Work stream name' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Another stream' })).toBeInTheDocument();
@@ -308,20 +319,7 @@ describe('WorkstreamHeader inline rename', () => {
     const line = document.querySelector('.workstream-title-line');
     expect(line).toHaveAttribute('aria-live', 'polite');
 
-    rerender(
-      <Tooltip.Provider>
-        <WorkstreamHeader
-          hypersightOpen={false}
-          hypersightPreferencePending={false}
-          onAddParticipant={vi.fn()}
-          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
-          onRename={async () => undefined}
-          onToggleHyperSight={vi.fn()}
-          socketState="connected"
-          workstream={{ ...headerWorkstream, title: 'Download link email to Danny' }}
-        />
-      </Tooltip.Provider>,
-    );
+    rerender(headerElement({ ...headerWorkstream, title: 'Download link email to Danny' }));
     expect(screen.getByRole('heading', { name: 'Download link email to Danny' })).toBeInTheDocument();
   });
 
@@ -368,6 +366,81 @@ describe('WorkstreamHeader inline rename', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'Daily product brief' }), { key: 'F2' });
 
     expect(screen.getByRole('textbox', { name: 'Work stream name' })).toBeInTheDocument();
+  });
+
+  it('keeps the tooltip on the rename hint while the whole name is on screen', () => {
+    renderWorkstreamHeader();
+
+    // jsdom reports a zero width for everything, which reads as a title that
+    // fits — the case where the hint is the only thing worth saying.
+    expect(screen.getByRole('button', { name: 'Daily product brief' }))
+      .toHaveAttribute('title', 'Double-click to rename');
+  });
+
+  it('leads the tooltip with the name once the header is too narrow to show it', () => {
+    const widths = stubElementWidths({ clientWidth: 180, scrollWidth: 260 });
+    try {
+      const title = 'Email draft to Danny about the download link';
+      const { rerender } = renderWorkstreamHeader({ ...headerWorkstream, title });
+
+      // The ellipsis is the only thing standing between the reader and the
+      // name, and it is not recoverable anywhere else on the screen.
+      expect(screen.getByRole('button', { name: title }))
+        .toHaveAttribute('title', `${title}\nDouble-click to rename`);
+
+      // A shorter name that fits leaves nothing for the tooltip to recover.
+      stubElementWidths({ clientWidth: 180, scrollWidth: 120 });
+      rerender(headerElement({ ...headerWorkstream, title: 'Danny email' }));
+
+      expect(screen.getByRole('button', { name: 'Danny email' }))
+        .toHaveAttribute('title', 'Double-click to rename');
+    } finally {
+      widths.restore();
+    }
+  });
+
+  it('measures the title again after the rename editor gives the heading back', () => {
+    const widths = stubElementWidths({ clientWidth: 180, scrollWidth: 260 });
+    try {
+      const title = 'Email draft to Danny about the download link';
+      renderWorkstreamHeader({ ...headerWorkstream, title });
+
+      expect(screen.getByRole('button', { name: title }))
+        .toHaveAttribute('title', `${title}\nDouble-click to rename`);
+
+      // The editor replaces the heading outright, so the button that comes back
+      // is a different element in a header that may have been resized while the
+      // field was open — which is why the measurement follows the node rather
+      // than being taken once.
+      fireEvent.doubleClick(screen.getByRole('button', { name: title }));
+      stubElementWidths({ clientWidth: 400, scrollWidth: 260 });
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Work stream name' }), { key: 'Escape' });
+
+      expect(screen.getByRole('button', { name: title }))
+        .toHaveAttribute('title', 'Double-click to rename');
+    } finally {
+      widths.restore();
+    }
+  });
+
+  it('keeps the spoken description to the rename hint when the tooltip carries the name', () => {
+    const widths = stubElementWidths({ clientWidth: 180, scrollWidth: 260 });
+    try {
+      const title = 'Email draft to Danny about the download link';
+      renderWorkstreamHeader({ ...headerWorkstream, title });
+
+      // Clipping is a visual state only: the button's accessible name is its
+      // text either way, so a description that repeated the title would read
+      // the whole name twice before reaching the part that is actually a hint.
+      const button = screen.getByRole('button', { name: title });
+      expect(button).toHaveAccessibleName(title);
+      expect(button).toHaveAccessibleDescription('Double-click to rename');
+      // The heading takes its own name from the button, and must not pick up
+      // the hint sitting beside it.
+      expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
+    } finally {
+      widths.restore();
+    }
   });
 
   it('caps the name at the length the contract accepts, as the sidebar dialog does', () => {
@@ -428,20 +501,7 @@ describe('WorkstreamHeader inline rename', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() => expect(onRename).toHaveBeenCalled());
 
-    rerender(
-      <Tooltip.Provider>
-        <WorkstreamHeader
-          hypersightOpen={false}
-          hypersightPreferencePending={false}
-          onAddParticipant={vi.fn()}
-          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
-          onRename={onRename}
-          onToggleHyperSight={vi.fn()}
-          socketState="connected"
-          workstream={{ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }}
-        />
-      </Tooltip.Provider>,
-    );
+    rerender(headerElement({ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }, { onRename }));
     const elsewhere = screen.getByRole('button', { name: 'More work-stream actions' });
     elsewhere.focus();
 
@@ -464,20 +524,7 @@ describe('WorkstreamHeader inline rename', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
     await waitFor(() => expect(onRename).toHaveBeenCalledWith('Launch planning'));
 
-    rerender(
-      <Tooltip.Provider>
-        <WorkstreamHeader
-          hypersightOpen={false}
-          hypersightPreferencePending={false}
-          onAddParticipant={vi.fn()}
-          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
-          onRename={onRename}
-          onToggleHyperSight={vi.fn()}
-          socketState="connected"
-          workstream={{ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }}
-        />
-      </Tooltip.Provider>,
-    );
+    rerender(headerElement({ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }, { onRename }));
 
     settle?.();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Another stream' })).toBeInTheDocument());
