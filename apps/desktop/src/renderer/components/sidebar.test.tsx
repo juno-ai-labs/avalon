@@ -141,6 +141,33 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
+  // The handle stands in a strip beside the sidebar rather than on its edge, so
+  // a grab at the far side of that strip must still move the sidebar by what
+  // the pointer moves rather than snapping the edge out to meet it.
+  it('drags from wherever the handle was grabbed without snapping the edge to the pointer', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    resizer.setPointerCapture = vi.fn();
+
+    fireEvent.pointerDown(resizer, { clientX: 318, pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 318, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '300');
+
+    fireEvent.pointerMove(window, { clientX: 358, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+
+    fireEvent.pointerUp(window, { pointerId: 3 });
+    fireEvent.pointerMove(window, { clientX: 400, pointerId: 3 });
+    expect(resizer).toHaveAttribute('aria-valuenow', '340');
+  });
+
   it('anchors a local-only onboarding checklist above the account footer', () => {
     render(
       <MemoryRouter>
