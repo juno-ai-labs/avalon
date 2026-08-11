@@ -92,6 +92,29 @@ Pausing an automation disables its Global route. Resuming it reactivates the
 same address. An archived or deleted owner leaves a disabled permanent route
 tombstone; Avalon never recycles the address.
 
+## Outbound automation results
+
+The addresses above are inbound. Separately, a personal automation may copy each
+run's result outward. Every run always lands in its own Avalon work stream — that
+is the canonical record and is not a destination the creator can turn off. On top
+of it the creator may freeze email to their own account address and one
+connector-provided personal surface, chosen once on the create screen and stored
+in `automation_delivery_targets`. Which connectors offer such a surface is the
+connector's own declaration rather than a list held by the create screen; see
+[connector architecture](CONNECTORS.md#delivering-automation-results-to-a-person).
+Slack's Agent DM is the one shipped today.
+
+Email delivery resolves the owner's account address when the automation is saved
+and stores that literal address, so a later account change cannot silently
+redirect results. Each result is sent through Resend from the notification
+sender, keyed for idempotency on the delivery target and the run's work stream,
+and the target records the work stream it last received so a workflow retry
+cannot mail the same result twice. Empty results and the "nothing qualified"
+phrasings suppressed for Slack are suppressed for email too. Non-production
+environments never send. A send failure records `last_error_json` on the target
+and raises a retryable error inside the delivery step; because the destinations
+are delivered independently, one failing channel does not hold back the other.
+
 ## Frozen v1 adjectives (128)
 
 ```text

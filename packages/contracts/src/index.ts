@@ -294,6 +294,10 @@ export const GenerateNoteNotesRequestSchema = z.object({
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
 }).strict();
 
+// Every run is always delivered to its Avalon work stream. These are the
+// additional destinations a personal automation freezes when it is saved.
+export const AutomationDeliveryTargetTypeSchema = z.enum(["slack_agent_dm", "email"]);
+
 export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
@@ -305,6 +309,17 @@ export const ConnectionSchema = z.object({
   displayName: z.string().min(1).max(180),
   grantedCapabilities: z.array(z.string()),
   status: z.enum(["healthy", "needs_reconnect", "error", "disabled"]),
+  /**
+   * Set when this connection can deliver automation results to the requesting
+   * user right now — the connector declares the surface and, where the
+   * installation is workspace-wide, that user has linked their own identity to
+   * it. Null means the connection is not a personal destination.
+   */
+  userDelivery: z.object({
+    targetType: AutomationDeliveryTargetTypeSchema,
+    label: z.string().min(1).max(80),
+    description: z.string().min(1).max(240),
+  }).nullable().default(null),
   lastSyncAt: TimestampSchema.nullable(),
   createdAt: TimestampSchema
 });
@@ -337,6 +352,11 @@ export const AutomationPluginRecommendationSchema = z.object({
   recommendedTools: z.array(z.string().min(1).max(160)).max(40).default([]),
   reason: z.string().min(1).max(800),
 });
+
+export const AutomationDeliveryTargetInputSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("slack_agent_dm"), connectionId: IdSchema }).strict(),
+  z.object({ type: z.literal("email") }).strict(),
+]);
 
 export const MemoryTableColumnTypeSchema = z.enum([
   "string",
@@ -783,9 +803,9 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   deliveryTargets: z.array(z.object({
-    type: z.literal("slack_agent_dm"),
-    connectionId: IdSchema,
-    displayName: z.string().min(1).max(180),
+    type: AutomationDeliveryTargetTypeSchema,
+    connectionId: IdSchema.nullable().default(null),
+    displayName: z.string().min(1).max(320),
     status: z.enum(["active", "needs_input", "disabled"]),
   })).default([]),
   templateUpdate: AutomationTemplateUpdateSchema.nullable().default(null),
@@ -917,13 +937,18 @@ export const CreateAutomationRequestSchema = z.object({
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   resourceIds: z.array(IdSchema).max(20).default([]),
-  deliveryTargets: z.array(z.object({
-    type: z.literal("slack_agent_dm"),
-    connectionId: IdSchema,
-  }).strict()).max(1).default([]),
+  deliveryTargets: z.array(AutomationDeliveryTargetInputSchema).max(2).default([]),
 }).superRefine((input, context) => {
   if (input.deliveryTargets.length > 0 && input.scope !== "personal") {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Slack Agent DM delivery requires a personal automation" });
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Result delivery outside Avalon requires a personal automation" });
+  }
+  const types = new Set<string>();
+  for (const target of input.deliveryTargets) {
+    if (types.has(target.type)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Each delivery destination can be chosen once" });
+      break;
+    }
+    types.add(target.type);
   }
 });
 export const CompileAutomationRequestSchema = z.object({
@@ -1287,12 +1312,31 @@ export const ConnectorActivityTriggerDescriptorSchema = z.object({
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
 });
 
+/**
+ * A connector that can hand a finished automation result to the person who
+ * owns the automation, on a surface they read as themselves — a Slack Agent DM
+ * today, a Teams chat later. Declaring this is what puts the connector in the
+ * "Deliver results" list; nothing about delivery is hard-coded per provider.
+ *
+ * `requiresPersonalIdentityLink` marks the providers whose installation is
+ * workspace-wide: the installation alone addresses no one, so the connection
+ * only becomes a destination once the requesting user has linked their own
+ * provider identity to it.
+ */
+export const ConnectorUserDeliverySchema = z.object({
+  targetType: AutomationDeliveryTargetTypeSchema,
+  label: z.string().min(1).max(80),
+  description: z.string().min(1).max(240),
+  requiresPersonalIdentityLink: z.boolean().default(false),
+});
+
 const ConnectorManifestBaseSchema = z.object({
   type: z.string().min(1),
   displayName: z.string().min(1),
   surfaces: z.array(ConnectorSurfaceSchema).min(1).default(["resource"]),
   nativeAgent: NativeAgentSurfaceSchema.optional(),
   messagingAgent: MessagingAgentSurfaceSchema.optional(),
+  userDelivery: ConnectorUserDeliverySchema.optional(),
   capabilities: z.array(ConnectorCapabilitySchema).default([]),
   supportedScopes: z.array(ScopeSchema),
   oauthRequired: z.boolean(),
@@ -1479,6 +1523,8 @@ export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
 export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
 export type AppendNoteTranscriptSegmentRequest = z.infer<typeof AppendNoteTranscriptSegmentRequestSchema>;
 export type Connection = z.infer<typeof ConnectionSchema>;
+export type AutomationDeliveryTargetType = z.infer<typeof AutomationDeliveryTargetTypeSchema>;
+export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type WorkstreamArtifact = z.infer<typeof WorkstreamArtifactSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
