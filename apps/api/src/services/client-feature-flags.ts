@@ -125,11 +125,3 @@ export async function resolveClientFeatureFlags(
     ),
   };
 }
-
-/** The Developer section's flag on its own, for a caller that wants only it. */
-export async function resolveDeveloperSettingsEnabled(
-  env: Env,
-  auth: IdentityAuthContext,
-): Promise<boolean> {
-  return (await resolveClientFeatureFlags(env, auth)).developerSettings;
-}

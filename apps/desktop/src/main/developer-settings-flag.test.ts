@@ -185,8 +185,7 @@ describe('developer settings flag controller', () => {
     expect(flag.enabled()).toBe(false);
     expect(onChange.mock.calls).toEqual([[true], [false]]);
 
-    // And it stays closed while the new account's polls fail, rather than
-    // inheriting what the previous context resolved to.
+    // And the new account's own answer is what re-opens it.
     pending[1]?.(true);
     await Promise.resolve();
     await Promise.resolve();
@@ -230,6 +229,31 @@ describe('developer settings flag controller', () => {
     pending[1]?.(false);
     await Promise.resolve();
     expect(flag.enabled()).toBe(false);
+  });
+
+  it('reports a poll that hangs, not just one that fails', async () => {
+    vi.useFakeTimers();
+    const { read, pending } = deferredReads();
+    const readSpy = vi.fn(read);
+    const { controller: flag, onAvailabilityChange } = controller(readSpy);
+
+    flag.observeSession('user-1@https://api.example.com');
+    await vi.advanceTimersByTimeAsync(0);
+    pending[0]?.(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flag.enabled()).toBe(true);
+
+    // Every poll from here hangs and never settles, so no rejection is ever
+    // raised. Abandoning is the only evidence there is, and it has to be
+    // announced — an hour of unconfirmed polls with the section still open is
+    // exactly the silence this callback exists to break.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+
+    expect(readSpy.mock.calls.length).toBeGreaterThan(50);
+    expect(flag.enabled()).toBe(true);
+    expect(onAvailabilityChange).toHaveBeenCalledWith(false, expect.any(Error));
+    // Once for the outage, not once per abandoned tick.
+    expect(onAvailabilityChange).toHaveBeenCalledTimes(1);
   });
 
   it('abandons a request that outlives a poll interval rather than waiting on it forever', async () => {

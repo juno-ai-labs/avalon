@@ -107,11 +107,17 @@ export class DeveloperSettingsFlagController {
    * three answers to the same question are worth one round trip.
    */
   async refresh(): Promise<boolean> {
-    // A request that has outlived a whole poll interval is treated as lost.
-    // The one real `read` bounds itself, but a shared promise that never
-    // settles would otherwise wedge every later tick behind it for the life of
-    // the process, which is too quiet a way for a flag to stop working.
-    if (this.inFlight && Date.now() - this.inFlightSince >= this.abandonAfterMs()) this.invalidate();
+    // A request that has outlived a whole poll interval is treated as lost, so
+    // a promise that never settles cannot wedge every later tick behind it for
+    // the life of the process. Abandoning is also the only evidence that will
+    // ever arrive about such a request: it produces no rejection, and by the
+    // time it might, it is a generation behind and the handler below ignores
+    // it. Announcing here is what keeps a hung poll from being the silent
+    // "quiet, working one" this callback exists to rule out.
+    if (this.inFlight && Date.now() - this.inFlightSince >= this.abandonAfterMs()) {
+      this.announceReachable(false, new Error('The developer settings flag request never settled'));
+      this.invalidate();
+    }
     if (this.inFlight) return this.inFlight;
     const generation = this.generation;
     const current = (): boolean => this.serverEnabled;
