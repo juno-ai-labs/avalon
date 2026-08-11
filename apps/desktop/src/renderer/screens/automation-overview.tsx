@@ -24,7 +24,7 @@ import {
   Users,
   Zap,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatDuration, formatRelative } from '../lib/format';
@@ -118,9 +118,19 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const [instructions, setInstructions] = useState('');
   const [editSourcePluginIds, setEditSourcePluginIds] = useState<Record<string, string>>({});
   const [adoptSourcePluginIds, setAdoptSourcePluginIds] = useState<Record<string, string>>({});
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [automationEmailCopyState, setAutomationEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => () => closeRail(), [closeRail, id]);
+
+  // Evicting the deleted automation's detail query has to happen after this
+  // screen is gone. Removing a query that still has a mounted observer makes
+  // React Query rebuild and refetch it on the next render, which would put the
+  // automation straight back in the cache — the opposite of the intent.
+  const deletedRef = useRef(false);
+  useEffect(() => () => {
+    if (deletedRef.current) queryClient.removeQueries({ queryKey: ['automation', id] });
+  }, [id, queryClient]);
 
   useEffect(() => {
     setAutomationEmailCopyState('idle');
@@ -198,6 +208,27 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const share = useMutation({
     mutationFn: () => api!.shareAutomation(id),
   });
+  const remove = useMutation({
+    mutationFn: () => api!.deleteAutomation(id),
+    onSuccess: async () => {
+      // Deleting closes any run that was opened ahead of its planned time, so
+      // the work-stream list is stale too, not just the automation list. The
+      // sidebar's copy of this action invalidates both for the same reason.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['automations'] }),
+        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
+      ]);
+      setDeleteOpen(false);
+      // Replace rather than push: this screen is showing the automation that
+      // was just deleted, so leaving its route in history means Back lands on a
+      // resource that is gone. The detail query has to go too — its 10s
+      // staleTime would otherwise let a remount render the deleted automation
+      // from cache without ever asking the server — but that eviction waits for
+      // unmount, below, rather than happening here.
+      deletedRef.current = true;
+      void navigate('/workstreams/new', { replace: true });
+    },
+  });
   const adoptUpdate = useMutation({
     mutationFn: (versionId: string) => api!.adoptAutomationUpdate(id, versionId, adoptSourcePluginIds),
     onSuccess: (updated) => {
@@ -223,6 +254,12 @@ export function AutomationOverviewScreen(): React.JSX.Element {
 
   const detail = automation.data;
   const automationEmailAddress = detail.emailAddress;
+  // A dialog reopened after a failed delete must not greet the user with the
+  // last attempt's error before they have tried anything.
+  const openDelete = (): void => {
+    remove.reset();
+    setDeleteOpen(true);
+  };
   const filteredRuns = detail.runs.filter((run) => filter === 'all' || run.triggerType === filter);
   const copyAutomationEmail = async (): Promise<void> => {
     if (!automationEmailAddress) return;
@@ -261,7 +298,9 @@ export function AutomationOverviewScreen(): React.JSX.Element {
             <DropdownMenu.Trigger asChild><IconButton label="More automation actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-                <DropdownMenu.Item className="menu-item" disabled><Trash2 size={14} /> Delete automation</DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item menu-item-danger" onSelect={openDelete}>
+                  <Trash2 size={14} /> Delete automation
+                </DropdownMenu.Item>
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -474,6 +513,29 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       >
         {share.data ? <div className="success-message"><ShieldCheck size={17} /><span><strong>Template published</strong><small>Coworkers can now find it inside New automation.</small></span></div> : <p className="modal-copy">Credentials and personal overrides are never copied into a template.</p>}
         {share.error && <InlineError>{share.error.message}</InlineError>}
+      </Modal>
+
+      <Modal
+        footer={
+          <>
+            <Button disabled={remove.isPending} onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button className="button-danger" disabled={remove.isPending} onClick={() => remove.mutate()}>
+              {remove.isPending ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />} Delete
+            </Button>
+          </>
+        }
+        onOpenChange={(open) => {
+          if (remove.isPending) return;
+          setDeleteOpen(open);
+        }}
+        open={deleteOpen}
+        title="Delete automation"
+      >
+        <p className="modal-copy">
+          <strong>{detail.name}</strong> stops running and leaves the sidebar for good. Its past
+          runs and the work streams it created stay where they are.
+        </p>
+        {remove.error && <InlineError>{remove.error.message}</InlineError>}
       </Modal>
     </div>
   );
