@@ -46,6 +46,8 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants.
 
+The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Avalon renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
+
 The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone resolves from the personal user or workspace according to scope; an explicit trigger timezone wins. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
 
 ## Connection plugins and authority narrowing
@@ -234,6 +236,58 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 This log starts here. The reasoning behind everything above it predates the log
 and was not recorded; do not read the absence of an entry as an absence of a
 reason for any of it.
+
+### 2026-08-11 — The automation architect narrates its research
+
+**What changed:** The compiler policy gained a `# Narration` section requiring
+assistant text on research turns — a stated plan alongside the first tool calls,
+then a progress update every three or four calls — and the ban on assistant text
+narrowed from every tool-call turn to the submission turn alone.
+`compileAutomation` now forwards Bind's `stream_delta` frames to its host as
+`delta` events, and emits `started` once per compile rather than once per model
+turn. The automation composer follows the transcript to the bottom while a
+compile streams.
+
+**Why:** Creating an automation was silent. The architect researches for a
+minute or more, and the only thing the transcript showed for all of it was a
+column of near-identical tool rows — "Reviewed GitHub", "Reviewed GitHub" —
+under a spinner counting seconds. Nothing said what Avalon had understood the
+request to be, what it was looking for, or that it had changed course when a
+connector turned out to be missing, so a compile that was working looked
+indistinguishable from one that was stuck.
+
+Two separate things produced that silence, and fixing either alone changes
+nothing. The prompt said "Tool-call turns must contain no assistant text", which
+suppressed narration at the source; and `compileAutomation` handled
+`stream_started`, `tool_*`, and inference events but dropped `stream_delta`, so
+any text the model did write was discarded before it reached the route. The rest
+of the path was already built and unused: `AutomationDraftStreamEventSchema` has
+carried a `delta` variant, the desktop client has parsed it, and the composer
+has rendered a streaming bubble from it, all with tests. Nothing upstream was
+muting the model — the provider payload sends `tool_choice: "auto"` with no
+token cap, and the deployed `OPENROUTER_AUTOMATION_MODEL` in both regions is a
+model that interleaves text with tool calls.
+
+The original ban was not wrong about the case it was written for. Prose on the
+submission turn either repeats or contradicts the draft summary the composer
+renders from the saved draft, and a question asked in text instead of
+`core_request_elicitation` produces no answerable block. That is why the rule was
+narrowed to that turn rather than deleted.
+
+**Considered and rejected:** Synthesizing progress lines host-side from tool
+events, which needs no model text at all. The rows already say which tool ran;
+what was missing is the reasoning between them — which provider is being ruled
+out and why the plan changed — and only the model has that. A host template
+would have restated the same rows in longer words.
+
+**Consequences:** Narration is transient. It is not persisted, and the composer
+replaces it with the settled assistant message when the draft arrives, so it
+gives progress rather than a record — a future change wanting a durable
+transcript here has to add one. Narration also spends output tokens on every
+research turn, which lengthens a compile against the harness's 180-second wall
+clock; a compile that already ran close to that ceiling is likelier to reach it.
+`started` now means "this compile began streaming", not "a turn began": any host
+using it to clear per-turn state will hold text across turns instead.
 
 ### 2026-08-11 — A connector row finds its verb anywhere in the tool name
 

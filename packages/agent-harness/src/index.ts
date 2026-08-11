@@ -1058,6 +1058,15 @@ export class AutomationCompilerError extends Error {
 export type AutomationCompilerStreamEvent =
   | { type: "started" }
   | {
+      /**
+       * A fragment of the architect's narration. `reset: true` replaces the
+       * composer's whole narration buffer with `delta` rather than appending.
+       */
+      type: "delta";
+      delta: string;
+      reset: boolean;
+    }
+  | {
       type: "thinking";
       inferenceRequestId: string;
       status: "started" | "completed";
@@ -1302,6 +1311,15 @@ export async function compileAutomation(input: {
   let submissionReminderSent = false;
   let elicitationReminderSent = false;
   let modelTimeMs = 0;
+  /**
+   * The composer shows one narration bubble for the whole compile, but Bind's
+   * stream resets are scoped to a turn: a route restart replays only the turn
+   * it abandoned. Remembering what earlier turns settled lets a reset restore
+   * them instead of erasing the plan the person has already read, and lets the
+   * `started` frame — which clears the bubble — be sent once rather than once
+   * per turn.
+   */
+  const narration = { started: false, turnId: "", settled: "", current: "" };
   const toolStartedAt = new Map<string, number>();
   const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
@@ -1529,7 +1547,26 @@ export async function compileAutomation(input: {
     corePlugins,
     onEvent: async (event) => {
       if (event.type === "stream_started") {
+        if (narration.started) return;
+        narration.started = true;
         await input.onStreamEvent?.({ type: "started" });
+      } else if (event.type === "stream_delta") {
+        if (event.turnId !== narration.turnId) {
+          narration.settled = [narration.settled, narration.current].filter(Boolean).join("\n\n");
+          narration.turnId = event.turnId;
+          narration.current = "";
+        }
+        if (event.reset) {
+          narration.current = "";
+          await input.onStreamEvent?.({ type: "delta", delta: narration.settled, reset: true });
+          return;
+        }
+        if (!event.delta) return;
+        // A new turn continues the same bubble, so its first fragment carries
+        // the paragraph break that separates it from the previous update.
+        const separator = narration.settled && !narration.current ? "\n\n" : "";
+        narration.current += event.delta;
+        await input.onStreamEvent?.({ type: "delta", delta: `${separator}${event.delta}`, reset: false });
       } else if (event.type === "tool_started") {
         const plugin = automationOwningPlugin(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
