@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -66,6 +66,13 @@ interface AutomationCompilePayload {
   attachmentLocalIds: string[];
   attachments: MessageAttachment[];
   message: string;
+  /**
+   * The draft this turn was sent from, or null when it opens a new one. A turn
+   * outlives the screen state it was sent from — the builder stays mounted
+   * across a switch to another draft — so every write it makes is checked
+   * against this rather than against whatever is on screen when it lands.
+   */
+  startedOnDraftId: string | null;
   templateId?: string;
   turnId: string;
   elicitation?: { id: string; answer: ElicitationAnswer };
@@ -326,6 +333,23 @@ function automationQuestionMessage(
   });
 }
 
+/** A saved conversation as the builder renders it. Every turn comes back as
+ * plain text except the compiler's last one, which is re-rendered from the
+ * draft so a choice the person walked away from is still a choice they can
+ * make, rather than a sentence describing one. */
+function resumedTurns(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  draft: AutomationDraftResponse,
+): Message[] {
+  const lastIndex = messages.length - 1;
+  return messages.map((message, index) => {
+    if (index === lastIndex && message.role === 'assistant' && draft.question) {
+      return automationQuestionMessage(draft.assistantMessage ?? message.content, draft.question);
+    }
+    return automationTextMessage(`resumed-${index}`, message.role === 'user' ? 'human' : 'agent', message.content);
+  });
+}
+
 function DeliveryChoice({
   checked,
   description,
@@ -481,11 +505,43 @@ function DraftSummary({
 export function NewAutomationScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api, session } = useAppSession();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const resumeDraftId = searchParams.get('draft');
+  // This screen also writes the draft into the URL once a turn compiles, and
+  // that write must not read back as "go and load this draft" — the
+  // conversation on screen is already the one it names, and loading it would
+  // replace it with the turn before. What separates the two is which *screen*
+  // wrote the URL, so the mark is held here and not in history state: a history
+  // entry outlives this component, and one that stayed marked would leave a
+  // remount — a back gesture, a restored window — with the resume permanently
+  // switched off, showing an empty builder for a draft that has a conversation.
+  const selfNamedDraftId = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const draftKey = newAutomationDraftKey(workspace.id);
+  // The conversation this screen's composer belongs to. Keeping the cache per
+  // draft is what stops an unsent message, and the attachments staged with it,
+  // following the screen into somebody else's conversation — including the
+  // blank one **New automation** opens, which shares the launcher's key.
+  //
+  // It moves on a settled turn rather than on the draft in the URL, because
+  // this screen's own URL write reaches the router several renders late and a
+  // key that followed it would re-key the composer mid-turn. `useDraftText`
+  // empties the composer whenever its key changes, so whatever was typed while
+  // the turn was compiling is carried over by hand rather than dropped.
+  const [composerDraftId, setComposerDraftId] = useState<string | null>(resumeDraftId);
+  const carriedInput = useRef<string | null>(null);
+  const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
   const { text: input, setText: setInput } = useDraftText(draftKey);
+  useEffect(() => {
+    const carried = carriedInput.current;
+    carriedInput.current = null;
+    // Runs after the hook's own key effect, which is declared above this one,
+    // so this is what the composer is left holding. Writing it back also marks
+    // the draft edited, so the cache read still in flight stands down rather
+    // than overwriting it.
+    if (carried) setInput(carried);
+  }, [composerDraftId, setInput]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
@@ -517,6 +573,71 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     enabled: Boolean(api),
     staleTime: 10_000,
   });
+
+  // Opened from a draft in the sidebar. The conversation is fetched once and
+  // applied once: after that the screen owns it again, so continuing the draft
+  // is not undone by a refetch of the turn it was resumed at.
+  const [resumedDraftId, setResumedDraftId] = useState<string | null>(null);
+  const resumedDraft = useQuery({
+    queryKey: ['automation-draft', resumeDraftId],
+    queryFn: ({ signal }) => api!.resumeAutomationDraft(resumeDraftId!, signal),
+    enabled: Boolean(api && resumeDraftId)
+      && resumeDraftId !== selfNamedDraftId.current
+      && resumedDraftId !== resumeDraftId,
+    staleTime: Infinity,
+    retry: false,
+  });
+  // Which draft the address bar named last. The transition is what matters, not
+  // the value: a screen that read "no draft" as "start over" on every render
+  // would wipe a conversation as soon as it began, before it had named itself.
+  const namedDraftId = useRef(resumeDraftId);
+  useEffect(() => {
+    const previous = namedDraftId.current;
+    namedDraftId.current = resumeDraftId;
+    // Everything below keys off the address bar *changing*, never off what it
+    // currently says. This screen's own write reaches the router several
+    // renders after the state beside it, so for a render or two the bar still
+    // names the draft before last — and reading that as a navigation is what
+    // wiped a conversation, and then re-keyed the composer under the typing
+    // hand, in two earlier attempts at this.
+    const movedToAnotherDraft = resumeDraftId !== previous;
+    // The mark only ever covers the URL this screen wrote, and it is stale once
+    // the reader has moved somewhere else. Left set, it would refuse to reopen
+    // that very draft later in the same screen.
+    if (movedToAnotherDraft && resumeDraftId !== null && resumeDraftId !== selfNamedDraftId.current) {
+      selfNamedDraftId.current = null;
+    }
+    if (resumeDraftId === null) {
+      // New automation was chosen while a draft was on screen. The route did
+      // not change, so nothing else clears it.
+      if (previous !== null) {
+        selfNamedDraftId.current = null;
+        setResumedDraftId(null);
+        setComposerDraftId(null);
+        setDraft(null);
+        setTurns([]);
+      }
+      return;
+    }
+    // The moment the reader picks a different draft, the conversation on screen
+    // stops being the one this screen is showing — before its replacement has
+    // loaded, and whether or not that load ever succeeds. Leaving the old one
+    // up would let a turn be sent against the draft the sidebar says was
+    // closed, and a failed load would leave it there for good.
+    if (movedToAnotherDraft
+      && resumeDraftId !== selfNamedDraftId.current
+      && resumeDraftId !== resumedDraftId
+      && draft !== null) {
+      setDraft(null);
+      setTurns([]);
+    }
+    const resumed = resumedDraft.data;
+    if (!resumed || resumedDraftId === resumeDraftId) return;
+    setResumedDraftId(resumeDraftId);
+    setComposerDraftId(resumeDraftId);
+    setDraft(resumed.draft);
+    setTurns(resumedTurns(resumed.messages, resumed.draft));
+  }, [draft, resumeDraftId, resumedDraft.data, resumedDraftId]);
   const visibleMentionConnections = mentionQuery === null
     ? []
     : (connections.data ?? [])
@@ -617,14 +738,29 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     if (!stillAvailable || scope !== 'you') setDeliveryConnectionId('');
   }, [connections.data, scope, deliveryConnectionId]);
 
+  // The conversation on screen right now, read from a box rather than from a
+  // closure: a turn's callbacks are created when it is sent and fire minutes
+  // later, by which time the render they closed over may describe a draft the
+  // reader has already left.
+  const openDraftId = useRef<string | null>(null);
+  openDraftId.current = draft?.draftId ?? null;
+  const showsTurn = (payload: AutomationCompilePayload): boolean =>
+    payload.startedOnDraftId === openDraftId.current;
+
   const compile = useMutation({
     mutationFn: (payload: AutomationCompilePayload) =>
       api!.compileAutomation({
         message: payload.message,
-        ...(draft?.draftId ? { draftId: draft.draftId } : {}),
+        ...(payload.startedOnDraftId ? { draftId: payload.startedOnDraftId } : {}),
         ...(payload.templateId ? { templateId: payload.templateId } : {}),
         ...(payload.attachmentIds.length > 0 ? { attachmentIds: payload.attachmentIds } : {}),
       }, (event) => {
+        // A turn belongs to the conversation it was sent from. Picking another
+        // draft out of the sidebar leaves this one in flight against a screen
+        // that has moved on, and every write below — the streamed thinking and
+        // tool rows as much as the final answer — would otherwise land in
+        // somebody else's transcript.
+        if (!showsTurn(payload)) return;
         if (event.type === 'started') {
           setStreamingAssistant({ hasText: false, text: '' });
           return;
@@ -700,8 +836,31 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     },
     onSuccess: (response, payload) => {
       attachmentDraft.consume(payload.attachmentLocalIds);
+      // The saved conversation moved on whatever is on screen now, so the
+      // cached copy is stale either way. Dropping it is what makes reopening
+      // this draft later show the turn it is actually at.
+      queryClient.removeQueries({ queryKey: ['automation-draft', response.draftId] });
+      void queryClient.invalidateQueries({ queryKey: ['automations'] });
+      // The screen moved to another draft while this turn was compiling. The
+      // turn still landed on the server — it is in that draft's saved
+      // conversation — but nothing about it belongs on screen, least of all
+      // the URL write below, which would drag the reader back to it.
+      if (!showsTurn(payload)) return;
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
+      // The turn wrote a draft automation, which the sidebar lists. Naming it
+      // in the URL is what makes that row the active one and what lets this
+      // screen be reopened on the conversation it is showing. The composer's
+      // cache moves with it, carrying anything typed while the turn compiled.
+      if (resumeDraftId !== response.draftId) {
+        selfNamedDraftId.current = response.draftId;
+        setResumedDraftId(response.draftId);
+        setSearchParams({ draft: response.draftId }, { replace: true });
+      }
+      if (composerDraftId !== response.draftId) {
+        carriedInput.current = input;
+        setComposerDraftId(response.draftId);
+      }
       const responseMessage = response.question
         ? automationQuestionMessage(response.assistantMessage, response.question)
         : response.assistantMessage
@@ -714,6 +873,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       });
     },
     onError: (_error, payload) => {
+      if (!showsTurn(payload)) return;
       setStreamingAssistant({ hasText: false, text: '' });
       setTurns((current) => settleThought(current, `${payload.turnId}-thought`));
     },
@@ -755,6 +915,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     const readyAttachments = attachmentDraft.ready;
     const trimmed = message.trim();
     if ((!trimmed && readyAttachments.length === 0) || attachmentDraft.uploading || compile.isPending) return;
+    // The address bar names a draft this screen has not got hold of — it is
+    // still loading, or the load failed. A turn sent now carries no draft id
+    // and would open a *second* draft while the sidebar still highlights the
+    // first.
+    if (resumeDraftId !== null && draft === null) return;
     const createdAt = new Date().toISOString();
     await compile.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
@@ -768,6 +933,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         createdAt,
       })),
       message: trimmed,
+      startedOnDraftId: draft?.draftId ?? null,
       turnId,
       ...(elicitation ? { elicitation } : {}),
     });
@@ -843,6 +1009,24 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 >
                   {subscribe.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Use template
                 </Button>
+              </section>
+            ) : resumeDraftId !== null && !draft && resumedDraft.isError ? (
+              // The draft named in the address bar is the one the sidebar is
+              // highlighting, so the intro's blank slate would be a lie here —
+              // and a message sent against it starts a second draft while the
+              // first is still on screen in the sidebar.
+              <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
+                <AvalonMark />
+                <p className="eyebrow">Draft automation</p>
+                <h1 id="automation-builder-heading">This draft could not be opened</h1>
+                <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Avalon could not load this conversation.'}</p>
+                <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>Try again</Button>
+              </section>
+            ) : resumeDraftId !== null && !draft ? (
+              <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
+                <AvalonMark />
+                <p className="eyebrow">Draft automation</p>
+                <h1 id="automation-builder-heading">Opening this draft…</h1>
               </section>
             ) : turns.length === 0 && !draft ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
