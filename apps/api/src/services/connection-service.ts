@@ -2310,20 +2310,7 @@ function googleConnectionDisplayName(capabilities: string[], accountDisplayName:
 }
 
 function googleProviderScopesForCapabilities(capabilities: string[]): string[] {
-  const scopes = new Set(capabilities.flatMap((capability) => capabilityScopes[capability] ?? []));
-  if (scopes.has("https://www.googleapis.com/auth/gmail.compose")) {
-    scopes.delete("https://www.googleapis.com/auth/gmail.send");
-  }
-  if (scopes.has("https://www.googleapis.com/auth/calendar.events")) {
-    scopes.delete("https://www.googleapis.com/auth/calendar.events.readonly");
-  }
-  if (scopes.has("https://www.googleapis.com/auth/documents")) {
-    scopes.delete("https://www.googleapis.com/auth/documents.readonly");
-  }
-  if (scopes.has("https://www.googleapis.com/auth/spreadsheets")) {
-    scopes.delete("https://www.googleapis.com/auth/spreadsheets.readonly");
-  }
-  return [...scopes];
+  return [...new Set(capabilities.flatMap((capability) => capabilityScopes[capability] ?? []))];
 }
 
 function assertGoogleCapabilitiesGranted(
@@ -2348,24 +2335,19 @@ function assertGoogleCapabilitiesGranted(
   const capabilityGranted: Record<string, boolean> = {
     "gmail.read": has(
       GoogleCapabilityScopes.gmailRead[0],
-      "https://www.googleapis.com/auth/gmail.modify",
       allAccess,
     ),
     "gmail.draft": has(
       GoogleCapabilityScopes.gmailDraft[0],
-      "https://www.googleapis.com/auth/gmail.modify",
       allAccess,
     ),
     "gmail.send": has(
       GoogleCapabilityScopes.gmailSend[0],
-      GoogleCapabilityScopes.gmailDraft[0],
-      "https://www.googleapis.com/auth/gmail.modify",
       allAccess,
     ),
     "calendar.read": has(
       GoogleCapabilityScopes.calendarRead[0],
       GoogleCapabilityScopes.calendarWrite[0],
-      "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/calendar",
     ),
     "calendar.write": has(
@@ -2379,23 +2361,19 @@ function assertGoogleCapabilitiesGranted(
     "docs.read": has(
       GoogleCapabilityScopes.docsRead[0],
       GoogleCapabilityScopes.docsWrite[0],
-      "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/drive",
     ),
     "docs.write": has(
       GoogleCapabilityScopes.docsWrite[0],
-      "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/drive",
     ),
     "sheets.read": has(
       GoogleCapabilityScopes.sheetsRead[0],
       GoogleCapabilityScopes.sheetsWrite[0],
-      "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/drive",
     ),
     "sheets.write": has(
       GoogleCapabilityScopes.sheetsWrite[0],
-      "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/drive",
     ),
   };
