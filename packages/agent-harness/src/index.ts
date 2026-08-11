@@ -1742,7 +1742,18 @@ function executeAutomationCreatorDiscoveryTool(
           idempotency: tool.idempotency ?? "safe",
           inputSchema: tool.inputSchema,
         })),
-        activityTriggers: plugin.activityTriggers,
+        // Projected rather than returned whole, like `plugins_search` above.
+        // A descriptor also carries `digestible`, which answers a question
+        // about scheduled digests and nothing about whether an automation may
+        // trigger on the event — and it reads `false` on two thirds of GitHub's
+        // triggers, which a model building an automation would reasonably take
+        // as "not available to me".
+        activityTriggers: plugin.activityTriggers.map((trigger) => ({
+          eventType: trigger.eventType,
+          label: trigger.label,
+          description: trigger.description,
+          filterFields: trigger.filterFields,
+        })),
       },
     } : { error: "plugin_not_found", pluginId };
   }
@@ -2401,6 +2412,7 @@ export async function canonicalToolInputHash(value: unknown): Promise<string> {
 
 export const __testing = {
   canonicalJson,
+  executeAutomationCreatorDiscoveryTool,
   addressingJsonSchema,
   automationJsonSchema: automationDraftSubmissionJsonSchema,
   normalizeAutomationDraft
