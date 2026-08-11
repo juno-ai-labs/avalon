@@ -202,9 +202,23 @@ export class NoteService {
     const at = nowIso();
     const result = await this.env.DB.prepare(
       `UPDATE notes SET archived_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL
+         AND recording_status != 'recording'`,
     ).bind(at, at, id, this.auth.workspaceId, this.auth.userId).run();
-    if (!result.meta.changes) throw new ApiError(404, "note_not_found", "Note not found");
+    if (result.meta.changes) return;
+    // The write is the authorization, so nothing was read before it. A miss is
+    // usually a note this user cannot archive, but it is also how an active
+    // recording refuses, and those two owe the caller different answers. This
+    // read throws the 404 for every other cause; reaching past it means the row
+    // is present, owned, and unarchived, so recording is what stopped the write.
+    // Archiving underneath a live meeting window would 404 its next segment
+    // save while capture kept running, losing the rest of the transcript.
+    await this.requireNote(id, true);
+    throw new ApiError(
+      409,
+      "note_recording",
+      "This note is still recording. End the recording before archiving it.",
+    );
   }
 
   async appendSegment(id: string, input: AppendNoteTranscriptSegmentRequest): Promise<NoteTranscriptSegment> {
