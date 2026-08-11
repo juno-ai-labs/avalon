@@ -2593,28 +2593,33 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           },
         );
 
-        const activationHints: string[] = [];
-        for (const plugin of childPlugins.filter((candidate) => candidate.preload)) {
-          await assertChildOwned();
-          const frozen = childFrozenConnections.get(plugin.canonicalId);
-          const authorized = frozen
-            ? await reauthorizeFrozenPlugin(
-                options.env,
-                childInput,
-                frozen,
-                childSignal,
-                assertChildOwned,
-              )
-            : isLoadableBuiltinHarnessPlugin(plugin.canonicalId, childHarnessTools);
-          if (!authorized) continue;
-          await assertChildOwned();
-          await persistRunPluginActivation(options.env.DB, admission.childInput, childLiveness.lease, {
-            pluginId: plugin.canonicalId,
-            toolSurfaceHash: childPluginSurfaceHashes.get(plugin.canonicalId)!,
-          });
-          await assertChildOwned();
-          activationHints.push(plugin.canonicalId);
-        }
+        // Shared with the root run's preload rather than repeated here: a
+        // second copy of "reauthorize, then persist" is what let a verdict
+        // change slip past one of them.
+        const activationHints = await persistInitialPluginActivations(
+          childPlugins.filter((candidate) => candidate.preload).map((plugin) => plugin.canonicalId),
+          async (pluginId) => {
+            await assertChildOwned();
+            const frozen = childFrozenConnections.get(pluginId);
+            return frozen
+              ? reauthorizeFrozenPlugin(
+                  options.env,
+                  childInput,
+                  frozen,
+                  childSignal,
+                  assertChildOwned,
+                )
+              : builtinPluginAuthorization(pluginId, childHarnessTools);
+          },
+          async (pluginId) => {
+            await assertChildOwned();
+            await persistRunPluginActivation(options.env.DB, admission.childInput, childLiveness.lease, {
+              pluginId,
+              toolSurfaceHash: childPluginSurfaceHashes.get(pluginId)!,
+            });
+            await assertChildOwned();
+          },
+        );
 
         let childText = "";
         const childModelRouting = await resolveAgentModelRouting(options.env, "inline_child", {

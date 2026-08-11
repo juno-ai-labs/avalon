@@ -1013,7 +1013,12 @@ export class ConnectionService {
     try {
       result = await withAuthorizedConnection(
         this.env,
-        { connection: context, adapter, signal: AbortSignal.timeout(10_000) },
+        {
+          connection: context,
+          adapter,
+          signal: AbortSignal.timeout(10_000),
+          connectionStatus: String(connection.status),
+        },
         (authorized) => adapter.healthCheck(authorized),
       );
     } catch (error) {
@@ -1112,7 +1117,12 @@ export class ConnectionService {
         const signal = AbortSignal.timeout(15_000);
         await withAuthorizedConnection(
           this.env,
-          { connection: await this.context(connection), adapter, signal },
+          {
+            connection: await this.context(connection),
+            adapter,
+            signal,
+            connectionStatus: String(connection.status),
+          },
           (authorized) => adapter.revoke!(authorized, signal),
         );
         remoteRevocation = "succeeded";
