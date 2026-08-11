@@ -1744,7 +1744,7 @@ pre {
    `.plugin-activity.tool-started .tool-summary strong`; change them together and
    read the constraint at `@keyframes plugin-activity-shimmer` first. */
 .agent-work-timing-active .agent-work-timing-label {
-  animation: plugin-activity-shimmer 2.4s ease-in-out infinite;
+  animation: plugin-activity-shimmer 1.8s ease-in-out infinite;
   background: linear-gradient(100deg, #77766f 27%, #d5d4cf 45%, #8c8b84 55%, #77766f 73%);
   background-clip: text;
   background-size: 400% 100%;
@@ -2881,7 +2881,7 @@ pre {
    `.agent-work-timing-active .agent-work-timing-label`; change them together and
    read the constraint at `@keyframes plugin-activity-shimmer` below first. */
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity.tool-started .tool-summary strong {
-  animation: plugin-activity-shimmer 2.4s ease-in-out infinite;
+  animation: plugin-activity-shimmer 1.8s ease-in-out infinite;
   background: linear-gradient(100deg, #77766f 27%, #d5d4cf 45%, #8c8b84 55%, #77766f 73%);
   background-clip: text;
   background-size: 400% 100%;
@@ -2901,7 +2901,13 @@ pre {
    top of this file cuts the animation to one 0.001ms iteration, and with
    fill-mode left at `none` the element settles on its base `background-position`
    of 0%. Keeping the band clear of the text there is what makes that state flat
-   base colour instead of a permanently half-lit label. */
+   base colour instead of a permanently half-lit label.
+
+   The runway costs visible time: the band spends most of the travel clear of the
+   text, so the highlight is only on the label for about a fifth of each cycle.
+   The 1.8s duration is set against that, bringing the sweep round often enough
+   that the gap reads as rhythm. The percentages are duration-independent — the
+   constraint above holds at any duration — so retiming is safe to adjust here. */
 @keyframes plugin-activity-shimmer {
   0%, 18% { background-position: 100% 0; }
   68%, 100% { background-position: 0% 0; }
