@@ -277,6 +277,43 @@ function useNamingSkeleton(workstream: WorkstreamDetail): boolean {
   return naming && !expired;
 }
 
+const RENAME_HINT = 'Double-click to rename';
+
+/**
+ * Whether `node` is showing an ellipsis in place of text it could not fit.
+ *
+ * The title only truncates in a header genuinely too narrow to hold it, which
+ * makes the tooltip the one way left to read the whole name — and the button
+ * spends that tooltip on the rename hint. Knowing when the name is hidden is
+ * what lets it carry both.
+ *
+ * Re-measuring is driven by the element's own size rather than the window's:
+ * the sidebar and the right rail both resize the header without the window
+ * moving. `title` is a dependency because a longer name can overflow a box that
+ * never changed size, in which case nothing else here would fire.
+ */
+function useTextClipped(node: HTMLElement | null, title: string): boolean {
+  const [clipped, setClipped] = useState(false);
+
+  useEffect(() => {
+    if (!node) {
+      setClipped(false);
+      return undefined;
+    }
+    // Both measurements are integers taken from a box that is usually
+    // fractional — `clientWidth` rounds, `scrollWidth` rounds up — so an
+    // element with room to spare can still report a pixel of overflow. Only
+    // more than that is text the reader cannot see.
+    const measure = (): void => setClipped(node.scrollWidth - node.clientWidth > 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node, title]);
+
+  return clipped;
+}
+
 export function WorkstreamHeader({
   workstream,
   socketState,
@@ -334,6 +371,17 @@ export function WorkstreamHeader({
     returnFocusToTitle.current = false;
     titleButton.current?.focus();
   }, [renameDraft]);
+  // The measurement needs the same element, but as state rather than a ref: the
+  // heading is swapped out for the editor and for the naming skeleton, and a
+  // mutable ref changing does not re-run an effect, so the button coming back
+  // would otherwise go unmeasured. The ref above stays because focus is set
+  // during an effect, where reading the current node is the point.
+  const [titleNode, setTitleNode] = useState<HTMLButtonElement | null>(null);
+  const attachTitleButton = useCallback((node: HTMLButtonElement | null) => {
+    titleButton.current = node;
+    setTitleNode(node);
+  }, []);
+  const titleClipped = useTextClipped(titleNode, workstream.title);
   const startRename = (): void => {
     setRenameDraft(workstream.title);
     setRenameError(null);
@@ -426,8 +474,13 @@ export function WorkstreamHeader({
                       startRename();
                     }
                   }}
-                  ref={titleButton}
-                  title="Double-click to rename"
+                  ref={attachTitleButton}
+                  // A clipped title is unreadable anywhere else on the screen,
+                  // so the tooltip leads with the name and keeps the hint under
+                  // it. Screen readers are unaffected either way: the button's
+                  // accessible name comes from its text, which is complete
+                  // whether or not the box can show all of it.
+                  title={titleClipped ? `${workstream.title}\n${RENAME_HINT}` : RENAME_HINT}
                   type="button"
                 >
                   {workstream.title}

@@ -49,6 +49,24 @@ const headerWorkstream: WorkstreamDetail = {
   automationRuns: [],
 };
 
+/**
+ * jsdom performs no layout, so every element reports a width of zero and a
+ * clipped title cannot be produced — only described. The properties are defined
+ * on the prototype because the element under measurement is created by the
+ * component; `restore` puts jsdom's own zero-width getters back, which
+ * `restoreMocks` cannot do for a plain `defineProperty`.
+ */
+function stubElementWidths(widths: { clientWidth: number; scrollWidth: number }): { restore: () => void } {
+  for (const [name, value] of Object.entries(widths)) {
+    Object.defineProperty(HTMLElement.prototype, name, { configurable: true, value });
+  }
+  return {
+    restore: (): void => {
+      for (const name of Object.keys(widths)) Reflect.deleteProperty(HTMLElement.prototype, name);
+    },
+  };
+}
+
 function renderWorkstreamHeader(
   workstream = headerWorkstream,
   overrides: {
@@ -367,6 +385,51 @@ describe('WorkstreamHeader inline rename', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: 'Daily product brief' }), { key: 'F2' });
 
     expect(screen.getByRole('textbox', { name: 'Work stream name' })).toBeInTheDocument();
+  });
+
+  it('keeps the tooltip on the rename hint while the whole name is on screen', () => {
+    renderWorkstreamHeader();
+
+    // jsdom reports a zero width for everything, which reads as a title that
+    // fits — the case where the hint is the only thing worth saying.
+    expect(screen.getByRole('button', { name: 'Daily product brief' }))
+      .toHaveAttribute('title', 'Double-click to rename');
+  });
+
+  it('leads the tooltip with the name once the header is too narrow to show it', () => {
+    const widths = stubElementWidths({ clientWidth: 180, scrollWidth: 260 });
+    try {
+      const title = 'Email draft to Danny about the download link';
+      const { rerender } = renderWorkstreamHeader({ ...headerWorkstream, title });
+
+      // The ellipsis is the only thing standing between the reader and the
+      // name, and it is not recoverable anywhere else on the screen.
+      expect(screen.getByRole('button', { name: title }))
+        .toHaveAttribute('title', `${title}\nDouble-click to rename`);
+
+      // A shorter name can fit a box that never changed size, so the element's
+      // own resize is not enough to notice on its own.
+      stubElementWidths({ clientWidth: 180, scrollWidth: 120 });
+      rerender(
+        <Tooltip.Provider>
+          <WorkstreamHeader
+            hypersightOpen={false}
+            hypersightPreferencePending={false}
+            onAddParticipant={vi.fn()}
+            onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+            onRename={async () => undefined}
+            onToggleHyperSight={vi.fn()}
+            socketState="connected"
+            workstream={{ ...headerWorkstream, title: 'Danny email' }}
+          />
+        </Tooltip.Provider>,
+      );
+
+      expect(screen.getByRole('button', { name: 'Danny email' }))
+        .toHaveAttribute('title', 'Double-click to rename');
+    } finally {
+      widths.restore();
+    }
   });
 
   it('caps the name at the length the contract accepts, as the sidebar dialog does', () => {
