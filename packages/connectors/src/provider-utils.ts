@@ -135,7 +135,12 @@ export function isRevokedGrantError(error: unknown): error is ConnectorError {
   if (!(error instanceof ConnectorError) || !isRecord(error.details)) return false;
   const providerError = error.details.providerError;
   if (typeof providerError === "string") return REVOKED_GRANT_ERRORS.has(providerError);
-  return Number(error.details.status) === 401;
+  // No code to read. Guessing wrong in this direction nags a member to reconnect
+  // an account that works; guessing wrong in the other leaves a dead connection
+  // reporting healthy while every call fails and nothing ever prompts them. The
+  // silent one is worse, so an unclassifiable rejection keeps the original
+  // status test.
+  return [400, 401, 403].includes(Number(error.details.status));
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -185,7 +190,7 @@ export async function providerJsonResponse(
     // cannot separate "this grant is gone" from "this request was malformed" —
     // OAuth reports both as 400 — and telling a member to reconnect a working
     // account because of our own bad request is the worse of the two mistakes.
-    const providerError = isRecord(payload) && typeof payload.error === "string" ? payload.error : null;
+    const providerError = providerErrorCode(payload);
     throw new ConnectorError(response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error", message, {
       status: response.status,
       ...(providerError ? { providerError } : {}),
@@ -319,6 +324,29 @@ export function base64(value: string): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+/**
+ * The provider's own short error code, wherever it put it.
+ *
+ * OAuth says `error`, and Notion answers its token endpoint with an envelope
+ * keyed `code`; some providers nest either inside an object. Reading only the
+ * first would silently drop the classification for the rest and fall back to
+ * judging by status, which is the thing the code exists to avoid.
+ */
+function providerErrorCode(payload: unknown): string | null {
+  if (!isRecord(payload)) return null;
+  for (const key of ["error", "code"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value) return value;
+    if (isRecord(value)) {
+      for (const nested of ["code", "error", "type"]) {
+        const inner = value[nested];
+        if (typeof inner === "string" && inner) return inner;
+      }
+    }
+  }
+  return null;
 }
 
 function providerErrorMessage(value: unknown): string | null {
