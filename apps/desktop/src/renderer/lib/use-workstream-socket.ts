@@ -497,8 +497,12 @@ export function useWorkstreamSocket(
         // Avalon names a work stream a moment after it is created, and a
         // participant can rename one at any time. Both arrive here, and both
         // have to reach the header and the sidebar row without a refetch.
-        // Either way the title is now settled, so the skeleton comes down —
-        // including when naming failed and the placeholder is what stands.
+        // Whichever status the event carries, the title has stopped being a
+        // placeholder, so the skeleton comes down — including when naming
+        // failed and the line taken from the request is what stands. It is
+        // `automatic` when a later pass may still improve on the name and
+        // `settled` when nothing will change it again; the event says which,
+        // and neither is a reason to keep waiting.
         const renamed = { title: event.title, titleStatus: event.titleStatus };
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, ...renamed } : current);

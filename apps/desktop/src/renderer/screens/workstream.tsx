@@ -355,7 +355,18 @@ export function WorkstreamHeader({
       <div className="workstream-header-left window-no-drag">
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
         <div className="workstream-title-block">
-          <div className="workstream-title-line">
+          {/* The one place a title arriving on its own is worth announcing. A
+              work stream created a second ago is named while its author is
+              looking at it, and a skeleton that says a name is coming owes
+              them the name — the sidebar rows deliberately stay silent, since
+              a list that announces once per unnamed row is noise. Live is off
+              while the editor is open: the person renaming it is typing the
+              new name and does not need it read back, and the swap between
+              heading and form is not news. */}
+          <div
+            aria-live={renameDraft === null ? 'polite' : 'off'}
+            className="workstream-title-line"
+          >
             {workstream.titleStatus === 'naming' ? (
               <h1><TitleSkeleton className="title-skeleton-header" /></h1>
             ) : renameDraft === null ? (

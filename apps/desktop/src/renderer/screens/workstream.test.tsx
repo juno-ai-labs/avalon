@@ -283,17 +283,52 @@ describe('WorkstreamHeader inline rename', () => {
   });
 
   it('holds the header for a name instead of showing the request it was created from', () => {
-    renderWorkstreamHeader({
+    const { rerender } = renderWorkstreamHeader({
       ...headerWorkstream,
       title: 'Create an email draft to Danny from Mucker that shares the download link',
       titleStatus: 'naming',
     });
 
-    expect(screen.getByRole('status', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+    // The heading is what carries the name, so it is the heading that has to
+    // say a name is coming — a label on the placeholder itself reaches nobody.
+    expect(screen.getByRole('heading', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
     expect(screen.queryByText(/Create an email draft/u)).not.toBeInTheDocument();
     // Nothing to rename yet: the title on the row is a placeholder, and the
     // editor returns with the name a second later.
     expect(screen.queryByRole('button', { name: /Create an email draft/u })).not.toBeInTheDocument();
+
+    // A name that arrives on its own has to be announced, or the skeleton has
+    // promised something the header never delivers.
+    const line = document.querySelector('.workstream-title-line');
+    expect(line).toHaveAttribute('aria-live', 'polite');
+
+    rerender(
+      <Tooltip.Provider>
+        <WorkstreamHeader
+          hypersightOpen={false}
+          hypersightPreferencePending={false}
+          onAddParticipant={vi.fn()}
+          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+          onRename={async () => undefined}
+          onToggleHyperSight={vi.fn()}
+          socketState="connected"
+          workstream={{ ...headerWorkstream, title: 'Download link email to Danny' }}
+        />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getByRole('heading', { name: 'Download link email to Danny' })).toBeInTheDocument();
+  });
+
+  it('stops announcing the title line while someone is typing a new name into it', () => {
+    renderWorkstreamHeader();
+
+    expect(document.querySelector('.workstream-title-line')).toHaveAttribute('aria-live', 'polite');
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
+
+    // The person renaming it is typing the new name; reading their own edit
+    // back to them, and the swap from heading to form, is noise.
+    expect(document.querySelector('.workstream-title-line')).toHaveAttribute('aria-live', 'off');
   });
 
   it('opens the editor on F2', () => {
