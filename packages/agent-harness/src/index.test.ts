@@ -428,6 +428,17 @@ describe("agent harness", () => {
           finish_reason: "length",
         }],
       }]),
+      // The retried attempt keeps the abandoned turn's id, so the settle
+      // branch must not re-fire and the separator has to come back.
+      streamResponse([
+        { choices: [{ delta: { content: "Searching GitHub instead." } }] },
+        {
+          choices: [{
+            delta: { tool_calls: [toolDeltaWithArguments(0, "creator-search", "automation_plugins_search", '{"query":"github"}')] },
+            finish_reason: "tool_calls",
+          }],
+        },
+      ]),
       automationSubmitResponse(valid),
     ];
     const compilerEvents: AutomationCompilerStreamEvent[] = [];
@@ -446,6 +457,9 @@ describe("agent harness", () => {
       { type: "delta", delta: "\n\ndiscard this", reset: false },
       // The abandoned attempt is retracted, but the first turn's update is not.
       { type: "delta", delta: "Checking the plugin catalog.", reset: true },
+      // Text after the reset re-applies the paragraph break, because the reset
+      // zeroed `current` while `settled` still holds the first turn.
+      { type: "delta", delta: "\n\nSearching GitHub instead.", reset: false },
     ]);
   });
 

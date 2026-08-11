@@ -244,17 +244,31 @@ assistant text on research turns — a stated plan alongside the first tool call
 then a progress update every three or four calls — and the ban on assistant text
 narrowed from every tool-call turn to the submission turn alone.
 `compileAutomation` now forwards Bind's `stream_delta` frames to its host as
-`delta` events, and emits `started` once per compile rather than once per model
-turn. The automation composer follows the transcript to the bottom while a
-compile streams.
+coalesced `delta` events, and emits `started` once per compile rather than once
+per model turn. The automation composer follows the transcript to the bottom
+while a compile streams, and keeps the narration when a compile fails.
 
-Three restatements of the save-partial-draft-then-elicit rule were collapsed to
-two in the same edit, to buy the bytes the new section needed against the
-8 KB fixed-overhead bound the prompt tests enforce. The rule survives in
-Submission, which owns turn ordering, and beside the description of an
-elicitation, because calling `core_request_elicitation` before a draft is saved
-throws and spends an iteration the run may not have. What went was the third
-copy, in the Plan bullets, which stated the same sequence in different words.
+The compiler prompt's fixed-overhead bound went from 8 KB to 9 KB in the same
+edit. The first attempt kept the old ceiling and paid for the new section by
+cutting policy — a restatement of the save-partial-draft-then-elicit rule, and
+the enumeration naming source and destination as details never to guess — which
+review caught as a real loss of instruction rather than of redundancy. The bound
+exists to catch prose creeping in unnoticed; `# Narration` is a deliberate,
+permanent section, and deleting rules to fit a ceiling set before it existed is
+the wrong trade. Raise it again, deliberately and with an entry here, rather
+than compressing policy to fit.
+
+Narration frames are coalesced before they leave the compiler, by the same
+2 KB / 75 ms rule the work-stream socket path uses — `createTextDeltaBatcher`
+now lives in the harness and both surfaces call it. Unbatched, a narrating
+compile is on the order of a thousand frames, each one an SSE write, a schema
+parse, a React state update, and a forced reflow from the composer's
+follow-to-bottom. The retraction rule the sequenced batcher carries had to be
+generalized rather than copied: that one *flushes* before a reset because its
+reset clears only the active turn, while the compiler's reset frame carries the
+whole replacement buffer, so pending text is *discarded*. Both callers state
+which they need at the call site; the batcher itself knows nothing about
+retraction.
 
 **Why:** Creating an automation was silent. The architect researches for a
 minute or more, and the only thing the transcript showed for all of it was a
@@ -288,14 +302,39 @@ what was missing is the reasoning between them — which provider is being ruled
 out and why the plan changed — and only the model has that. A host template
 would have restated the same rows in longer words.
 
-**Consequences:** Narration is transient. It is not persisted, and the composer
-replaces it with the settled assistant message when the draft arrives, so it
-gives progress rather than a record — a future change wanting a durable
-transcript here has to add one. Narration also spends output tokens on every
-research turn, which lengthens a compile against the harness's 180-second wall
-clock; a compile that already ran close to that ceiling is likelier to reach it.
-`started` now means "this compile began streaming", not "a turn began": any host
-using it to clear per-turn state will hold text across turns instead.
+**Consequences:** Narration is transient on the success path. It is not
+persisted, and the composer replaces it with the settled assistant message when
+the draft arrives, so it gives progress rather than a record — a future change
+wanting a durable transcript here has to add one. On the failure path it is
+kept: a compile that ends in an error settles its narration into the transcript
+as an agent message, because that is the case where the explanation is worth the
+most and clearing it would delete the only account of what went wrong. It is
+kept head-first and capped, not whole. A compiler stuck repairing a rejected
+submission was observed narrating the rejected JSON Schema itself, and the
+opening plan is the part that explains a failure while a degenerating run
+degenerates at the end — so the tail is what the cap drops.
+
+Narration quality depends on the model honouring the policy, and honouring it is
+not free. `x-ai/grok-4.5` at high reasoning effort still emits an occasional
+deliberation line — a tool name, a "wait, let me check" — against explicit rules
+forbidding both, most often while repairing a rejected submission. The rules are
+stated with a discriminating example rather than enforced host-side: filtering
+model text by pattern would censor the connector and event names that legitimate
+narration is *supposed* to contain. A future model swap should look at this
+again rather than assume it is settled.
+
+Narration spends output tokens on every research turn, which lengthens a compile
+against the harness's 180-second wall clock; a compile that already ran close to
+that ceiling is likelier to reach it. `started` now means "this compile began
+streaming", not "a turn began": any host using it to clear per-turn state will
+hold text across turns instead.
+
+One thing the single-bubble design accepts: because the bubble renders after the
+tool rows, the plan stated at the top of a compile ends up below the calls that
+followed it, and the reading order inverts as the run goes on. Per-turn bubbles
+would fix the ordering and lose the continuous account, which is the thing worth
+having; a future change that revisits this should know the ordering was seen and
+traded away rather than missed.
 
 ### 2026-08-11 — A connector row finds its verb anywhere in the tool name
 

@@ -1055,6 +1055,65 @@ export class AutomationCompilerError extends Error {
   }
 }
 
+export interface TextDeltaBatcher {
+  push(delta: string): Promise<void>;
+  flush(): Promise<void>;
+  /** Drop pending text without publishing it. See the retraction rule below. */
+  discard(): void;
+}
+
+/**
+ * Coalesce provider text fragments before they become frames on a wire.
+ *
+ * A model emits a token at a time, and every fragment that reaches a client
+ * unbatched costs a frame, a schema parse, a state update, and — where the
+ * receiver follows the transcript — a layout pass. The defaults match the
+ * sequenced batcher on the work-stream socket path
+ * (`createSequencedStreamDeltaBatcher` in `apps/api/src/services/integrations.ts`),
+ * so both surfaces coalesce identically; that one stays separate because it
+ * also has to keep turn and epoch sequencing, which this one has no concept of.
+ *
+ * **A retraction is never batched.** A caller with reset semantics settles
+ * whatever is pending — `flush` when the retraction only clears part of the
+ * receiver's buffer, `discard` when the retracting frame carries the whole
+ * replacement — and publishes that frame on its own, so text can never arrive
+ * coalesced behind the frame that was meant to replace it. Which of the two
+ * applies depends on what the retraction means, so it lives with each caller
+ * rather than in here.
+ */
+export function createTextDeltaBatcher(
+  publish: (delta: string) => Promise<void>,
+  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
+): TextDeltaBatcher {
+  const maxCharacters = options.maxCharacters ?? 2_048;
+  const maxDelayMs = options.maxDelayMs ?? 75;
+  const now = options.now ?? Date.now;
+  let pending = "";
+  let lastFlushAt = now();
+
+  const flush = async (): Promise<void> => {
+    if (!pending) return;
+    const delta = pending;
+    pending = "";
+    lastFlushAt = now();
+    await publish(delta);
+  };
+
+  return {
+    async push(delta: string): Promise<void> {
+      pending += delta;
+      if (pending.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
+        await flush();
+      }
+    },
+    flush,
+    discard(): void {
+      pending = "";
+      lastFlushAt = now();
+    },
+  };
+}
+
 export type AutomationCompilerStreamEvent =
   | { type: "started" }
   | {
@@ -1320,6 +1379,18 @@ export async function compileAutomation(input: {
    * per turn.
    */
   const narration = { started: false, turnId: "", settled: "", current: "" };
+  const narrationBatch = createTextDeltaBatcher(async (delta) => {
+    await input.onStreamEvent?.({ type: "delta", delta, reset: false });
+  });
+  /**
+   * Every frame that is not batched narration settles the batch first, so a
+   * tool row, a thinking row, or the completion can never overtake the text
+   * that was written before it.
+   */
+  const emitStreamEvent = async (event: AutomationCompilerStreamEvent): Promise<void> => {
+    await narrationBatch.flush();
+    await input.onStreamEvent?.(event);
+  };
   const toolStartedAt = new Map<string, number>();
   const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
   const creatorTools: HarnessTool[] = [
@@ -1549,7 +1620,7 @@ export async function compileAutomation(input: {
       if (event.type === "stream_started") {
         if (narration.started) return;
         narration.started = true;
-        await input.onStreamEvent?.({ type: "started" });
+        await emitStreamEvent({ type: "started" });
       } else if (event.type === "stream_delta") {
         if (event.turnId !== narration.turnId) {
           narration.settled = [narration.settled, narration.current].filter(Boolean).join("\n\n");
@@ -1558,7 +1629,11 @@ export async function compileAutomation(input: {
         }
         if (event.reset) {
           narration.current = "";
-          await input.onStreamEvent?.({ type: "delta", delta: narration.settled, reset: true });
+          // The retraction goes out alone: anything still pending belongs to
+          // the attempt being abandoned, and coalescing it behind this frame
+          // would restore the text the reset exists to remove.
+          narrationBatch.discard();
+          await emitStreamEvent({ type: "delta", delta: narration.settled, reset: true });
           return;
         }
         if (!event.delta) return;
@@ -1566,7 +1641,7 @@ export async function compileAutomation(input: {
         // the paragraph break that separates it from the previous update.
         const separator = narration.settled && !narration.current ? "\n\n" : "";
         narration.current += event.delta;
-        await input.onStreamEvent?.({ type: "delta", delta: `${separator}${event.delta}`, reset: false });
+        await narrationBatch.push(`${separator}${event.delta}`);
       } else if (event.type === "tool_started") {
         const plugin = automationOwningPlugin(event.pluginId, catalog);
         const presentation = AUTOMATION_RESEARCH_TOOL_PRESENTATION[event.toolName]
@@ -1580,7 +1655,7 @@ export async function compileAutomation(input: {
           : automationSubjectPlugins(event.toolName, event.input, catalog);
         toolStartedAt.set(event.toolCallId, Date.now());
         toolLabelPlugins.set(event.toolCallId, labelPlugins);
-        await input.onStreamEvent?.({
+        await emitStreamEvent({
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "started", labelPlugins),
@@ -1611,7 +1686,7 @@ export async function compileAutomation(input: {
             );
         toolStartedAt.delete(event.toolCallId);
         toolLabelPlugins.delete(event.toolCallId);
-        await input.onStreamEvent?.({
+        await emitStreamEvent({
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "completed", labelPlugins),
@@ -1632,7 +1707,7 @@ export async function compileAutomation(input: {
         const labelPlugins = plugin ? [plugin] : toolLabelPlugins.get(event.toolCallId) ?? [];
         toolStartedAt.delete(event.toolCallId);
         toolLabelPlugins.delete(event.toolCallId);
-        await input.onStreamEvent?.({
+        await emitStreamEvent({
           type: "tool",
           toolCallId: event.toolCallId,
           name: automationDiscoveryActivityName(event.toolName, "failed", labelPlugins),
@@ -1645,7 +1720,7 @@ export async function compileAutomation(input: {
     },
     onInferenceRequest: async (request) => {
       await input.onInferenceRequest?.(request);
-      await input.onStreamEvent?.({
+      await emitStreamEvent({
         type: "thinking",
         inferenceRequestId: request.inferenceRequestId,
         status: "started",
@@ -1655,7 +1730,7 @@ export async function compileAutomation(input: {
     onInferenceAttempt: async (attempt) => {
       await input.onInferenceAttempt?.(attempt);
       modelTimeMs += attempt.latencyMs;
-      await input.onStreamEvent?.({
+      await emitStreamEvent({
         type: "thinking",
         inferenceRequestId: attempt.inferenceRequestId,
         status: "completed",
@@ -1701,7 +1776,7 @@ export async function compileAutomation(input: {
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (draftState.submitted && (draftState.submitted.ready || draftState.submitted.elicitation)) {
-    await input.onStreamEvent?.({ type: "completed" });
+    await emitStreamEvent({ type: "completed" });
     return draftState.submitted;
   }
   if (outcome.failure) {
