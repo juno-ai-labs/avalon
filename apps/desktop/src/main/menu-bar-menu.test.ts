@@ -5,6 +5,7 @@ import {
   menuBarLabel,
   menuBarMenuTemplate,
   supportsSectionHeaders,
+  MENU_BAR_PINNED_LIMIT,
   MENU_BAR_RECENT_LIMIT,
   type MenuBarActions,
   type MenuBarContent,
@@ -23,12 +24,12 @@ function actions(): MenuBarActions {
 }
 
 function template(
-  content: MenuBarContent,
+  content: Partial<MenuBarContent>,
   overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Avalon',
-    content,
+    content: { ...emptyMenuBarContent, ...content },
     signedIn: overrides.signedIn ?? true,
     sectionHeaders: overrides.sectionHeaders ?? true,
     actions: overrides.actions ?? actions(),
@@ -58,6 +59,7 @@ describe('menu bar menu', () => {
         { id: 'opportunity-2', version: 1, label: 'Summarize yesterday’s standup' },
       ],
       recents: workstreams,
+      pinned: [{ id: 'pinned-a', title: 'Acme renewal' }, { id: 'pinned-b', title: 'Board deck' }],
     });
 
     expect(labels(items)).toEqual([
@@ -76,9 +78,43 @@ describe('menu bar menu', () => {
       'Work stream 3',
       'Work stream 4',
       '—',
+      'Pinned',
+      'Acme renewal',
+      'Board deck',
+      '—',
       'Open Avalon',
       'Quit Avalon',
     ]);
+  });
+
+  it('shows the top five of the reader’s own pinned arrangement, in that order', () => {
+    const pinned = Array.from({ length: 8 }, (_value, index) => ({
+      id: `pinned-${index}`,
+      title: `Pinned ${index}`,
+    }));
+    const items = template({ pinned });
+    const pinnedLabels = labels(items).filter((label) => label?.startsWith('Pinned '));
+
+    // Sliced, never re-sorted: the arrangement is the person's, and the store
+    // hands it over already ordered.
+    expect(pinnedLabels).toEqual(['Pinned 0', 'Pinned 1', 'Pinned 2', 'Pinned 3', 'Pinned 4']);
+    expect(pinnedLabels).toHaveLength(MENU_BAR_PINNED_LIMIT);
+  });
+
+  it('omits the Pinned group whole when nothing is pinned', () => {
+    const items = template({ recents: workstreams });
+
+    expect(items.some((item) => item.label === 'Pinned')).toBe(false);
+    expect(labels(items).at(-3)).toBe('—');
+    expect(labels(items).slice(-2)).toEqual(['Open Avalon', 'Quit Avalon']);
+  });
+
+  it('opens a pinned row the same way a recent one opens', () => {
+    const menuActions = actions();
+    const items = template({ pinned: [{ id: 'pinned-a', title: 'Acme renewal' }] }, { actions: menuActions });
+    activate(items.find((item) => item.label === 'Acme renewal'));
+
+    expect(menuActions.openWorkstream).toHaveBeenCalledWith('pinned-a');
   });
 
   it('shows no more than five recent work streams', () => {
@@ -135,6 +171,8 @@ describe('menu bar menu', () => {
       { suggestions: [], recents: workstreams },
       { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: [] },
       { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: workstreams },
+      { pinned: [{ id: 'p', title: 'Acme renewal' }] },
+      { recents: workstreams, pinned: [{ id: 'p', title: 'Acme renewal' }] },
     ]) {
       const drawn = labels(template(content));
       expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
