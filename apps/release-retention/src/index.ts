@@ -64,13 +64,17 @@ export default {
     const localHour = requiredInteger(env.RETENTION_LOCAL_HOUR, "RETENTION_LOCAL_HOUR", 0);
     if (localHour > 23) throw new Error("RETENTION_LOCAL_HOUR must not exceed 23");
     if (!shouldRunAtLocalHour(controller.scheduledTime, env.RETENTION_TIME_ZONE, localHour)) {
-      console.log(JSON.stringify({
+      // Workers Logs indexes the properties of a logged object as structured
+      // fields and renders `message` as the log list's summary; serializing the
+      // entry first would collapse both into one unqueryable string.
+      console.log({
         cron: controller.cron,
         event: "desktop_release_retention_skipped",
+        message: "desktop_release_retention_skipped not_target_local_hour",
         reason: "not_target_local_hour",
         scheduledTime: new Date(controller.scheduledTime).toISOString(),
         timeZone: env.RETENTION_TIME_ZONE,
-      }));
+      });
       return;
     }
 
@@ -78,12 +82,13 @@ export default {
       dryRun: env.RETENTION_DRY_RUN === "true",
       keepCount: requiredInteger(env.RETENTION_KEEP_COUNT, "RETENTION_KEEP_COUNT", 1),
     });
-    console.log(JSON.stringify({
+    console.log({
       cron: controller.cron,
       event: "desktop_release_retention_completed",
+      message: `desktop_release_retention_completed ${report.status} archived=${report.archivedObjectCount} deleted=${report.deletedObjectCount}`,
       report,
       scheduledTime: new Date(controller.scheduledTime).toISOString(),
       timeZone: env.RETENTION_TIME_ZONE,
-    }));
+    });
   },
 } satisfies ExportedHandler<Env>;
