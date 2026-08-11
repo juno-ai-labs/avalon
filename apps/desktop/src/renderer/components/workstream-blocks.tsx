@@ -367,12 +367,12 @@ export function AssistantMessageContent({
 function ToolBlock({ message }: { message: Message }): React.JSX.Element | null {
   const tool = message.toolEvent;
   if (!tool) return null;
-  const pluginActivity = Boolean(tool.plugins?.length);
+  const owningPlugin = tool.plugin;
   return (
-    <details className={clsx('tool-block', `tool-${tool.status}`, pluginActivity && 'plugin-activity')}>
+    <details className={clsx('tool-block', `tool-${tool.status}`, owningPlugin && 'plugin-activity')}>
       <summary>
-        {pluginActivity
-          ? <PluginFacePile plugins={tool.plugins ?? []} />
+        {owningPlugin
+          ? <PluginFace plugin={owningPlugin} />
           : <span className="tool-icon"><TerminalSquare aria-hidden="true" size={14} /></span>}
         <span className="tool-summary">
           <strong>{tool.name}</strong>
@@ -423,29 +423,17 @@ const pluginIconByKey: Record<AutomationPluginIcon, TablerIcon> = {
   'world-search': IconWorldSearch,
 };
 
-function PluginFacePile({ plugins }: { plugins: AutomationPluginActivity[] }): React.JSX.Element {
-  const visible = plugins.slice(0, 4);
-  const overflow = plugins.length - visible.length;
+/** A row shows the plugin that owns the tool it ran, so there is only ever one. */
+function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX.Element {
+  const PluginIcon = pluginIconByKey[plugin.icon];
   return (
     <span
-      aria-label={`Plugins: ${plugins.map((plugin) => plugin.displayName).join(', ')}`}
-      className="plugin-face-pile"
+      aria-label={`Plugin: ${plugin.displayName}`}
+      className={clsx('plugin-face', `plugin-face-${plugin.icon}`)}
       role="img"
+      title={plugin.displayName}
     >
-      {visible.map((plugin, index) => {
-        const PluginIcon = pluginIconByKey[plugin.icon];
-        return (
-          <span
-            className={clsx('plugin-face', `plugin-face-${plugin.icon}`)}
-            key={plugin.pluginId}
-            style={{ zIndex: index + 1 }}
-            title={plugin.displayName}
-          >
-            <PluginIcon aria-hidden="true" size={14} stroke={1.8} />
-          </span>
-        );
-      })}
-      {overflow > 0 && <span className="plugin-face plugin-face-overflow" style={{ zIndex: visible.length + 1 }}>+{overflow}</span>}
+      <PluginIcon aria-hidden="true" size={14} stroke={1.8} />
     </span>
   );
 }

@@ -145,7 +145,8 @@ export interface ToolEventData {
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
   durationMs?: number;
   toolType?: string;
-  plugins?: AutomationPluginActivity[];
+  /** The single plugin that owns this tool; absent for Avalon-owned tools. */
+  plugin?: AutomationPluginActivity;
   input?: unknown;
   output?: unknown;
 }
