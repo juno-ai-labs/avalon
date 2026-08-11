@@ -95,6 +95,17 @@ describe('single-platform desktop identity routing', () => {
     vi.useRealTimers();
   });
 
+  // Every deep link goes through here. Dispatching straight into
+  // `deepLinkListener?.()` swallows the link when the provider has not
+  // registered its listener yet — the handler re-registers whenever the session
+  // or API changes, so there is a real window where it is null — and the test
+  // then fails much later on an assertion that never comes true. Wait for the
+  // listener, then call it unguarded so a missing one throws here instead.
+  async function dispatchDeepLink(url: string): Promise<void> {
+    await waitFor(() => expect(deepLinkListener).not.toBeNull());
+    act(() => deepLinkListener!(url));
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -131,9 +142,7 @@ describe('single-platform desktop identity routing', () => {
     window.localStorage.setItem('avalon:selected-region', 'eu');
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`));
+    await dispatchDeepLink(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=global&attempt=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(bridge.exchangeDesktopTicket).toHaveBeenCalledWith({
       apiBaseUrl: 'https://api.with-avalon.com',
@@ -292,9 +301,7 @@ describe('single-platform desktop identity routing', () => {
   it('rejects a regional authentication callback instead of creating a second login surface', async () => {
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=eu&attempt=${'a'.repeat(43)}`));
+    await dispatchDeepLink(`avalon://auth/complete?ticket=single-use-ticket-long-enough&region=eu&attempt=${'a'.repeat(43)}`);
 
     expect(bridge.exchangeDesktopTicket).not.toHaveBeenCalled();
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('identity service');
@@ -304,11 +311,9 @@ describe('single-platform desktop identity routing', () => {
     const invalidate = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       'avalon://invitations/accept?token=private-invitation-token-long-enough&region=eu',
-    ));
+    );
 
     expect(await screen.findByText('global:invite')).toBeVisible();
     expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.with-avalon.com');
@@ -326,11 +331,9 @@ describe('single-platform desktop identity routing', () => {
     bridge.getSession.mockResolvedValue(globalSession);
     renderProvider();
     expect(await screen.findByText('global:Global Research')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       'avalon://invitations/accept?token=private-invitation-token-long-enough&region=eu',
-    ));
+    );
 
     expect(await screen.findByText('global:invite')).toBeVisible();
     expect(screen.getByTestId('invitation-api')).toHaveTextContent('https://eu.api.with-avalon.com');
@@ -468,11 +471,9 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
-    ));
+    );
 
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['connections'] }));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workstream'] });
@@ -488,11 +489,9 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       `avalon://auth/complete?provider=linear&region=eu&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
-    ));
+    );
 
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('Linear authorization was cancelled');
   });
@@ -510,16 +509,14 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       'avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
-    ));
+    );
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
 
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       `avalon://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
-    ));
+    );
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
   });
 
@@ -532,11 +529,9 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('eu:European Research')).toBeVisible();
     // The optional call is a silent no-op until the provider has registered its
     // listener, and rendering the session does not guarantee that has happened.
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(
+    await dispatchDeepLink(
       `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
-    ));
+    );
 
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
   });
@@ -562,7 +557,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
-    act(() => deepLinkListener?.(`avalon://slack/link?token=${'a'.repeat(43)}`));
+    await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(fetchRequest).toHaveBeenCalledTimes(2));
     const [previewUrl, previewInit] = fetchRequest.mock.calls[0]!;
@@ -593,7 +588,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
 
-    act(() => deepLinkListener?.(`avalon://slack/link?token=${'a'.repeat(43)}`));
+    await dispatchDeepLink(`avalon://slack/link?token=${'a'.repeat(43)}`);
 
     await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
     expect(fetchRequest).toHaveBeenCalledTimes(1);
@@ -617,7 +612,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    act(() => deepLinkListener?.('avalon://settings/workspace'));
+    await dispatchDeepLink('avalon://settings/workspace');
 
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
@@ -637,10 +632,10 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
 
-    act(() => deepLinkListener?.('avalon://settings/connections'));
+    await dispatchDeepLink('avalon://settings/connections');
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('connections'));
 
-    act(() => deepLinkListener?.('avalon://automations/new'));
+    await dispatchDeepLink('avalon://automations/new');
     await waitFor(() => expect(window.location.hash).toBe('#/automations/new'));
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
@@ -661,9 +656,7 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
-    await waitFor(() => expect(deepLinkListener).not.toBeNull());
-
-    act(() => deepLinkListener?.(rawUrl));
+    await dispatchDeepLink(rawUrl);
 
     await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent('unexpected sign-in link'));
     expect(bridge.openSettings).not.toHaveBeenCalled();
