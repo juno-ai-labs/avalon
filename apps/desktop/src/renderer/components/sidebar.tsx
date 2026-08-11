@@ -11,6 +11,7 @@ import {
   Copy,
   EyeOff,
   FileStack,
+  Globe2,
   LogOut,
   Menu,
   MessageSquarePlus,
@@ -39,6 +40,8 @@ interface SidebarProps {
   workstreams: WorkstreamSummary[];
   loading?: boolean;
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
+  onArchiveNote: (note: NoteSummary) => Promise<void>;
+  onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
@@ -250,26 +253,68 @@ function WorkstreamRow({
   );
 }
 
-function NoteRow({ note }: { note: NoteSummary }): React.JSX.Element {
+function NoteRow({
+  note,
+  ownedByViewer,
+  onArchive,
+  onChangeScope,
+}: {
+  note: NoteSummary;
+  ownedByViewer: boolean;
+  onArchive: (note: NoteSummary) => void;
+  onChangeScope: (note: NoteSummary, scope: 'personal' | 'workspace') => void;
+}): React.JSX.Element {
+  const isPrivate = note.scope === 'personal';
   return (
-    <NavLink
-      className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
-      to={`/notes/${note.id}`}
-    >
-      <span className="sidebar-row-icon">
-        <span aria-label="Note" className="sidebar-note-marker" role="img">
-          <NotebookText aria-hidden="true" size={15} strokeWidth={1.8} />
-        </span>
-      </span>
-      <span className="sidebar-row-main">
-        <span className="sidebar-row-title">{note.title}</span>
-      </span>
-      {note.scope === 'personal' && (
-        <span aria-label="Private note" className="sidebar-note-privacy" role="img">
-          <IconLock aria-hidden="true" size={15} stroke={1.8} />
-        </span>
-      )}
-    </NavLink>
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>
+        <div className="sidebar-context-target">
+          <NavLink
+            className={({ isActive }) => clsx('sidebar-row note-row', isActive && 'is-active')}
+            to={`/notes/${note.id}`}
+          >
+            <span className="sidebar-row-icon">
+              <span aria-label="Note" className="sidebar-note-marker" role="img">
+                <NotebookText aria-hidden="true" size={15} strokeWidth={1.8} />
+              </span>
+            </span>
+            <span className="sidebar-row-main">
+              <span className="sidebar-row-title">{note.title}</span>
+            </span>
+            {note.scope === 'personal' && (
+              <span aria-label="Private note" className="sidebar-note-privacy" role="img">
+                <IconLock aria-hidden="true" size={15} stroke={1.8} />
+              </span>
+            )}
+          </NavLink>
+        </div>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal>
+        <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
+          {/* A workspace note stays in everyone's sidebar, but only its owner
+              can change or archive it, so the row offers both actions without
+              pretending either would succeed for a reader. The visibility item
+              names the state it moves to rather than the current one. */}
+          <ContextMenu.Item
+            className="menu-item"
+            disabled={!ownedByViewer}
+            onSelect={() => onChangeScope(note, isPrivate ? 'workspace' : 'personal')}
+          >
+            {isPrivate
+              ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
+              : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
+          </ContextMenu.Item>
+          <ContextMenu.Separator className="menu-separator" />
+          <ContextMenu.Item
+            className="menu-item menu-item-danger"
+            disabled={!ownedByViewer}
+            onSelect={() => onArchive(note)}
+          >
+            <Archive aria-hidden="true" size={16} /> Archive note
+          </ContextMenu.Item>
+        </ContextMenu.Content>
+      </ContextMenu.Portal>
+    </ContextMenu.Root>
   );
 }
 
@@ -280,6 +325,8 @@ export function Sidebar({
   workstreams,
   loading,
   onArchiveDraftAutomation,
+  onArchiveNote,
+  onChangeNoteScope,
   onDeleteAutomation,
   onMarkWorkstreamUnread,
   onRenameWorkstream,
@@ -298,6 +345,9 @@ export function Sidebar({
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  // Both note actions apply straight from the menu, so a rejection has nowhere
+  // to land unless it is raised here: the row simply stays as it was.
+  const [noteError, setNoteError] = useState<{ copy: string; message: string; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -456,6 +506,27 @@ export function Sidebar({
                       <NoteRow
                         key={item.id}
                         note={item.note}
+                        onArchive={(target) => {
+                          void onArchiveNote(target).catch((error: unknown) => {
+                            setNoteError({
+                              title: 'Note could not be archived',
+                              copy: 'The note is still in the sidebar. Try again in a moment.',
+                              message: error instanceof Error ? error.message : 'The note could not be archived.',
+                            });
+                          });
+                        }}
+                        onChangeScope={(target, scope) => {
+                          void onChangeNoteScope(target, scope).catch((error: unknown) => {
+                            setNoteError({
+                              title: 'Note visibility could not be changed',
+                              copy: scope === 'workspace'
+                                ? 'The note is still private. Try again in a moment.'
+                                : 'The note is still public to the workspace. Try again in a moment.',
+                              message: error instanceof Error ? error.message : 'The note could not be updated.',
+                            });
+                          });
+                        }}
+                        ownedByViewer={item.note.ownerUserId === workspace.currentUser.id}
                       />
                     ) : (
                       <WorkstreamRow
@@ -571,6 +642,17 @@ export function Sidebar({
       >
         <p className="modal-copy">The draft is still in the sidebar. Try again in a moment.</p>
         {archiveError && <InlineError>{archiveError}</InlineError>}
+      </Modal>
+      <Modal
+        footer={<Button onClick={() => setNoteError(null)}>Close</Button>}
+        onOpenChange={(open) => {
+          if (!open) setNoteError(null);
+        }}
+        open={Boolean(noteError)}
+        title={noteError?.title ?? 'Note could not be updated'}
+      >
+        <p className="modal-copy">{noteError?.copy}</p>
+        {noteError && <InlineError>{noteError.message}</InlineError>}
       </Modal>
       <Modal
         footer={(
