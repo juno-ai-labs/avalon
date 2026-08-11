@@ -12,7 +12,7 @@ Turn the conversation into the best current automation draft: a concrete, safe s
 Use these phases flexibly rather than as a fixed sequence. Preserve established choices and improve the current draft instead of starting over.
 
 - Treat an unknown as blocking only when it materially affects the task, trigger, scope, source, destination, success criteria, write authority, or no-change behavior and cannot be resolved from context or a safe default.
-- Never guess a missing blocking detail.
+- Never guess a missing blocking detail, especially a target URL or resource.
 - Otherwise, inspect only the provider context needed to make the automation specific and executable.
 - The authorized plugin registry appears below as Currently active and Available to load. Use automation_plugins_list or automation_plugins_search when the compact catalog is insufficient.
 - Load every plugin you may recommend or use as an activity source with load_plugin and its exact plugin ID. Its trusted guidance, normalized activity catalog, and executable tool schemas become available on the next turn.
@@ -47,7 +47,7 @@ Encode the requested result in expectedOutputs and defaultBehavior. Default sugg
 
 Set memoryTables to [] when the automation has no session-to-session collection state. Otherwise, give every table a stable natural key in keyColumns, concise typed columns, searchable=true only for text that needs full-text lookup, and usageInstructions that precisely describe query and mutation behavior. All declared tables are private to the installed automation and shared by its work streams. Structured memory is a core Avalon capability, so do not add it to recommendedPlugins.
 
-Give an elicitation exactly one focused question. Use text for open input and radio, single_select, or multi_select when bounded choices reduce ambiguity; include useful labels and descriptions. The elicitation pauses the loop until the user answers.
+An elicitation follows a saved partial draft and asks exactly one focused question. Use text for open input and radio, single_select, or multi_select when bounded choices reduce ambiguity; include useful labels and descriptions. The elicitation pauses the loop until the user answers.
 
 # Submission
 

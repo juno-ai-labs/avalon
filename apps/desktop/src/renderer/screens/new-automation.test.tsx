@@ -619,6 +619,73 @@ describe('New automation composer', () => {
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 
+  it('retracts an abandoned narration turn without blanking the bubble', async () => {
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+
+    // A model that opens a turn with a bare newline must not render a bubble
+    // before it has said anything.
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: '\n', reset: false });
+    });
+    expect(document.querySelector('.agent-message')).toBeNull();
+
+    act(() => {
+      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
+      stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false });
+    });
+    expect(await screen.findByText(/Searching GitHub next\./)).toBeInTheDocument();
+
+    // The harness replays the settled text on a reset, so the abandoned turn
+    // disappears and the earlier update survives.
+    act(() => { stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: true }); });
+    expect(await screen.findByText('Checking the plugin catalog.')).toBeInTheDocument();
+    expect(screen.queryByText(/Searching GitHub next\./)).not.toBeInTheDocument();
+
+    // A reset with nothing to restore leaves no bubble at all.
+    act(() => { stream({ type: 'delta', delta: '', reset: true }); });
+    await waitFor(() => expect(document.querySelector('.agent-message')).toBeNull());
+  });
+
+  it('follows streaming narration to the bottom until the reader scrolls up', async () => {
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+
+    const surface = document.querySelector('.new-automation-screen') as HTMLElement;
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
+    Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 900 });
+
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
+    });
+    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
+
+    // Scrolling away from the bottom stops the follow; scrolling back resumes
+    // it, so a reader who looked at an earlier step is never yanked forward.
+    surface.scrollTop = 1_000;
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false }); });
+    await screen.findByText(/Searching GitHub next\./);
+    expect(surface.scrollTop).toBe(1_000);
+
+    surface.scrollTop = 3_950;
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: '\n\nDrafting it now.', reset: false }); });
+    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
+  });
+
   it('preloads Avalon’s plugin picks without a Default plugins section', async () => {
     api.getConnections.mockResolvedValue([
       {

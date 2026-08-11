@@ -248,6 +248,14 @@ narrowed from every tool-call turn to the submission turn alone.
 turn. The automation composer follows the transcript to the bottom while a
 compile streams.
 
+Three restatements of the save-partial-draft-then-elicit rule were collapsed to
+two in the same edit, to buy the bytes the new section needed against the
+8 KB fixed-overhead bound the prompt tests enforce. The rule survives in
+Submission, which owns turn ordering, and beside the description of an
+elicitation, because calling `core_request_elicitation` before a draft is saved
+throws and spends an iteration the run may not have. What went was the third
+copy, in the Plan bullets, which stated the same sequence in different words.
+
 **Why:** Creating an automation was silent. The architect researches for a
 minute or more, and the only thing the transcript showed for all of it was a
 column of near-identical tool rows — "Reviewed GitHub", "Reviewed GitHub" —
