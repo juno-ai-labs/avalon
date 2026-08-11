@@ -14,7 +14,6 @@ export interface MenuBarControllerDependencies {
   readonly appName: string;
   readonly createTray: () => MenuBarTray;
   readonly content: () => MenuBarContent;
-  readonly launchAtLogin: () => boolean;
   readonly signedIn: () => boolean;
   readonly actions: MenuBarActions;
   readonly readSettings: () => Promise<StoredApplicationSettings>;
@@ -67,7 +66,6 @@ export class MenuBarController {
       this.tray.setContextMenu(menuBarMenuTemplate({
         appName: this.dependencies.appName,
         content: this.dependencies.content(),
-        launchAtLogin: this.dependencies.launchAtLogin(),
         signedIn: this.dependencies.signedIn(),
         actions: this.dependencies.actions,
       }));

@@ -20,6 +20,7 @@ import {
   Newspaper,
   PanelTop,
   Plug,
+  Power,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -470,6 +471,10 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   });
   const updateMenuBarEnabled = useMutation({
     mutationFn: (enabled: boolean) => bridge.setMenuBarEnabled(enabled),
+    onSuccess: setApplicationSettings,
+  });
+  const updateLaunchAtLogin = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setLaunchAtLogin(enabled),
     onSuccess: setApplicationSettings,
   });
   const pendingInvitations = useMemo(
@@ -1081,6 +1086,40 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   </>
                 )}
                 <ApplicationIconPicker />
+                {applicationSettings?.launchAtLoginAvailable !== false && (
+                  <>
+                    <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Startup</h2><p>Decide whether this Mac starts Avalon for you.</p></div>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><Power aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Open Avalon at login</strong>
+                          <small>Start Avalon when you log in. It opens quietly in the menu bar with no window, so it is ready before you ask for it.</small>
+                        </span>
+                        <span className="settings-toggle">
+                          <input
+                            aria-label="Open Avalon at login"
+                            /* macOS owns this, not Avalon's preference file, so
+                             * the checked state is what the system reports back
+                             * after the write — which is how a registration it
+                             * is still waiting to have approved shows honestly. */
+                            checked={applicationSettings?.launchAtLogin ?? false}
+                            disabled={
+                              applicationSettings === null
+                              || updateLaunchAtLogin.isPending
+                              || updateLockdownMode.isPending
+                            }
+                            onChange={(event) => updateLaunchAtLogin.mutate(event.currentTarget.checked)}
+                            role="switch"
+                            type="checkbox"
+                          />
+                          <span aria-hidden="true" />
+                        </span>
+                      </label>
+                    </div>
+                    {updateLaunchAtLogin.error && <InlineError>{updateLaunchAtLogin.error.message}</InlineError>}
+                  </>
+                )}
                 {/* The service decides whether this section exists at all, and
                   * answers on a poll, so it can appear or disappear without the
                   * window reloading. It is absent rather than disabled: a

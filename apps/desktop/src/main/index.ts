@@ -490,7 +490,7 @@ const launchAtLoginController = new LaunchAtLoginController({
   setOpenAtLogin: (openAtLogin) => app.setLoginItemSettings({ openAtLogin }),
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
-  onChange: () => menuBarController.refresh(),
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
 });
 
 /** A status item click does not activate Avalon the way a Dock click does, so
@@ -524,7 +524,6 @@ const menuBarController = new MenuBarController({
   appName: app.name,
   createTray: createMenuBarTray,
   content: () => menuBarContentStore.content(),
-  launchAtLogin: () => launchAtLoginController.enabled(),
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuth),
@@ -534,6 +533,10 @@ const menuBarController = new MenuBarController({
       void createMeetingWindow().catch((error: unknown) => {
         logError('avalon', 'failed to open meeting notes from the menu bar', error);
       });
+    },
+    newWorkstream: () => {
+      activateFromMenuBar();
+      emitDeepLink(`${customProtocol}://workstreams/new`);
     },
     newAutomation: () => {
       activateFromMenuBar();
@@ -545,11 +548,6 @@ const menuBarController = new MenuBarController({
       emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`);
     },
     openAvalon: openMainWindowFromMenuBar,
-    setLaunchAtLogin: (enabled) => {
-      void launchAtLoginController.set(enabled).catch((error: unknown) => {
-        logWarn('avalon', 'could not change whether Avalon opens at login', error);
-      });
-    },
     quit: () => app.quit(),
   },
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
@@ -574,6 +572,8 @@ function desktopApplicationSettings(
     debugEnabled: debugSettingsController.enabled() && developerSettingsAvailable,
     menuBarEnabled: menuBarController.enabled(),
     menuBarAvailable: menuBarController.available(),
+    launchAtLogin: launchAtLoginController.enabled(),
+    launchAtLoginAvailable: launchAtLoginController.available(),
   };
 }
 
@@ -1371,6 +1371,10 @@ function emitDeepLink(rawUrl: string): void {
     const isWorkstream = deepLink.protocol === `${customProtocol}:`
       && deepLink.hostname === 'workstreams'
       && /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(deepLink.pathname);
+    const isNewWorkstream = deepLink.protocol === `${customProtocol}:`
+      && deepLink.hostname === 'workstreams'
+      && deepLink.pathname === '/new'
+      && deepLink.search === '';
     const isInvitation = deepLink.protocol === `${customProtocol}:`
       && deepLink.hostname === 'invitations'
       && deepLink.pathname === '/accept'
@@ -1390,7 +1394,10 @@ function emitDeepLink(rawUrl: string): void {
       && /^[A-Za-z0-9_-]{20,500}$/u.test(deepLink.searchParams.get('token') ?? '')
       && [...deepLink.searchParams.keys()].every((key) => key === 'token')
       && deepLink.searchParams.getAll('token').length === 1;
-    if (!isAuthentication && !isWorkstream && !isInvitation && !isSettings && !isAutomation && !isSlackLink) return;
+    if (
+      !isAuthentication && !isWorkstream && !isNewWorkstream && !isInvitation
+      && !isSettings && !isAutomation && !isSlackLink
+    ) return;
     sendDeepLink(deepLink.toString());
   } catch {
     // Ignore malformed protocol payloads from the operating system.
@@ -1451,6 +1458,14 @@ function registerIpc(): void {
     // `state()` for the same reason as the Developer preference above: reading
     // Lockdown mode's full settings can run the keystore fallback, and adding
     // or removing a status item must never cost anyone their session.
+    return desktopApplicationSettings();
+  });
+  ipcMain.handle('application-settings:set-launch-at-login', async (event, rawEnabled: unknown) => {
+    assertTrustedIpcSender(event);
+    await launchAtLoginController.set(rawEnabled);
+    // `state()` for the same reason as the two preferences above: registering a
+    // login item must never run Lockdown mode's keystore fallback, which clears
+    // credentials and forces a new sign-in.
     return desktopApplicationSettings();
   });
   ipcMain.handle('application-icon:get', (event) => {

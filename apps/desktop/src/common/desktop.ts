@@ -57,6 +57,13 @@ export interface DesktopApplicationSettings extends DesktopLockdownSettings {
    * preference is still stored where it is not, so moving the same profile to a
    * Mac restores the choice rather than the default. */
   menuBarAvailable: boolean;
+  /** Whether Avalon is registered to open at login. Read back from the
+   * operating system, which owns it — not from Avalon's preference file — so
+   * this reports what macOS actually holds, including a registration it is
+   * still waiting for the person to approve. */
+  launchAtLogin: boolean;
+  /** Whether this platform has login items at all. */
+  launchAtLoginAvailable: boolean;
 }
 
 export interface DesktopWorkspaceSummary {
@@ -109,6 +116,7 @@ export interface AvalonDesktopBridge {
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setMenuBarEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
+  setLaunchAtLogin: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   onApplicationSettingsChanged: (listener: (settings: DesktopApplicationSettings) => void) => () => void;
   getApplicationIcon: () => Promise<DesktopApplicationIconState>;
   setApplicationIcon: (iconId: ApplicationIconId) => Promise<DesktopApplicationIconState>;

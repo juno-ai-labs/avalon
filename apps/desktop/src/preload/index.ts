@@ -63,6 +63,8 @@ const bridge: AvalonDesktopBridge = {
     ipcRenderer.invoke('application-settings:set-debug-enabled', enabled) as Promise<DesktopApplicationSettings>,
   setMenuBarEnabled: (enabled) =>
     ipcRenderer.invoke('application-settings:set-menu-bar-enabled', enabled) as Promise<DesktopApplicationSettings>,
+  setLaunchAtLogin: (enabled) =>
+    ipcRenderer.invoke('application-settings:set-launch-at-login', enabled) as Promise<DesktopApplicationSettings>,
   onApplicationSettingsChanged: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, settings: DesktopApplicationSettings): void => listener(settings);
     ipcRenderer.on('application-settings:changed', handler);
