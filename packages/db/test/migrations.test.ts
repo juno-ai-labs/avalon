@@ -687,7 +687,15 @@ describe("database migrations", () => {
         ('description-derived', 'description-workspace', 'Checkout', 'EU cards are failing again.',
          'ad_hoc', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11'),
         ('description-automation', 'description-workspace', 'Weekly brief', 'Produce the weekly brief.',
-         'automation', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11');
+         'automation', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11'),
+        -- Attachment-only: the description is the literal creation fallback
+        -- against an empty opening message, so it differs without being written.
+        ('description-attachment', 'description-workspace', 'Files', 'Review the attached files',
+         'ad_hoc', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11'),
+        -- A Slack mention past the objective's 4,000-character limit: the
+        -- description is the opening message truncated, not a different text.
+        ('description-truncated', 'description-workspace', 'Slack task', ${"'" + "s".repeat(4000) + "'"},
+         'ad_hoc', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11');
       INSERT INTO messages
         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
          message_type, text_content, sequence_number, created_at)
@@ -695,7 +703,11 @@ describe("database migrations", () => {
         ('description-message-a', 'client-a', 'description-workspace', 'description-authored', 'human',
          'description-owner', 'text', 'EU cards are failing again.', 1, '2026-08-11'),
         ('description-message-b', 'client-b', 'description-workspace', 'description-derived', 'human',
-         'description-owner', 'text', 'EU cards are failing again.', 1, '2026-08-11');
+         'description-owner', 'text', 'EU cards are failing again.', 1, '2026-08-11'),
+        ('description-message-c', 'client-c', 'description-workspace', 'description-attachment', 'human',
+         'description-owner', 'text', '', 1, '2026-08-11'),
+        ('description-message-d', 'client-d', 'description-workspace', 'description-truncated', 'human',
+         'description-owner', 'text', ${"'" + "s".repeat(4200) + "'"}, 1, '2026-08-11');
     `);
 
     database.exec(readFileSync(
@@ -706,10 +718,14 @@ describe("database migrations", () => {
     const sources = database.prepare(
       "SELECT id, description_source FROM workstreams ORDER BY id",
     ).all() as Array<{ id: string; description_source: string }>;
+    // Only the row a person can still be shown to have written is promoted.
+    // The backfill is not re-runnable, so a wrong promotion is permanent.
     expect(sources).toEqual([
+      { id: "description-attachment", description_source: "derived" },
       { id: "description-authored", description_source: "authored" },
       { id: "description-automation", description_source: "derived" },
       { id: "description-derived", description_source: "derived" },
+      { id: "description-truncated", description_source: "derived" },
     ]);
 
     // One row per work stream is what makes the claim a claim: a second
