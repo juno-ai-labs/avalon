@@ -200,13 +200,18 @@ describe("flag targeting attributes", () => {
 
   // The whole point of the boundary: a targeting rule gets the domain, which is
   // a cohort, and never the local part or the name, which are a person.
+  //
+  // Scoped to the fields the boundary actually covers. `workspaceSlug` is the
+  // documented carve-out — it is slugified user-typed text and may itself name
+  // a company or a person — so it is excluded here rather than left to pass by
+  // accident on a fixture that happens not to be named after anybody.
   it("never sends a name, an address, or an address's local part", async () => {
-    const attributes = await loadFlagTargetingAttributes(envWith(sqliteD1(database)), {
-      workspaceId: WORKSPACE_ID,
-      userId: MEMBER_ID,
-      workstreamId: AD_HOC_WORKSTREAM,
-    });
+    const { workspaceSlug, ...attributes } = await loadFlagTargetingAttributes(
+      envWith(sqliteD1(database)),
+      { workspaceId: WORKSPACE_ID, userId: MEMBER_ID, workstreamId: AD_HOC_WORKSTREAM },
+    );
 
+    expect(workspaceSlug).toBe("Dogfood");
     const serialized = JSON.stringify(attributes);
     for (const forbidden of ["@", "ada", "grace", "Lovelace", "Hopper"]) {
       expect(serialized).not.toContain(forbidden);
@@ -227,6 +232,49 @@ describe("flag targeting attributes", () => {
         workstreamId: AD_HOC_WORKSTREAM,
       }),
     ).resolves.toEqual({});
+  });
+
+  // A miss is retried immediately by design; a failure is not. While D1 is
+  // unhealthy every agent path would otherwise re-read and re-warn per run,
+  // making an outage noisier than it already is.
+  it("holds a failed read down briefly instead of retrying it every evaluation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const prepare = vi.fn(() => {
+      throw new Error("D1_ERROR: storage unavailable");
+    });
+    const env = envWith({ prepare } as unknown as D1Database);
+
+    await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });
+    await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });
+    expect(prepare).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date(Date.parse(NOW) + 11_000));
+    await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
+  // The suppression is per entity and per subject: one workspace's failure must
+  // not silence the reads a different subject would make.
+  it("suppresses only the subject whose read failed", async () => {
+    const healthy = sqliteD1(database);
+    const prepare = vi.spyOn(healthy, "prepare");
+    const flaky = {
+      prepare: (sql: string) => {
+        if (sql.includes("FROM workspaces")) throw new Error("D1_ERROR: storage unavailable");
+        return healthy.prepare(sql);
+      },
+    } as unknown as D1Database;
+    const env = envWith(flaky);
+
+    await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID });
+    await expect(
+      loadFlagTargetingAttributes(env, {
+        workspaceId: WORKSPACE_ID,
+        workstreamId: AD_HOC_WORKSTREAM,
+      }),
+    ).resolves.toMatchObject({ workstreamOrigin: "ad_hoc" });
+    expect(prepare).toHaveBeenCalledTimes(1);
   });
 
   it("reads each subject once and then serves the cached facts", async () => {

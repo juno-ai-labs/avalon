@@ -128,7 +128,7 @@ did. Each id the caller passes brings its facts with it:
 
 | Attribute | Type | Value | Needs |
 | --- | --- | --- | --- |
-| `workspaceSlug` | string | The workspace's slug — how a rule names one workspace without pasting a uuid | `workspaceId` |
+| `workspaceSlug` | string | The workspace's slug — how a rule names one workspace without pasting a uuid. **User-authored**; see the carve-out below | `workspaceId` |
 | `workspaceMemberCount` | number | Members whose membership is `active`; invited and suspended do not count | `workspaceId` |
 | `workspaceAgeDays` | number | Whole days since the workspace was created | `workspaceId` |
 | `workspaceOwnerEmailDomain` | string | Email domain of the user who created the workspace | `workspaceId` |
@@ -163,10 +163,19 @@ loader, not at the rule author's discretion:
 - **No** — a person's name, a full email address or its local part, a work
   stream's title or objective, a note, a message, a prompt, or anything else a
   person wrote.
+- **One carve-out: `workspaceSlug`.** It is user-authored text — the workspace
+  name typed at onboarding, slugified, with eight characters of the workspace id
+  appended (`workspace-service.ts`) — so it can name a company, a team, or, on a
+  solo account, a person, and it crosses from both regions. It is sent anyway,
+  because the alternative is rules written against uuids, and a rule nobody can
+  read six weeks later is a rollout nobody can safely revert. This is the one
+  exception; a second one is a decision, not a precedent.
 
 A domain is a cohort — a customer, a team, the people dogfooding — and that is
 what makes a rule expressible. The local part is the individual, and it never
-leaves the Worker; `flag-targeting-attributes.ts` keeps a test on exactly that.
+leaves the Worker; `flag-targeting-attributes.ts` keeps a test on exactly that,
+scoped to the fields the rule covers rather than passing by accident on the
+carve-out.
 
 ### Freshness and cost
 
@@ -178,6 +187,13 @@ leaves the Worker; `flag-targeting-attributes.ts` keeps a test on exactly that.
   work stream" would leave those work streams unattributed through their first
   runs. They are unattributed for that first evaluation either way — a fact the
   rows do not yet hold cannot be sent.
+- A **failed read is held down for ten seconds**, keyed by entity and subject.
+  That is the one case where retrying immediately helps nobody: while D1 is
+  unhealthy, every agent path would otherwise re-issue its reads and warn again
+  on every run, so an outage would arrive with a log flood on top of it. Ten
+  seconds is short enough that recovery is prompt and a row written moments
+  later is still picked up. "No row" and "no read" are therefore different
+  outcomes internally, even though both send no attributes.
 - At most three reads, issued concurrently, and each failure degrades to "no
   attributes from that entity" and logs `flag_targeting_attributes_unavailable`.
   A D1 error warns in every environment: unlike the Flagship binding, D1 works

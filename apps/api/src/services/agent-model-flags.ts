@@ -161,10 +161,14 @@ export async function resolveAgentModelRouting(
   const flags = env.FLAGS;
   if (!flags) return fallback;
   const flagKey = AGENT_MODEL_FLAG_KEYS[role];
+  // Loaded outside the try below on purpose. That catch is written for one
+  // expected condition — the local always-remote binding throwing — and reports
+  // it as `agent_model_flag_unavailable` at a level chosen to keep local runs
+  // quiet; an attribute failure caught there would wear the wrong name. The
+  // loader guarantees its own no-throw contract and logs its own diagnostics.
+  const attributes = await loadFlagTargetingAttributes(env, context);
   let details: FlagshipEvaluationDetails<AgentModelRouting>;
-  let attributes: FlagTargetingAttributes;
   try {
-    attributes = await loadFlagTargetingAttributes(env, context);
     details = await flags.getObjectDetails(
       flagKey,
       fallback,
