@@ -42,7 +42,7 @@ jobs:
           - name: api-tests-2-of-2
             command: >-
               pnpm --filter @avalon/api exec vitest run --shard=2/2 &&
-              pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts
+              pnpm --filter @avalon/api test:workers
           - name: remaining-tests
             command: >-
               pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test &&
@@ -71,7 +71,8 @@ jobs:
 
   # Keep one stable required check while the expensive work fans out above.
   # `always()` makes this job report a failure instead of being skipped when a
-  # matrix lane fails or is cancelled.
+  # matrix lane fails or is cancelled. That deliberately leaves a red verify
+  # on a superseded PR revision: a skipped required check would count as green.
   verify:
     name: verify
     needs: checks
