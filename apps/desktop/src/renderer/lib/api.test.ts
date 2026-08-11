@@ -214,7 +214,7 @@ describe('Avalon API wire adapter', () => {
       },
       { type: 'delta', delta: 'Which blog ', reset: false },
       { type: 'delta', delta: 'should I monitor?', reset: false },
-      { type: 'completed', draft, assistantMessage: 'Which blog should I monitor?' },
+      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Which blog should I monitor?' },
     ];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       void input;
@@ -229,7 +229,10 @@ describe('Avalon API wire adapter', () => {
       { message: 'Check this blog every 24 hours.', attachmentIds: [resourceId] },
       (event) => streamed.push(event),
     );
+    // The draft's identity comes back from the API, which is what makes it the
+    // id of the draft automation now sitting in the sidebar.
     expect(result).toMatchObject({
+      draftId: '00000000-0000-7000-8000-000000000042',
       assistantMessage: 'Which blog should I monitor?',
       question: {
         prompt: 'Paste the full blog URL.',
@@ -241,15 +244,17 @@ describe('Avalon API wire adapter', () => {
     const request = fetchMock.mock.calls[0]!;
     expect(String(request[0])).toBe('https://api.avalon.test/automations/draft/stream');
     expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');
-    expect(JSON.parse(String(request[1]?.body))).toMatchObject({
-      draftId: result.draftId,
+    const opening = JSON.parse(String(request[1]?.body));
+    expect(opening).toMatchObject({
       messages: [{ role: 'user', content: 'Check this blog every 24 hours.' }],
       currentDraft: null,
       attachmentIds: [resourceId],
     });
+    expect(opening).not.toHaveProperty('draftId');
 
     await api.compileAutomation({ message: 'Only report meaningful changes.', draftId: result.draftId });
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+      draftId: '00000000-0000-7000-8000-000000000042',
       attachmentIds: [resourceId],
       messages: [
         { role: 'user', content: 'Check this blog every 24 hours.' },

@@ -98,5 +98,23 @@ export function useDraftText(draftKey: string): DraftText {
   // debounce was still holding.
   useEffect(() => () => flush(), [draftKey, flush]);
 
+  // The one edit the debounce never holds: one made before the cache read has
+  // landed. The save effect stands down until hydration, so a composer opened,
+  // typed into, and left inside that window has nothing armed to flush and the
+  // text goes nowhere — which is the same sentence the hydration handler above
+  // exists to protect, lost to a different order of events. Its own guard
+  // cancels it when the composer is already gone, so this is the only place
+  // left to write from.
+  //
+  // Deliberately keyed to unmount alone. A key change resets `edited`, so this
+  // cannot fire for one — and must not, because `latest` describes the key
+  // being switched to by the time a key-change cleanup runs.
+  const commitUnhydratedEdit = useCallback((): void => {
+    if (hydrated.current || !edited.current || pending.current) return;
+    pending.current = { ...latest.current };
+    flush();
+  }, [flush]);
+  useEffect(() => () => commitUnhydratedEdit(), [commitUnhydratedEdit]);
+
   return { text, setText, mentions, setMentions };
 }
