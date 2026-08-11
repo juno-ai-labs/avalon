@@ -62,23 +62,46 @@ export async function withAuthorizedConnection<T>(
   operation: (connection: AuthorizedConnectorConnection) => Promise<T>,
 ): Promise<T> {
   const { connection, adapter, signal } = input;
-  if (input.connectionStatus === undefined || input.connectionStatus === "healthy") {
+  // Both the refresh and the rotation below claim a lease filtered on
+  // `status = 'healthy'`, so neither can succeed for a connection D1 holds in
+  // any other state. Gating them together is what keeps a diagnostic path
+  // reaching the provider: with no rotation registered,
+  // `withProviderReauthorization` falls back to the adapter's own refresh, and
+  // the provider's answer survives instead of being replaced by an
+  // availability error from a lease that could never have been claimed.
+  const rotatable = input.connectionStatus === undefined || input.connectionStatus === "healthy";
+  if (rotatable) {
     await ensureFreshConnectorCredentials(env, connection, adapter, signal, input.minimumValidityMs);
   }
   let credentialsBefore = JSON.stringify(connection.credentials);
+  const persistIfChanged = async () => {
+    if (JSON.stringify(connection.credentials) === credentialsBefore) return;
+    await persistConnectorCredentials(env, connection);
+    credentialsBefore = JSON.stringify(connection.credentials);
+  };
   try {
     // An adapter that meets a mid-call rejection rotates through the same lease
     // this door's refresh uses, rather than redeeming the stored refresh token
     // beside it. Like the refresh above, that coordinator persists what it
     // rotated, so the baseline moves with it and only mutations the adapter
     // makes afterwards are written again below.
-    return await operation(authorizedConnection(connection, async (refused, rotateSignal) => {
-      const rotated = await rotateConnectorCredentials(env, connection, adapter, rotateSignal, refused);
-      credentialsBefore = JSON.stringify(rotated);
-      return rotated;
-    }));
+    return await operation(authorizedConnection(
+      connection,
+      rotatable
+        ? async (refused, rotateSignal) => {
+            const rotated = await rotateConnectorCredentials(env, connection, adapter, rotateSignal, refused);
+            credentialsBefore = JSON.stringify(rotated);
+            return rotated;
+          }
+        : undefined,
+    ));
   } catch (error) {
     if (!isReconnectRequiredConnectorError(error)) throw error;
+    // Persisted before the row leaves `healthy`: `persistConnectorCredentials`
+    // filters on that status, so marking first would silently discard a
+    // credential the adapter had rotated in place and leave only a spent one
+    // stored.
+    await persistIfChanged();
     const reason = reconnectReason(error);
     await markConnectorNeedsReconnect(env.DB, connection, reason);
     throw new ConnectorError("unauthorized", "This connector connection needs reconnecting", {
@@ -86,9 +109,7 @@ export async function withAuthorizedConnection<T>(
       reason,
     });
   } finally {
-    if (JSON.stringify(connection.credentials) !== credentialsBefore) {
-      await persistConnectorCredentials(env, connection);
-    }
+    await persistIfChanged();
   }
 }
 

@@ -1828,14 +1828,16 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     connection,
     {
       refresh: (candidate, refreshSignal) => adapter.refreshCredentials!(candidate, refreshSignal),
-      // `token_expired` is the one Slack auth code a rotation resolves.
-      // `token_revoked`, `account_inactive`, and `invalid_refresh_token` are
-      // settled answers, and Slack's own policy errors carry no error code at
-      // all — spending a single-use refresh token on any of them would buy a
-      // retry that fails identically.
+      // Slack refuses a credential in two dialects: the Web API answers HTTP
+      // 200 with an error code, and the personal MCP transport answers HTTP
+      // 401. Both mean the token may merely be stale. `token_revoked`,
+      // `account_inactive`, and `invalid_refresh_token` are settled answers, a
+      // 403 is a policy denial, and Slack's own pre-flight errors carry no
+      // provider details at all — spending a single-use refresh token on any of
+      // those would buy a retry that fails identically.
       isRejection: (error) => isProviderCredentialRejection(
         error,
-        (details) => details.error === "token_expired",
+        (details) => details.error === "token_expired" || details.status === 401,
       ),
       canRefresh: (candidate) => Boolean(stringValue(candidate.credentials, "refreshToken")),
       signal,
@@ -2175,9 +2177,9 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       );
       return { output, summary: `${definition.mode === "read" ? "Read from" : "Updated"} Slack with ${name}` };
     },
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: Boolean(config.clientId && config.clientSecret && config.signingSecret), message: "Slack connector configuration is available" };
-      const signal = AbortSignal.timeout(10_000);
+      const signal = callerSignal ?? AbortSignal.timeout(10_000);
       try {
         const authentication = await reauthorizing(connection, signal, () => slackApiResponse(
           connection.scope === "workspace" ? botToken(connection) : userToken(connection),

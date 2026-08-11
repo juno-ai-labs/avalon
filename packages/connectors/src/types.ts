@@ -111,19 +111,33 @@ declare const credentialFreshness: unique symbol;
  */
 export interface AuthorizedConnectorConnection extends ConnectorConnectionContext {
   readonly [credentialFreshness]: true;
-  /**
-   * Host-serialized credential rotation, supplied by the credential door.
-   *
-   * A rotating refresh token is single-use, so two calls that are in flight
-   * together must not each redeem the stored one. The host serializes rotation
-   * behind the same lease its expiry-driven refresh uses, and hands that in
-   * here. `withProviderReauthorization` prefers it over an adapter's own
-   * `refreshCredentials`; adapters should not call it directly.
-   */
-  readonly rotateCredentials?: (
-    refused: Record<string, unknown>,
-    signal: AbortSignal,
-  ) => Promise<Record<string, unknown>>;
+}
+
+/**
+ * Host-serialized credential rotation, per connection.
+ *
+ * A rotating refresh token is single-use, so two calls in flight together must
+ * not each redeem the stored one. The host serializes rotation behind the same
+ * lease its expiry-driven refresh uses and registers it here.
+ *
+ * It is deliberately not a property of the connection. The connection is handed
+ * to adapters as `ConnectorToolContext.connection`, and a rotation hanging off
+ * it would be an escape hatch every adapter could reach — guarded by a doc
+ * comment asking them not to, which is exactly the remembered step this brand
+ * exists to remove. `withProviderReauthorization` reads it here instead.
+ */
+export type ConnectorCredentialRotation = (
+  refused: Record<string, unknown>,
+  signal: AbortSignal,
+) => Promise<Record<string, unknown>>;
+
+const credentialRotations = new WeakMap<ConnectorConnectionContext, ConnectorCredentialRotation>();
+
+/** The host's serialized rotation for this connection, when it registered one. */
+export function connectorCredentialRotation(
+  connection: ConnectorConnectionContext,
+): ConnectorCredentialRotation | undefined {
+  return credentialRotations.get(connection);
 }
 
 /**
@@ -136,11 +150,10 @@ export interface AuthorizedConnectorConnection extends ConnectorConnectionContex
  */
 export function authorizedConnection(
   connection: ConnectorConnectionContext,
-  rotateCredentials?: AuthorizedConnectorConnection["rotateCredentials"],
+  rotateCredentials?: ConnectorCredentialRotation,
 ): AuthorizedConnectorConnection {
-  return (rotateCredentials
-    ? Object.assign(connection, { rotateCredentials })
-    : connection) as AuthorizedConnectorConnection;
+  if (rotateCredentials) credentialRotations.set(connection, rotateCredentials);
+  return connection as AuthorizedConnectorConnection;
 }
 
 export interface ConnectorToolContext {
@@ -506,7 +519,17 @@ export interface ConnectorAdapter {
    * A caller deciding whether authority was withdrawn must not read an
    * unreachable provider as a revoked grant.
    */
-  healthCheck(connection?: AuthorizedConnectorConnection): Promise<{
+  /**
+   * `signal` is threaded from the caller rather than timed internally.
+   * Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout`
+   * created here is not disposable — it keeps the invocation alive until it
+   * fires, long after the check returned. An adapter falls back to its own
+   * timeout only when a caller supplies none.
+   */
+  healthCheck(
+    connection?: AuthorizedConnectorConnection,
+    signal?: AbortSignal,
+  ): Promise<{
     ok: boolean;
     message: string;
     reconnectRequired?: boolean;

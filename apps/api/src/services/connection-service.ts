@@ -1019,7 +1019,7 @@ export class ConnectionService {
           signal: AbortSignal.timeout(10_000),
           connectionStatus: String(connection.status),
         },
-        (authorized) => adapter.healthCheck(authorized),
+        (authorized) => adapter.healthCheck(authorized, AbortSignal.timeout(10_000)),
       );
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
@@ -1064,8 +1064,10 @@ export class ConnectionService {
     // The door persists what it and the health check changed, but only for a
     // connection D1 still holds as healthy. A probe that revives a
     // `needs_reconnect` connection is the case that write skips, so the
-    // identity a successful check recovered is stored here instead.
-    if (JSON.stringify(context.credentials) !== before) {
+    // identity a successful check recovered is stored here instead — and only
+    // for that case, or a healthy connection would be encrypted and written
+    // twice for one test.
+    if (connection.status !== "healthy" && JSON.stringify(context.credentials) !== before) {
       await this.persistCredentials(connection, context.credentials);
     }
     if (result.ok && connection.connector_type === "granola" && connection.scope === "personal") {

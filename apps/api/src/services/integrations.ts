@@ -83,7 +83,10 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
-import { withAuthorizedConnection } from "./connector-connection-access";
+import {
+  markConnectorNeedsReconnect,
+  withAuthorizedConnection,
+} from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
   buildAttachmentModelParts,
@@ -4129,21 +4132,50 @@ async function reauthorizeFrozenPlugin(
     const health = await withAuthorizedConnection(
       env,
       { connection, adapter, signal },
-      (authorized) => raceWithSignal(adapter.healthCheck(authorized), signal),
+      // The signal is handed to the adapter rather than only raced against it:
+      // this runs inside a Workflow step, and an `AbortSignal.timeout` created
+      // inside the adapter would hold the invocation open after the check
+      // returned. The caller's deadline is disposable.
+      (authorized) => raceWithSignal(adapter.healthCheck(authorized, signal), signal),
     );
     await ownershipGuard?.();
-    if (health.ok) return "authorized";
-    logPluginAuthorizationFailure(env, input, frozen, health.message);
-    // An adapter reports a withdrawn grant as `reconnectRequired`. Every other
-    // unhealthy result — an unreachable provider, a malformed response — says
-    // nothing about this run's authority.
-    return health.reconnectRequired ? "denied" : "indeterminate";
+    return await pluginAuthorizationFromHealth(env, input, frozen, health);
   } catch (error) {
     logPluginAuthorizationFailure(env, input, frozen, error);
     return error instanceof ConnectorError && error.code === "unauthorized"
       ? "denied"
       : "indeterminate";
   }
+}
+
+/**
+ * Turns one health result into a verdict, and records a denial the adapter
+ * reported rather than threw.
+ *
+ * An adapter that answers `{ ok: false, reconnectRequired: true }` never
+ * reaches the credential door's error path, so without this nothing writes the
+ * verdict down. Leaving the row healthy is what produced the original report:
+ * the desktop kept offering a connection every run had already found unusable,
+ * and each later load repeated the same refused provider calls.
+ */
+async function pluginAuthorizationFromHealth(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  health: { ok: boolean; message: string; reconnectRequired?: boolean },
+): Promise<PluginAuthorization> {
+  if (health.ok) return "authorized";
+  logPluginAuthorizationFailure(env, input, frozen, health.message);
+  // An adapter reports a withdrawn grant as `reconnectRequired`. Every other
+  // unhealthy result — an unreachable provider, a malformed response — says
+  // nothing about this run's authority.
+  if (!health.reconnectRequired) return "indeterminate";
+  await markConnectorNeedsReconnect(
+    env.DB,
+    { id: frozen.connectionId, workspaceId: frozen.workspaceId },
+    "authorization_failed",
+  );
+  return "denied";
 }
 
 function logPluginAuthorizationFailure(
@@ -5684,6 +5716,7 @@ export const __integrationTesting = {
   persistToolTranscriptMessage,
   persistPolledActivity,
   withAuthorizedConnection,
+  pluginAuthorizationFromHealth,
   createStreamDeltaBatcher,
   classifyHarnessToolFailure,
   createConnectorToolContext,
