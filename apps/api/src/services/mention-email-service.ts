@@ -1,4 +1,4 @@
-import type { Region } from "@avalon/contracts";
+import { workstreamCanonicalUrl, type Region } from "@avalon/contracts";
 
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
@@ -36,7 +36,10 @@ export async function sendWorkstreamMentionEmail(
   const workstreamTitle = singleLine(input.workstreamTitle);
   const recipientName = singleLine(input.recipientName);
   const excerpt = messageExcerpt(input.messageText);
-  const workstreamUrl = `avalon://workstreams/${encodeURIComponent(input.workstreamId)}`;
+  // A mail client will not linkify `avalon://`, and a recipient reading on a
+  // phone has no desktop app to hand it to. The canonical HTTPS link is a real
+  // link in every client and still ends at the same work stream.
+  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
   const replyTo = input.workstreamEmailAddress?.trim() || null;
   const subject = `${authorName} mentioned you in ${workstreamTitle}`;
   const text = [

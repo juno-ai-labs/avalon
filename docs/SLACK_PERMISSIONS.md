@@ -87,20 +87,20 @@ bundle.
 | `channels:history` | Receive public-channel follow-ups in existing Avalon threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
 | `channels:join` | Join current and newly created public channels so `@Avalon` is consistently available. |
 | `channels:manage` | Create a public channel with workspace `slack_create_conversation`. |
-| `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, and list visible members. |
+| `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a work stream. |
 | `chat:write` | Post and stream Agent replies, errors, controls, proactive notifications, automation results, and workspace `slack_send_message` output. |
 | `commands` | Receive `/avalon` slash commands and Slack global or message shortcuts. |
 | `files:read` | Read metadata and bounded textual content for files visible to the bot. |
 | `groups:history` | Receive private-channel follow-ups in existing Avalon threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
-| `groups:read` | Read invited private-channel metadata and list visible members. It does not grant access to private channels the bot has not joined. |
+| `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a work stream. It does not grant access to private channels the bot has not joined. |
 | `groups:write` | Create a private channel with workspace `slack_create_conversation`. |
 | `im:history` | Receive Agent DM prompts and read accessible DM history. |
-| `im:read` | Discover bot-visible direct-message conversations and membership. |
+| `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a work stream. |
 | `im:write` | Open an Agent DM for account linking, notifications, automation delivery, or workspace `slack_create_conversation`. |
 | `links:read` | Receive `link_shared` events for supported Avalon URLs. |
-| `links:write` | Attach a privacy-safe preview to an eligible Avalon URL with `chat.unfurl`. |
+| `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Avalon URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
 | `mpim:history` | Read accessible multi-person-DM history and threads. |
-| `mpim:read` | Discover accessible multi-person DMs and membership. Avalon does not subscribe to ordinary `message.mpim` traffic. |
+| `mpim:read` | Discover accessible multi-person DMs and membership, and read their conversation metadata for the same unfurl audience check. Avalon does not subscribe to ordinary `message.mpim` traffic. |
 | `mpim:write` | Open a group DM with workspace `slack_create_conversation`. |
 | `reactions:read` | Receive bounded reaction-added and reaction-removed activity for explicitly configured automations. |
 | `reactions:write` | Add an emoji reaction with workspace `slack_add_reaction`, and add the host-owned `eyes` reaction to the exact triggering DM or mention after durable admission and authorization but before context gathering or workstream processing. Slack's `already_reacted` response makes retries idempotent; a provider-side acknowledgement failure is logged and does not discard the admitted request. |

@@ -175,6 +175,7 @@ const browserBridge: AvalonDesktopBridge = {
         global: import.meta.env.VITE_API_GLOBAL_URL ?? 'http://127.0.0.1:8787',
         eu: import.meta.env.VITE_API_EU_URL ?? 'http://127.0.0.1:8788',
       },
+      webBaseUrl: import.meta.env.VITE_PUBLIC_WEB_BASE_URL ?? 'http://127.0.0.1:5174',
       devAuthEnabled: import.meta.env.DEV,
     } as RuntimeConfig;
   },
