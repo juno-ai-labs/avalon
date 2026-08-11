@@ -196,4 +196,4 @@ deliberately not keyed on `draftKey` — a key-change cleanup runs when `latest`
 already describes the key being switched *to*, so firing it there would write one
 draft's text under another's key.
 
-Shipped in #99.
+Shipped in #99. The regression test that pins it arrived separately, in #104.
