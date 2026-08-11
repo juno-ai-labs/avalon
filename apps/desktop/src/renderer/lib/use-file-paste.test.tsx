@@ -1,7 +1,7 @@
 import type React from 'react';
 import { renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useFilePaste } from './use-file-paste';
+import { useFilePaste, useWindowFilePaste } from './use-file-paste';
 
 function pasteEvent(input: { files?: File[]; text?: string } = {}): React.ClipboardEvent<HTMLElement> {
   const files = input.files ?? [];
@@ -41,6 +41,59 @@ describe('useFilePaste', () => {
     result.current(event);
 
     expect(onFiles).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('keeps images pasted in the same second apart', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 11, 9, 4, 5));
+    const onFiles = vi.fn();
+    const { result } = renderHook(() => useFilePaste(onFiles));
+
+    result.current(pasteEvent({
+      files: [
+        new File(['a'], 'image.png', { type: 'image/png' }),
+        new File(['b'], 'image.png', { type: 'image/png' }),
+      ],
+    }));
+    // A second paste landing on the same second must not reuse the first's names either.
+    result.current(pasteEvent({ files: [new File(['c'], 'image.png', { type: 'image/png' })] }));
+
+    const names = onFiles.mock.calls.flatMap(([files]) => (files as File[]).map((file) => file.name));
+    expect(names).toEqual([
+      'Pasted image 2026-08-11 at 09.04.05.png',
+      'Pasted image 2026-08-11 at 09.04.05 (2).png',
+      'Pasted image 2026-08-11 at 09.04.05 (3).png',
+    ]);
+  });
+
+  it('names an SVG by its extension and leaves a file that is not an image alone', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 11, 9, 4, 5));
+    const onFiles = vi.fn();
+    const { result } = renderHook(() => useFilePaste(onFiles));
+    const blob = new File([''], '', { type: '' });
+
+    result.current(pasteEvent({
+      files: [new File(['<svg/>'], 'image.svg', { type: 'image/svg+xml' }), blob],
+    }));
+
+    const [pasted] = onFiles.mock.calls[0]! as [File[]];
+    expect(pasted[0]!.name).toBe('Pasted image 2026-08-11 at 09.04.05.svg');
+    // Renaming a typeless blob to `.png` would earn it a broken image preview.
+    expect(pasted[1]).toBe(blob);
+  });
+
+  it('pastes copied prose and attaches the image that came inside it', () => {
+    const onFiles = vi.fn();
+    const { result } = renderHook(() => useFilePaste(onFiles));
+    const inline = new File(['png'], 'image001.png', { type: 'image/png' });
+    const event = pasteEvent({ files: [inline], text: 'The retry window overlaps the timeout.' });
+
+    result.current(event);
+
+    expect(onFiles).toHaveBeenCalledWith([inline]);
+    // The prose is what was copied, so it still reaches the caret.
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
@@ -107,5 +160,59 @@ describe('useFilePaste', () => {
 
     expect(onFiles).not.toHaveBeenCalled();
     expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+function dispatchPaste(target: EventTarget, files: File[]): Event {
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: {
+      files: files as unknown as FileList,
+      getData: () => '',
+      types: files.length > 0 ? ['Files'] : [],
+    },
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+describe('useWindowFilePaste', () => {
+  afterEach(() => document.body.replaceChildren());
+
+  it('attaches a paste that lands outside any text surface', () => {
+    const onFiles = vi.fn();
+    renderHook(() => useWindowFilePaste(onFiles));
+
+    const event = dispatchPaste(document.body, [new File(['png'], 'image.png', { type: 'image/png' })]);
+
+    expect(onFiles).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves a text field and a dialog to handle their own paste', () => {
+    const onFiles = vi.fn();
+    renderHook(() => useWindowFilePaste(onFiles));
+    const textarea = document.createElement('textarea');
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const inside = document.createElement('span');
+    dialog.append(inside);
+    document.body.append(textarea, dialog);
+
+    const file = [new File(['png'], 'image.png', { type: 'image/png' })];
+    dispatchPaste(textarea, file);
+    dispatchPaste(inside, file);
+
+    expect(onFiles).not.toHaveBeenCalled();
+  });
+
+  it('stops listening once the screen unmounts', () => {
+    const onFiles = vi.fn();
+    const { unmount } = renderHook(() => useWindowFilePaste(onFiles));
+
+    unmount();
+    dispatchPaste(document.body, [new File(['png'], 'image.png', { type: 'image/png' })]);
+
+    expect(onFiles).not.toHaveBeenCalled();
   });
 });
