@@ -262,15 +262,23 @@ const GOOGLE_DRIVE_FILE_TYPE_MIME: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[numbe
   pdf: "application/pdf",
 };
 
-/** Which tool reads each file type, so a rejection names the way forward. */
+/**
+ * Which tool reads each file type, so a rejection names the way forward.
+ *
+ * Named by canonical tool, the way the plugin system message already refers to
+ * them: a connector cannot know the wire prefix its connection was given, and
+ * `docs.read_document` is a name the caller can match against
+ * `google_docs_read_document` where "the Docs document reader" is a phrase it
+ * has to resolve on its own.
+ */
 const GOOGLE_DRIVE_FILE_TYPE_TOOL: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[number], string> = {
-  document: "Read it with the Docs document reader.",
-  spreadsheet: "Read it with the Sheets spreadsheet reader.",
-  presentation: "Presentations have no dedicated reader; export it through Drive instead.",
-  form: "Forms have no dedicated reader; open it in Google Forms.",
-  drawing: "Drawings have no dedicated reader; export it through Drive instead.",
-  folder: "That id is a folder. Search inside it rather than reading it as a file.",
-  pdf: "Read it with the Drive downloader, which returns bounded text.",
+  document: "Read it with docs.read_document.",
+  spreadsheet: "Read it with sheets.read_spreadsheet, or sheets.read_values for a range of cells.",
+  presentation: "Presentations have no dedicated reader; use drive.export to get its text.",
+  form: "Forms have no dedicated reader; drive.get_metadata is all this connection can see of one.",
+  drawing: "Drawings have no dedicated reader; use drive.export.",
+  folder: "That id is a folder rather than a file. Use drive.search to find what is inside it.",
+  pdf: "Read it with drive.download, which returns bounded text.",
 };
 
 export const GoogleFileWriteAuthorizationGuidance =
@@ -461,7 +469,7 @@ export const googleTools: ToolDefinition[] = [
         },
         fileType: {
           type: "string",
-          enum: ["document", "spreadsheet", "presentation", "form", "drawing", "folder", "pdf"],
+          enum: [...GOOGLE_DRIVE_FILE_TYPES],
           description: "Restrict results to one kind of file.",
         },
         modifiedAfter: {
@@ -2329,12 +2337,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           text: z.string().min(1).max(100_000)
         }).strict().parse(rawArgs);
         await assertGoogleDriveFileWritable(api, context.connection, args.documentId, context.signal);
-        const payload = await updateGoogleDocument(api, context.connection, args.documentId, [{
+        const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
+          updateGoogleDocument(api, context.connection, args.documentId, [{
           insertText: {
             endOfSegmentLocation: { segmentId: "", ...(args.tabId ? { tabId: args.tabId } : {}) },
             text: args.text
           }
-        }], context.signal);
+        }], context.signal));
         return {
           output: boundedToolOutput({
             documentId: args.documentId,
@@ -2353,12 +2362,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           matchCase: z.boolean().default(true)
         }).strict().parse(rawArgs);
         await assertGoogleDriveFileWritable(api, context.connection, args.documentId, context.signal);
-        const payload = await updateGoogleDocument(api, context.connection, args.documentId, [{
-          replaceAllText: {
-            containsText: { text: args.find, matchCase: args.matchCase },
-            replaceText: args.replace
-          }
-        }], context.signal);
+        const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
+          updateGoogleDocument(api, context.connection, args.documentId, [{
+            replaceAllText: {
+              containsText: { text: args.find, matchCase: args.matchCase },
+              replaceText: args.replace
+            }
+          }], context.signal));
         const occurrencesChanged = recordArray(payload, "replies").reduce(
           (total, reply) => total + (readNestedNumber(reply, "replaceAllText", "occurrencesChanged") ?? 0),
           0
@@ -2398,9 +2408,9 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           "dateTimeRenderOption",
           args.valueRenderOption === "UNFORMATTED_VALUE" ? "SERIAL_NUMBER" : "FORMATTED_STRING"
         );
-        const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
-          safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
-        );
+        const payload = await withGoogleFileFamilyHint(context, args.spreadsheetId, "spreadsheet", () =>
+          api(context.connection, url.toString(), { signal: context.signal })
+            .then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
         return {
           output: boundedToolOutput(sanitizeGoogleSheetValues(payload)),
           summary: `Read Google Sheets range ${args.range}`,
@@ -2442,15 +2452,16 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         );
         url.searchParams.set("valueInputOption", args.valueInputOption);
         if (append) url.searchParams.set("insertDataOption", args.insertDataOption ?? "INSERT_ROWS");
-        const payload = await api(context.connection, url.toString(), {
-          method: append ? "POST" : "PUT",
-          body: JSON.stringify({
-            range: args.range,
-            majorDimension: "ROWS",
-            values: args.values.map((row) => row.map((value) => value === null ? "" : value))
-          }),
-          signal: context.signal
-        }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES));
+        const payload = await withGoogleFileFamilyHint(context, args.spreadsheetId, "spreadsheet", () =>
+          api(context.connection, url.toString(), {
+            method: append ? "POST" : "PUT",
+            body: JSON.stringify({
+              range: args.range,
+              majorDimension: "ROWS",
+              values: args.values.map((row) => row.map((value) => value === null ? "" : value))
+            }),
+            signal: context.signal
+          }).then((response) => safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)));
         return {
           output: boundedToolOutput(sanitizeGoogleSheetWriteResponse(payload)),
           summary: `${append ? "Appended" : "Updated"} ${args.values.length} row${args.values.length === 1 ? "" : "s"} in Google Sheets`,
