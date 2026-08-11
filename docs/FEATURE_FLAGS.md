@@ -356,10 +356,14 @@ vocabulary: a rule written for a client flag reads like every other rule, and
 the boundary in [what may become an attribute](#what-may-become-an-attribute)
 applies unchanged — the staff scope is `userEmailDomain`, never an address.
 
-The one difference is what is reliably *present*. A client flag always knows a
-`userId`, because there is a person asking rather than a workspace running
-something, so `userEmailDomain`, `userRole`, and `userPlatformId` are always
-available to a rule here. `workstreamId` never is, so no `workstream*` attribute
+The one difference is which attributes are *reachable at all*. A client flag
+always knows a `userId`, because there is a person asking rather than a
+workspace running something, so the `user*` attributes are the ones to write a
+rule against here — where most agent evaluations cannot use them. That is a
+statement about which rules are worth writing, not a guarantee that a given
+attribute was sent: the usual omissions still apply below, so a rule on
+`userEmailDomain` is a rule the client flags can express, not one that always
+matches. `workstreamId` is never known here, so no `workstream*` attribute ever
 appears. `workspaceId` is present only once an organization has been chosen.
 
 Everything that is not an explicit `true` resolves to off: no binding, a binding
