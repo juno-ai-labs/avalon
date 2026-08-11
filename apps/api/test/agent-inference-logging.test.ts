@@ -178,9 +178,15 @@ describe("agent inference logging", () => {
       disposition: "fallback",
       failure_kind: "api",
       provider_error_code: 400,
-      provider_error_message: "Provider returned error",
       provider_error_provider: "xAI",
     });
+    // The provider's free text is deliberately absent. Some upstreams quote the
+    // request back inside it, and this line is written for every workspace into
+    // Workers Logs and 90-day Logpush storage, where the key-based redactor has
+    // no way to recognise it.
+    const entry = logged.mock.calls[0]![0] as Record<string, unknown>;
+    expect(entry).not.toHaveProperty("provider_error_message");
+    expect(JSON.stringify(entry)).not.toContain("Provider returned error");
     logged.mockRestore();
   });
 

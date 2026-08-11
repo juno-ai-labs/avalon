@@ -62,23 +62,47 @@ export { SlackRoutingBridge } from "./slack-routing-bridge";
  * the partial `Env` they need. A misconfigured deployment fails on its first
  * request with the offending keys named, instead of on whichever request first
  * happened to read the missing one.
+ *
+ * Every entrypoint logs the same event before it fails. The key list is the
+ * whole point of the check, and a queue or cron invocation that threw without
+ * one would be exactly the anonymous failure this replaces.
+ */
+function assertEnvContractOrLog(env: Env): EnvContractError | null {
+  try {
+    assertEnvContract(env);
+    return null;
+  } catch (error) {
+    if (!(error instanceof EnvContractError)) throw error;
+    logStructuredEvent(env, "error", "env_contract_failed", { keys: error.keys });
+    return error;
+  }
+}
+
+/**
+ * A non-HTTP entrypoint has no response to carry the failure, so it rethrows
+ * after logging: the platform's own retry and dead-letter handling is the right
+ * place for a batch that cannot run, and swallowing it would drop the work
+ * silently.
  */
 function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
   handler: (...args: TArgs) => TResult,
 ): (...args: TArgs) => TResult {
   return (...args: TArgs) => {
-    assertEnvContract(args[1]);
+    const failure = assertEnvContractOrLog(args[1]);
+    if (failure) throw failure;
     return handler(...args);
   };
 }
 
 export default {
   fetch: (request, env, context) => {
-    try {
-      assertEnvContract(env);
-    } catch (error) {
-      if (!(error instanceof EnvContractError)) throw error;
-      logStructuredEvent(env, "error", "env_contract_failed", { keys: error.keys });
+    // `/health` is exempt. It is the endpoint whose job is to report which
+    // pieces of configuration are present, and it already models every one of
+    // them as configured/not configured. Letting the 503 swallow it would make
+    // the one probe that can name the missing key the one that cannot answer —
+    // and the 503 body deliberately carries no key names, since they are
+    // secrets, so the probe is the only place an operator can see them.
+    if (new URL(request.url).pathname !== "/health" && assertEnvContractOrLog(env)) {
       return Response.json(
         { error: { code: "service_misconfigured", message: "The service is misconfigured", requestId: null } },
         { status: 503 },

@@ -407,7 +407,10 @@ const ArtifactRowSchema = z.object({
   workstream_id: rowId,
   harness_run_id: rowId.nullish(),
   artifact_type: rowText,
-  title: rowText,
+  // Safe today only because `workstream_create_artifact` is the sole writer and
+  // bounds it to 300. Bounding it here too makes the context panel structurally
+  // safe against a second writer rather than conventionally safe.
+  title: displayText(300),
   preview_text: rowText.nullish(),
   status: rowText,
   metadata_json: rowText.nullish(),
@@ -1219,7 +1222,13 @@ export class WorkstreamService {
     await this.assertMembersExist([userId]);
     await this.database.workstreams.addParticipant(this.auth.workspaceId, id, userId, this.auth.userId, "explicit");
     const participant = (await this.loadParticipants(id)).find((item) => item.user.id === userId);
-    if (participant) await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
+    // The reload can miss if the membership changed underneath this request.
+    // The route parses this against `ParticipantSchema`, so returning undefined
+    // produced an anonymous 500 on a path whose write had already committed.
+    if (!participant) {
+      throw new ApiError(409, "participant_reload_failed", "The participant was added but could not be read back");
+    }
+    await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "participant_added", participant });
     return participant;
   }
 
@@ -1259,7 +1268,13 @@ export class WorkstreamService {
     // A private note is only visible to its creator. The attaching request
     // returns refreshed canonical state to that user, but broadcasting the
     // resource would expose its title to every socket in a shared work stream.
-    if (attached && resource.note_scope !== "personal") {
+    // Same reason as `addParticipant`: `WORKSTREAM_RESOURCES_SQL` filters notes
+    // archived since the authorization check, so the reload can legitimately
+    // miss. A typed conflict beats a 500 whose log says only `internal_error`.
+    if (!attached) {
+      throw new ApiError(409, "resource_reload_failed", "The resource was attached but could not be read back");
+    }
+    if (resource.note_scope !== "personal") {
       await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "resource_attached", resource: attached });
     }
     return attached;

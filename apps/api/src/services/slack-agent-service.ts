@@ -45,6 +45,7 @@ import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
+import { withDeadline } from "../lib/deadline";
 import { randomToken, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
@@ -1124,10 +1125,13 @@ export class SlackAgentService {
       const connection = await this.connectionForTeam(teamId);
       let summary;
       try {
-        summary = await joinAllSlackPublicChannels(
-          await this.botToken(connection),
-          AbortSignal.timeout(3 * 60_000),
-        );
+        // A cancellable deadline: this runs inside the activity queue consumer,
+        // whose invocation ends when the batch handler returns. An uncancellable
+        // three-minute timer would hold that invocation open for the remainder
+        // after a sync that finished in seconds, and the runtime would cancel it
+        // as a hang.
+        const token = await this.botToken(connection);
+        summary = await withDeadline(3 * 60_000, (signal) => joinAllSlackPublicChannels(token, signal));
       } catch (error) {
         if (!slackReconnectRequired(error)) throw error;
         await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));

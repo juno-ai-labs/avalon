@@ -73,8 +73,25 @@ describe("environment contract", () => {
       .toThrow(/HARNESS_MAX_WALL_CLOCK_MS is invalid/u);
     expect(() => assertEnvContract(productionEnv({ CONNECTOR_POLL_TIMEOUT_MS: "20s" })))
       .toThrow(/CONNECTOR_POLL_TIMEOUT_MS is invalid/u);
-    expect(() => assertEnvContract(productionEnv({ HARNESS_MAX_TOOL_CALLS: "0" })))
-      .toThrow(/HARNESS_MAX_TOOL_CALLS is invalid/u);
+  });
+
+  it("accepts a ceiling of zero, which `numericEnv` already reads as the default", () => {
+    // Readability is the check, not policy. Zero is a value an operator may
+    // legitimately set to drop a ceiling during an incident, and `numericEnv`
+    // treats a non-positive value as "use the default" — so rejecting it here
+    // would turn a documented mitigation into a region-wide 503.
+    expect(() => assertEnvContract(productionEnv({ HARNESS_MAX_TOOL_CALLS: "0" }))).not.toThrow();
+  });
+
+  it("says whether a key is missing or merely wrong", () => {
+    // Read from the environment, not from `issue.input`, which Zod does not
+    // populate — testing it reported a key that is set but malformed as
+    // missing, sending whoever reads the log after a variable that is there.
+    expect(() => assertEnvContract(productionEnv({ APP_ENV: "prod" as Env["APP_ENV"] })))
+      .toThrow(/APP_ENV is invalid/u);
+    const withoutLogLevel = productionEnv();
+    delete (withoutLogLevel as Partial<Env>).LOG_LEVEL;
+    expect(() => assertEnvContract(withoutLogLevel)).toThrow(/LOG_LEVEL is missing/u);
   });
 
   it("leaves an absent optional ceiling alone", () => {
@@ -107,6 +124,19 @@ describe("environment contract", () => {
     // `.dev.vars` has never carried them, so requiring them locally would break
     // `pnpm dev:api:local` rather than catch a real misconfiguration.
     expect(() => assertEnvContract({ ...withoutGoogle, APP_ENV: "development" })).not.toThrow();
+  });
+
+  it("lets a sandbox boot without an OpenRouter key, but not a deployment", () => {
+    // `scripts/seed-sandbox-env.mjs` leaves the key empty whenever no real one
+    // is available, which is every sandbox session. Enforcing it unconditionally
+    // turned that into a 503 on every route of both regions — including
+    // `/health`, the one endpoint that models its absence as a supported state
+    // and could have named it.
+    const withoutKey = productionEnv();
+    delete (withoutKey as Partial<Env>).OPENROUTER_API_KEY;
+
+    expect(() => assertEnvContract(withoutKey)).toThrow(/OPENROUTER_API_KEY is missing/u);
+    expect(() => assertEnvContract({ ...withoutKey, APP_ENV: "development" })).not.toThrow();
   });
 
   it("validates a given environment object once", () => {

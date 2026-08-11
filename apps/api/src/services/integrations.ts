@@ -70,7 +70,7 @@ import { numericEnv } from "../env";
 import { encryptString, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
-import { withDeadline } from "../lib/deadline";
+import { createChildDeadline, withDeadline } from "../lib/deadline";
 import { ApiError } from "../lib/api-error";
 import {
   FIRECRAWL_CACHE_MAX_AGE_MS,
@@ -852,8 +852,7 @@ export async function classifyWorkstreamMessage(
           success: diagnostic.success,
           failure_kind: diagnostic.failureKind,
           provider_error_code: diagnostic.providerError?.code,
-          provider_error_message: diagnostic.providerError?.message,
-          provider_error_provider: diagnostic.providerError?.providerName,
+            provider_error_provider: diagnostic.providerError?.providerName,
           validation_issues: diagnostic.validationIssues,
         },
       );
@@ -1678,11 +1677,18 @@ export async function runWorkstreamHarness(
       reauthorizePlugin: async (pluginId) => {
         const frozen = harnessTools.frozenConnections.get(pluginId);
         if (!frozen) return isLoadableBuiltinHarnessPlugin(pluginId, harnessTools);
-        const healthSignal = combineAbortSignals(
+        // Cancellable: this runs inside the bind loop's Workflow step, so an
+        // uncancellable thirty-second timer outlives the reauthorization it
+        // guarded and holds the invocation open.
+        const deadline = createChildDeadline(
           harnessSignal,
-          AbortSignal.timeout(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000)),
+          numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         );
-        return reauthorizeFrozenPlugin(env, input, frozen, healthSignal);
+        try {
+          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal);
+        } finally {
+          deadline.dispose();
+        }
       },
     persistActivation: async (pluginId) => {
       await persistWorkstreamPluginActivation(env, input, liveness.lease, pluginId, harnessTools);

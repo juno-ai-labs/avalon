@@ -1,4 +1,5 @@
 import { WORKSTREAM_NAMING_GRACE_MS, type Workstream } from "@avalon/contracts";
+import { truncateUtf16Safe } from "@avalon/contracts/text";
 import { z } from "zod";
 
 /**
@@ -19,6 +20,13 @@ export const WORKSTREAM_VIEWER_JOINS_SQL = `LEFT JOIN automation_subscriptions s
   LEFT JOIN workstream_read_states rs ON rs.workstream_id = w.id AND rs.user_id = ?`;
 
 const rowText = z.string();
+/**
+ * A column whose length no `CHECK` constrains, read into a field a contract
+ * bounds. Truncating here keeps one over-long value a shortened field rather
+ * than a 500 for every row the same query returned.
+ */
+const displayText = (max: number): z.ZodType<string, string> =>
+  z.string().transform((value) => truncateUtf16Safe(value, max));
 const rowId = z.string().min(1);
 const rowTimestamp = z.string().min(1);
 const rowCount = z.number().int().nonnegative();
@@ -40,10 +48,13 @@ const rowCount = z.number().int().nonnegative();
 export const WorkstreamRowSchema = z.object({
   id: rowId,
   workspace_id: rowId,
-  title: rowText,
-  objective: rowText.nullish(),
+  title: displayText(180),
+  objective: displayText(4_000).nullish(),
   origin_type: z.enum(["ad_hoc", "automation"]),
-  origin_label: rowText.nullish(),
+  // `automation_templates.name` allows 140 characters; `originLabel` allows 120.
+  // Without the bound, one automation named past 120 fails `GET /workstreams`
+  // for the entire workspace — the sidebar — rather than shortening one label.
+  origin_label: displayText(120).nullish(),
   created_by_user_id: rowId.nullish(),
   automation_subscription_id: rowId.nullish(),
   automation_run_id: rowId.nullish(),

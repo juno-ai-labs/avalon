@@ -5,6 +5,7 @@ import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { truncateUtf16Safe } from "../lib/text";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { encryptString } from "../lib/crypto";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -184,8 +185,13 @@ export class ResourceService {
       ).bind(
         id,
         this.auth.workspaceId,
-        title ?? file.name,
-        file.type || "application/octet-stream",
+        // Bounded at the write as well as the read. `title` arrives from a
+        // multipart field and `file.type` from a client-supplied header, and
+        // neither column constrains length — an unbounded value here becomes a
+        // row that fails `ResourceSchema` and `MessageAttachmentSchema` on every
+        // later read.
+        truncateUtf16Safe(title ?? file.name, 300),
+        truncateUtf16Safe(file.type || "application/octet-stream", 160),
         key,
         JSON.stringify({ originalName: file.name, size: file.size }),
         at,
@@ -434,7 +440,12 @@ function toResource(row: Record<string, unknown>) {
   return {
     id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
     resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
-    title: String(row.title), mimeType: row.mime_type == null ? null : String(row.mime_type), canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+    // Truncated to `ResourceSchema`'s bounds rather than passed through: the
+    // columns have no length constraint, and a row past the bound would fail
+    // `GET /resources` for the whole workspace rather than one row.
+    title: truncateUtf16Safe(String(row.title), 300),
+    mimeType: row.mime_type == null ? null : truncateUtf16Safe(String(row.mime_type), 160),
+    canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
     watchEnabled, watchStatus: row.connection_id == null ? "unsupported" : watchEnabled ? "watching" : "paused",
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     contentAvailable: row.content_ref != null,

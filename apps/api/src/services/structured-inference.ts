@@ -84,7 +84,6 @@ export async function runStructuredInference<T>(
         success: diagnostic.success,
         failure_kind: diagnostic.failureKind,
         provider_error_code: diagnostic.providerError?.code,
-        provider_error_message: diagnostic.providerError?.message,
         provider_error_provider: diagnostic.providerError?.providerName,
         validation_issues: diagnostic.validationIssues,
       },

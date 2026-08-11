@@ -152,8 +152,22 @@ stood in for a check:
   the columns' own CHECK constraints, so a bad row fails where it is read and
   names its column. `mappers/connection.ts` and the row schemas in
   `workstream-service.ts` and `note-service.ts` are the pattern; the readers in
-  `integrations.ts`, `automation-service.ts`, `workspace-service.ts` and
-  `connection-service.ts` still hand-coerce and are the remaining work.
+  `integrations.ts`, `automation-service.ts`, `workspace-service.ts`,
+  `connection-service.ts`, `work-opportunity-service.ts`, `slack-agent-service.ts`
+  and `resource-service.ts` still hand-coerce and are the remaining work.
+
+  Two rules keep a row schema from turning one bad row into a dead list, which is
+  the failure the schemas exist to remove rather than relocate:
+
+  - **Mirror a `CHECK` exactly, and bound anything the column does not.** An enum
+    that restates a real constraint can only fail on drift, and naming the column
+    is the point. A column with no length constraint read into a field a contract
+    bounds is truncated at the read instead — `origin_label`, `resources.title`,
+    `activities.title`. Without that, one over-long value fails every row the
+    same query returned.
+  - **Widen the code before the column.** A migration that relaxes a `CHECK` must
+    ship after the deploy that widens the matching enum, or rows written by the
+    new schema fail the readers still running the old one.
 - **Route responses** pass their contract before serializing, enforced by the
   `avalon/require-validated-response` lint rule. Without it the strict side of
   the contract was the far side of the network: the desktop client parses every

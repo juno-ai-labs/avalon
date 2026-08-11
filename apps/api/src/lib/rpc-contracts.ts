@@ -120,8 +120,14 @@ export const AutomationEmailRouteStatusInputSchema = AutomationEmailRouteInputSc
  * The registry's batch methods take arrays. Bounding them is part of the
  * contract: an unbounded batch is a way to hold one Global invocation open on
  * behalf of a regional caller.
+ *
+ * This is the bound `WorkstreamEmailRoutingService.assertBulkSize` already
+ * enforces, and it is defined here so there is one number rather than two. A
+ * second, tighter bound on the same path would mean a batch that succeeds on
+ * Global comes back from a regional caller as a 400 — a Global/EU behavioural
+ * divergence introduced by the guard meant to prevent one.
  */
-export const RPC_BATCH_LIMIT = 500;
+export const RPC_BATCH_LIMIT = 512;
 export function rpcBatch<T extends z.ZodTypeAny>(schema: T) {
   return z.array(schema).max(RPC_BATCH_LIMIT);
 }

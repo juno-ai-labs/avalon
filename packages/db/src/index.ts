@@ -1,4 +1,5 @@
 import { ExternalActorSchema } from "@avalon/contracts";
+import { truncateUtf16Safe } from "@avalon/contracts/text";
 import type {
   AutomationSummary,
   ExternalActor,
@@ -258,8 +259,12 @@ function parseMessageAttachments(value: unknown): Message["attachments"] {
   const rows = parseJson<Array<Record<string, unknown>>>(value, []);
   return rows.map((attachment) => ({
     id: String(attachment.id),
-    fileName: String(attachment.fileName),
-    mimeType: String(attachment.mimeType || "application/octet-stream"),
+    // Bounded to `MessageAttachmentSchema`'s own limits. `resources.title` and
+    // `resources.mime_type` carry no length constraint, so a single over-long
+    // upload title would otherwise fail the transcript page for every
+    // participant, on every page containing that message, forever.
+    fileName: truncateUtf16Safe(String(attachment.fileName), 300),
+    mimeType: truncateUtf16Safe(String(attachment.mimeType || "application/octet-stream"), 160),
     sizeBytes: Math.max(0, Number(attachment.sizeBytes ?? 0)),
     contentAvailable: Number(attachment.contentAvailable ?? 0) === 1 || attachment.contentAvailable === true,
     createdAt: String(attachment.createdAt),
