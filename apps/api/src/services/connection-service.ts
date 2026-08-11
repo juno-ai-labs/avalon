@@ -42,6 +42,7 @@ import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { SlackRoutingService } from "./slack-routing-service";
+import { resolveUserDelivery } from "./user-delivery";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
@@ -118,7 +119,13 @@ export class ConnectionService {
        WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
        ORDER BY c.display_name COLLATE NOCASE`,
     ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
-    return (result.results ?? []).map(connectionFromRow);
+    const rows = result.results ?? [];
+    const userDelivery = await resolveUserDelivery(
+      this.env,
+      { workspaceId: auth.workspaceId, userId: auth.userId },
+      rows.map((row) => ({ id: String(row.id), connector_type: row.connector_type, status: row.status })),
+    );
+    return rows.map((row) => connectionFromRow(row, userDelivery.get(String(row.id)) ?? null));
   }
 
   async beginGoogle(input: {

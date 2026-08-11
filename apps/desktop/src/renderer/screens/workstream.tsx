@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { ApiError, backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
@@ -257,8 +258,16 @@ export function WorkstreamHeader({
     if (showing(variant)) closeRail();
     else onOpenRail(variant);
   };
+  // Copy the canonical HTTPS link, not the `avalon://` deep link. A copied link
+  // is going somewhere else — Slack, mail, a Linear comment — where an unknown
+  // scheme does not unfurl, often does not linkify, and is dead for anyone who
+  // has not installed Avalon. The canonical link ends at the same work stream.
   const copyLink = (): void => {
-    void desktopBridge().copyText(`avalon://workstreams/${workstream.id}`);
+    void (async () => {
+      const bridge = desktopBridge();
+      const { webBaseUrl } = await bridge.getRuntimeConfig();
+      await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstream.id));
+    })();
   };
   const copyEmailAddress = (): void => {
     if (workstream.emailAddress) void desktopBridge().copyText(workstream.emailAddress);

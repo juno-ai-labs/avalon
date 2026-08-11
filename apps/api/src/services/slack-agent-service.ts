@@ -18,6 +18,9 @@ import {
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
   TriggerDefinitionSchema,
+  isWorkstreamId,
+  parseWorkstreamLink,
+  workstreamCanonicalUrl,
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginContext,
@@ -25,6 +28,16 @@ import {
   type SlackSearchAuthorization,
 } from "@avalon/contracts";
 import { newId, nowIso } from "@avalon/db";
+import {
+  SLACK_UNFURL_MAX_LINKS,
+  TERMINAL_UNFURL_REASONS,
+  WORKSTREAM_UNFURL_COLUMNS,
+  WORKSTREAM_UNFURL_JOINS,
+  slackChannelIsExternallyShared,
+  workstreamUnfurlBlocks,
+  workstreamUnfurlSummary,
+  type WorkstreamUnfurlSummary,
+} from "./slack-workstream-card";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -2217,16 +2230,121 @@ export class SlackAgentService {
     const links = Array.isArray(event.links) ? event.links.filter((link): link is Record<string, unknown> => Boolean(link) && typeof link === "object") : [];
     if (!channel || !ts || links.length === 0) return;
     const connection = await this.connectionForTeam(teamId);
-    const unfurls: Record<string, unknown> = {};
+    const linkedWorkstreams = new Map<string, string>();
     for (const link of links) {
-      if (typeof link.url !== "string") continue;
-      const url = new URL(link.url);
-      if (url.origin !== new URL(this.env.PUBLIC_WEB_BASE_URL).origin) continue;
-      const match = /^\/workstreams\/([0-9a-f-]{36})$/iu.exec(url.pathname);
-      if (!match) continue;
-      unfurls[link.url] = { blocks: [{ type: "section", text: { type: "mrkdwn", text: "*Avalon*\nOpen this item in Avalon to view it with your existing workspace permissions." } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open in Avalon" }, url: desktopHandoffUrl(this.env.PUBLIC_WEB_BASE_URL, `avalon://workstreams/${match[1]}`), action_id: "avalon_open_unfurl" }] }] };
+      if (typeof link.url !== "string" || linkedWorkstreams.size >= SLACK_UNFURL_MAX_LINKS) continue;
+      // Slack only delivers link_shared for the app's registered unfurl domain,
+      // so only the HTTPS shapes below can ever arrive here. The shared parser
+      // still accepts the raw deep link, and it never throws on a malformed URL.
+      const workstreamId = parseWorkstreamLink(link.url, { webBaseUrl: this.env.PUBLIC_WEB_BASE_URL });
+      if (workstreamId) linkedWorkstreams.set(link.url, workstreamId);
     }
-    if (Object.keys(unfurls).length) await slackApi(await this.botToken(connection), "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
+    if (linkedWorkstreams.size === 0) return;
+    const token = await this.botToken(connection);
+    // Summary detail is withheld only where Slack itself has put another
+    // company in the room. Every conversation inside the workspace — public,
+    // private, DM, group DM — sees it, and an audience lookup that fails falls
+    // back to the anonymous card rather than dropping the unfurl.
+    // Posting a new card fails closed: an audience we could not confirm is
+    // treated as external. The refresh sweep deliberately does the opposite.
+    const externallyShared = await slackChannelIsExternallyShared(token, channel);
+    const summaries = externallyShared !== false
+      ? new Map<string, WorkstreamUnfurlSummary>()
+      : await this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]);
+    const unfurls: Record<string, unknown> = {};
+    for (const [url, workstreamId] of linkedWorkstreams) {
+      unfurls[url] = {
+        blocks: workstreamUnfurlBlocks(
+          summaries.get(workstreamId) ?? null,
+          workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId),
+        ),
+      };
+    }
+    try {
+      await slackApi(token, "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
+    } catch (error) {
+      // A message that can never carry an unfurl is not a failed job. Letting
+      // it throw marks the `link_shared` ingress job non-retryable, which pins
+      // its attempt count at the ceiling and reads downstream as a job that
+      // exhausted its retry budget — an alert nobody can act on. Anything else
+      // still throws, so a rate limit or outage keeps its durable retry.
+      if (!TERMINAL_UNFURL_REASONS.has(slackErrorReason(error))) throw error;
+      console.info("Slack declined to unfurl a work-stream link", {
+        team_id: teamId,
+        channel_id: channel,
+        reason: slackErrorReason(error),
+      });
+      return;
+    }
+    await this.recordUnfurledLinks(connection, channel, ts, linkedWorkstreams, summaries);
+  }
+
+  /**
+   * Remember which message carries which work-stream link, so the maintenance
+   * sweep can rewrite the card when the work stream moves on.
+   *
+   * This is the only chance to learn it: Slack reports a shared link once, in
+   * `link_shared`, and only permits `chat.unfurl` for a URL whose event the app
+   * acknowledged. There is no API to re-enumerate past events, so a link that
+   * is not recorded here can never be refreshed.
+   *
+   * Only links that were rendered with a summary are recorded. A card that
+   * showed nothing has nothing to keep current, and recording a work stream
+   * that resolved outside this workspace would give the sweep a row it must
+   * never act on.
+   */
+  private async recordUnfurledLinks(
+    connection: SlackConnectionRow,
+    channel: string,
+    ts: string,
+    linkedWorkstreams: Map<string, string>,
+    summaries: Map<string, WorkstreamUnfurlSummary>,
+  ): Promise<void> {
+    const at = nowIso();
+    const statements = recordableUnfurlLinks(linkedWorkstreams, summaries)
+      .map(({ url, workstreamId, summary }) => this.env.DB.prepare(
+        `INSERT INTO slack_unfurled_links
+         (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
+          rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8, ?8)
+         ON CONFLICT(connection_id, slack_channel_id, slack_message_ts, url)
+         DO UPDATE SET rendered_status = excluded.rendered_status,
+                       rendered_anonymous = 0,
+                       audience_checked_at = excluded.audience_checked_at,
+                       refreshed_at = excluded.refreshed_at`,
+      ).bind(
+        connection.id,
+        channel,
+        ts,
+        url,
+        connection.workspace_id,
+        workstreamId,
+        summary.harnessStatus,
+        at,
+      ));
+    if (statements.length) await this.env.DB.batch(statements);
+  }
+
+  private async workstreamUnfurlSummaries(
+    workspaceId: string,
+    workstreamIds: string[],
+  ): Promise<Map<string, WorkstreamUnfurlSummary>> {
+    if (!workstreamIds.length) return new Map();
+    // Scoping to the connection's own workspace is the one check here that is
+    // not a matter of taste: a link to another Avalon workspace's work stream
+    // must fall through to the anonymous card rather than be named in this
+    // Slack team. A miss is indistinguishable from a link that never existed.
+    const rows = await this.env.DB.prepare(
+      // Archiving retires a work stream from view, including App Home's own
+      // task list, so an archived one falls through to the anonymous card
+      // rather than keeping its title alive in Slack.
+      `SELECT w.id, ${WORKSTREAM_UNFURL_COLUMNS}
+         FROM workstreams w
+         ${WORKSTREAM_UNFURL_JOINS}
+        WHERE w.workspace_id = ? AND w.archived_at IS NULL
+          AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
+    ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
+    return new Map((rows.results ?? []).map((row) => [String(row.id), workstreamUnfurlSummary(row)]));
   }
 
   private async linkedIdentity(teamId: string, slackUserId: string): Promise<SlackIdentity | null> {
@@ -2630,7 +2748,10 @@ async function resolveSlackChannelType(
     }, AbortSignal.timeout(5_000));
     const channelName = result.channel.name?.trim().slice(0, 255) || null;
     if (result.channel.is_im === true) return { channelType: "im", channelName, failure: null };
-    if (result.channel.is_mpim === true || result.channel.is_private) {
+    // `is_private` is optional on the wire. Only an explicit `false` classifies
+    // a conversation as public; anything else stays private, because this
+    // classification gates whether Avalon will start a workspace task here.
+    if (result.channel.is_mpim === true || result.channel.is_private !== false) {
       return { channelType: "private", channelName, failure: null };
     }
     return { channelType: "public", channelName, failure: null };
@@ -2818,12 +2939,22 @@ function linkedHome(name: string, tasks: Record<string, unknown>[], automations:
   ];
   if (!tasks.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nothing needs your attention right now._" } });
   for (const task of tasks) {
+    const workstreamId = String(task.id);
+    // Minting a link is strict on purpose, but this is a list: one row that
+    // cannot produce a link must cost that row, not the whole App Home. The
+    // throw would otherwise escape `views.publish` and fail account linking.
+    if (!isWorkstreamId(workstreamId)) {
+      console.warn("Skipped an App Home task row with an unlinkable work-stream id", {
+        workstream_id: workstreamId,
+      });
+      continue;
+    }
     const status = task.harness_status === "needs_input"
       ? ":warning: Needs your input"
       : task.harness_status === "running"
         ? ":large_green_circle: Running"
         : `Recent · ${escapeMrkdwn(String(task.harness_status).replaceAll("_", " "))}`;
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${desktopHandoffUrl(webBase, `avalon://workstreams/${String(task.id)}`)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${workstreamCanonicalUrl(webBase, workstreamId)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
   blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
   if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Avalon DM." } });
@@ -2843,7 +2974,7 @@ function linkedHome(name: string, tasks: Record<string, unknown>[], automations:
 
 function responseActionBlocks(workstreamId: string, webBase: string, linked: boolean): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
-    { type: "button", text: { type: "plain_text", text: "Open task" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_task" },
+    { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_task" },
     ...(linked ? [{ type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "avalon_feedback", value: workstreamId }] : []),
   ] }, aiResponseDisclaimerBlock()];
 }
@@ -2867,7 +2998,7 @@ function workspaceClaimBlocks(sessionId: string, includeConnectHint: boolean): R
 }
 
 function automationActionBlocks(title: string, workstreamId: string, webBase: string): Record<string, unknown>[] {
-  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: desktopHandoffUrl(webBase, `avalon://workstreams/${workstreamId}`), action_id: "avalon_open_automation_result" }] }, aiResponseDisclaimerBlock()];
+  return [{ type: "header", text: { type: "plain_text", text: title.slice(0, 150) } }, { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open full result" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "avalon_open_automation_result" }] }, aiResponseDisclaimerBlock()];
 }
 
 function aiResponseDisclaimerBlock(): Record<string, unknown> {
@@ -2886,7 +3017,7 @@ function desktopHandoffUrl(webBase: string, target: string): string {
   return url.toString();
 }
 
-function shouldSuppressAutomationResult(text: string): boolean {
+export function shouldSuppressAutomationResult(text: string): boolean {
   const normalized = text.trim();
   return !normalized || /\b(?:no|zero)\s+(?:qualifying|actionable|matching)\s+(?:emails?|messages?)\b/iu.test(normalized);
 }
@@ -3082,6 +3213,40 @@ function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+/** Mirrors the `length(url) BETWEEN 1 AND 2000` check in `0055_slack_unfurled_links.sql`. */
+const SLACK_UNFURL_MAX_URL_LENGTH = 2_000;
+
+/**
+ * Decide which of a message's work-stream links are worth recording for refresh.
+ *
+ * The stored URL is the key `chat.unfurl` is later called with, so it has to
+ * match what Slack reported byte for byte. Trimming one to fit the column would
+ * store a key that can never match again: the refresh would look like it
+ * succeeded while the message kept its stale card. Skipping instead costs only
+ * the ability to refresh that one link — its card is still posted.
+ *
+ * Over-long links are reachable, not hypothetical: a canonical link is about
+ * seventy characters, but the legacy `/open#target=…` form this still accepts
+ * tolerates arbitrary extra fragment parameters.
+ */
+function recordableUnfurlLinks(
+  linkedWorkstreams: Map<string, string>,
+  summaries: Map<string, WorkstreamUnfurlSummary>,
+): { url: string; workstreamId: string; summary: WorkstreamUnfurlSummary }[] {
+  return [...linkedWorkstreams].flatMap(([url, workstreamId]) => {
+    const summary = summaries.get(workstreamId);
+    if (!summary) return [];
+    if (url.length > SLACK_UNFURL_MAX_URL_LENGTH) {
+      console.warn("Skipped recording an over-long work-stream link; its card cannot be refreshed", {
+        workstream_id: workstreamId,
+        url_length: url.length,
+      });
+      return [];
+    }
+    return [{ url, workstreamId, summary }];
+  });
+}
+
 export const __slackAgentTesting = {
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
@@ -3096,6 +3261,8 @@ export const __slackAgentTesting = {
   slackEventActorUserIds,
   slackChannelResolutionDenial,
   slackChannelType,
+  linkedHome,
+  recordableUnfurlLinks,
   slackIngressRetryable,
   slackReconnectRequired,
 };

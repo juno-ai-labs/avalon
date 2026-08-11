@@ -24,6 +24,7 @@ function environment(overrides: Partial<Env> = {}): Env {
   return {
     APP_ENV: "production",
     AVALON_REGION: "global",
+    PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
     RESEND_API_KEY: "re_test_send_only",
     RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
     RESEND_NOTIFICATION_FROM_EMAIL: "Avalon <notifications@with-avalon.com>",
@@ -65,7 +66,10 @@ describe("work-stream mention email", () => {
         { name: "region", value: "global" },
       ],
     });
-    expect(String(body.text)).toContain(`avalon://workstreams/${input.workstreamId}`);
+    // A mail client linkifies the canonical HTTPS link and ignores `avalon://`.
+    expect(String(body.text)).toContain(`https://with-avalon.com/app/workstreams/${input.workstreamId}`);
+    expect(String(body.text)).not.toContain("avalon://");
+    expect(String(body.html)).toContain(`https://with-avalon.com/app/workstreams/${input.workstreamId}`);
     expect(String(body.text)).toContain("Reply to this email to continue the work stream.");
     expect(String(body.html)).toContain("Sam &amp; Team");
     expect(String(body.html)).toContain("Adam &lt;Admin&gt; Injected");

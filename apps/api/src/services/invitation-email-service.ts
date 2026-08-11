@@ -1,8 +1,10 @@
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { escapeHtml, sendResendEmail, singleLine } from "./resend";
 
-const RESEND_EMAILS_URL = "https://api.resend.com/emails";
-const MAX_RESEND_RESPONSE_BYTES = 32_000;
+const EMAIL_ERRORS = {
+  unavailable: { code: "invitation_email_unavailable", message: "Invitation email is temporarily unavailable" },
+  failed: { code: "invitation_email_failed", message: "The invitation email could not be sent" },
+};
 
 export interface WorkspaceInvitationEmail {
   id: string;
@@ -70,6 +72,8 @@ export async function sendWorkspaceInvitationEmail(
     idempotencyKey: `avalon-workspace-invitation/${invitation.id}`,
     category: "workspace_invitation",
     region: invitation.region,
+    sender: "transactional",
+    errors: EMAIL_ERRORS,
   }, request);
 }
 
@@ -113,91 +117,11 @@ export async function sendWorkspaceInvitationResolutionEmail(
     idempotencyKey: `avalon-workspace-invitation/${invitation.id}/${invitation.outcome}`,
     category: `workspace_invitation_${invitation.outcome}`,
     region: invitation.region,
+    sender: "transactional",
+    errors: EMAIL_ERRORS,
   }, request);
 }
 
-interface ResendEmail {
-  recipientEmail: string;
-  subject: string;
-  html: string;
-  text: string;
-  idempotencyKey: string;
-  category: string;
-  region: "global" | "eu";
-}
-
-async function sendResendEmail(
-  env: Env,
-  email: ResendEmail,
-  request: typeof fetch,
-): Promise<InvitationEmailDelivery> {
-  // Unit tests and local smoke runs must never send real transactional email.
-  if (env.APP_ENV !== "production") return "skipped";
-
-  const apiKey = env.RESEND_API_KEY?.trim();
-  const from = env.RESEND_FROM_EMAIL?.trim();
-  if (!apiKey || !from) {
-    throw new ApiError(
-      503,
-      "invitation_email_unavailable",
-      "Invitation email is temporarily unavailable",
-    );
-  }
-
-  let response: Response;
-  try {
-    response = await request(RESEND_EMAILS_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-        "idempotency-key": email.idempotencyKey,
-        "user-agent": "avalon-worker/0.1",
-      },
-      body: JSON.stringify({
-        from,
-        to: [email.recipientEmail],
-        subject: email.subject,
-        html: email.html,
-        text: email.text,
-        tags: [
-          { name: "category", value: email.category },
-          { name: "region", value: email.region },
-        ],
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    throw new ApiError(502, "invitation_email_failed", "The invitation email could not be sent");
-  }
-
-  let body: string;
-  try {
-    body = await boundedResponseText(response);
-  } catch {
-    throw new ApiError(502, "invitation_email_failed", "The invitation email could not be sent");
-  }
-  if (!response.ok) {
-    throw new ApiError(502, "invitation_email_failed", "The invitation email could not be sent");
-  }
-  try {
-    const parsed = JSON.parse(body) as { id?: unknown };
-    if (typeof parsed.id !== "string" || parsed.id.length === 0 || parsed.id.length > 200) {
-      throw new Error("invalid Resend response");
-    }
-  } catch {
-    throw new ApiError(502, "invitation_email_failed", "The invitation email could not be sent");
-  }
-  return "sent";
-}
-
-async function boundedResponseText(response: Response): Promise<string> {
-  const body = await response.text();
-  if (body.length > MAX_RESEND_RESPONSE_BYTES) {
-    throw new ApiError(502, "invitation_email_failed", "The invitation email could not be sent");
-  }
-  return body;
-}
 
 function invitationEmailHtml(input: WorkspaceInvitationEmail & {
   roleLabel: string;
@@ -265,16 +189,4 @@ function invitationResolutionEmailHtml(input: WorkspaceInvitationResolutionEmail
 </html>`;
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/gu, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  })[character] ?? character);
-}
 
-function singleLine(value: string): string {
-  return value.replace(/[\r\n\t]+/gu, " ").replace(/\s{2,}/gu, " ").trim();
-}

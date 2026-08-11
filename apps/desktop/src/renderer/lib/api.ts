@@ -51,6 +51,7 @@ import { createElicitationMessage, upsertTranscriptMessage } from './transcript'
 import type {
   ActivitySuggestionData,
   ArtifactData,
+  AutomationCreateOptions,
   AutomationDetail,
   AutomationDraftResponse,
   AutomationRunSummary,
@@ -303,6 +304,7 @@ function mapConnection(connection: WireConnection): WorkstreamConnection {
         ? 'disabled'
         : 'reconnect_required',
     capabilities: connection.grantedCapabilities,
+    ...(connection.userDelivery ? { userDelivery: connection.userDelivery } : {}),
   };
 }
 
@@ -347,9 +349,10 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
   const completed = invocation.completedAt ? Date.parse(invocation.completedAt) : Number.NaN;
   return {
     id: invocation.id,
-    name: invocation.toolName,
+    name: invocation.activityName ?? invocation.toolName,
     summary: invocation.outputSummary ?? invocation.inputSummary,
     status: invocation.status === 'pending' ? 'started' : invocation.status,
+    ...(invocation.plugin ? { plugin: invocation.plugin } : {}),
     ...(Number.isFinite(started) && Number.isFinite(completed) ? { durationMs: completed - started } : {}),
     input: invocation.inputSummary,
     ...(invocation.outputSummary ? { output: invocation.outputSummary } : {}),
@@ -1541,22 +1544,25 @@ export class AvalonApi {
     draftId: string,
     defaultPluginIds: string[],
     activitySourcePluginIds: Record<string, string>,
-    resourceIds: string[],
-    slackDeliveryConnectionId?: string,
+    options: AutomationCreateOptions = {},
   ): Promise<AutomationDetail> {
     const state = this.drafts.get(draftId);
     if (!state?.draft?.ready) throw new ApiError('Finish the automation conversation before creating it.', 422, 'automation_not_ready');
+    const delivery = options.delivery ?? {};
     const raw = await this.request('/automations', {
       method: 'POST',
       body: {
         draft: state.draft,
-        scope: state.draft.suggestedScope,
+        scope: options.scope === undefined
+          ? state.draft.suggestedScope
+          : options.scope === 'you' ? 'personal' : 'workspace',
         defaultPluginIds,
         activitySourcePluginIds,
-        resourceIds,
-        deliveryTargets: slackDeliveryConnectionId
-          ? [{ type: 'slack_agent_dm', connectionId: slackDeliveryConnectionId }]
-          : [],
+        resourceIds: [],
+        deliveryTargets: [
+          ...(delivery.connection ? [{ type: delivery.connection.targetType, connectionId: delivery.connection.id }] : []),
+          ...(delivery.email ? [{ type: 'email' }] : []),
+        ],
       },
       schema: WireAutomationDetailSchema,
     });

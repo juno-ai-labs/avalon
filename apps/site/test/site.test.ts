@@ -79,6 +79,7 @@ describe('public Avalon site', () => {
       'invite/index.html',
       'slack/link/index.html',
       'open/index.html',
+      'app/workstreams/index.html',
       'slack/index.html',
       'terms/index.html',
       'privacy/index.html',
@@ -125,6 +126,7 @@ describe('public Avalon site', () => {
       readProjectFile('invite/index.html'),
       readProjectFile('slack/link/index.html'),
       readProjectFile('open/index.html'),
+      readProjectFile('app/workstreams/index.html'),
       readProjectFile('slack/index.html'),
       readProjectFile('terms/index.html'),
       readProjectFile('privacy/index.html'),
@@ -496,5 +498,41 @@ describe('public Avalon site', () => {
     expect(script).not.toContain('window.location.search');
     expect(script).not.toMatch(/console\./u);
     expect(script).not.toContain('textContent = target');
+  });
+});
+
+describe('canonical work-stream links', () => {
+  it('serves one handoff page for every work-stream id through a path rewrite', () => {
+    const redirects = readProjectFile('public/_redirects');
+    const config = readProjectFile('vite.config.ts');
+    const page = readProjectFile('app/workstreams/index.html');
+
+    // No asset can exist per id, so the rewrite is what makes the canonical
+    // path resolve at all. Losing it turns every shared link into a 404.
+    expect(redirects).toContain('/app/workstreams/*  /app/workstreams/  200');
+    expect(config).toContain('app/workstreams/index.html');
+    expect(page).toContain('id="open-avalon"');
+    expect(page).toContain('noindex, nofollow');
+    expect(page).toContain('<script type="module" src="/src/workstream-link.ts"></script>');
+  });
+
+  it('reads the id from the path and hands off without exposing work-stream content', () => {
+    const script = readProjectFile('src/workstream-link.ts');
+
+    expect(script).toContain('window.location.pathname');
+    expect(script).toContain('parseWorkstreamLinkPath');
+    expect(script).toContain('workstreamDeepLink');
+    // The page is a handoff, not a viewer: it must never fetch or render the
+    // work stream, which would leak content the visitor is not authorized for.
+    expect(script).not.toContain('fetch(');
+    expect(script).not.toMatch(/console\./u);
+    expect(script).not.toContain('innerHTML');
+  });
+
+  it('keeps the handoff page out of shared caches', () => {
+    const headers = readProjectFile('public/_headers');
+
+    expect(headers).toContain('/app/workstreams/*');
+    expect(headers.slice(headers.indexOf('/app/workstreams/*'))).toContain('Cache-Control: no-store');
   });
 });

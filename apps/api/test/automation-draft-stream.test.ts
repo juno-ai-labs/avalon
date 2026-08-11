@@ -73,7 +73,7 @@ describe("automation draft stream", () => {
         name: "Reviewing connected tools",
         summary: "Reviewed the authorized plugin catalog",
         status: "completed",
-        plugins: [{ pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" }],
+        plugin: { pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" },
         durationMs: 42,
       });
       await options?.onStreamEvent?.({ type: "completed" });
@@ -122,7 +122,7 @@ describe("automation draft stream", () => {
         name: "Reviewing connected tools",
         summary: "Reviewed the authorized plugin catalog",
         status: "completed",
-        plugins: [{ pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" }],
+        plugin: { pluginId: "plugin_github", displayName: "GitHub", icon: "brand-github" },
         durationMs: 42,
       },
       { type: "completed", draft, assistantMessage: "Paste the full blog URL." },

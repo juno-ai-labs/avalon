@@ -51,6 +51,7 @@ update it in the same change.
 | [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md) | The Slack Agent connector's product boundary, tools, and event handling. |
 | [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) | Every configured Slack OAuth scope and the behavior that depends on it. Read before adding a scope. |
 | [`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md) | The permanent per-work-stream and per-automation address format at `automation.with-avalon.com`, and its derivation. |
+| [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md) | The canonical `https://with-avalon.com/app/workstreams/<uuid>` link, why the id sits in the path, and the site rewrite that serves it. Read before emitting or parsing a work-stream link anywhere. |
 
 ## Development, verification, and operations
 
