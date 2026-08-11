@@ -107,12 +107,73 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Cleared durable table rows",
     failed: "Could not clear durable table rows",
   },
-  run_subagent: {
+  workstream_run_subagent: {
     started: "Running a focused sub-agent",
     settled: "Ran a focused sub-agent",
     failed: "Could not run a focused sub-agent",
   },
+  list_plugins: {
+    started: "Checking available plugins",
+    settled: "Checked available plugins",
+    failed: "Could not check available plugins",
+  },
+  search_plugins: {
+    started: "Searching connected plugins",
+    settled: "Searched connected plugins",
+    failed: "Could not search connected plugins",
+  },
+  load_plugin: {
+    started: "Loading a plugin",
+    settled: "Loaded a plugin",
+    failed: "Could not load a plugin",
+  },
 };
+
+/**
+ * The action a connector tool performs, taken from the last segment of its wire
+ * name (`..._drive_search` → `search`). Naming every connector row "Reviewed
+ * <connector>" would label writes as reads and give every call on one
+ * connection the same label.
+ */
+const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string; preposition?: string }> = {
+  search: { started: "Searching", settled: "Searched" },
+  query: { started: "Querying", settled: "Queried" },
+  list: { started: "Listing", settled: "Listed" },
+  read: { started: "Reading", settled: "Read" },
+  get: { started: "Fetching", settled: "Fetched", preposition: "from" },
+  fetch: { started: "Fetching", settled: "Fetched", preposition: "from" },
+  download: { started: "Downloading", settled: "Downloaded", preposition: "from" },
+  create: { started: "Creating", settled: "Created", preposition: "in" },
+  add: { started: "Adding", settled: "Added", preposition: "to" },
+  append: { started: "Appending", settled: "Appended", preposition: "to" },
+  update: { started: "Updating", settled: "Updated", preposition: "in" },
+  upsert: { started: "Updating", settled: "Updated", preposition: "in" },
+  delete: { started: "Deleting", settled: "Deleted", preposition: "in" },
+  archive: { started: "Archiving", settled: "Archived", preposition: "in" },
+  send: { started: "Sending", settled: "Sent", preposition: "through" },
+  post: { started: "Posting", settled: "Posted", preposition: "to" },
+  reply: { started: "Replying", settled: "Replied", preposition: "in" },
+  comment: { started: "Commenting", settled: "Commented", preposition: "in" },
+};
+
+/**
+ * A connector tool's wire name is `<connection prefix>_<action path>`, and the
+ * prefix is derived from the model plugin id, so the action is recoverable
+ * without a registry lookup on the read path.
+ */
+function connectorActionKey(toolName: string, pluginId: string): string {
+  const prefix = pluginId.replace(/^plugin_/u, "").slice(0, 48);
+  const leaf = prefix && toolName.startsWith(`${prefix}_`)
+    ? toolName.slice(prefix.length + 1)
+    : toolName;
+  const segments = leaf.split("_").filter(Boolean);
+  return segments[segments.length - 1] ?? "";
+}
+
+/** Whether a wire name has Avalon prose, used to guard against drift. */
+export function hasAvalonToolProse(toolName: string): boolean {
+  return Object.hasOwn(AVALON_TOOL_PROSE, toolName);
+}
 
 /**
  * A wire name is the last resort, and it should still read as a phrase rather
@@ -132,17 +193,22 @@ function humanizeWireToolName(toolName: string): string {
 export function toolActivityName(input: {
   toolName: string;
   status: ToolActivityStatus;
-  pluginDisplayName?: string | null;
+  plugin?: { pluginId: string; displayName: string } | null;
 }): string {
   const prose = AVALON_TOOL_PROSE[input.toolName];
   if (prose) {
     if (input.status === "started") return prose.started;
     return input.status === "failed" ? prose.failed : prose.settled;
   }
-  const owner = input.pluginDisplayName?.trim();
+  const owner = input.plugin?.displayName.trim();
   if (owner) {
-    if (input.status === "started") return `Reviewing ${owner}`;
-    return input.status === "failed" ? `Could not reach ${owner}` : `Reviewed ${owner}`;
+    // One wording for both modes on failure: the call did not reach the
+    // provider, so saying what it would have done there would overstate it.
+    if (input.status === "failed") return `Could not reach ${owner}`;
+    const action = CONNECTOR_ACTION_PROSE[connectorActionKey(input.toolName, input.plugin?.pluginId ?? "")];
+    if (!action) return input.status === "started" ? `Reviewing ${owner}` : `Reviewed ${owner}`;
+    const verb = input.status === "started" ? action.started : action.settled;
+    return action.preposition ? `${verb} ${action.preposition} ${owner}` : `${verb} ${owner}`;
   }
   const humanized = humanizeWireToolName(input.toolName);
   return input.status === "failed" ? `${humanized} failed` : humanized;

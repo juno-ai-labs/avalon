@@ -187,7 +187,7 @@ describe("tool invocation attribution", () => {
       displayName: "Google Drive · Work",
       icon: "brand-google-drive",
     });
-    expect(loaded?.activityName).toBe("Reviewed Google Drive · Work");
+    expect(loaded?.activityName).toBe("Searched Google Drive · Work");
   });
 
   it("leaves an Avalon-owned tool unattributed", async () => {
@@ -252,7 +252,7 @@ describe("tool invocation failure wording", () => {
     const env = { DB: database.binding } as unknown as Env;
 
     expect((await __integrationTesting.loadToolInvocation(env, harnessRunId, "tool-call-1"))?.activityName)
-      .toBe("Reviewed Google Drive · Work");
+      .toBe("Searched Google Drive · Work");
   });
 
   it("leaves a row unattributed when the connector name is blank", async () => {
