@@ -49,9 +49,21 @@ export function socketTicketFromProtocols(header: string | null | undefined): st
   return tokens.find((token) => token !== SOCKET_TICKET_SUBPROTOCOL && TICKET_TOKEN.test(token)) ?? null;
 }
 
-/** Strip the deprecated query ticket from a URL an issuing endpoint returned. */
+/**
+ * Strip the deprecated query ticket from a URL an issuing endpoint returned.
+ *
+ * Total by design: this runs inside a schema transform, and throwing there
+ * would surface a bare `TypeError` instead of the parse failure the caller
+ * handles. A URL that cannot be parsed is returned unchanged, so it fails where
+ * it did before — at the `WebSocket` constructor.
+ */
 export function socketUrlWithoutTicket(url: string): string {
-  const parsed = new URL(url);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
   parsed.searchParams.delete(SOCKET_TICKET_QUERY_PARAM);
   return parsed.toString();
 }
