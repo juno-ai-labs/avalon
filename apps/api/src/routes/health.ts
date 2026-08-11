@@ -1,8 +1,18 @@
 import { Hono } from "hono";
+import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
+
+/** The probe's own shape — this route owns it, so the contract lives here. */
+const HealthCheckSchema = z.object({ ok: z.boolean(), message: z.string() });
+const HealthResponseSchema = z.object({
+  ok: z.boolean(),
+  region: z.enum(["global", "eu"]),
+  environment: z.enum(["development", "test", "staging", "production"]),
+  checks: z.record(z.string(), HealthCheckSchema),
+});
 
 export const healthRoutes = new Hono<HonoAppEnv>();
 
@@ -124,5 +134,8 @@ healthRoutes.get("/", async (c) => {
   if (c.env.APP_ENV === "production") required.push(checks.inboundEmail, checks.featureFlags);
   if (anyLinearConfigured) required.push(checks.linear);
   const ok = required.every((check) => check?.ok);
-  return c.json({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }, ok ? 200 : 503);
+  return c.json(
+    HealthResponseSchema.parse({ ok, region: c.env.AVALON_REGION, environment: c.env.APP_ENV, checks }),
+    ok ? 200 : 503,
+  );
 });

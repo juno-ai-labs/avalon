@@ -11,6 +11,7 @@ import {
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
+import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-validated-response.mjs";
 
 export default tseslint.config(
   {
@@ -38,6 +39,7 @@ export default tseslint.config(
           "no-direct-openrouter-client": noDirectOpenRouterClientRule,
           "provider-json-schema-complexity": providerJsonSchemaComplexityRule,
           "require-inference-diagnostics": requireInferenceDiagnosticsRule,
+          "require-validated-response": requireValidatedResponseRule,
           "require-inference-signal": requireInferenceSignalRule,
           "require-websocket-ticket": requireWebSocketTicketRule,
         },
@@ -57,6 +59,12 @@ export default tseslint.config(
     ignores: ["apps/api/src/services/structured-inference.ts"],
     rules: {
       "avalon/no-direct-openrouter-client": "error",
+    },
+  },
+  {
+    files: ["apps/api/src/routes/**/*.ts"],
+    rules: {
+      "avalon/require-validated-response": "error",
     },
   },
   {

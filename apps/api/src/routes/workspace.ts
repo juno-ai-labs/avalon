@@ -4,8 +4,12 @@ import {
   AcceptWorkspaceInvitationRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
+  CreateWorkspaceInvitationResponseSchema,
   UpdateUserTimezoneRequestSchema,
   UpdateWorkspaceRequestSchema,
+  WorkspaceInvitationSchema,
+  WorkspaceMemberSchema,
+  WorkspaceSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -13,25 +17,30 @@ import { getAuth } from "../middleware/auth";
 import { WorkspaceService } from "../services/workspace-service";
 
 const invitationParam = z.object({ id: IdSchema });
+const MemberPageSchema = z.object({ items: z.array(WorkspaceMemberSchema) });
+const InvitationPageSchema = z.object({ items: z.array(WorkspaceInvitationSchema) });
 
 export const workspaceRoutes = new Hono<HonoAppEnv>();
 
-workspaceRoutes.get("/", async (c) => c.json(await new WorkspaceService(c.env, getAuth(c)).getWorkspace()));
+workspaceRoutes.get("/", async (c) =>
+  c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).getWorkspace())));
 workspaceRoutes.patch("/", zValidator("json", UpdateWorkspaceRequestSchema), async (c) =>
-  c.json(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json"))),
+  c.json(WorkspaceSchema.parse(await new WorkspaceService(c.env, getAuth(c)).updateWorkspace(c.req.valid("json")))),
 );
 workspaceRoutes.patch("/me", zValidator("json", UpdateUserTimezoneRequestSchema), async (c) =>
-  c.json(await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone)),
+  c.json(WorkspaceMemberSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).updateMyTimezone(c.req.valid("json").timezone))),
 );
 workspaceRoutes.get("/members", async (c) =>
-  c.json({ items: await new WorkspaceService(c.env, getAuth(c)).listMembers() }),
+  c.json(MemberPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listMembers() })),
 );
 workspaceRoutes.get("/invitations", async (c) =>
-  c.json({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitations() }),
+  c.json(InvitationPageSchema.parse({ items: await new WorkspaceService(c.env, getAuth(c)).listInvitations() })),
 );
 workspaceRoutes.post("/invitations", zValidator("json", CreateWorkspaceInvitationRequestSchema), async (c) => {
   const body = c.req.valid("json");
-  return c.json(await new WorkspaceService(c.env, getAuth(c)).createInvitation(body.email, body.role), 201);
+  return c.json(CreateWorkspaceInvitationResponseSchema.parse(
+    await new WorkspaceService(c.env, getAuth(c)).createInvitation(body.email, body.role)), 201);
 });
 workspaceRoutes.delete("/invitations/:id", zValidator("param", invitationParam), async (c) => {
   await new WorkspaceService(c.env, getAuth(c)).revokeInvitation(c.req.valid("param").id);

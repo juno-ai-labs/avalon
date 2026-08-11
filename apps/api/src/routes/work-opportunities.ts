@@ -2,6 +2,8 @@ import {
   IdSchema,
   RecordWorkOpportunityImpressionsRequestSchema,
   StartWorkOpportunityRequestSchema,
+  WorkOpportunityPageSchema,
+  WorkstreamDetailSchema,
 } from "@avalon/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -14,10 +16,18 @@ import { WorkOpportunityService } from "../services/work-opportunity-service";
 const listQuery = z.object({ limit: z.coerce.number().int().min(1).max(4).default(4) });
 const idParam = z.object({ id: IdSchema });
 
+/** What starting a suggestion hands back: the work stream it opened, and where. */
+const StartedWorkOpportunityResponseSchema = z.object({
+  workstream: WorkstreamDetailSchema,
+  messageId: IdSchema,
+  harnessRunId: IdSchema.nullable(),
+});
+
 export const workOpportunityRoutes = new Hono<HonoAppEnv>();
 
 workOpportunityRoutes.get("/", zValidator("query", listQuery), async (c) =>
-  c.json(await new WorkOpportunityService(c.env, getAuth(c), requestDeferral(c)).list(c.req.valid("query").limit)),
+  c.json(WorkOpportunityPageSchema.parse(
+    await new WorkOpportunityService(c.env, getAuth(c), requestDeferral(c)).list(c.req.valid("query").limit))),
 );
 
 workOpportunityRoutes.post(
@@ -40,10 +50,11 @@ workOpportunityRoutes.post(
   zValidator("json", StartWorkOpportunityRequestSchema),
   async (c) => {
     const input = c.req.valid("json");
-    return c.json(await new WorkOpportunityService(c.env, getAuth(c), requestDeferral(c)).start(
-      c.req.valid("param").id,
-      input.version,
-      input.idempotencyKey,
-    ), 201);
+    return c.json(StartedWorkOpportunityResponseSchema.parse(
+      await new WorkOpportunityService(c.env, getAuth(c), requestDeferral(c)).start(
+        c.req.valid("param").id,
+        input.version,
+        input.idempotencyKey,
+      )), 201);
   },
 );
