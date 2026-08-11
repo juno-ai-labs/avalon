@@ -4,6 +4,7 @@ import { zValidator } from "../middleware/validation";
 import {
   AutomationDetailSchema,
   AutomationDraftSchema,
+  AutomationDraftStateSchema,
   AutomationDraftStreamEventSchema,
   AutomationRunSchema,
   AutomationSummarySchema,
@@ -29,6 +30,13 @@ const updateBody = z.object({ name: z.string().min(1).max(140).optional(), descr
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });
+/** The non-streaming twin of the stream's `completed` event, down to the id of
+ * the draft subscription the turn wrote. */
+const CompiledDraftSchema = z.object({
+  draftId: IdSchema,
+  draft: AutomationDraftSchema,
+  assistantMessage: z.string().min(1),
+});
 const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) });
 const NextRunSchema = z.object({
   /** Null when the automation is paused or has no enabled schedule. */
@@ -68,7 +76,7 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
   logEvent(c, "info", "automation_draft_compile_started", { draft_id: input.draftId });
   return streamSSE(c, async (stream) => {
     try {
-      const draft = await service.compile(input, requestId, {
+      const compiled = await service.compile(input, requestId, {
         signal: c.req.raw.signal,
         onStreamEvent: async (event) => {
           if (event.type === "completed") return;
@@ -80,10 +88,9 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
       });
       const completed = AutomationDraftStreamEventSchema.parse({
         type: "completed",
-        draft,
-        assistantMessage: draft.elicitation?.prompt
-          ?? draft.followUpQuestion
-          ?? (draft.ready ? "The automation is ready to create." : "I need one more detail before I can create this automation."),
+        draftId: compiled.draftId,
+        draft: compiled.draft,
+        assistantMessage: compiled.assistantMessage,
       });
       await stream.writeSSE({ event: completed.type, data: JSON.stringify(completed) });
     } catch (error) {
@@ -107,9 +114,16 @@ automationRoutes.post("/draft/stream", zValidator("json", CompileAutomationReque
 automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchema), async (c) => {
   const input = c.req.valid("json");
   logEvent(c, "info", "automation_draft_compile_started", { draft_id: input.draftId });
-  return c.json(AutomationDraftSchema.parse(
-    await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId"))));
+  const compiled = await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId"));
+  return c.json(CompiledDraftSchema.parse({
+    draftId: compiled.draftId,
+    draft: AutomationDraftSchema.parse(compiled.draft),
+    assistantMessage: compiled.assistantMessage,
+  }));
 });
+automationRoutes.get("/:id/draft", zValidator("param", idParam), async (c) =>
+  c.json(AutomationDraftStateSchema.parse(
+    await new AutomationService(c.env, getAuth(c)).draftState(c.req.valid("param").id))));
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) =>
   c.json(AutomationDetailSchema.parse(await new AutomationService(c.env, getAuth(c)).create(c.req.valid("json"))), 201));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>

@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -326,6 +326,23 @@ function automationQuestionMessage(
   });
 }
 
+/** A saved conversation as the builder renders it. Every turn comes back as
+ * plain text except the compiler's last one, which is re-rendered from the
+ * draft so a choice the person walked away from is still a choice they can
+ * make, rather than a sentence describing one. */
+function resumedTurns(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  draft: AutomationDraftResponse,
+): Message[] {
+  const lastIndex = messages.length - 1;
+  return messages.map((message, index) => {
+    if (index === lastIndex && message.role === 'assistant' && draft.question) {
+      return automationQuestionMessage(draft.assistantMessage ?? message.content, draft.question);
+    }
+    return automationTextMessage(`resumed-${index}`, message.role === 'user' ? 'human' : 'agent', message.content);
+  });
+}
+
 function DeliveryChoice({
   checked,
   description,
@@ -481,6 +498,7 @@ function DraftSummary({
 export function NewAutomationScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
   const { api, session } = useAppSession();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -517,6 +535,47 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     enabled: Boolean(api),
     staleTime: 10_000,
   });
+
+  // Opened from a draft in the sidebar. The conversation is fetched once and
+  // applied once: after that the screen owns it again, so continuing the draft
+  // is not undone by a refetch of the turn it was resumed at.
+  const resumeDraftId = searchParams.get('draft');
+  // This screen also writes the draft into the URL once a turn compiles, and
+  // that write must not read back as "go and load this draft" — the
+  // conversation on screen is already the one it names. Marking the navigation
+  // is what separates the two, since the value alone cannot.
+  const selfNamedDraft = (useLocation().state as { selfNamedDraft?: boolean } | null)?.selfNamedDraft === true;
+  const [resumedDraftId, setResumedDraftId] = useState<string | null>(null);
+  const resumedDraft = useQuery({
+    queryKey: ['automation-draft', resumeDraftId],
+    queryFn: ({ signal }) => api!.resumeAutomationDraft(resumeDraftId!, signal),
+    enabled: Boolean(api && resumeDraftId) && !selfNamedDraft && resumedDraftId !== resumeDraftId,
+    staleTime: Infinity,
+    retry: false,
+  });
+  // Which draft the address bar named last. The transition is what matters, not
+  // the value: a screen that read "no draft" as "start over" on every render
+  // would wipe a conversation as soon as it began, before it had named itself.
+  const namedDraftId = useRef(resumeDraftId);
+  useEffect(() => {
+    const previous = namedDraftId.current;
+    namedDraftId.current = resumeDraftId;
+    if (resumeDraftId === null) {
+      // New automation was chosen while a draft was on screen. The route did
+      // not change, so nothing else clears it.
+      if (previous !== null) {
+        setResumedDraftId(null);
+        setDraft(null);
+        setTurns([]);
+      }
+      return;
+    }
+    const resumed = resumedDraft.data;
+    if (!resumed || resumedDraftId === resumeDraftId) return;
+    setResumedDraftId(resumeDraftId);
+    setDraft(resumed.draft);
+    setTurns(resumedTurns(resumed.messages, resumed.draft));
+  }, [resumeDraftId, resumedDraft.data, resumedDraftId]);
   const visibleMentionConnections = mentionQuery === null
     ? []
     : (connections.data ?? [])
@@ -702,6 +761,14 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       attachmentDraft.consume(payload.attachmentLocalIds);
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
+      // The turn wrote a draft automation, which the sidebar lists. Naming it
+      // in the URL is what makes that row the active one and what lets this
+      // screen be reopened on the conversation it is showing.
+      if (resumeDraftId !== response.draftId) {
+        setResumedDraftId(response.draftId);
+        setSearchParams({ draft: response.draftId }, { replace: true, state: { selfNamedDraft: true } });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['automations'] });
       const responseMessage = response.question
         ? automationQuestionMessage(response.assistantMessage, response.question)
         : response.assistantMessage

@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
 import type { Workspace } from '../lib/types';
@@ -11,6 +11,7 @@ import { NewAutomationScreen } from './new-automation';
 const api = vi.hoisted(() => ({
   compileAutomation: vi.fn(),
   createAutomation: vi.fn(),
+  resumeAutomationDraft: vi.fn(),
   deleteDraftResource: vi.fn(),
   getConnections: vi.fn(),
   getNotes: vi.fn(),
@@ -52,14 +53,22 @@ vi.mock('thinking-orbs', () => ({
   ),
 }));
 
-function renderScreen(): void {
+/** The address bar, readable from a test. The screen writes the draft it is on
+ * into the query string, and the sidebar reads that back to mark the row. */
+function LocationProbe(): React.JSX.Element {
+  const location = useLocation();
+  return <span data-testid="location-search">{location.search}</span>;
+}
+
+function renderScreen(entry = '/automations/new'): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/automations/new']}>
+        <MemoryRouter initialEntries={[entry]}>
+          <LocationProbe />
           <Routes>
             <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/new" />
           </Routes>
@@ -79,6 +88,9 @@ describe('New automation composer', () => {
     await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
+    // Loud by default: a test that resumes a draft says so, and one that does
+    // not must never have a stale conversation swapped in under it.
+    api.resumeAutomationDraft.mockRejectedValue(new Error('no draft was meant to be resumed'));
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-1',
       assistantMessage: 'What should the automation monitor?',
@@ -202,6 +214,61 @@ describe('New automation composer', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy draft ID' }));
 
     expect(copyText).toHaveBeenCalledWith('draft-1');
+  });
+
+  it('reopens a draft from the sidebar on the turn it was left at', async () => {
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: {
+        draftId: 'draft-9',
+        assistantMessage: 'Which blog should I monitor?',
+        question: {
+          id: 'question-9',
+          prompt: 'Which blog should I monitor?',
+          responseType: 'free_text',
+          options: [],
+          allowOther: false,
+        },
+      },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    renderScreen('/automations/new?draft=draft-9');
+
+    await waitFor(() => expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything()));
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+    // The question the conversation ended on is a question again, not a
+    // sentence describing one.
+    expect(await screen.findByRole('textbox', { name: 'Which blog should I monitor?' })).toBeVisible();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Which blog should I monitor?' }), {
+      target: { value: 'https://example.com/blog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    // Continuing writes back to the same draft rather than starting another.
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
+      { message: 'https://example.com/blog', draftId: 'draft-9' },
+      expect.any(Function),
+    ));
+  });
+
+  it('names the draft it just wrote in the address bar, so its sidebar row is the open one', async () => {
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await screen.findByText('What should the automation monitor?');
+    // The screen adopts the API's id rather than the reverse: the turn wrote a
+    // draft automation, and the URL has to point at that row.
+    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-1'));
+    // Naming it is not the same as reopening it — the conversation on screen is
+    // already the current one.
+    expect(api.resumeAutomationDraft).not.toHaveBeenCalled();
   });
 
   it('uses workstream chat messages while streaming research and the assistant response', async () => {

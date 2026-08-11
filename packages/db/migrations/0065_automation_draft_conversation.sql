@@ -1,0 +1,25 @@
+-- The conversation that produced a draft automation, so the draft can be picked
+-- back up rather than only looked at.
+--
+-- `status = 'draft'` has described a subscription since the first migration, and
+-- the sidebar has rendered one since drafts were sunk to the bottom, but nothing
+-- ever wrote such a row: the automation architect's conversation lived only in
+-- the renderer's memory and vanished on reload, so no draft could reach the
+-- sidebar at all. Persisting the draft as the subscription it is going to become
+-- fixes that, and the subscription is the right home because the row is already
+-- the thing the sidebar lists, the archive endpoint hides, and creation
+-- promotes — an id that survives the promotion means the sidebar row a person
+-- watched appear does not jump when they finish it.
+--
+-- The column holds the compiler's turn-by-turn transcript plus the draft it last
+-- produced and the attachment resources it was given: exactly the state
+-- `POST /automations/draft/stream` needs echoed back to continue. It is written
+-- on every compile turn and cleared when the draft is promoted, so it is NULL
+-- for every automation that runs. A column rather than a table because it is
+-- 1:1 with the subscription, dies with it, and is never queried across rows —
+-- a join table would buy nothing and would let the transcript outlive its draft.
+--
+-- No CHECK constraint tying it to `status`. The API clears it in the same
+-- statement that flips the status, and a constraint spanning two columns would
+-- turn a future status the compiler wants to use into a migration.
+ALTER TABLE automation_subscriptions ADD COLUMN draft_conversation_json TEXT;
