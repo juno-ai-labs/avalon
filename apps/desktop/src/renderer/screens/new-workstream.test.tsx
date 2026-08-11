@@ -384,6 +384,49 @@ describe('New work-stream home', () => {
     ]);
   });
 
+  it('opens the work stream on the keystroke rather than on the response', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    const turn = await screen.findByRole('article', { name: 'Message from Adam Juhasz' });
+    expect(within(turn).getByText('Prepare the launch brief')).toBeVisible();
+    expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Welcome back, Adam' })).not.toBeInTheDocument());
+  });
+
+  // The hand-off is built on the composer being one object across both states.
+  // Remounting it would restart its own state and split the transition into two
+  // elements swapping places, which is the thing the animation exists to avoid.
+  it('carries the same composer across the hand-off', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await screen.findByRole('status', { name: 'Avalon is working' });
+    expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toBe(composer);
+  });
+
+  it('takes back the optimistic work stream when creation fails', async () => {
+    api.createWorkstream.mockRejectedValueOnce(new Error('offline'));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    expect(await screen.findByText('offline')).toBeVisible();
+    expect(screen.queryByRole('article', { name: 'Message from Adam Juhasz' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Avalon is working' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
+  });
+
   it('restores an immediately cleared message when creation fails without replacing a newer draft', async () => {
     api.createWorkstream.mockRejectedValueOnce(new Error('offline'));
     renderScreen();

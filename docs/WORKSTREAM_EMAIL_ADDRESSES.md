@@ -55,6 +55,14 @@ Issued addresses are persisted and never recomputed. Deleted addresses are
 tombstoned rather than reassigned. Future vocabulary changes require a new
 generation version and do not alter existing addresses.
 
+Reservation and activation are separable. The address a work stream keeps comes
+from the reservation, so that step is always on the path that creates it;
+activation only decides whether inbound mail routes there yet, and
+`POST /workstreams` defers it rather than making its caller wait for a second hop
+to the Global registry — see [`workstream-creation.md`](workstream-creation.md).
+A work stream can therefore exist briefly with its route still `reserved`, and
+`list` reconciles it through `backfillWorkstreamAddresses`.
+
 There is exactly one authoritative reservation namespace for every Avalon
 region and both owner kinds. The Global control plane owns the historical
 `workstream_email_routes` registry; Global work streams and automations reserve

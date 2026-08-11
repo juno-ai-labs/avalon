@@ -45,6 +45,45 @@ describe("work-stream room snapshot", () => {
     });
   });
 
+  // A snapshot replaces the client's whole detail rather than merging into it,
+  // so a field the snapshot omits is a field the client loses until its next
+  // REST read. Naming only the run's id cost a work stream its work timer for
+  // the whole of any run that was already going when its socket connected.
+  it("describes the latest harness run, not only its id", async () => {
+    const database = seededDatabase();
+    database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, started_at, model, created_at)
+       VALUES (?, ?, ?, 'opening_message', ?, 'running', ?, 'x-ai/grok-4.3', ?)`,
+    ).run(
+      "00000000-0000-7000-8000-0000000000b9",
+      workspaceId,
+      workstreamId,
+      JSON.stringify({ type: "user", userId: readerId }),
+      at,
+      at,
+    );
+    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+
+    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+      workspaceId,
+      workstreamId,
+      viewerUserId: readerId,
+      viewers: [],
+    });
+
+    expect(snapshot.latestHarnessRunId).toBe("00000000-0000-7000-8000-0000000000b9");
+    expect(snapshot.latestHarnessRun).toMatchObject({
+      id: "00000000-0000-7000-8000-0000000000b9",
+      origin: "opening_message",
+      status: "running",
+      model: "x-ai/grok-4.3",
+      startedAt: at,
+      completedAt: null,
+      error: null,
+    });
+  });
+
   it("stops reporting a work stream as being named long after anything could be", async () => {
     const database = seededDatabase();
     database.prepare("UPDATE workstreams SET title_status = 'naming', created_at = ? WHERE id = ?")
