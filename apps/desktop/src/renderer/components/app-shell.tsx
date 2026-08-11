@@ -149,17 +149,21 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // One counter across all three pin mutations, because they all rewrite the
   // same list and a response can only be judged stale against the others.
   const pinRequestsIssued = useRef(0);
-  const applyPinResponse = async (request: () => Promise<WorkstreamSummary[]>): Promise<void> => {
+  // Answers whether this response was the one applied, which the sidebar needs
+  // as well: a superseded response updates nothing, so the action behind it has
+  // no row movement to follow and must not scroll the viewport either.
+  const applyPinResponse = async (request: () => Promise<WorkstreamSummary[]>): Promise<boolean> => {
     pinRequestsIssued.current += 1;
     const issued = pinRequestsIssued.current;
     const pinned = await request();
-    if (!applyPinnedWorkstreamsIfCurrent(queryClient, pinned, issued, pinRequestsIssued.current)) return;
+    if (!applyPinnedWorkstreamsIfCurrent(queryClient, pinned, issued, pinRequestsIssued.current)) return false;
     // The response is the whole pinned list and can name a work stream this
     // device has never listed — pinned on another machine, and too quiet to sit
     // on the page this one last fetched. Patching positions cannot conjure that
     // row, so the list is refetched behind the patch: the patch is what moves
     // the section immediately, the refetch is what makes it complete.
     void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+    return true;
   };
   const notes = useQuery({
     queryKey: ['notes'],
@@ -284,8 +288,8 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (location.pathname === `/workstreams/${updated.id}`) void navigate('/workstreams/new');
         }}
         onPinWorkstream={async (workstream, pinned) => {
-          if (!api) return;
-          await applyPinResponse(() => pinned
+          if (!api) return false;
+          return applyPinResponse(() => pinned
             ? api.pinWorkstream(workstream.id)
             : api.unpinWorkstream(workstream.id));
         }}
