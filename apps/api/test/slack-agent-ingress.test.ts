@@ -573,11 +573,23 @@ describe("work-stream link unfurl card", () => {
     expect(text).not.toContain("via ");
   });
 
+  it("badges a failed work stream, which is as actionable as one needing input", () => {
+    const text = cardText(workstreamUnfurlBlocks({
+      title: "Board decision",
+      harnessStatus: "failed",
+      lastActivityAt: "2026-08-10T12:00:00.000Z",
+      automationName: null,
+    }, url));
+
+    expect(text).toContain(":red_circle: *<");
+    expect(text.split("\n")[1]).toMatch(/^Failed · /u);
+  });
+
   it("shows no status badge for a settled work stream", () => {
     // "Completed" is not something a reader can act on, and a card is only
     // rewritten when its badge changes — so a settled work stream would carry
-    // that label indefinitely. Only running and needs-input say anything.
-    for (const harnessStatus of ["completed", "failed", "scheduled", "idle"]) {
+    // that label indefinitely. Only the actionable states say anything.
+    for (const harnessStatus of ["completed", "scheduled", "idle"]) {
       const text = cardText(workstreamUnfurlBlocks({
         title: "Daily product brief",
         harnessStatus,
@@ -586,7 +598,7 @@ describe("work-stream link unfurl card", () => {
       }, url));
 
       expect(text.startsWith("*<"), harnessStatus).toBe(true);
-      expect(text, harnessStatus).not.toMatch(/Completed|Failed|Scheduled|Idle/u);
+      expect(text, harnessStatus).not.toMatch(/Completed|Scheduled|Idle/u);
       expect(text.split("\n")[1], harnessStatus).toMatch(/^Updated /u);
     }
   });
