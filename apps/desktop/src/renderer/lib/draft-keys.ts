@@ -11,6 +11,15 @@ export function newWorkstreamDraftKey(workspaceId: string): string {
   return `new-workstream:${workspaceId}`;
 }
 
-export function newAutomationDraftKey(workspaceId: string): string {
-  return `new-automation:${workspaceId}`;
+/**
+ * Scoped by workspace like the launcher, and then by the draft automation being
+ * written when there is one. The builder is one screen serving many
+ * conversations: sharing a single key across them would carry an unsent
+ * sentence — and worse, staged attachments — from the draft it was typed in
+ * into the next draft's turn.
+ */
+export function newAutomationDraftKey(workspaceId: string, draftAutomationId?: string | null): string {
+  return draftAutomationId
+    ? `new-automation:${workspaceId}:${draftAutomationId}`
+    : `new-automation:${workspaceId}`;
 }

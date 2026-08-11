@@ -27,7 +27,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -177,6 +177,18 @@ function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): Rea
   );
 }
 
+/** The draft the builder currently has open, or null when it is writing a new
+ * one. Every draft row points at the same path and differs only in the query,
+ * which NavLink does not consider — left to itself it would light up every
+ * draft, and the New automation entry beside them, the moment the builder
+ * opened. */
+function useOpenDraftId(): string | null {
+  const location = useLocation();
+  return location.pathname === '/automations/new'
+    ? new URLSearchParams(location.search).get('draft')
+    : null;
+}
+
 function AutomationRow({
   automation,
   debugEnabled,
@@ -191,11 +203,18 @@ function AutomationRow({
   onRunNow: (automation: AutomationSummary) => void;
 }): React.JSX.Element {
   const isDraft = automation.status === 'draft';
+  const draftActive = useOpenDraftId() === automation.id;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
-          <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active', isDraft && 'is-draft')} to={`/automations/${automation.id}`}>
+          {/* A draft has no overview to open — no runs, no next run, nothing it
+              has done. What it has is the conversation that was left unfinished,
+              so its row goes back to the builder to carry on writing it. */}
+          <NavLink
+            className={({ isActive }) => clsx('sidebar-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            to={isDraft ? `/automations/new?draft=${encodeURIComponent(automation.id)}` : `/automations/${automation.id}`}
+          >
             <span className="sidebar-row-icon" aria-hidden="true">
               {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}
             </span>
@@ -561,6 +580,7 @@ export function Sidebar({
   onSignOut,
 }: SidebarProps): React.JSX.Element {
   const debugEnabled = useDebugEnabled();
+  const openDraftId = useOpenDraftId();
   const sidebarOpen = useUiStore((state) => state.sidebarOpen);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
@@ -866,7 +886,13 @@ export function Sidebar({
               <MessageSquarePlus aria-hidden="true" size={15} />
               <span>New work stream</span>
             </NavLink>
-            <NavLink className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')} to="/automations/new">
+            {/* Reopening a draft lands on this same path, where the active row
+                is the draft's own. Two entries lit at once would say the screen
+                is both a new automation and that one. */}
+            <NavLink
+              className={({ isActive }) => clsx('sidebar-action', isActive && openDraftId === null && 'is-active')}
+              to="/automations/new"
+            >
               <Plus aria-hidden="true" size={15} />
               <span>New automation</span>
             </NavLink>
