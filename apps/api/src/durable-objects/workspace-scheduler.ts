@@ -11,7 +11,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
-import { scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
@@ -631,7 +631,7 @@ export class WorkspaceScheduler {
     if (existing) return existing.id;
 
     const id = crypto.randomUUID();
-    const model = await scheduledWorkstreamModel(this.env, { workspaceId, workstreamId });
+    const model = await scheduledWorkstreamModelForExisting(this.env, { workspaceId, workstreamId });
     await this.env.DB.prepare(
       `INSERT INTO harness_runs (
        id, workspace_id, workstream_id, origin, execution_principal_json,

@@ -52,6 +52,7 @@ import { elicitationMessageId, normalizeElicitation } from './elicitation';
 import { createElicitationMessage, upsertTranscriptMessage } from './transcript';
 import type {
   ActivitySuggestionData,
+  AgentModelOverride,
   ArtifactData,
   AutomationCreateOptions,
   AutomationDeliveryTargetType,
@@ -1110,7 +1111,12 @@ export class AvalonApi {
     return mapWorkstreamSummary(workstream);
   }
 
-  async createWorkstream(input: { openingMessage: string; participantIds: string[]; attachmentIds?: string[] }): Promise<CreatedWorkstream> {
+  async createWorkstream(input: {
+    openingMessage: string;
+    participantIds: string[];
+    attachmentIds?: string[];
+    modelOverride?: AgentModelOverride;
+  }): Promise<CreatedWorkstream> {
     const clientMessageId = crypto.randomUUID();
     const response = await this.request('/workstreams', {
       method: 'POST',
@@ -1119,6 +1125,9 @@ export class AvalonApi {
         participantUserIds: input.participantIds,
         clientMessageId,
         attachmentIds: input.attachmentIds ?? [],
+        // Omitted rather than sent as null when nothing was pinned, so the work
+        // stream stays on whatever `agent-model-workstream` serves it.
+        ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
       },
       schema: createWorkstreamResponseSchema,
     });
@@ -1611,6 +1620,7 @@ export class AvalonApi {
           ...(delivery.connection ? [{ type: delivery.connection.targetType, connectionId: delivery.connection.id }] : []),
           ...(delivery.email ? [{ type: 'email' }] : []),
         ],
+        ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
       },
       schema: WireAutomationDetailSchema,
     });

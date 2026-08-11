@@ -40,6 +40,7 @@ import { createElicitationMessage, createTextMessage, createToolEventMessage, up
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import type {
+  AgentModelOverride,
   AutomationActivitySource,
   AutomationDraftQuestion,
   AutomationDraftResponse,
@@ -502,6 +503,9 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+  // Pins the work streams this automation's runs create, not the drafting
+  // conversation above — the automation architect keeps its own flag.
+  const [modelOverride, setModelOverride] = useState<AgentModelOverride | null>(null);
   const attachmentDraft = useFileAttachments(api, draftKey);
   // This composer does not autofocus either, so a paste landing on the document
   // reaches the draft rather than going nowhere.
@@ -721,6 +725,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const create = useMutation({
     mutationFn: () => api!.createAutomation(draft!.draftId, defaultPluginIds, activitySourcePluginIds, {
       scope,
+      ...(modelOverride ? { modelOverride } : {}),
       delivery: {
         ...(deliveryConnection
           ? { connection: { id: deliveryConnection.id, targetType: deliveryConnection.userDelivery!.targetType } }
@@ -924,6 +929,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   fileInputRef={fileInputRef}
                   mentionLabel="Mention a connection"
                   mentionLabels={mentionLabels}
+                  modelOverride={{ value: modelOverride, onChange: setModelOverride }}
                   onAttach={attachmentDraft.addFiles}
                   onMention={beginConnectionMention}
                   onKeyDown={(event) => {

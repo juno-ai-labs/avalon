@@ -40,7 +40,7 @@ import {
   startWorkstreamWorkflow,
 } from "./integrations";
 import { logStructuredEvent } from "../observability/logger";
-import { scheduledWorkstreamModel } from "./agent-model-flags";
+import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
@@ -170,7 +170,7 @@ export async function launchWorkstreamHarness(
 ): Promise<string> {
   const id = newId();
   const at = nowIso();
-  const model = await scheduledWorkstreamModel(env, {
+  const model = await scheduledWorkstreamModelForExisting(env, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
   });
@@ -500,6 +500,9 @@ export class WorkstreamService {
       clientMessageId: input.clientMessageId,
       participantUserIds: input.participantUserIds,
       attachmentIds,
+      // Written before the harness is launched below, which is what lets the
+      // run this create starts already resolve to the pinned model.
+      modelOverride: input.modelOverride ?? null,
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
