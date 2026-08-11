@@ -99,11 +99,24 @@ browser driver to the repository.
 it indexes every document and says which one owns which area. Find the ones whose
 scope matches what you are touching, read them first, and update them in the same
 change. When a change introduces a subsystem no existing document covers, add
-`docs/<NAME>.md` and register it in that index — the index is the one registry
-that has to stay complete. Product requirement documents are the exception: they
+`docs/<lower-kebab-name>.md` and register it in that index — the index is the one
+registry that has to stay complete. Product requirement documents are the exception: they
 live in dated folders under `docs/PRDs/` and are not registered, per
 [`docs/prds.md`](docs/prds.md). The root [`README.md`](README.md) links only to
 that index and lists no documents of its own; do not add a second list there.
+
+**Every architecture or large module you create or substantially change gets its
+own document in `docs/`, written to the shape in
+[`docs/module-documents.md`](docs/module-documents.md)** — read it before writing
+or editing one. It defines the threshold for what needs a document, the required
+sections, and the one thing that is non-negotiable: each such document ends with
+a **running changelog**, newest entry first, appended **in the same change as the
+code**. An entry records what changed *and why it changed* — the pressure that
+forced it, the alternative that was rejected, and what a future change has to
+respect. The code says what the module does and the diff says what moved; only
+that section says why, and it is written for whoever changes this module a year
+from now without you to ask. "Refactor" and "cleanup" are not a why. Never invent
+one you do not know — say the earlier reasoning was not recorded.
 
 ## Pull requests
 
