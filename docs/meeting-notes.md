@@ -39,6 +39,14 @@ visible to the refresh that follows it, so a refresh scheduled independently of 
 commit would summarize a transcript that stops a full cadence short. The timer
 re-arms because the commit takes dictation out of `listening` and back.
 
+A refresh raised while one is still running is **coalesced, not queued** — the
+caller gets the pass already in flight. The commit still happens, so no speech is
+lost, but a second inference for it is not: a live briefing replaces the last one
+rather than adding to it, so the next pass summarizes those segments anyway.
+Queueing them instead would let a pass slower than the cadence — always possible
+at 60 seconds, and the normal case at the 15-second floor — build a backlog that
+costs an inference per tick and has to drain before finalization can even start.
+
 ### Where the cadence comes from
 
 The cadence is the `control-tower-refresh-seconds` flag, served from Flagship and
@@ -105,12 +113,16 @@ by the main process only to the main window). The meeting window exists for the
 recording; once there is no recording, the note is what the person wants to be
 looking at.
 
-Two paths do not end that way. If the note could not be marked complete the
-window stays open, because closing would take the only report of the failure with
-it. And a **native window close** — the traffic-light button, or app quit —
-finalizes and then closes regardless of whether that succeeded, since a window
-that refuses to shut also blocks quit; it does not navigate, because closing a
-window is not a request to be taken somewhere.
+Two paths do not end that way. If anything went wrong — the transcript could not
+be closed, the last segment could not be saved, the final summary failed, or the
+note could not be marked complete — the window stays open, because it is the only
+place any of those is reported and the note screen cannot ask for a summary
+again. `finalizeRecording` resolves to whether the meeting finished cleanly for
+exactly this decision; a failure that only sets a visible error, as the summary
+does, would otherwise be indistinguishable from success. And a **native window
+close** — the traffic-light button, or app quit — finalizes and then closes
+regardless, since a window that refuses to shut also blocks quit; it does not
+navigate, because closing a window is not a request to be taken somewhere.
 
 ### Landing a briefing
 
@@ -145,6 +157,11 @@ briefings.
   as user-role messages and both prompts refuse instructions found inside them.
 - **A `live` pass with no new segments does no inference.** It materializes and
   returns, which is what keeps a silent minute from costing an inference.
+- **At most one live refresh is in flight per window.** Removing the coalescing
+  turns a slow pass into an unbounded queue of them, and the symptom is a bill
+  and a stuck **End**, not a visibly broken briefing.
+- **The meeting window closes only when the meeting finished cleanly.** Anything
+  that closes it on a failure discards the only report of that failure.
 - **Only the owner may record, append, or generate.** Every statement binds
   `workspace_id` and `owner_user_id`; the screen is read-only for anyone else.
 
@@ -190,9 +207,10 @@ what happens when a note's scope changes, which is
   visible marker and `transcriptStatus` becomes `partial`. Only the final pass is
   told that — a live briefing is a working note that is replaced in seconds and
   says nothing about coverage, while the durable summary carries the caveat.
-- **A refresh overruns its own cadence.** Refreshes are serialized on
-  `generationTailRef`, so a slow pass delays the next one rather than racing it;
-  the compare-and-set catches anything that still overlaps across windows.
+- **A refresh overruns its own cadence.** The tick that lands on top of it is
+  coalesced into the pass in flight, so the loop skips rather than accumulates;
+  refreshes are serialized on `generationTailRef`, and the compare-and-set
+  catches anything that still overlaps across windows.
 
 ## Security and trust model
 
@@ -298,6 +316,41 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-08-11 — A live refresh coalesces instead of queueing, and End only closes on a clean finish
+
+**What changed:** A `live` refresh raised while one is still running now returns
+the pass in flight rather than queueing another behind it. `finalizeRecording`
+resolves to whether the meeting finished cleanly, and **End** closes the window
+only when it did — previously a failed final summary or segment save closed the
+window anyway, because both report through visible state rather than by
+rejecting, and only a failed `updateNote` reached the caller. The empty state
+also describes the cadence it was served instead of naming one minute.
+
+**Why:** All three are consequences of the two entries below, found in review of
+the same change. A one-minute cadence is short enough that a pass can overrun it
+and a fifteen-second floor makes that routine: each tick was adding an inference
+for segments the next pass would summarize anyway, and finalization had to drain
+the whole backlog before it could start. The close behavior was documented as
+"only on a clean finalization" and was not that — the summary is the failure most
+worth staying open for, since nothing in the note screen can ask for it again.
+And a served cadence makes any number in the copy a promise the app may not keep.
+
+**Considered and rejected:** Skipping the *commit* as well when a refresh is
+already running. The commit is the durable half and the only thing that makes
+that minute of speech recoverable; dropping it to save an inference loses
+transcript. Also rejected: closing the window on any finalization and surfacing
+the error on the note screen instead, which would mean building a regenerate
+affordance there — worth doing, but a larger change than this review finding.
+
+**Consequences:** `generateNotes` and `finalizeRecording` now report success as a
+resolved `boolean` rather than by rejecting, so a caller that ignores the value
+silently ignores a failure — the two tests that hold this both fail vacuously if
+written to assert only on the happy path, which is how the queueing bug survived
+its first test. A meeting that repeatedly fails to summarize now leaves its
+window open, which is deliberate but means a person can accumulate meeting
+windows if the service is down; if that becomes the common failure, the answer is
+a regenerate control on the note screen, not closing over the error.
 
 ### 2026-08-11 — Ending a meeting closes its window and opens the note
 
