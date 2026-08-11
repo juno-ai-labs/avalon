@@ -4,6 +4,7 @@ import {
   emptyMenuBarContent,
   menuBarLabel,
   menuBarMenuTemplate,
+  supportsSectionHeaders,
   MENU_BAR_RECENT_LIMIT,
   type MenuBarActions,
   type MenuBarContent,
@@ -23,12 +24,13 @@ function actions(): MenuBarActions {
 
 function template(
   content: MenuBarContent,
-  overrides: { signedIn?: boolean; actions?: MenuBarActions } = {},
+  overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Avalon',
     content,
     signedIn: overrides.signedIn ?? true,
+    sectionHeaders: overrides.sectionHeaders ?? true,
     actions: overrides.actions ?? actions(),
   });
 }
@@ -62,9 +64,12 @@ describe('menu bar menu', () => {
       'New Meeting/Note',
       'New Work Stream',
       'New Automation',
+      '—',
+      'Suggestions',
       'Reply to the Acme renewal thread',
       'Summarize yesterday’s standup',
       '—',
+      'Recent',
       'Work stream 0',
       'Work stream 1',
       'Work stream 2',
@@ -82,18 +87,60 @@ describe('menu bar menu', () => {
     expect(recentLabels).toHaveLength(MENU_BAR_RECENT_LIMIT);
   });
 
-  it('keeps the rule and all three fixed actions when Avalon has nothing to suggest', () => {
+  it('collapses the suggestion group to one rule when Avalon has nothing to suggest', () => {
     const items = template({ suggestions: [], recents: workstreams.slice(0, 1) });
+    // Not two rules against each other with no group between them.
     expect(labels(items)).toEqual([
       'New Meeting/Note',
       'New Work Stream',
       'New Automation',
       '—',
+      'Recent',
       'Work stream 0',
       '—',
       'Open Avalon',
       'Quit Avalon',
     ]);
+  });
+
+  it('heads each group, and keeps Recent over its own empty state', () => {
+    const items = template(emptyMenuBarContent);
+    const recent = items.find((item) => item.label === 'Recent');
+
+    expect(recent?.type).toBe('header');
+    expect(items.some((item) => item.label === 'Suggestions')).toBe(false);
+    expect(labels(items).indexOf('Recent'))
+      .toBe(labels(items).indexOf('No recent work streams') - 1);
+  });
+
+  it('falls back to a disabled row where macOS has no section headers', () => {
+    const items = template(
+      { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: workstreams },
+      { sectionHeaders: false },
+    );
+
+    for (const label of ['Suggestions', 'Recent']) {
+      const header = items.find((item) => item.label === label);
+      expect(header?.type).toBeUndefined();
+      // Still unclickable: a header that could be activated is a menu row that
+      // does nothing, which is worse than an unstyled one.
+      expect(header?.enabled).toBe(false);
+      expect(header?.click).toBeUndefined();
+    }
+  });
+
+  it('never draws two rules in a row, whatever the content is', () => {
+    for (const content of [
+      emptyMenuBarContent,
+      { suggestions: [], recents: workstreams },
+      { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: [] },
+      { suggestions: [{ id: 'o1', version: 1, label: 'Reply to Dana' }], recents: workstreams },
+    ]) {
+      const drawn = labels(template(content));
+      expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
+      expect(drawn.at(0)).not.toBe('—');
+      expect(drawn.at(-1)).not.toBe('—');
+    }
   });
 
   it('says why the lower half is empty rather than dropping it', () => {
@@ -122,6 +169,9 @@ describe('menu bar menu', () => {
     );
     for (const item of items) activate(item);
 
+    // Headers carry no handler, so activating everything must not produce a
+    // stray call.
+    expect(items.filter((item) => item.click).length).toBe(7);
     expect(menuActions.newMeetingNote).toHaveBeenCalledTimes(1);
     expect(menuActions.newWorkstream).toHaveBeenCalledTimes(1);
     expect(menuActions.newAutomation).toHaveBeenCalledTimes(1);
@@ -131,6 +181,15 @@ describe('menu bar menu', () => {
     expect(menuActions.openWorkstream).toHaveBeenCalledWith('workstream-0');
     expect(menuActions.openAvalon).toHaveBeenCalledTimes(1);
     expect(menuActions.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the macOS version that decides whether section headers exist', () => {
+    // macOS 14 introduced them; Avalon targets 26 and 27, where they are the
+    // native treatment.
+    expect(supportsSectionHeaders('26.1')).toBe(true);
+    expect(supportsSectionHeaders('14.0.0')).toBe(true);
+    expect(supportsSectionHeaders('13.6.1')).toBe(false);
+    expect(supportsSectionHeaders('')).toBe(false);
   });
 
   it('flattens a model-written title into one readable row', () => {
