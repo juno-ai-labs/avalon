@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
+import { workstreamCanonicalUrl } from '@avalon/contracts/workstream-links';
 import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
@@ -139,6 +140,26 @@ function CopyResourceIdItem({ id, label }: { id: string; label: string }): React
       onSelect={() => void desktopBridge().copyText(id).catch(() => undefined)}
     >
       <Copy aria-hidden="true" size={16} /> {label}
+    </ContextMenu.Item>
+  );
+}
+
+/**
+ * The work-stream row's copy action hands out the link rather than the bare id:
+ * a row is shared with a person far more often than it is quoted into a bug
+ * report, and the id is still one click away in the work stream's own header
+ * menu and its right rail. Like every other surface it emits the canonical
+ * HTTPS link, never the `avalon://` deep link — see `docs/WORKSTREAM_LINKS.md`.
+ */
+function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): React.JSX.Element {
+  const copy = async (): Promise<void> => {
+    const bridge = desktopBridge();
+    const { webBaseUrl } = await bridge.getRuntimeConfig();
+    await bridge.copyText(workstreamCanonicalUrl(webBaseUrl, workstreamId));
+  };
+  return (
+    <ContextMenu.Item className="menu-item" onSelect={() => void copy().catch(() => undefined)}>
+      <Copy aria-hidden="true" size={16} /> Copy work stream link
     </ContextMenu.Item>
   );
 }
@@ -288,7 +309,7 @@ function WorkstreamRow({
                 : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
             </ContextMenu.Item>
           )}
-          {debugEnabled && <CopyResourceIdItem id={workstream.id} label="Copy work stream id" />}
+          {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} />}
           <ContextMenu.Separator className="menu-separator" />
           <ContextMenu.Item className="menu-item menu-item-danger">
             <Archive aria-hidden="true" size={16} /> Archive
