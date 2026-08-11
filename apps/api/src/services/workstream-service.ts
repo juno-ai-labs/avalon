@@ -921,7 +921,10 @@ export class WorkstreamService {
     this.scheduleMentionNotifications(messageWithMentions, workstream);
     // A reply is where the detail a name was missing usually arrives, so this
     // is the moment to look at an Avalon-chosen title again. It stops on a
-    // count for every work stream that is not due one.
+    // bounded count for every work stream that is not due one, and it handles
+    // its own failures, which is what `deferTask` requires of anything it is
+    // handed — on a path without an execution context the promise is dropped
+    // rather than awaited, and a rejection would have nowhere to go.
     this.deferTask(refreshWorkstreamName(this.env, {
       workspaceId: this.auth.workspaceId,
       workstreamId: id,
