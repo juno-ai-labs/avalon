@@ -64,6 +64,32 @@ export async function withProviderReauthorization<T>(
 }
 
 /**
+ * Replaces a credential the adapter itself judged too close to expiry.
+ *
+ * The host refreshes before an adapter is reached, so this fires only when a
+ * long-running operation crosses the expiry boundary mid-flight — but when it
+ * does, two concurrent operations would each redeem the same rotating refresh
+ * token if they refreshed privately. It is the same race
+ * `withProviderReauthorization` closes on the rejection route, and it is closed
+ * the same way: through the host's serialized rotation when one is registered,
+ * falling back to the adapter's own refresh when none is (a diagnostic path, or
+ * a caller outside the credential door).
+ */
+export async function refreshExpiringCredentials(
+  connection: ConnectorConnectionContext,
+  refresh: (
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+  ) => Promise<Record<string, unknown>>,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const rotate = connectorCredentialRotation(connection);
+  return rotate
+    ? rotate({ ...connection.credentials }, signal)
+    : refresh(connection, signal);
+}
+
+/**
  * Whether an error is the provider refusing the credential that was presented.
  *
  * `unauthorized` alone is far too broad to answer this: adapters also raise it
@@ -83,6 +109,33 @@ export function isProviderCredentialRejection(
     && error.code === "unauthorized"
     && isRecord(error.details)
     && matches(error.details);
+}
+
+/**
+ * The OAuth error codes that mean the member's grant itself is gone, so the
+ * only recovery is reconnecting.
+ *
+ * Deliberately excludes `invalid_client`, `unauthorized_client`,
+ * `invalid_request`, and `invalid_scope`: every one of those is Avalon's
+ * configuration or Avalon's request being wrong, and none of them is fixed by a
+ * member reauthorizing an account that still works.
+ */
+const REVOKED_GRANT_ERRORS = new Set(["invalid_grant", "expired_token", "invalid_token"]);
+
+/**
+ * Whether a token-endpoint failure means the stored grant is dead.
+ *
+ * Classifying by status alone marks a connection `needs_reconnect` for any 400
+ * or 403, which is how a malformed request or a proxy's rate limit ends up
+ * demanding that a member reauthorize a healthy account. When the provider sent
+ * an error code, that code decides; with no code, only a 401 is taken as a
+ * rejection.
+ */
+export function isRevokedGrantError(error: unknown): error is ConnectorError {
+  if (!(error instanceof ConnectorError) || !isRecord(error.details)) return false;
+  const providerError = error.details.providerError;
+  if (typeof providerError === "string") return REVOKED_GRANT_ERRORS.has(providerError);
+  return Number(error.details.status) === 401;
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -128,8 +181,14 @@ export async function providerJsonResponse(
   if (!response.ok) {
     const message = providerErrorMessage(payload) ?? `The provider returned HTTP ${response.status}`;
     const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+    // The provider's own short error code, when it sent one. A status alone
+    // cannot separate "this grant is gone" from "this request was malformed" —
+    // OAuth reports both as 400 — and telling a member to reconnect a working
+    // account because of our own bad request is the worse of the two mistakes.
+    const providerError = isRecord(payload) && typeof payload.error === "string" ? payload.error : null;
     throw new ConnectorError(response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error", message, {
       status: response.status,
+      ...(providerError ? { providerError } : {}),
       ...(retryAfterMs != null ? { retryAfterMs } : {}),
     });
   }

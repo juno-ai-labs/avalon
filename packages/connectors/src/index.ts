@@ -21,7 +21,13 @@ import {
   type ResolvedConnectorAdapter,
 } from "./types";
 import { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
-export { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
+export {
+  isProviderCredentialRejection,
+  isRevokedGrantError,
+  providerJson,
+  refreshExpiringCredentials,
+  withProviderReauthorization,
+} from "./provider-utils";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";

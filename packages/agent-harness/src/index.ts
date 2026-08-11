@@ -2227,6 +2227,24 @@ export interface HarnessCompactionConfig {
  */
 export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
 
+/**
+ * Why a plugin's authorization is being revalidated, which decides how far the
+ * host has to go to answer.
+ *
+ * `activation` is a plugin becoming usable — a `load_plugin`, a restored hint,
+ * the initial preload. It happens a handful of times per run, and the answer
+ * has to be current all the way to the provider.
+ *
+ * `continuation` is the check between model turns, which runs before *every*
+ * inference. What it exists to catch is authority the host itself withdrew
+ * mid-run: a revoked grant, a removed member, an archived work stream, a
+ * connection marked unhealthy — all of which the host knows from its own
+ * records. Answering it with a provider round trip per active plugin per turn
+ * spends real quota to re-learn something the host already knows, and on a
+ * connector whose health check writes it is worse than wasteful.
+ */
+export type PluginAuthorizationOccasion = "activation" | "continuation";
+
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
     maxIterations: number;
@@ -2305,7 +2323,10 @@ export interface RunHarnessInput {
     inputHash: string,
     policy: { pluginId: string } & HarnessToolPolicyIdentity,
   ) => Promise<HarnessToolResult | null>;
-  reauthorizePlugin?: (canonicalId: string) => PluginAuthorization | Promise<PluginAuthorization>;
+  reauthorizePlugin?: (
+    canonicalId: string,
+    occasion: PluginAuthorizationOccasion,
+  ) => PluginAuthorization | Promise<PluginAuthorization>;
   persistActivation?: (canonicalId: string) => void | Promise<void>;
   onActivationDropped?: (drop: unknown) => void | Promise<void>;
   beforeToolCall?: BeforeToolCallHook;

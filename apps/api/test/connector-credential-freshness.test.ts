@@ -3,6 +3,8 @@ import {
   authorizedConnection,
   createConnectorRegistry,
   isProviderCredentialRejection,
+  isRevokedGrantError,
+  providerJson,
   withProviderReauthorization,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
@@ -272,6 +274,137 @@ describe("plugin revalidation verdicts", () => {
     expect(statements).toEqual([]);
   });
 });
+
+describe("refresh rejection classification", () => {
+  it("marks a grant dead only when the provider says so", async () => {
+    // A token endpoint answers both a revoked grant and Avalon's own malformed
+    // request with HTTP 400. Classifying on status alone told members to
+    // reconnect healthy accounts over our bugs.
+    const revoked = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_grant" });
+    const ourFault = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_request" });
+    const badClient = new ConnectorError("unauthorized", "bad", { status: 401, providerError: "invalid_client" });
+    const proxied = new ConnectorError("unauthorized", "blocked", { status: 403 });
+
+    expect(isRevokedGrantError(revoked)).toBe(true);
+    expect(isRevokedGrantError(ourFault)).toBe(false);
+    expect(isRevokedGrantError(badClient)).toBe(false);
+    expect(isRevokedGrantError(proxied)).toBe(false);
+    // With no code at all, only a 401 is still taken as a rejection.
+    expect(isRevokedGrantError(new ConnectorError("unauthorized", "x", { status: 401 }))).toBe(true);
+  });
+
+  it("carries the provider's error code out of a failed request", async () => {
+    const fetcher = (async () => Response.json({ error: "invalid_grant" }, { status: 400 })) as typeof fetch;
+    await expect(providerJson(fetcher, "https://provider.test/token", { method: "POST" }))
+      .rejects.toMatchObject({ details: { status: 400, providerError: "invalid_grant" } });
+  });
+});
+
+describe("provider writes", () => {
+  it("keeps the Granola webhook repair out of the health check", async () => {
+    // A health check runs on every plugin activation. Re-enabling a webhook is
+    // a write, and it belongs to an explicit connection test instead.
+    const methods: string[] = [];
+    const registry = createConnectorRegistry({
+      granola: {
+        redirectUri: "https://api.example.com/connections/granola/callback",
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          methods.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname}`);
+          return Response.json({
+            notes: [],
+            webhook_endpoints: [{ id: "whe_00000000000000", enabled: false }],
+          });
+        }) as typeof fetch,
+      },
+    });
+    const adapter = registry.get("granola");
+    const connection = authorizedConnection(connectionContext(
+      { apiKey: "grn_workspace-key", webhookEndpointId: "whe_00000000000000" },
+      "workspace",
+    ));
+
+    await expect(adapter.healthCheck(connection, AbortSignal.timeout(5_000)))
+      .resolves.toMatchObject({ ok: true });
+    expect(methods.some((call) => call.startsWith("PATCH"))).toBe(false);
+
+    methods.length = 0;
+    await expect(adapter.repair!(connection, AbortSignal.timeout(5_000)))
+      .resolves.toMatchObject({ repaired: true });
+    expect(methods.some((call) => call.startsWith("PATCH"))).toBe(true);
+  });
+});
+
+describe("revalidation between model turns", () => {
+  it("answers from Avalon's own records without calling the provider", async () => {
+    // `reauthorizeActive` runs before every inference, so a provider round trip
+    // here costs one call per active plugin per turn. Everything this check
+    // exists to catch — a revoked grant, a removed member, an archived work
+    // stream, a connection marked unhealthy — is already in D1.
+    const statements: string[] = [];
+    const database = {
+      prepare(sql: string) {
+        statements.push(sql.replace(/\s+/gu, " ").trim().slice(0, 60));
+        return {
+          bind() { return this; },
+          async first() {
+            if (sql.includes("FROM workspace_members")) return { status: "active" };
+            if (sql.includes("FROM workstreams")) {
+              return { archived_at: null, automation_subscription_id: null, automation_run_id: null };
+            }
+            if (sql.includes("FROM connector_connections")) {
+              return {
+                id: FROZEN.connectionId,
+                workspace_id: FROZEN.workspaceId,
+                connector_type: "granola",
+                scope: "personal",
+                owner_user_id: OWNER,
+                granted_scopes_json: JSON.stringify(["granola.personal.read"]),
+                encrypted_credentials: "ciphertext",
+                credential_iv: "iv",
+                cursor_json: "{}",
+                config_json: "{}",
+                status: "healthy",
+              };
+            }
+            return null;
+          },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+    const fetcher = vi.fn(async () => new Response("{}"));
+
+    await expect(__integrationTesting.reauthorizeFrozenPlugin(
+      { DB: database, CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1", TWITTER_API_IO_API_KEY: "k", fetch: fetcher } as never,
+      {
+        workspaceId: FROZEN.workspaceId,
+        workstreamId: "00000000-0000-7000-8000-0000000000ws",
+        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        executionPrincipal: { type: "user", userId: OWNER },
+      } as never,
+      FROZEN as never,
+      AbortSignal.timeout(2_000),
+      "continuation",
+    )).resolves.toBe("authorized");
+
+    expect(fetcher).not.toHaveBeenCalled();
+    // Nothing was decrypted either: the credentials are not needed to answer.
+    expect(statements.some((sql) => sql.includes("encrypted_credentials = ?"))).toBe(false);
+  });
+});
+
+const OWNER = "00000000-0000-7000-8000-00000000a11e";
+const FROZEN = {
+  pluginId: "connection:00000000-0000-7000-8000-00000000c0de",
+  connectionId: "00000000-0000-7000-8000-00000000c0de",
+  workspaceId: "00000000-0000-7000-8000-00000000ffff",
+  connectorType: "granola",
+  scope: "personal" as const,
+  ownerUserId: OWNER,
+  grantedScopes: ["granola.personal.read"],
+  shortWireName: "granola",
+  modelPluginId: "plugin_granola",
+};
 
 /**
  * The credential a run starts with can still be rejected while the call is in
