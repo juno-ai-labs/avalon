@@ -15,21 +15,28 @@ const migrationsDirectory = new URL("../../../packages/db/migrations/", import.m
 const databases: DatabaseSync[] = [];
 const now = "2026-08-10T12:00:00.000Z";
 
+interface Hooks {
+  afterRun?: (sql: string) => void;
+  afterAll?: (sql: string) => void;
+}
+
 class Statement {
   private values: SQLInputValue[] = [];
   constructor(
     private readonly statement: ReturnType<DatabaseSync["prepare"]>,
     private readonly sql: string,
-    private readonly afterRun?: (sql: string) => void,
+    private readonly hooks: Hooks,
   ) {}
   bind(...values: unknown[]): this { this.values = values as SQLInputValue[]; return this; }
   async first<T>(): Promise<T | null> { return (this.statement.get(...this.values) as T | undefined) ?? null; }
   async all<T>(): Promise<{ success: true; results: T[]; meta: Record<string, unknown> }> {
-    return { success: true, results: this.statement.all(...this.values) as T[], meta: {} };
+    const results = this.statement.all(...this.values) as T[];
+    this.hooks.afterAll?.(this.sql);
+    return { success: true, results, meta: {} };
   }
   async run<T>(): Promise<{ success: true; results: T[]; meta: { changes: number } }> {
     const result = this.statement.run(...this.values);
-    this.afterRun?.(this.sql);
+    this.hooks.afterRun?.(this.sql);
     return { success: true, results: [], meta: { changes: Number(result.changes) } };
   }
 }
@@ -37,9 +44,9 @@ class Statement {
 class D1Adapter {
   constructor(
     private readonly database: DatabaseSync,
-    private readonly afterRun?: (sql: string) => void,
+    private readonly hooks: Hooks = {},
   ) {}
-  prepare(sql: string): Statement { return new Statement(this.database.prepare(sql), sql, this.afterRun); }
+  prepare(sql: string): Statement { return new Statement(this.database.prepare(sql), sql, this.hooks); }
   async batch(statements: Statement[]) { return Promise.all(statements.map((statement) => statement.run())); }
 }
 
@@ -62,18 +69,28 @@ function environment(
   database: DatabaseSync,
   overrides: Partial<Env> = {},
   afterRun?: (sql: string) => void,
+  afterAll?: (sql: string) => void,
 ): Env {
   return {
-    DB: new D1Adapter(database, afterRun),
+    DB: new D1Adapter(database, { ...(afterRun ? { afterRun } : {}), ...(afterAll ? { afterAll } : {}) }),
     APP_ENV: "development",
     AVALON_REGION: "global",
     ...overrides,
   } as unknown as Env;
 }
 
-/** The write that stores a ranking, which happens while the lease is held. */
+/**
+ * The write that stores a ranking, which happens while the lease is held.
+ *
+ * Matched on collapsed whitespace so that rewrapping the statement cannot
+ * quietly stop this from matching — a hook that never fires makes the tests
+ * below pass without testing anything, so they also assert that it fired.
+ */
 function isRankingWrite(sql: string): boolean {
-  return sql.includes("INSERT INTO suggested_work_sets") && sql.includes("opportunity_ids_json,\n      ranking_reasoning");
+  const collapsed = sql.replace(/\s+/gu, " ");
+  return collapsed.includes("INSERT INTO suggested_work_sets")
+    && collapsed.includes("opportunity_ids_json")
+    && collapsed.includes("ranking_reasoning");
 }
 
 function auth(userId: string): AuthContext {
@@ -288,9 +305,11 @@ describe("suggested-work scheduler", () => {
     await processDueSuggestedWork(environment(database, {}, (sql) => {
       if (interrupted || !isRankingWrite(sql)) return;
       interrupted = true;
-      // Someone dismisses a suggestion while the tournament is still going.
-      database.prepare("UPDATE suggested_work_sets SET due_at = ? WHERE user_id = ?")
-        .run("2026-08-10T12:30:00.000Z", activeUser);
+      // Someone dismisses a suggestion while the tournament is still going,
+      // exactly as `dismiss()` writes it — a new due time and a new request.
+      database.prepare(
+        "UPDATE suggested_work_sets SET due_at = ?, request_seq = request_seq + 1 WHERE user_id = ?",
+      ).run("2026-08-10T12:30:00.000Z", activeUser);
     }));
 
     expect(interrupted).toBe(true);
@@ -298,6 +317,62 @@ describe("suggested-work scheduler", () => {
     // served on a later pass rather than being silently dropped.
     expect(database.prepare("SELECT due_at, lease_id FROM suggested_work_sets WHERE user_id = ?").get(activeUser))
       .toEqual({ due_at: "2026-08-10T12:30:00.000Z", lease_id: null });
+  });
+
+  it("keeps a request raised mid-run that does not move the due time", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    const database = migratedDatabase();
+    seed(database, { [activeUser]: now });
+    insertOpportunity(database, "00000000-0000-7000-8000-00000000020f");
+    markDue(database, activeUser, "2026-08-10T11:00:00.000Z");
+    let interrupted = false;
+    const pending: Array<Promise<void>> = [];
+
+    await processDueSuggestedWork(environment(database, {}, (sql) => {
+      if (interrupted || !isRankingWrite(sql)) return;
+      interrupted = true;
+      // An admission lands mid-tournament, through the helper the write path
+      // actually calls rather than a hand-written statement — the point of the
+      // test is what that helper does. It debounces two minutes out, which is
+      // *later* than the 11:00 request being ranked, so `MIN` keeps 11:00 and
+      // `due_at` does not move at all: the column is left byte-identical.
+      pending.push(__workOpportunityTesting.markSuggestedWorkDue(
+        environment(database), workspaceId, [activeUser],
+      ));
+    }));
+
+    await Promise.all(pending);
+    expect(interrupted).toBe(true);
+    // Identifying the request by its due time could not see this one, so the
+    // completed run cleared it and the member kept a set that was already out of
+    // date. The sequence number is what makes the ask visible.
+    expect(database.prepare("SELECT due_at, lease_id FROM suggested_work_sets WHERE user_id = ?").get(activeUser))
+      .toEqual({ due_at: "2026-08-10T11:00:00.000Z", lease_id: null });
+  });
+
+  it("does not claim a request that was withdrawn after it was selected", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    const database = migratedDatabase();
+    seed(database, { [activeUser]: now });
+    insertOpportunity(database, "00000000-0000-7000-8000-000000000210");
+    markDue(database, activeUser, "2026-08-10T11:00:00.000Z");
+    let selected = false;
+
+    await processDueSuggestedWork(environment(database, {}, () => undefined, (sql) => {
+      if (selected || !sql.includes("FROM suggested_work_sets s")) return;
+      selected = true;
+      // Between the scan and the claim, the request is superseded.
+      database.prepare("UPDATE suggested_work_sets SET request_seq = request_seq + 1, due_at = ? WHERE user_id = ?")
+        .run("2026-08-10T14:00:00.000Z", activeUser);
+    }));
+
+    expect(selected).toBe(true);
+    // Claimed on the exact request that was selected, so this pass declines it
+    // rather than spending a tournament answering a request nobody made.
+    expect(database.prepare("SELECT due_at, lease_id, last_ranked_at FROM suggested_work_sets WHERE user_id = ?").get(activeUser))
+      .toEqual({ due_at: "2026-08-10T14:00:00.000Z", lease_id: null, last_ranked_at: null });
   });
 
   it("re-ranks for impressions even though the candidates are unchanged", async () => {
@@ -354,6 +429,33 @@ describe("suggested-work request rules", () => {
     expect(page.items.map((item) => item.id)).toEqual([kept]);
     expect(database.prepare("SELECT due_at FROM suggested_work_sets WHERE user_id = ?").get(activeUser))
       .toEqual({ due_at: "2026-08-10T12:02:00.000Z" });
+  });
+
+  it("never settles on an empty ranking while candidates exist", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    const database = migratedDatabase();
+    seed(database, { [activeUser]: now });
+    const opportunityId = "00000000-0000-7000-8000-000000000211";
+    insertOpportunity(database, opportunityId);
+    markDue(database, activeUser, "2026-08-10T11:00:00.000Z");
+    const service = new WorkOpportunityService(environment(database), auth(activeUser));
+
+    await processDueSuggestedWork(environment(database));
+    const stored = database.prepare("SELECT opportunity_ids_json, due_at FROM suggested_work_sets WHERE user_id = ?")
+      .get(activeUser) as { opportunity_ids_json: string; due_at: string | null };
+
+    // An empty set stored against the real fingerprint is a trap: the read path
+    // calls it unranked and asks, the scheduler cache-hits on the fingerprint and
+    // clears the request without ranking, and the two do that to each other
+    // forever, a candidate load and a ranking slot at a time.
+    expect(JSON.parse(stored.opportunity_ids_json)).toEqual([opportunityId]);
+    expect(stored.due_at).toBeNull();
+
+    await service.list(4);
+
+    expect(database.prepare("SELECT due_at FROM suggested_work_sets WHERE user_id = ?").get(activeUser))
+      .toEqual({ due_at: null });
   });
 
   it("asks for nothing when a member has no opportunities at all", async () => {
