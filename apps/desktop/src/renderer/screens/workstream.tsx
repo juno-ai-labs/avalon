@@ -42,6 +42,7 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
+import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
@@ -870,7 +871,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, title: updated.title } : current,
       );
-      queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
         current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
       );
     },
@@ -958,7 +959,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     },
@@ -1024,7 +1025,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
           queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-          queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+          queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
         ]);
       },
@@ -1099,7 +1100,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     } catch (error) {
@@ -1195,7 +1196,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (activeWorkstreamIdRef.current !== id) return;
       queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
         current ? { ...current, ...updated } : current);
-      queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
         current?.map((item) => item.id === id ? { ...item, ...updated } : item));
     }).catch(() => {
       void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });

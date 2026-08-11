@@ -19,6 +19,11 @@ test("takes an explicit database and output directory", () => {
   );
 });
 
+test("refuses a flag whose value is the next flag rather than reading a file named --out", () => {
+  assert.throws(() => parseArguments(["--sql", "--out", "/tmp/preview"]), /--sql needs a value/u);
+  assert.throws(() => parseArguments(["--db"]), /--db needs a value/u);
+});
+
 test("picks the D1 file rather than Miniflare's metadata database", () => {
   const resolved = resolveLocalDatabase("/state", ["metadata.sqlite", "aa.sqlite", "bb.sqlite", "notes.txt"]);
 

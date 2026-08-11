@@ -48,7 +48,7 @@ interface DigestScheduleRow {
 }
 
 interface DeliveryCursorRow {
-  cursor_through: number;
+  cursor_through: number | null;
 }
 
 export type DigestFireOutcome =
@@ -165,24 +165,43 @@ export async function fireDigestSchedule(
     ).bind(harnessRunId, nowIso(), deliveryId).run();
     return { started: true, deliveryId, harnessRunId };
   } catch (error) {
-    // The claim is released rather than left dangling, so the scheduler's own
-    // retry backoff gets another attempt at this occurrence.
-    await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status IN ('planned', 'running')")
+    // Only a claim that never reached a harness is released, so the scheduler's
+    // retry gets another attempt at this occurrence. A `running` row is left
+    // alone deliberately: if the launch succeeded and only the status write
+    // failed, deleting it would strand the live run — settlement would find no
+    // delivery, drop the digest, and the retry would start a second run with no
+    // uniqueness left to catch it.
+    await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
       .bind(deliveryId).run().catch(() => undefined);
     throw error;
   }
 }
 
-/** Where the next digest starts reading: the top of the last settled one. */
+/**
+ * Where the next digest starts reading: the highest point this schedule has
+ * committed to covering.
+ *
+ * "Committed" includes a delivery that is still `planned` or `running`, not just
+ * a settled one. Two configured times a minute apart, or one slow run, would
+ * otherwise both start from the last *settled* cursor and summarize the same
+ * events into consecutive emails — the window is frozen before the harness is
+ * queued, so the second occurrence cannot see that the first already claimed it.
+ *
+ * `failed` is excluded, which is what folds an undelivered window into the next
+ * digest rather than losing it.
+ *
+ * The maximum rather than the newest row: `planned_for` orders occurrences, but
+ * a retried or late one can settle out of order, and the cursor must never move
+ * backwards.
+ */
 async function previousCursor(env: Env, scheduleId: string): Promise<ActivityEventCursor | null> {
   const row = await env.DB.prepare(
-    `SELECT cursor_through
+    `SELECT MAX(cursor_through) AS cursor_through
        FROM digest_deliveries
-      WHERE digest_schedule_id = ? AND status IN ('delivered', 'empty')
-      ORDER BY planned_for DESC
-      LIMIT 1`,
+      WHERE digest_schedule_id = ?
+        AND status IN ('delivered', 'empty', 'planned', 'running')`,
   ).bind(scheduleId).first<DeliveryCursorRow>();
-  return row ? Number(row.cursor_through) : null;
+  return row?.cursor_through == null ? null : Number(row.cursor_through);
 }
 
 /**
@@ -337,7 +356,7 @@ export function renderDigestBrief(
     "- Where an item below carries a `link:`, link its name with `[name](url)` the first time it appears in that section. Never invent a URL.",
     "- Lead a bullet with a single emoji only where it earns its place — a decision needed, a blocker, something shipped. Most bullets take none.",
     "- Bold the few phrases that carry the decision. Use `> ` for a quote worth reading verbatim.",
-    "- Summarize only what is new. Do not restate anything you have already digested in this work stream.",
+    "- Summarize only what is new. Earlier digests in this work stream that were actually sent are marked as delivered; do not restate those. A summary with no delivery note never reached them, so cover it again.",
     "- If an item below is only a fragment and the detail matters, use your tools to read the full context before summarizing it.",
     "- No sign-off, no restating these instructions, no commentary about being an assistant.",
     "",

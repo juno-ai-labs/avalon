@@ -117,7 +117,7 @@ export async function deliverDigest(
       // every occurrence from now on.
       failed += 1;
       const permanent = error instanceof ApiError && error.details?.retryable === false;
-      await markFailed(env, target.id, permanent ? "needs_input" : "active", error);
+      await markFailed(env, target.id, permanent, error);
       // A permanent rejection is recorded and not rethrown: retrying the step
       // would only reach the same answer, and the target now says so.
       if (!permanent) failures.push(error);
@@ -153,7 +153,7 @@ async function deliverToTarget(
         itemCount: context.itemCount,
         highlightCount: context.highlightCount,
         appUrl: env.PUBLIC_WEB_BASE_URL,
-        settingsUrl: `${env.PUBLIC_WEB_BASE_URL}/app/settings/digest`,
+        settingsUrl: digestSettingsUrl(env),
       }),
       text: [digestTitle(context), "", digestMarkdownToText(context.bodyMarkdown)].join("\n"),
       idempotencyKey: `avalon-digest/${target.id}/${context.deliveryId}`,
@@ -170,6 +170,22 @@ async function deliverToTarget(
   if (!connectorDelivery || !target.connection_id || !target.provider_user_id) return false;
   await connectorDelivery(env, context, target);
   return true;
+}
+
+/**
+ * Where "change when you get this" goes.
+ *
+ * The site serves no page under `/app/settings`, so a URL there would 404 — and
+ * this is the link recipients are most likely to click, since the digest is on
+ * by default. `/open` is the existing desktop handoff and already allowlists
+ * `avalon://settings/...`, so it is the page that exists. Built with `new URL`
+ * like every other public link in the API, which also survives a trailing slash
+ * on the base.
+ */
+export function digestSettingsUrl(env: Pick<Env, "PUBLIC_WEB_BASE_URL">): string {
+  const handoff = new URL("/open", env.PUBLIC_WEB_BASE_URL);
+  handoff.hash = new URLSearchParams({ target: "avalon://settings/digest" }).toString();
+  return handoff.toString();
 }
 
 /** Localized to the recipient's own timezone — a digest is a time of *their* day. */
@@ -204,16 +220,27 @@ async function markDelivered(env: Env, targetId: string, deliveryId: string): Pr
   ).bind(at, deliveryId, at, targetId).run();
 }
 
+/**
+ * Records why a destination did not receive this digest.
+ *
+ * Only a permanent rejection moves the status: a transient one leaves it where
+ * it was, because writing `active` unconditionally would promote a target that
+ * a previous permanent rejection had already parked in `needs_input`, and the
+ * settings screen would stop showing that it needs attention.
+ */
 async function markFailed(
   env: Env,
   targetId: string,
-  status: "active" | "needs_input",
+  permanent: boolean,
   error: unknown,
 ): Promise<void> {
   await env.DB.prepare(
-    "UPDATE digest_delivery_targets SET status = ?, last_error_json = ?, updated_at = ? WHERE id = ?",
+    `UPDATE digest_delivery_targets
+        SET status = CASE WHEN ? THEN 'needs_input' ELSE status END,
+            last_error_json = ?, updated_at = ?
+      WHERE id = ?`,
   ).bind(
-    status,
+    permanent ? 1 : 0,
     JSON.stringify({
       code: "digest_delivery_failed",
       message: error instanceof Error ? error.message.slice(0, 500) : "Digest delivery failed",

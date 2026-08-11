@@ -26,6 +26,7 @@ import {
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceSchema as WireWorkspaceSchema,
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
+  DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
   WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
   type AutomationDraft as WireAutomationDraft,
@@ -254,23 +255,6 @@ const runNowResponseSchema = z.object({
   reused: z.boolean(),
 });
 const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() });
-
-const digestScheduleSchema = z.object({
-  id: z.string(),
-  enabled: z.boolean(),
-  days: z.array(z.number().int().min(0).max(6)).default([]),
-  times: z.array(z.number().int().min(0).max(1439)).default([]),
-  timezone: z.string(),
-  deliveryTargets: z.array(z.object({
-    type: z.enum(['slack_agent_dm', 'email']),
-    connectionId: z.string().nullable().default(null),
-    displayName: z.string(),
-    status: z.enum(['active', 'needs_input', 'disabled']),
-    lastDeliveredAt: z.string().nullable().default(null),
-  })).default([]),
-  nextRunAt: z.string().nullable().default(null),
-  lastDeliveredAt: z.string().nullable().default(null),
-});
 
 export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']): HarnessStatus {
   return status === 'idle' ? 'completed' : status;
@@ -818,7 +802,7 @@ export class AvalonApi {
   }
 
   async getDigestSchedule(signal?: AbortSignal): Promise<DigestSchedule> {
-    return this.request('/digest', { schema: digestScheduleSchema, signal });
+    return this.request('/digest', { schema: WireDigestScheduleSchema, signal });
   }
 
   /**
@@ -831,7 +815,7 @@ export class AvalonApi {
     times: number[];
     deliveryTargets: Array<{ type: AutomationDeliveryTargetType; connectionId: string | null }>;
   }): Promise<DigestSchedule> {
-    return this.request('/digest', { method: 'PUT', body: input, schema: digestScheduleSchema });
+    return this.request('/digest', { method: 'PUT', body: input, schema: WireDigestScheduleSchema });
   }
 
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {
