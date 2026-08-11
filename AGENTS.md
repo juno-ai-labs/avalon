@@ -99,8 +99,8 @@ browser driver to the repository.
 it indexes every document and says which one owns which area. Find the ones whose
 scope matches what you are touching, read them first, and update them in the same
 change. When a change introduces a subsystem no existing document covers, add
-`docs/<NAME>.md` and register it in that index — the index is the one registry
-that has to stay complete. Product requirement documents are the exception: they
+`docs/<lower-kebab-name>.md` and register it in that index — the index is the one
+registry that has to stay complete. Product requirement documents are the exception: they
 live in dated folders under `docs/PRDs/` and are not registered, per
 [`docs/prds.md`](docs/prds.md). The root [`README.md`](README.md) links only to
 that index and lists no documents of its own; do not add a second list there.

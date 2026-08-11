@@ -372,8 +372,9 @@ provenance rather than guidance.
   [`ARCHITECTURE.md`](ARCHITECTURE.md), [`DATA_MODEL.md`](DATA_MODEL.md),
   [`CONNECTORS.md`](CONNECTORS.md), and so on — updated in the same change as
   the code, per [the agent rule sheet](../AGENTS.md). If a PRD introduced a
-  subsystem that no existing document covers, add `docs/<NAME>.md` to the shape
-  in [`module-documents.md`](module-documents.md) and register it in the index.
+  subsystem that no existing document covers, add `docs/<lower-kebab-name>.md`
+  to the shape in [`module-documents.md`](module-documents.md) and register it in
+  the index.
   Once the PRD freezes, that document's changelog — not the decision log — is
   where the module's reasoning continues to be recorded.
 - **A subsystem document may cite a PRD** for the reasoning behind a decision.

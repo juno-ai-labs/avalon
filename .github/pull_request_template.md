@@ -113,8 +113,8 @@ A PR that creates or substantially changes an architecture or large module also
 carries that module's document in docs/ and a new entry in its Changelog saying
 why the change was made. See docs/module-documents.md.
 
-- <the docs/ files added or updated in this change>
-- <the module document whose Changelog gained an entry>
+- <the docs/ files added or updated in this change, naming any module document
+  whose Changelog gained an entry>
 
 ## Reviewer notes
 
