@@ -9,6 +9,7 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
+  Check,
   Copy,
   Ellipsis,
   FileText,
@@ -22,6 +23,7 @@ import {
   RefreshCcw,
   Search,
   UserPlus,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -249,6 +251,7 @@ export function WorkstreamHeader({
   hypersightPreferencePending,
   onAddParticipant,
   onOpenRail,
+  onRename,
   onToggleHyperSight,
 }: {
   workstream: WorkstreamDetail;
@@ -257,6 +260,7 @@ export function WorkstreamHeader({
   hypersightPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
+  onRename: (title: string) => Promise<void>;
   onToggleHyperSight: () => void;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
@@ -270,6 +274,69 @@ export function WorkstreamHeader({
   const toggleRail = (variant: RailVariant): void => {
     if (showing(variant)) closeRail();
     else onOpenRail(variant);
+  };
+  // A null draft means the heading is displayed; any string means the inline
+  // editor is open, so there is one source of truth for both.
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  // The route keeps this component mounted across work streams, so an open
+  // editor would otherwise carry the previous stream's draft into the next one.
+  // The ref lets an in-flight rename recognize that it is no longer the one on
+  // screen: the promise it is waiting on outlives the navigation.
+  const shownWorkstreamId = useRef(workstream.id);
+  useEffect(() => {
+    shownWorkstreamId.current = workstream.id;
+    setRenameDraft(null);
+    setRenameError(null);
+    setRenaming(false);
+  }, [workstream.id]);
+  // Closing the editor unmounts the field, which would leave focus on the body
+  // and strand a keyboard user at the top of the document. The title button
+  // does not exist until the next render, so the focus call waits for it.
+  const titleButton = useRef<HTMLButtonElement>(null);
+  const returnFocusToTitle = useRef(false);
+  useEffect(() => {
+    if (renameDraft !== null || !returnFocusToTitle.current) return;
+    returnFocusToTitle.current = false;
+    titleButton.current?.focus();
+  }, [renameDraft]);
+  const startRename = (): void => {
+    setRenameDraft(workstream.title);
+    setRenameError(null);
+  };
+  const cancelRename = (): void => {
+    returnFocusToTitle.current = true;
+    setRenameDraft(null);
+    setRenameError(null);
+  };
+  const submitRename = async (): Promise<void> => {
+    const title = renameDraft?.trim() ?? '';
+    if (!title || renaming) return;
+    // An unchanged name is a no-op rather than a request; the editor still
+    // closes, so Save never looks inert.
+    if (title === workstream.title) {
+      cancelRename();
+      return;
+    }
+    // Every completion below is guarded on the work stream still being the one
+    // on screen. Navigating away mid-flight otherwise lands the old stream's
+    // failure under the new stream's title, or closes an editor the user has
+    // since opened on it.
+    const submittedFor = workstream.id;
+    setRenaming(true);
+    setRenameError(null);
+    try {
+      await onRename(title);
+      if (shownWorkstreamId.current !== submittedFor) return;
+      returnFocusToTitle.current = true;
+      setRenameDraft(null);
+    } catch (error) {
+      if (shownWorkstreamId.current !== submittedFor) return;
+      setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
+    } finally {
+      if (shownWorkstreamId.current === submittedFor) setRenaming(false);
+    }
   };
   // Copy the canonical HTTPS link, not the `avalon://` deep link. A copied link
   // is going somewhere else — Slack, mail, a Linear comment — where an unknown
@@ -293,12 +360,89 @@ export function WorkstreamHeader({
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
         <div className="workstream-title-block">
           <div className="workstream-title-line">
-            <h1>{workstream.title}</h1>
+            {renameDraft === null ? (
+              <h1>
+                {/* A heading cannot carry the interaction itself: a focusable
+                    h1 is still announced as a heading, so a screen-reader user
+                    is never told there is anything to activate. A real button
+                    inside it is announced as one, and the heading keeps its
+                    name from the button's text. A mouse click reports a detail
+                    of 1 or more and is ignored — only a double click opens the
+                    editor — while keyboard activation reports 0. */}
+                <button
+                  aria-keyshortcuts="Enter F2"
+                  className="workstream-title-button"
+                  onClick={(event) => { if (event.detail === 0) startRename(); }}
+                  onDoubleClick={startRename}
+                  onKeyDown={(event) => {
+                    if (event.key === 'F2') {
+                      event.preventDefault();
+                      startRename();
+                    }
+                  }}
+                  ref={titleButton}
+                  title="Double-click to rename"
+                  type="button"
+                >
+                  {workstream.title}
+                </button>
+              </h1>
+            ) : (
+              <form
+                className="workstream-title-edit"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitRename();
+                }}
+              >
+                <input
+                  aria-label="Work stream name"
+                  autoFocus
+                  className="workstream-title-input"
+                  disabled={renaming}
+                  // The contract caps a title at 180, and the sidebar's dialog
+                  // already stops there. Without the same cap the server
+                  // rejects the save with a message that never mentions length.
+                  maxLength={180}
+                  onChange={(event) => {
+                    setRenameDraft(event.currentTarget.value);
+                    // The reason for a failed save stands in for the status
+                    // line, so it cannot outlive the draft that caused it.
+                    setRenameError(null);
+                  }}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      cancelRename();
+                    }
+                  }}
+                  value={renameDraft}
+                />
+                <IconButton
+                  className="title-edit-save"
+                  disabled={renaming || renameDraft.trim().length === 0}
+                  label="Save name"
+                  type="submit"
+                >
+                  {renaming ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+                </IconButton>
+                <IconButton className="title-edit-cancel" disabled={renaming} label="Cancel rename" onClick={cancelRename}>
+                  <X size={15} />
+                </IconButton>
+              </form>
+            )}
             {workstream.origin === 'automation' && <Badge>{workstream.automationName ?? 'Automation'}</Badge>}
           </div>
           <div className="workstream-subtitle">
-            <StatusDot status={workstream.harnessStatus} />
-            {workstream.plannedFor && <span><CalendarClock size={11} /> {formatDateTime(workstream.plannedFor)}</span>}
+            {renameError ? (
+              <InlineError>{renameError}</InlineError>
+            ) : (
+              <>
+                <StatusDot status={workstream.harnessStatus} />
+                {workstream.plannedFor && <span><CalendarClock size={11} /> {formatDateTime(workstream.plannedFor)}</span>}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -711,6 +855,20 @@ export function WorkstreamScreen(): React.JSX.Element {
     onSuccess: (updated) => {
       queryClient.setQueryData(['workstream', id], updated);
       setParticipantDialogOpen(false);
+    },
+  });
+
+  // The header renames in place, so both the open detail and the sidebar list
+  // have to show the new title without a refetch round trip.
+  const renameWorkstream = useMutation({
+    mutationFn: (title: string) => api!.renameWorkstream(id, title),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
+        current ? { ...current, title: updated.title } : current,
+      );
+      queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+        current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+      );
     },
   });
 
@@ -1140,6 +1298,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         hypersightPreferencePending={hypersightPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
+        onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
         onToggleHyperSight={() => setHyperSightVisible(!hypersightOpen)}
         socketState={socketState}
         workstream={displayedDetail}
