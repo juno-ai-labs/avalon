@@ -67,6 +67,27 @@ describe('useRailCrossFade', () => {
     expect(result.current).toBeNull();
   });
 
+  // The panel is on screen for a fade it started twice over; the first fade's
+  // timer must not be the one that ends the second.
+  it('gives a panel that leaves twice a full fade the second time', () => {
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useRailCrossFade(id), {
+      initialProps: { id: 'inspector' as string | null },
+    });
+
+    rerender({ id: null });
+    act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS - 10));
+    rerender({ id: 'inspector' });
+    rerender({ id: 'hypersight' });
+    expect(result.current).toBe('inspector');
+
+    // The first departure's timer would have fired here.
+    act(() => vi.advanceTimersByTime(10));
+    expect(result.current).toBe('inspector');
+
+    act(() => vi.advanceTimersByTime(RAIL_CROSSFADE_MS));
+    expect(result.current).toBeNull();
+  });
+
   // Switching back mid-fade turns the hand-off around rather than stacking a
   // second one on it: the panel that was on its way out is the one on screen.
   it('turns the fade around when the sidebar changes hands again mid-fade', () => {

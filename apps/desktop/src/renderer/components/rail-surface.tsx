@@ -20,24 +20,31 @@ export const RAIL_CROSSFADE_MS = 190;
  * outgoing panel through that gap is what makes both directions cross-fade
  * rather than only the one that happens to change hands in a single commit.
  */
-export function useRailCrossFade(activeId: string | null): string | null {
+export function useRailCrossFade<PanelId extends string>(activeId: PanelId | null): PanelId | null {
   const [shownId, setShownId] = useState(activeId);
-  const [leavingId, setLeavingId] = useState<string | null>(null);
+  // The same panel can start a second fade while its first one is still
+  // pending — close it, reopen it, then hand the slot away. Storing the id
+  // alone would be an equal value, React would bail out of the update, and the
+  // effect below would keep the first fade's timer, which then ends the second
+  // fade early. The count makes every departure a distinct value.
+  const [leaving, setLeaving] = useState<{ id: PanelId; departure: number } | null>(null);
 
   if (shownId !== activeId) {
     setShownId(activeId);
-    if (shownId !== null) setLeavingId(shownId);
+    if (shownId !== null) {
+      setLeaving((current) => ({ id: shownId, departure: (current?.departure ?? 0) + 1 }));
+    }
   }
 
   useEffect(() => {
-    if (leavingId === null) return;
-    const timer = window.setTimeout(() => setLeavingId(null), RAIL_CROSSFADE_MS);
+    if (leaving === null) return;
+    const timer = window.setTimeout(() => setLeaving(null), RAIL_CROSSFADE_MS);
     return () => window.clearTimeout(timer);
-  }, [leavingId]);
+  }, [leaving]);
 
   // A panel that takes the slot back before its own fade is over is on screen
   // as itself, not as its own ghost.
-  return leavingId === activeId ? null : leavingId;
+  return leaving === null || leaving.id === activeId ? null : leaving.id;
 }
 
 interface RailSurfaceProps {

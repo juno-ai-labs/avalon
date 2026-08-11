@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 
 export type RailVariant = 'context' | 'runs';
+/** Which of the two panels the right sidebar's one slot is being laid out for. */
+export type RailPanel = 'hypersight' | 'inspector';
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
   id: string;
@@ -15,6 +17,7 @@ interface UiState {
   inspector: RailInspector | null;
   hypersightOpen: boolean;
   hypersightWidth: number;
+  railLeaving: RailPanel | null;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -29,6 +32,11 @@ interface UiState {
   // shell to lay out against rather than deciding it.
   setHyperSightOpen: (open: boolean) => void;
   setHyperSightWidth: (width: number) => void;
+  // A panel that has lost the slot is still on screen for its fade, so the
+  // shell has to keep laying out against it: dropping the room it occupies, or
+  // re-targeting the slot at the other panel's width, would reflow the screen
+  // underneath something the person can still see.
+  setRailLeaving: (panel: RailPanel | null) => void;
   // Each panel keeps its own width per work stream: a wide HyperSight in one
   // stream must not narrow the inspector in another. Screens outside a work
   // stream pass null and share one bucket.
@@ -108,6 +116,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   inspector: null,
   hypersightOpen: false,
   hypersightWidth: loadRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, null),
+  railLeaving: null,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarWidth: (width) => {
@@ -133,6 +142,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     saveRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, get().railScope, hypersightWidth);
     set({ hypersightWidth });
   },
+  setRailLeaving: (railLeaving) => set({ railLeaving }),
   setRailScope: (railScope) => set({
     railScope,
     railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),

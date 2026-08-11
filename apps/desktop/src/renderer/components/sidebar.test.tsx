@@ -141,6 +141,30 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
   });
 
+  // The pill answers to how near the pointer is rather than to hovering the
+  // handle, so the reveal reaches 20px without the hit area having to.
+  it('reveals the navigation pill once the pointer is near the edge, at any height', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={[]} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const resizer = screen.getByRole('separator', { name: 'Resize navigation' });
+    expect(resizer).not.toHaveClass('is-near');
+
+    fireEvent.pointerMove(window, { clientX: 316, clientY: 780 });
+    expect(resizer).toHaveClass('is-near');
+
+    fireEvent.pointerMove(window, { clientX: 316, clientY: 90 });
+    expect(resizer).toHaveClass('is-near');
+
+    fireEvent.pointerMove(window, { clientX: 340, clientY: 400 });
+    expect(resizer).not.toHaveClass('is-near');
+  });
+
   // The handle stands in a strip beside the sidebar rather than on its edge, so
   // a grab at the far side of that strip must still move the sidebar by what
   // the pointer moves rather than snapping the edge out to meet it.
