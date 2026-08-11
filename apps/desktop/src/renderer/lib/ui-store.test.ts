@@ -10,7 +10,6 @@ describe('context rail state', () => {
       railOpen: false,
       railVariant: 'context',
       railWidth: 360,
-      railExpanded: false,
       inspector: null,
       hypersightOpen: false,
       hypersightWidth: 360,
@@ -60,11 +59,11 @@ describe('context rail state', () => {
 
   it('opens the requested contextual variant and resets stale detail state', () => {
     useUiStore.getState().inspect({ type: 'resource', id: 'old-resource' });
-    useUiStore.getState().openRail('background');
+    useUiStore.getState().openRail('runs');
 
     expect(useUiStore.getState()).toMatchObject({
       railOpen: true,
-      railVariant: 'background',
+      railVariant: 'runs',
       inspector: null,
     });
   });
@@ -76,8 +75,13 @@ describe('context rail state', () => {
     useUiStore.getState().setRailWidth(900);
     expect(useUiStore.getState().railWidth).toBe(560);
 
+    // Closing leaves the detail on screen for the panel's fade-out; the next
+    // open is what puts the rail back at its list.
     useUiStore.getState().inspect({ type: 'connection', id: 'google' });
     useUiStore.getState().closeRail();
-    expect(useUiStore.getState()).toMatchObject({ railOpen: false, inspector: null, railExpanded: false });
+    expect(useUiStore.getState()).toMatchObject({ railOpen: false, inspector: { type: 'connection', id: 'google' } });
+
+    useUiStore.getState().openRail('context');
+    expect(useUiStore.getState()).toMatchObject({ railOpen: true, inspector: null });
   });
 });

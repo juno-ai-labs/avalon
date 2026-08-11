@@ -9,26 +9,34 @@ import { MAX_RAIL_WIDTH, MIN_RAIL_WIDTH } from '../lib/ui-store';
 const RAIL_EDGE_GAP = 8;
 const KEYBOARD_STEP = 16;
 
+function widthUnderPointer(clientX: number): number {
+  return window.innerWidth - clientX - RAIL_EDGE_GAP;
+}
+
 /**
  * The grab handle shared by HyperSight and the inspector rail: a short pill
- * rather than a full-height border, which colors and grows as it is grabbed so
- * the affordance is legible without drawing a second edge beside the sidebar's.
+ * standing just outside the sidebar's leading edge, which colors and grows as
+ * it is grabbed so the affordance is legible without drawing a second border
+ * down the panel. It is a sibling of the sidebar rather than a child, both
+ * because the sidebar clips its own contents and because the handle belongs to
+ * the space beside it.
  */
 export function RailResizeHandle({
   label,
   width,
-  displayedWidth = width,
   onResize,
 }: {
   label: string;
-  /** The stored width the keyboard steps from, and the one `onResize` writes. */
+  /** The sidebar's current width — what the keyboard steps from. */
   width: number;
-  /** What the sidebar is actually rendered at, when the two can differ. */
-  displayedWidth?: number;
   onResize: (width: number) => void;
 }): React.JSX.Element {
   const [resizing, setResizing] = useState(false);
   const pointerRef = useRef<number | null>(null);
+  // The handle stands beside the sidebar rather than on its edge, so the width
+  // under the pointer is not the sidebar's width. Holding the difference from
+  // the moment of the grab keeps the sidebar from jumping to meet the pointer.
+  const grabOffsetRef = useRef(0);
 
   const finishDrag = (element?: HTMLDivElement): void => {
     if (pointerRef.current === null) return;
@@ -49,7 +57,7 @@ export function RailResizeHandle({
       aria-orientation="vertical"
       aria-valuemax={MAX_RAIL_WIDTH}
       aria-valuemin={MIN_RAIL_WIDTH}
-      aria-valuenow={displayedWidth}
+      aria-valuenow={width}
       className={clsx('rail-resizer', resizing && 'is-resizing')}
       onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -62,13 +70,14 @@ export function RailResizeHandle({
         event.preventDefault();
         finishDrag(event.currentTarget);
         pointerRef.current = event.pointerId;
+        grabOffsetRef.current = widthUnderPointer(event.clientX) - width;
         event.currentTarget.setPointerCapture?.(event.pointerId);
         setResizing(true);
         document.body.classList.add('is-resizing-rail');
       }}
       onPointerMove={(event) => {
         if (event.pointerId !== pointerRef.current) return;
-        onResize(window.innerWidth - event.clientX - RAIL_EDGE_GAP);
+        onResize(widthUnderPointer(event.clientX) - grabOffsetRef.current);
       }}
       onPointerUp={(event) => {
         if (event.pointerId === pointerRef.current) finishDrag(event.currentTarget);

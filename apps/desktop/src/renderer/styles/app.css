@@ -485,11 +485,10 @@ pre {
   min-width: 0;
   overflow: hidden;
   position: relative;
-  transition: padding-right 160ms ease;
 }
 
 @media (min-width: 1181px) {
-  .workspace-shell.rail-open .main-pane { padding-right: calc(var(--rail-width) + 8px); }
+  .workspace-shell.rail-open .main-pane { padding-right: calc(var(--rail-slot) + 8px); }
 }
 
 .sidebar {
@@ -506,29 +505,23 @@ pre {
 }
 
 .sidebar.is-resizing { user-select: none; }
+/* The navigation's grab handle is the sidebar's, standing in the gap outside its
+   trailing edge — the same width as the right sidebar's, and starting below the
+   title bar so the window stays draggable by its top edge. How near the pointer
+   has to come for the pill to show is decided in the component rather than by
+   this box, so the reveal can be generous without the box being. */
 .sidebar-resizer {
   bottom: 0;
-  cursor: col-resize;
   position: absolute;
-  right: -5px;
+  right: -12px;
   top: 48px;
-  width: 10px;
+  width: 12px;
   z-index: 3;
 }
-.sidebar-resizer::after {
-  background: transparent;
-  border-radius: 2px;
-  bottom: 8px;
-  content: '';
-  position: absolute;
-  right: 4px;
-  top: 8px;
-  transition: background 120ms;
-  width: 2px;
-}
-.sidebar-resizer:hover::after,
-.sidebar-resizer:focus-visible::after,
-.sidebar.is-resizing .sidebar-resizer::after { background: #65665e; }
+.sidebar-resizer > span { opacity: 0; }
+.sidebar-resizer.is-near > span,
+.sidebar-resizer:focus-visible > span,
+.sidebar.is-resizing .sidebar-resizer > span { opacity: 1; }
 
 .sidebar-titlebar {
   align-items: flex-end;
@@ -1725,12 +1718,11 @@ pre {
 .panel-toggle.is-active:hover { background: color-mix(in srgb, var(--brand) 17%, var(--raised)); }
 .participant-header-button { align-items: center; background: transparent; border-radius: 7px; color: var(--muted); display: flex; gap: 4px; min-height: 30px; padding: 2px 5px; }
 .participant-header-button:hover { background: var(--raised); color: var(--ink); }
-.icon-count { align-items: center; background: var(--blue); border: 2px solid var(--surface); border-radius: 999px; color: #101820; display: flex; font-size: 8px; font-weight: 700; height: 14px; justify-content: center; min-width: 14px; position: absolute; right: -3px; top: -3px; }
 
 .transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; }
 
 /* HyperSight — the second panel of the right sidebar, sharing the inspector
-   rail's frame, grab handle, and header. */
+   rail's frame, grab handle, and header through `.rail-surface`. */
 .hypersight-rail .rail-title { gap: 7px; }
 .hypersight-rail .rail-title h2 { margin-left: 0; }
 .hypersight-rail .rail-scroll { overscroll-behavior: contain; }
@@ -1980,7 +1972,7 @@ pre {
 .workstream-composer:focus-within { border-color: #5a5b54; }
 .workstream-composer.is-file-dragging,
 .transcript-scroll.is-file-dragging,
-.inspector-rail.is-file-dragging { box-shadow: inset 0 0 0 2px var(--brand); }
+.rail-surface.is-file-dragging { box-shadow: inset 0 0 0 2px var(--brand); }
 .composer-attachments,
 .message-attachments { display: flex; flex-wrap: wrap; gap: 7px; }
 .composer-attachments { padding: 11px 13px 1px; }
@@ -2093,17 +2085,49 @@ pre {
 /* Right sidebar: the context inspector rail and HyperSight */
 
 .rail-scrim { display: none; }
-.inspector-rail,
-.hypersight-rail { background: #20211e; border: 1px solid #3a3b35; border-radius: 10px; bottom: 8px; box-shadow: -8px 0 28px rgba(0,0,0,.16); display: grid; grid-template-rows: 45px minmax(0, 1fr); max-width: calc(100vw - var(--sidebar-width) - 24px); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; z-index: 40; }
-/* A short handle that colors and grows under the pointer, rather than a second
-   border running the height of the sidebar. */
-.rail-resizer { align-items: center; bottom: 7px; cursor: col-resize; display: flex; justify-content: center; left: 0; position: absolute; top: 45px; touch-action: none; width: 11px; z-index: 2; }
-.rail-resizer > span { background: #50514b; border-radius: 99px; height: 38px; transition: background 100ms ease, height 100ms ease; width: 2px; }
-.rail-resizer:focus-visible { outline: 0; }
+/* HyperSight and the inspector share one slot, so the width lives on the shell
+   rather than on either panel: registering it as a length lets the slot animate
+   as it changes hands, carrying the panel, the handle beside it, and the room
+   the main pane leaves for it along with it. */
+@property --rail-width {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 360px;
+}
+/* What the slot is actually drawn at: the remembered width, or what the window
+   leaves for it. Everything placed against the panel reads this rather than the
+   remembered width, so a handle or a header cannot part company with a panel the
+   window has capped. Each breakpoint that changes the room available restates
+   it. */
+.workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - var(--sidebar-width) - 24px)); transition: --rail-width 190ms cubic-bezier(.32, .72, 0, 1); }
+.rail-surface { background: #20211e; border: 1px solid #3a3b35; border-radius: 10px; bottom: 8px; box-shadow: -8px 0 28px rgba(0,0,0,.16); display: grid; grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
+/* The panel that just lost the slot dissolves over the one that took it. Only
+   the outgoing panel animates: the incoming one is already opaque underneath,
+   so the frame itself never thins out mid-hand-off. */
+.rail-surface.is-leaving { animation: rail-hand-off 190ms linear forwards; pointer-events: none; z-index: 41; }
+@keyframes rail-hand-off {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+/* A short pill that colors and grows under the pointer, standing in the gap
+   beside the panel it resizes rather than drawing a second border down its
+   edge. Both sidebars use it; only where each one sits differs. */
+.rail-resizer,
+.sidebar-resizer { align-items: center; cursor: col-resize; display: flex; justify-content: center; touch-action: none; }
+.rail-resizer > span,
+.sidebar-resizer > span { background: #50514b; border-radius: 99px; height: 38px; transition: background 100ms ease, height 100ms ease, opacity 100ms ease; width: 2px; }
+.rail-resizer:focus-visible,
+.sidebar-resizer:focus-visible { outline: 0; }
 .rail-resizer:hover > span,
 .rail-resizer:focus-visible > span,
-.rail-resizer.is-resizing > span { background: var(--brand); height: 54px; }
+.rail-resizer.is-resizing > span,
+.sidebar-resizer.is-near > span,
+.sidebar-resizer:focus-visible > span,
+.sidebar.is-resizing .sidebar-resizer > span { background: var(--brand); height: 54px; }
+.rail-resizer { bottom: 8px; position: fixed; right: calc(var(--rail-slot) + 8px); top: 8px; width: 12px; z-index: 41; }
+/* A drag has to track the pointer exactly; only a hand-off is animated. */
 .is-resizing-rail { cursor: col-resize !important; user-select: none !important; }
+.is-resizing-rail .workspace-shell { transition: none; }
 .rail-header { align-items: center; border-bottom: 1px solid #30312c; display: flex; justify-content: space-between; padding: 0 7px 0 11px; }
 .rail-title,
 .rail-header-actions { align-items: center; display: flex; gap: 2px; }
@@ -2118,7 +2142,6 @@ pre {
 .rail-section-header h3 { color: #8e8d87; font-size: 10.5px; font-weight: 560; margin: 0; }
 .rail-list,
 .rail-card-list,
-.task-list,
 .run-rail-list { display: grid; gap: 5px; list-style: none; margin: 0; padding: 0; }
 .person-row { align-items: center; border-radius: 6px; display: flex; gap: 8px; min-height: 38px; padding: 4px 5px; }
 .person-row > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; min-width: 0; }
@@ -2166,16 +2189,6 @@ pre {
 .run-filter button { background: transparent; border-radius: 4px; color: #77766f; font-size: 9.5px; min-height: 24px; padding: 3px 7px; }
 .rail-toolbar button.is-selected,
 .run-filter button.is-selected { background: #3a3b35; color: #cccac4; }
-.task-card { background: #2a2b27; border: 1px solid transparent; border-radius: 7px; padding: 10px; }
-.task-card:hover { border-color: #40413b; }
-.task-title-row { align-items: flex-start; display: flex; gap: 7px; }
-.task-title-row strong { color: #bdbcb5; font-size: 11px; line-height: 1.35; }
-.task-status { background: #77766f; border-radius: 50%; flex: 0 0 auto; height: 6px; margin-top: 5px; width: 6px; }
-.task-status.running { animation: active-pulse 1.3s infinite; background: var(--blue); }
-.task-status.failed { background: var(--red); }
-.task-meta,
-.task-details { align-items: center; color: #77766f; display: flex; flex-wrap: wrap; font-size: 9.5px; gap: 8px; margin: 5px 0 0 13px; }
-.task-details button { background: transparent; color: var(--blue); padding: 0; }
 .run-rail-row { align-items: center; background: #292a26; border: 1px solid transparent; border-radius: 7px; color: inherit; display: grid; gap: 7px; grid-template-columns: 14px minmax(0, 1fr) auto 14px; min-height: 62px; padding: 8px 9px; text-align: left; width: 100%; }
 .run-rail-row:hover { border-color: #41423c; }
 .run-rail-copy { display: flex; flex-direction: column; min-width: 0; }
@@ -2213,7 +2226,7 @@ pre {
 .message-context-label { color: #83837b; font-size: 9px; font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--blue); display: inline-flex; font-size: 10.5px; gap: 4px; margin-top: 19px; }
 .automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--sidebar-width) / 2)); width: calc(100% - var(--sidebar-width) - 76px); z-index: 4; }
-.rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-width) / 2 - var(--rail-width) / 2)); width: calc(100% - var(--sidebar-width) - var(--rail-width) - 76px); }
+.rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-width) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--sidebar-width) - var(--rail-slot) - 76px); }
 .automation-composer { --composer-text-padding: 14px 15px 4px; background: #292a26; border-color: #4a4b45; border-radius: 12px; box-shadow: 0 9px 30px rgba(0,0,0,.22); }
 .automation-composer textarea { min-height: 54px; }
 .automation-composer .composer-toolbar { min-height: 37px; padding: 1px 8px 7px; }
@@ -2392,11 +2405,19 @@ pre {
 
 @media (max-width: 1180px) {
   .rail-scrim { background: rgba(0,0,0,.2); display: block; inset: 0; position: fixed; z-index: 35; }
-  .inspector-rail,
-  .hypersight-rail { box-shadow: -14px 0 42px rgba(0,0,0,.38); max-width: min(560px, calc(100vw - var(--sidebar-width) - 20px)); }
+  .workspace-shell { --rail-slot: min(var(--rail-width), 560px, calc(100vw - var(--sidebar-width) - 20px)); }
+  .rail-surface { box-shadow: -14px 0 42px rgba(0,0,0,.38); }
   .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--sidebar-width) / 2)); width: calc(100% - var(--sidebar-width) - 60px); }
   .automation-overview-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .automation-overview-actions .button:not(.run-now-button) { font-size: 0; gap: 0; padding: 5px 8px; }
+}
+
+/* The right sidebar floats over the transcript below 1181px, but never over the
+   header controls that opened it: those move left to sit beside it. Narrower
+   than 561px the panel is full-bleed and there is no beside to move to. */
+@media (min-width: 561px) and (max-width: 1180px) {
+  .rail-open .workstream-header,
+  .rail-open .automation-overview-header { padding-right: calc(var(--rail-slot) + 16px); }
 }
 
 @media (max-width: 920px) {
@@ -2410,8 +2431,7 @@ pre {
   .header-menu-button { display: inline-flex; }
   .mobile-sidebar-trigger { display: none; }
   .sidebar-resizer { display: none; }
-  .inspector-rail,
-  .hypersight-rail { max-width: calc(100vw - 16px); }
+  .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - 16px)); }
   .automation-composer-wrap,
   .rail-open .automation-composer-wrap { transform: translateX(-50%); width: calc(100% - 50px); }
   .workstream-header,
@@ -2421,8 +2441,7 @@ pre {
 @media (max-width: 760px) {
   .transcript-column { padding-left: 20px; padding-right: 20px; }
   .composer-dock { padding-left: 16px; padding-right: 16px; }
-  .workstream-header-actions .participant-header-button,
-  .workstream-header-actions > .header-background-tasks { display: none; }
+  .workstream-header-actions .participant-header-button { display: none; }
   .automation-overview-layout { display: block; padding: 38px 22px 90px; }
   .automation-facts { display: grid; gap: 18px; grid-template-columns: repeat(2, 1fr); margin-bottom: 30px; }
   .automation-overview-actions > .button:not(.run-now-button) { display: none; }
@@ -2779,8 +2798,8 @@ pre {
   .waiting-workstream-source,
   .waiting-workstream-row time,
   .waiting-workstream-copy > span { display: none; }
-  .inspector-rail,
-  .hypersight-rail { border-radius: 8px; min-width: 0; width: calc(100vw - 16px) !important; }
+  .workspace-shell { --rail-slot: calc(100vw - 16px); }
+  .rail-surface { border-radius: 8px; min-width: 0; }
   .rail-resizer { display: none; }
   .automation-builder { padding-left: 18px; padding-right: 18px; }
   .automation-overview-title > .badge { display: none; }
@@ -2801,8 +2820,7 @@ pre {
     scroll-behavior: auto !important;
     transition-duration: 0.001ms !important;
   }
-  .status-running .status-dot,
-  .task-status.running { opacity: 1; }
+  .status-running .status-dot { opacity: 1; }
 }
 
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
