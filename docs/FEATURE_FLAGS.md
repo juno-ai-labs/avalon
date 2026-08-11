@@ -36,14 +36,24 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | Activity classifier | `agent-model-activity-structured` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
 are the standalone structured-output agents, which call OpenRouter directly
 rather than through the harness: message addressing; semantic activity
-triggering plus contextual routing; and the two halves of suggested work, which
-get separate flags because admission turns connector activity into prompts while
-ranking orders them per user, and pinning one should not move the other.
+triggering plus contextual routing; the two halves of suggested work, which get
+separate flags because admission turns connector activity into prompts while
+ranking orders them per user, and pinning one should not move the other; and the
+work-stream description loop.
+
+The description loop is the one role whose default is most likely to want
+raising. It reads a window of up to 600 messages and decides whether a work
+stream's purpose has moved, which is a harder judgment than the classifiers it
+shares a default with — see
+[`workstream-descriptions.md`](workstream-descriptions.md). Retarget the flag
+rather than changing the shared `OPENROUTER_STRUCTURED_MODEL` variable, which
+would move the classifiers with it.
 
 **Adding an agent means adding a flag.** The set above is the whole of what
 `agent-model-flags.ts` knows about; an agent that reads `OPENROUTER_*` directly

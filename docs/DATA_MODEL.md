@@ -14,7 +14,8 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 
 ## Work streams
 
-- `workstreams` is the central object. `origin_type` distinguishes ad hoc work from automation output without splitting the UI.
+- `workstreams` is the central object. `origin_type` distinguishes ad hoc work from automation output without splitting the UI. `objective` is the work stream's description; `description_source` records whether a person wrote it (`authored`) or it was derived at creation or by the refresh loop (`derived`), which is what lets an automatic rewrite weigh a deliberate line differently from a copied opening message.
+- `workstream_description_refreshes` holds one row per work stream: the last evaluation by the loop that rewrites a description once the work stream's purpose has moved. `rest_until` is both the admission clock and the single-writer claim — it is pushed forward when an evaluation starts, so two runs finishing together cannot both spend a window and a failing model is not retried by every run behind it. It stores the resolved instant rather than the inputs because the rest is earned: `consecutive_keeps` doubles it to a ceiling, a rewrite returns it to the floor, and a person editing the description buys a full rest outright. `decision` records the outcome including `kept`, because knowing the loop looked is what separates a description that still fits from one nothing has examined. See [`workstream-descriptions.md`](workstream-descriptions.md).
 - `workstream_participants` records explicit participation reasons. Viewer presence is intentionally absent from D1.
 - `messages` has a per-work-stream `sequence_number`; `workstreams.next_sequence_number` allocates ordered events.
 - `message_mentions` stores validated person and connector spans.

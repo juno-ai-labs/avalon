@@ -638,6 +638,12 @@ pre {
 .workstream-row.is-unread .sidebar-row-icon { color: var(--blue); }
 
 .sidebar-row-hint { align-items: center; color: #73736c; display: flex; font-size: 10.5px; gap: 3px; margin-top: 2px; }
+/* The hint is a flex row so a scope badge can sit beside its text, which is
+   also why the `text-overflow` above never applied to it: ellipsis is a block
+   behavior. A work-stream description now runs to 280 characters, so the text
+   needs its own ellipsizing box — without `min-width: 0` a flex item refuses to
+   shrink below its content and clips mid-word at the panel edge instead. */
+.sidebar-row-hint-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
 .workstream-row { min-height: 30px; }
 .note-row { background: transparent; border: 0; min-height: 30px; text-align: left; width: 100%; }
