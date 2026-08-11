@@ -127,5 +127,11 @@
     { "name": "avalon-eu-workstream-loop", "binding": "WORKSTREAM_LOOP_WORKFLOW", "class_name": "WorkstreamLoopWorkflow" },
     { "name": "avalon-eu-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" }
   ],
-  "observability": { "enabled": true, "head_sampling_rate": 1 }
+  // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
+  // has to be asked for separately.
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  }
 }

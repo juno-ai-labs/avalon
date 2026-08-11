@@ -46,6 +46,7 @@ import {
   type ApplicationIconId,
   type DesktopApplicationIconState,
 } from '../common/application-icons';
+import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import {
@@ -547,7 +548,7 @@ async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> 
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
     const legacySession = parseLegacyStoredSession(parsed);
     if (!legacySession) {
-      console.warn('[avalon] the legacy desktop session did not match its durable schema');
+      logWarn('avalon', 'the legacy desktop session did not match its durable schema');
       return null;
     }
     const auth = await writeSplitSessionFiles(legacySession);
@@ -556,7 +557,7 @@ async function migrateLegacySessionToSplitStorage(): Promise<StoredAuth | null> 
     return auth;
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') {
-      console.warn('[avalon] could not migrate the encrypted desktop session', error);
+      logWarn('avalon', 'could not migrate the encrypted desktop session', error);
     }
     return null;
   }
@@ -569,14 +570,14 @@ async function loadStoredAuth(): Promise<StoredAuth | null> {
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
     const auth = parseStoredAuth(parsed);
     if (!auth) {
-      console.warn('[avalon] the stored desktop credential did not match its durable schema');
+      logWarn('avalon', 'the stored desktop credential did not match its durable schema');
       return null;
     }
     inMemoryAuth = auth;
     return auth;
   } catch (error) {
     if (errorCode(error) === 'ENOENT') return migrateLegacySessionToSplitStorage();
-    console.warn('[avalon] could not restore the stored desktop credential', error);
+    logWarn('avalon', 'could not restore the stored desktop credential', error);
     return null;
   }
 }
@@ -591,19 +592,19 @@ async function loadStoredSession(): Promise<WireSession | null> {
     const parsed: unknown = JSON.parse(decryptStoredSessionValue(encrypted));
     const profile = parseStoredProfile(parsed);
     if (!profile) {
-      console.warn('[avalon] discarding an incompatible desktop profile cache');
+      logWarn('avalon', 'discarding an incompatible desktop profile cache');
       return null;
     }
     const stored = sessionFromStoredState(auth, profile, apiBaseForAuth(auth));
     if (!stored) {
-      console.warn('[avalon] discarding a desktop profile cache with a mismatched credential binding');
+      logWarn('avalon', 'discarding a desktop profile cache with a mismatched credential binding');
       return null;
     }
     inMemorySession = stored;
     return stored;
   } catch (error) {
     if (errorCode(error) !== 'ENOENT') {
-      console.warn('[avalon] could not restore the desktop profile cache', error);
+      logWarn('avalon', 'could not restore the desktop profile cache', error);
     }
     return null;
   }
@@ -1007,7 +1008,7 @@ async function refreshWireSession(): Promise<WireSession> {
           await clearStoredSessionUnlocked();
         });
       } catch (cleanupError) {
-        console.warn('[avalon] could not clear a rejected desktop credential', cleanupError);
+        logWarn('avalon', 'could not clear a rejected desktop credential', cleanupError);
       }
     }
     throw error;
@@ -1285,10 +1286,10 @@ function registerIpc(): void {
           try {
             await clearStoredSession();
           } catch (cleanupError) {
-            console.warn('[avalon] could not clear an invalid desktop credential', cleanupError);
+            logWarn('avalon', 'could not clear an invalid desktop credential', cleanupError);
           }
         }
-        console.warn('[avalon] could not rebuild the desktop profile cache', error);
+        logWarn('avalon', 'could not rebuild the desktop profile cache', error);
         return null;
       }
     }
@@ -1592,7 +1593,7 @@ async function initializeApplicationIcon(): Promise<void> {
   nativeTheme.on('updated', () => {
     if (applicationIconController.state().isAutomatic && developmentDockIconUsesAppearancePreview) {
       void applyApplicationIcon(automaticApplicationIcon(nativeTheme.shouldUseDarkColors)).catch((error: unknown) => {
-        console.warn('[avalon] could not refresh the development application icon', error);
+        logWarn('avalon', 'could not refresh the development application icon', error);
       });
     }
     applicationIconController.appearanceChanged();
@@ -1600,7 +1601,7 @@ async function initializeApplicationIcon(): Promise<void> {
   try {
     await applicationIconController.restore();
   } catch (error) {
-    console.warn('[avalon] could not restore the selected application icon', error);
+    logWarn('avalon', 'could not restore the selected application icon', error);
   }
 }
 
@@ -1615,7 +1616,7 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
     'did-fail-load',
     (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return;
-      console.error(`[avalon] ${surface} renderer failed to load`, {
+      logError('avalon', `${surface} renderer failed to load`, {
         errorCode,
         errorDescription,
         validatedUrl,
@@ -1623,15 +1624,15 @@ function installWindowDiagnostics(window: BrowserWindow, surface: 'main' | 'sett
     },
   );
   window.webContents.on('render-process-gone', (_event, details) => {
-    console.error(`[avalon] ${surface} renderer process exited`, details);
+    logError('avalon', `${surface} renderer process exited`, details);
   });
   window.on('unresponsive', () => {
-    console.error(`[avalon] ${surface} window became unresponsive`);
+    logError('avalon', `${surface} window became unresponsive`);
   });
   if (!app.isPackaged) {
     window.webContents.on('console-message', (details) => {
       if (details.level === 'error') {
-        console.error(`[avalon] ${surface} renderer console error`, {
+        logError('avalon', `${surface} renderer console error`, {
           message: details.message,
           lineNumber: details.lineNumber,
           sourceId: details.sourceId,
@@ -1646,7 +1647,7 @@ async function loadRenderer(window: BrowserWindow, url: string, surface: 'main' 
     await window.loadURL(url);
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ERR_ABORTED') return;
-    console.error(`[avalon] ${surface} loadURL failed`, error);
+    logError('avalon', `${surface} loadURL failed`, error);
     throw error;
   }
 }
@@ -1750,7 +1751,7 @@ async function createMeetingWindow(noteId: string = crypto.randomUUID()): Promis
   });
   meetingWindow.on('closed', () => {
     void nativeSystemAudioController.stop(meetingContents).catch((error) => {
-      console.warn('[meeting] Failed to stop native computer audio after window close', error);
+      logWarn('meeting', 'Failed to stop native computer audio after window close', error);
     });
     meetingWindows.delete(meetingWindow);
   });
@@ -1774,12 +1775,12 @@ function installApplicationMenu(): void {
     actions: {
       openSettings: () => {
         void createSettingsWindow().catch((error: unknown) => {
-          console.error('[avalon] failed to open settings', error);
+          logError('avalon', 'failed to open settings', error);
         });
       },
       openWebsite: () => {
         void shell.openExternal('https://with-avalon.com/').catch((error: unknown) => {
-          console.error('[avalon] failed to open website', error);
+          logError('avalon', 'failed to open website', error);
         });
       },
       checkForUpdates: () => autoUpdateController?.checkForUpdates(),
@@ -1913,18 +1914,18 @@ if (!singleInstanceLock) {
       await migrateLegacyStoredSessionFile(userDataDirectory());
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
-      if (code !== 'ENOENT') console.warn('[avalon] could not migrate the legacy desktop session file', error);
+      if (code !== 'ENOENT') logWarn('avalon', 'could not migrate the legacy desktop session file', error);
     }
     try {
       await lockdownModeController.initialize();
     } catch (error) {
-      console.warn('[avalon] could not initialize desktop session encryption', error);
+      logWarn('avalon', 'could not initialize desktop session encryption', error);
     }
     try {
       // Read after Lockdown mode: its startup fallback can rewrite the file.
       await debugSettingsController.initialize();
     } catch (error) {
-      console.warn('[avalon] could not read the Developer preference', error);
+      logWarn('avalon', 'could not read the Developer preference', error);
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
@@ -1965,12 +1966,12 @@ if (!singleInstanceLock) {
     app.on('activate', () => {
       if (!mainWindow || mainWindow.isDestroyed()) {
         void createMainWindow().catch((error: unknown) => {
-          console.error('[avalon] failed to recreate the main window', error);
+          logError('avalon', 'failed to recreate the main window', error);
         });
       }
     });
   }).catch((error: unknown) => {
-    console.error('[avalon] failed to start', error);
+    logError('avalon', 'failed to start', error);
     app.quit();
   });
 }

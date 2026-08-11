@@ -43,6 +43,7 @@ import {
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logError, logInfo, logWarn, type LogEnv } from "../observability/logger";
 import { randomToken, sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
@@ -216,7 +217,7 @@ export class SlackAgentService {
           jobId: job.id,
         }));
       } catch (error) {
-        console.warn("Slack ingress recovery enqueue failed", {
+        logWarn(this.env, "slack_ingress_recovery_enqueue_failed", {
           job_id: job.id,
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -248,7 +249,7 @@ export class SlackAgentService {
        ORDER BY updated_at DESC LIMIT ?`,
     ).bind(limit).all<{ id: string; workspace_id: string; error_code: string | null }>();
     for (const job of exhausted.results) {
-      console.error("Slack ingress exhausted its retry budget", {
+      logError(this.env, "slack_ingress_retry_budget_exhausted", {
         job_id: job.id,
         workspace_id: job.workspace_id,
         error_code: job.error_code,
@@ -273,7 +274,7 @@ export class SlackAgentService {
             // of token validity so a one-shot trigger never waits for refresh.
             await this.tokenFromEncrypted(connection, AbortSignal.timeout(10_000), 6 * 60_000);
           } catch (error) {
-            console.warn("Slack workspace credential pre-warm failed", {
+            logWarn(this.env, "slack_credential_prewarm_failed", {
               connection_id: connection.id,
               reason: error instanceof Error ? error.message : "unknown",
             });
@@ -409,7 +410,7 @@ export class SlackAgentService {
         ? String(shortcutMessage.ts)
         : null;
       const shortcutChannelResolution = shortcutChannelId
-        ? await resolveSlackChannelType(token, shortcutChannelId, nestedString(payload, "channel", "type"))
+        ? await resolveSlackChannelType(this.env, token, shortcutChannelId, nestedString(payload, "channel", "type"))
         : { channelType: "unknown" as const, channelName: null, failure: null };
       await slackApi(token, "views.open", {
         trigger_id: triggerId,
@@ -544,7 +545,7 @@ export class SlackAgentService {
       }
     } catch (error) {
       if (!input.recoverQueueSendFailure) throw error;
-      console.warn("Slack ingress queue publish deferred to recovery", {
+      logWarn(this.env, "slack_ingress_publish_deferred", {
         job_id: input.id,
         reason: error instanceof Error ? error.message : "unknown",
       });
@@ -639,7 +640,7 @@ export class SlackAgentService {
           text: "Avalon processed your request. Check your Agent conversation for the task or any required action.",
         });
       } catch (error) {
-        console.warn("Slack command follow-up failed", { reason: error instanceof Error ? error.message : "unknown" });
+        logWarn(this.env, "slack_command_follow_up_failed", { reason: error instanceof Error ? error.message : "unknown" });
       }
     }
   }
@@ -752,7 +753,7 @@ export class SlackAgentService {
         if (slackReconnectRequired(error)) {
           await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
         }
-        console.warn("Slack workspace member assignment lookup failed", {
+        logWarn(this.env, "slack_member_assignment_lookup_failed", {
           workspace_id: workspaceId,
           connection_id: connection.id,
           user_id: userId,
@@ -921,7 +922,7 @@ export class SlackAgentService {
         delivered = true;
       }
     } catch (error) {
-      console.warn("Slack stream delivery failed; using a thread reply", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
+      logWarn(this.env, "slack_stream_delivery_failed", { fallback: "thread_reply", workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       try {
         // An append may have reached Slack even when its response was lost.
         // Close the known stream before posting the idempotent full fallback so
@@ -939,7 +940,7 @@ export class SlackAgentService {
           // otherwise the closed stream may contain a partial result.
           if (streamContentComplete) delivered = true;
         } else {
-          console.warn("Slack failed to close an interrupted stream", {
+          logWarn(this.env, "slack_stream_close_failed", {
             workspace_id: workspaceId,
             workstream_id: workstreamId,
             reason: stopError instanceof Error ? stopError.message : "unknown",
@@ -983,12 +984,12 @@ export class SlackAgentService {
       ).bind(deliveryKey, nowIso(), session.id).run();
     } catch (error) {
       deliveryError = error;
-      console.warn("Slack workstream delivery failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
+      logWarn(this.env, "slack_workstream_delivery_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
     } finally {
       try {
         await slackApi(token, "assistant.threads.setStatus", { channel_id: session.slack_channel_id, thread_ts: session.slack_thread_ts, status: "" }, AbortSignal.timeout(5_000));
       } catch (error) {
-        console.warn("Slack thread status cleanup failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
+        logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
       }
       await this.env.DB.prepare(
         "UPDATE slack_agent_sessions SET slack_stream_ts = NULL, updated_at = ? WHERE id = ?",
@@ -1050,7 +1051,7 @@ export class SlackAgentService {
       try {
         await slackApi(token, "assistant.threads.setTitle", { channel_id: channelId, thread_ts: threadTs, title: input.title }, AbortSignal.timeout(5_000));
       } catch (error) {
-        console.warn("Slack automation thread title failed", { target_id: target.id, reason: error instanceof Error ? error.message : "unknown" });
+        logWarn(this.env, "slack_automation_thread_title_failed", { target_id: target.id, reason: error instanceof Error ? error.message : "unknown" });
       }
     } catch (error) {
       const reconnectRequired = (error instanceof ConnectorError && error.code === "unauthorized")
@@ -1133,14 +1134,14 @@ export class SlackAgentService {
       }
       if (!summary.complete) {
         await this.schedulePublicChannelSync(connection.id, summary.retryAfterMs);
-        console.info("Slack public-channel sync continuation scheduled", {
+        logInfo(this.env, "slack_public_channel_sync_continued", {
           connection_id: connection.id,
           team_id: teamId,
           ...summary,
         });
         return;
       }
-      console.info("Slack public-channel sync completed", {
+      logInfo(this.env, "slack_public_channel_sync_completed", {
         connection_id: connection.id,
         team_id: teamId,
         ...summary,
@@ -1165,7 +1166,7 @@ export class SlackAgentService {
         return;
       }
       if (result === "skipped") {
-        console.warn("Slack public channel could not be auto-joined", {
+        logWarn(this.env, "slack_public_channel_join_failed", {
           connection_id: connection.id,
           team_id: teamId,
           channel_id: channelId,
@@ -1277,7 +1278,7 @@ export class SlackAgentService {
       && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
       ? { channelType: existingSession.channel_type, channelName: null, failure: null }
       : activityChannelResolution
-        ?? await resolveSlackChannelType(token, channelId, event.channel_type);
+        ?? await resolveSlackChannelType(this.env, token, channelId, event.channel_type);
     await this.startFromPrompt(
       teamId,
       slackUserId,
@@ -1401,7 +1402,7 @@ export class SlackAgentService {
         if (slackReconnectRequired(error)) {
           await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
         }
-        console.warn("Slack activation acknowledgement failed", {
+        logWarn(this.env, "slack_activation_ack_failed", {
           connection_id: connection.id,
           team_id: teamId,
           event_id: activationInvocation.kind === "event" ? activationInvocation.eventId : null,
@@ -1460,7 +1461,7 @@ export class SlackAgentService {
                 title: requestedPrompt,
               }, AbortSignal.timeout(5_000));
             } catch (error) {
-              console.warn("Slack thread title failed", {
+              logWarn(this.env, "slack_thread_title_failed", {
                 session_id: session.id,
                 reason: error instanceof Error ? error.message : "unknown",
               });
@@ -1801,7 +1802,7 @@ export class SlackAgentService {
               : null,
             failure: null,
           }
-        : await resolveSlackChannelType(await this.botToken(connection), channelId, channelHint)
+        : await resolveSlackChannelType(this.env, await this.botToken(connection), channelId, channelHint)
       : { channelType: "unknown" as const, channelName: null, failure: null };
     const workspaceAutomationAllowed = channelResolution.channelType === "public";
     const allowedUserIds = workspaceAutomationAllowed
@@ -2178,7 +2179,7 @@ export class SlackAgentService {
         .slice(-8);
       return { status: "available", messages };
     } catch (error) {
-      console.warn("Slack nearby context lookup failed", {
+      logWarn(this.env, "slack_nearby_context_lookup_failed", {
         channel_id: source.channelId,
         thread_ts: source.threadTs,
         reason: slackErrorReason(error),
@@ -2264,6 +2265,7 @@ export class SlackAgentService {
         ).bind(connection.workspace_id, link.user_id, `${teamId}:%`).first<{ display_name: string; status: string }>(),
       ]);
       blocks = linkedHome(
+        this.env,
         link.name,
         tasks.results ?? [],
         automations.results ?? [],
@@ -2303,7 +2305,7 @@ export class SlackAgentService {
     // back to the anonymous card rather than dropping the unfurl.
     // Posting a new card fails closed: an audience we could not confirm is
     // treated as external. The refresh sweep deliberately does the opposite.
-    const externallyShared = await slackChannelIsExternallyShared(token, channel);
+    const externallyShared = await slackChannelIsExternallyShared(this.env, token, channel);
     const summaries = externallyShared !== false
       ? new Map<string, WorkstreamUnfurlSummary>()
       : await this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]);
@@ -2329,7 +2331,7 @@ export class SlackAgentService {
       // exhausted its retry budget — an alert nobody can act on. Anything else
       // still throws, so a rate limit or outage keeps its durable retry.
       if (!TERMINAL_UNFURL_REASONS.has(slackErrorReason(error))) throw error;
-      console.info("Slack declined to unfurl a work-stream link", {
+      logInfo(this.env, "slack_unfurl_declined", {
         team_id: teamId,
         channel_id: channel,
         reason: slackErrorReason(error),
@@ -2362,7 +2364,7 @@ export class SlackAgentService {
     rendered: Map<string, Record<string, unknown>[]>,
   ): Promise<void> {
     const at = nowIso();
-    const recordable = recordableUnfurlLinks(linkedWorkstreams, summaries);
+    const recordable = recordableUnfurlLinks(this.env, linkedWorkstreams, summaries);
     const hashes = await Promise.all(
       recordable.map(({ url }) => workstreamUnfurlCardHash(rendered.get(url) ?? [])),
     );
@@ -2558,7 +2560,7 @@ export class SlackAgentService {
         await this.env.GLOBAL_SLACK_ROUTER.setSlackRouteStatus(input);
       }
     } catch (error) {
-      console.warn("Slack route deactivation after revocation failed", {
+      logWarn(this.env, "slack_route_deactivation_after_revocation_failed", {
         connection_id: connection.id,
         reason: error instanceof Error ? error.message : "unknown",
       });
@@ -2798,6 +2800,7 @@ function recoverSlackDeniedPrompt(
 }
 
 async function resolveSlackChannelType(
+  env: LogEnv,
   token: string,
   channelId: string,
   hint: unknown,
@@ -2825,7 +2828,7 @@ async function resolveSlackChannelType(
     return { channelType: "public", channelName, failure: null };
   } catch (error) {
     const reason = slackErrorReason(error);
-    console.warn("Slack conversation privacy lookup failed closed", {
+    logWarn(env, "slack_conversation_privacy_lookup_failed", {
       channel_id: channelId,
       reason,
     });
@@ -2990,7 +2993,7 @@ function unlinkedHome(link: string): Record<string, unknown>[] {
   ];
 }
 
-function linkedHome(name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
+function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
   const blocks: Record<string, unknown>[] = [
     { type: "header", text: { type: "plain_text", text: `Welcome, ${name}`.slice(0, 150) } },
     { type: "actions", elements: [
@@ -3008,7 +3011,7 @@ function linkedHome(name: string, tasks: Record<string, unknown>[], automations:
     // cannot produce a link must cost that row, not the whole App Home. The
     // throw would otherwise escape `views.publish` and fail account linking.
     if (!isWorkstreamId(workstreamId)) {
-      console.warn("Skipped an App Home task row with an unlinkable work-stream id", {
+      logWarn(env, "slack_app_home_task_skipped", {
         workstream_id: workstreamId,
       });
       continue;
@@ -3294,6 +3297,7 @@ const SLACK_UNFURL_MAX_URL_LENGTH = 2_000;
  * tolerates arbitrary extra fragment parameters.
  */
 function recordableUnfurlLinks(
+  env: LogEnv,
   linkedWorkstreams: Map<string, string>,
   summaries: Map<string, WorkstreamUnfurlSummary>,
 ): { url: string; workstreamId: string; summary: WorkstreamUnfurlSummary }[] {
@@ -3301,7 +3305,7 @@ function recordableUnfurlLinks(
     const summary = summaries.get(workstreamId);
     if (!summary) return [];
     if (url.length > SLACK_UNFURL_MAX_URL_LENGTH) {
-      console.warn("Skipped recording an over-long work-stream link; its card cannot be refreshed", {
+      logWarn(env, "slack_workstream_link_too_long", {
         workstream_id: workstreamId,
         url_length: url.length,
       });

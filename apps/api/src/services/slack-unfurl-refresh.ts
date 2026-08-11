@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
@@ -126,7 +127,7 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   const rows = stale.results ?? [];
   if (rows.length > MAX_REFRESHES_PER_SWEEP) {
     // Never let a bounded sweep read as "everything is current".
-    console.info("Slack unfurl refresh hit its per-sweep ceiling", {
+    logInfo(env, "slack_unfurl_refresh_ceiling_reached", {
       ceiling: MAX_REFRESHES_PER_SWEEP,
       deferred: rows.length - MAX_REFRESHES_PER_SWEEP,
     });
@@ -143,10 +144,12 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
       await refreshConnectionUnfurls(env, connectionId, connectionRows);
     } catch (error) {
       // One unhealthy installation must not stop the others.
-      console.warn("Slack unfurl refresh failed for a connection", {
+      // `detail`, not `message`: the logger reserves `message` for the row
+      // summary Workers Logs lists, and an opaque provider string is not one.
+      logWarn(env, "slack_unfurl_refresh_connection_failed", {
         connection_id: connectionId,
         reason: slackUnfurlErrorReason(error),
-        message: error instanceof Error ? error.message : String(error),
+        detail: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -178,7 +181,7 @@ async function refreshConnectionUnfurls(
 
     let external = externalByChannel.get(row.slack_channel_id);
     if (external === undefined) {
-      external = await slackChannelIsExternallyShared(token, row.slack_channel_id);
+      external = await slackChannelIsExternallyShared(env, token, row.slack_channel_id);
       externalByChannel.set(row.slack_channel_id, external);
     }
     // Unlike posting a new card, an unconfirmed audience must not redact an
@@ -186,7 +189,7 @@ async function refreshConnectionUnfurls(
     // correct card to the anonymous form and then persist that as the truth.
     // Leave the row entirely untouched so the next sweep retries.
     if (external === null) {
-      console.warn("Slack unfurl refresh deferred; audience could not be confirmed", {
+      logWarn(env, "slack_unfurl_refresh_audience_unconfirmed", {
         connection_id: connectionId,
         channel_id: row.slack_channel_id,
       });
@@ -223,7 +226,7 @@ async function refreshConnectionUnfurls(
       const reason = slackUnfurlErrorReason(error);
       if (!TERMINAL_UNFURL_REASONS.has(reason)) {
         // Transient. Leave rendered_status alone so the next sweep retries.
-        console.warn("Slack unfurl refresh deferred", {
+        logWarn(env, "slack_unfurl_refresh_deferred", {
           connection_id: connectionId,
           workstream_id: row.workstream_id,
           reason,

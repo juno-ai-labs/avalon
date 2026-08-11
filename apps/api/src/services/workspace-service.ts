@@ -8,6 +8,7 @@ import { newId, nowIso } from "@avalon/db";
 import type { AuthContext, Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { randomToken, sha256 } from "../lib/crypto";
+import { logWarn } from "../observability/logger";
 import {
   sendWorkspaceInvitationEmail,
   sendWorkspaceInvitationResolutionEmail,
@@ -197,7 +198,7 @@ async function adoptSlackWorkstreamsForMember(
   } catch (error) {
     // Membership acceptance is authoritative. Slack adoption is a recoverable
     // convenience and can also run when the member explicitly links Slack.
-    console.warn("Slack workspace workstream adoption failed", {
+    logWarn(env, "slack_workspace_workstream_adoption_failed", {
       workspace_id: workspaceId,
       user_id: user.id,
       reason: error instanceof Error ? error.message : "unknown",
@@ -253,10 +254,13 @@ async function notifyInvitationResolution(
       region: invitation.workspace_region,
     });
   } catch (error) {
-    console.warn("Invitation resolution email delivery failed", {
-      invitationId: invitation.id,
+    // `workspace_region`, not `region`: the Global control plane resolves
+    // invitations for EU workspaces, so the two can disagree and the logger
+    // already records the region the Worker ran in.
+    logWarn(env, "invitation_resolution_email_delivery_failed", {
+      invitation_id: invitation.id,
       outcome,
-      region: invitation.workspace_region,
+      workspace_region: invitation.workspace_region,
       reason: error instanceof ApiError ? error.code : "unknown_error",
     });
   }
@@ -302,7 +306,7 @@ export class WorkspaceService {
       // The preference itself is saved, and the cron reconciler rebuilds any
       // derived row whose timezone disagrees with the account. Failing the
       // request here would lose the preference to fix a thing that self-heals.
-      console.warn("Digest schedules could not be re-derived for the new timezone", {
+      logWarn(this.env, "digest_schedule_rederive_failed", {
         workspace_id: this.auth.workspaceId,
         reason: error instanceof Error ? error.message : "unknown",
       });
