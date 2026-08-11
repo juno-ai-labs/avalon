@@ -569,6 +569,7 @@ function mapAutomationSummary(automation: z.infer<typeof WireAutomationSummarySc
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
+    updatedAt: automation.updatedAt,
     ...(automation.updateAvailable ? { statusMessage: 'Update available' } : {}),
   };
 }
@@ -906,6 +907,11 @@ export class AvalonApi {
 
   async archiveDraftAutomation(id: string): Promise<void> {
     await this.requestVoid(`/automations/${encodeURIComponent(id)}/archive`, { method: 'POST' });
+    this.automationDetails.delete(id);
+  }
+
+  async deleteAutomation(id: string): Promise<void> {
+    await this.requestVoid(`/automations/${encodeURIComponent(id)}`, { method: 'DELETE' });
     this.automationDetails.delete(id);
   }
 

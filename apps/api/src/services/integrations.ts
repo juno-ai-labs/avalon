@@ -3799,7 +3799,8 @@ async function assertRunAuthorityStillValid(
     throw new ConnectorError("unauthorized", "Automation authority no longer matches this work stream");
   }
   const automation = await db.prepare(
-    `SELECT s.status AS subscription_status, s.template_version_id,
+    `SELECT s.status AS subscription_status, s.lifecycle_state AS subscription_lifecycle_state,
+            s.template_version_id,
             s.email_route_status, t.archived_at AS template_archived_at,
             r.id AS automation_run_id, r.status AS automation_run_status,
             r.trigger_type, r.trigger_activity_id,
@@ -3823,6 +3824,7 @@ async function assertRunAuthorityStillValid(
     input.workspaceId,
   ).first<{
     subscription_status: string;
+    subscription_lifecycle_state: string;
     template_version_id: string;
     email_route_status: string | null;
     template_archived_at: string | null;
@@ -3834,6 +3836,7 @@ async function assertRunAuthorityStillValid(
   }>();
   if (
     !automation || automation.subscription_status !== "active" ||
+    automation.subscription_lifecycle_state !== "visible" ||
     automation.template_archived_at != null ||
     !["scheduled", "running", "needs_input"].includes(automation.automation_run_status)
   ) throw new ConnectorError("unauthorized", "Automation is no longer active for this run");
