@@ -282,9 +282,11 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     });
 
     // A run is the other way a work stream's transcript grows, so it is the
-    // other place an Avalon-chosen name gets its second look. Best-effort by
-    // construction: the run is already over, and a name is not worth failing
-    // it for. It stops on a count for a work stream that is not due one.
+    // other place an Avalon-chosen name gets its second look. It stops on a
+    // bounded count for a work stream that is not due one, and it never throws
+    // — the run is already over, and a step that could fail here would retry a
+    // model call over a transient read and then fail an instance whose work is
+    // already committed.
     await step.do("refresh-workstream-name", async () => {
       await refreshWorkstreamName(this.env, {
         workspaceId: input.workspaceId,
