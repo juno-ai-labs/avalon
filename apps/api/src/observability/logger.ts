@@ -57,7 +57,11 @@ export function logEvent(
 
 // Fields that read like a log line when a diagnostic carries them, in the order
 // a reader expects them. Everything else stays a field only: the summary exists
-// to identify the row, not to reproduce it.
+// to identify the row, not to reproduce it. Adding a name here is safe whatever
+// it is, because the summary is derived from the redacted fields rather than
+// the caller's — a name that starts matching `sensitiveKey` reads `[REDACTED]`
+// in the summary too, instead of printing the plaintext beside the hidden
+// field.
 const SUMMARY_FIELDS = ["method", "path", "status", "code"] as const;
 
 // Workers Logs renders the log list's message column from the entry's `message`
@@ -87,22 +91,25 @@ export function logStructuredEvent(
   // is one an untyped caller forced into the slot; an empty string still falls
   // back rather than listing the row blank.
   const { message: provided, ...rest } = fields;
-  const entry = redact({
+  const redacted = redact(rest) as Record<string, unknown>;
+  const entry = {
     timestamp: new Date().toISOString(),
     level,
     event,
-    message: typeof provided === "string" && provided.length > 0 ? provided : summarizeEvent(event, fields),
+    message: typeof provided === "string" && provided.length > 0
+      ? redact(provided) as string
+      : summarizeEvent(event, redacted),
     region: env.AVALON_REGION,
     app_version: env.APP_VERSION ?? "unknown",
     build_sha: env.BUILD_SHA ?? null,
-    ...rest,
-  });
+    ...redacted,
+  };
   // Workers Logs indexes the properties of a logged object as structured
   // fields, and treats `message` as the row's summary. Serializing the entry
   // first would collapse every diagnostic into that one string, making the
   // release dashboards unable to filter on fields such as `event` or `code`;
   // omitting `message` keeps the fields but empties the log list. These are the
-  // only `console` calls in the Worker, which `no-console` enforces everywhere
+  // only `console` calls in this Worker, which `no-console` enforces everywhere
   // else so no diagnostic can reach Workers Logs unindexed or unsummarized.
   /* eslint-disable no-console */
   if (level === "error") console.error(entry);

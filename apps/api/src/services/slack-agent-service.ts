@@ -2,6 +2,7 @@ import {
   acknowledgeConnectorAgentActivation,
   ConnectorError,
   joinAllSlackPublicChannels,
+  type SlackPublicChannelSyncResult,
   joinSlackPublicChannel,
   normalizeSlackActivity,
   parseSlackAgentInvocation,
@@ -1137,14 +1138,14 @@ export class SlackAgentService {
         logInfo(this.env, "slack_public_channel_sync_continued", {
           connection_id: connection.id,
           team_id: teamId,
-          ...summary,
+          ...publicChannelSyncFields(summary),
         });
         return;
       }
       logInfo(this.env, "slack_public_channel_sync_completed", {
         connection_id: connection.id,
         team_id: teamId,
-        ...summary,
+        ...publicChannelSyncFields(summary),
       });
       return;
     }
@@ -1166,7 +1167,12 @@ export class SlackAgentService {
         return;
       }
       if (result === "skipped") {
-        logWarn(this.env, "slack_public_channel_join_failed", {
+        // Slack refused the join for one of the allowlisted unjoinable reasons
+        // — archived, restricted, too many members. That is the expected
+        // outcome for those channels, and the bulk sync counts it under
+        // `skipped` too, so it must not read as a failure to a view built on
+        // the event name.
+        logWarn(this.env, "slack_public_channel_join_skipped", {
           connection_id: connection.id,
           team_id: teamId,
           channel_id: channelId,
@@ -2937,6 +2943,19 @@ function slackElicitationRequest(
   if (unknown.length === 0) return { answer: matched };
   const customResponse = unknown.join(", ");
   return { answer: [...matched, customResponse], customResponse };
+}
+
+// The connector returns its sync tally in camelCase. Log fields are
+// snake_case, so map it here rather than spreading the interface into an entry
+// and indexing `alreadyMember` beside `already_member` elsewhere.
+function publicChannelSyncFields(summary: SlackPublicChannelSyncResult): Record<string, unknown> {
+  return {
+    joined: summary.joined,
+    already_member: summary.alreadyMember,
+    skipped: summary.skipped,
+    complete: summary.complete,
+    ...(summary.retryAfterMs === undefined ? {} : { retry_after_ms: summary.retryAfterMs }),
+  };
 }
 
 function slackErrorReason(error: unknown): string {

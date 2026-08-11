@@ -127,6 +127,23 @@ describe("structured logging", () => {
     expect(entry.message).toBe("slack_thread_title_failed");
   });
 
+  it("derives the summary from the redacted fields, not the caller's", () => {
+    // The guarantee is structural rather than a property of what
+    // SUMMARY_FIELDS happens to name today: whatever redaction does to a
+    // summarized field has to reach the summary as well. `redact` truncates a
+    // long string, so a long `path` proves which copy the summary was built
+    // from.
+    const entry = capture("info", () => logInfo(env, "http_request", {
+      method: "GET",
+      path: `/notes/${"a".repeat(2_500)}`,
+      status: 200,
+    }));
+
+    expect(entry.path).toMatch(/…$/u);
+    expect(entry.message).toBe(`http_request GET ${entry.path as string} 200`);
+    expect((entry.message as string).length).toBeLessThan(2_100);
+  });
+
   it("routes each level helper to the console method Workers Logs reads it from", () => {
     expect(capture("info", () => logInfo(env, "slack_public_channel_sync_completed", { joined: 3 })))
       .toMatchObject({ event: "slack_public_channel_sync_completed", joined: 3, level: "info" });
