@@ -22,9 +22,45 @@ import {
   acknowledgeConnectorAgentActivation,
   authorizedConnection,
   connectorCapabilitySupportsScope,
+  type ConnectorError,
 } from "./types";
 
 describe("Slack connector", () => {
+  it("offers only tool-backed capabilities when it refuses one it lacks", async () => {
+    const adapter = createSlackConnector({
+      clientId: "client",
+      clientSecret: "secret",
+      signingSecret: "signing",
+      redirectUri: "https://api.example.com/connections/slack/callback",
+      fetch: async () => {
+        throw new Error("A refused tool must never reach Slack");
+      },
+    });
+
+    const refusal = await adapter.executeTool("create_canvas", { title: "Notes" }, {
+      connection: slackWorkspaceToolConnection(),
+      principal: { type: "workspace", workspaceId: "workspace-avalon" },
+      signal: AbortSignal.timeout(1_000),
+    }).then(
+      () => { throw new Error("A tool the connection cannot call must be refused"); },
+      (error: unknown) => error as ConnectorError,
+    );
+
+    const available = (refusal.details as { available?: string[] } | undefined)?.available ?? [];
+    // Slack is the connector where the grant and the model-callable surface
+    // genuinely differ. `slack.agent` and `slack.notifications.write` are
+    // control-plane grants with no tool behind them, so answering "what can I
+    // do instead?" with either of them sends the model after something it
+    // cannot call — worse than the bare refusal this replaced.
+    expect(available).not.toContain(SlackCapabilities.agent);
+    expect(available).not.toContain(SlackCapabilities.notificationsWrite);
+    expect(available).toContain(SlackCapabilities.messagesWrite);
+    expect(available).toContain(SlackCapabilities.search);
+    // Everything offered is a capability some tool in this plugin declares.
+    const toolCapabilities = new Set(adapter.agentPlugin.tools.map((tool) => tool.capability));
+    expect(available.filter((capability: string) => !toolCapabilities.has(capability))).toEqual([]);
+  });
+
   it("declares expressive activity triggers with typed Slack filters", () => {
     const adapter = createSlackConnector({
       clientId: "client",
