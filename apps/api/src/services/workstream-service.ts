@@ -33,6 +33,7 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { scheduledWorkstreamModel } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
+import { restDescriptionAfterHumanEdit } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
@@ -624,6 +625,14 @@ export class WorkstreamService {
     if (input.archived != null) {
       await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
         region: this.env.AVALON_REGION,
+        workspaceId: this.auth.workspaceId,
+        workstreamId: id,
+      });
+    }
+    // The person just answered the only question the refresh loop asks. Let it
+    // rest rather than spend a model call second-guessing them.
+    if (input.objective != null) {
+      await restDescriptionAfterHumanEdit(this.env, {
         workspaceId: this.auth.workspaceId,
         workstreamId: id,
       });

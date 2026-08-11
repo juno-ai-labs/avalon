@@ -60,17 +60,43 @@ export const DESCRIPTION_WINDOW_MINIMUM_MESSAGES = 200;
 export const MAXIMUM_DESCRIPTION_WINDOW_MESSAGES = 600;
 
 /**
- * How long a work stream rests between evaluations. Descriptions are read in
- * lists and remembered; one that moves faster than a person checks in is worse
- * than one that lags.
+ * The floor on how long a work stream rests between evaluations. Descriptions
+ * are read in lists and remembered; one that moves faster than a person checks
+ * in is worse than one that lags.
  */
 export const DESCRIPTION_REFRESH_MINIMUM_INTERVAL_SECONDS = 6 * 60 * 60;
 /**
- * How much has to be new before the loop looks again. Below this the window is
- * substantially the one that produced the current description, so the model
- * would be re-deciding the same question at the same cost.
+ * The ceiling the doubling below climbs to. A description confirmed several
+ * times running is not one an extra look is likely to change, so the loop stops
+ * paying to hear the same answer — but never stops entirely, because the
+ * confirmations were about a work stream that has since kept moving.
  */
-export const DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES = 15;
+export const DESCRIPTION_REFRESH_MAXIMUM_INTERVAL_SECONDS = 48 * 60 * 60;
+
+/**
+ * What a work stream has to have *said* since the last evaluation, not merely
+ * how many rows it wrote.
+ *
+ * Only messages a person authored count. An agent's own turns restate the ask
+ * it was given and a system notice is the host talking to itself; neither is
+ * evidence that the work moved, and counting them would let a single request
+ * that provoked a long agent transcript buy a fresh evaluation. The character
+ * floor is the difference between a conversation and a row of acknowledgements.
+ */
+export const DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES = 10;
+export const DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_CHARACTERS = 600;
+/**
+ * How much of what was said has to be *about* something the description does
+ * not already cover.
+ *
+ * This is the gate that separates a busy work stream from a changed one. Ten
+ * more messages elaborating the subject already named are not drift, and paying
+ * a model to confirm that is the waste this loop is most likely to fall into:
+ * an active work stream produces the volume for a fresh evaluation every few
+ * hours forever. Drift, by contrast, is definitionally vocabulary the
+ * description lacks.
+ */
+export const DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS = 5;
 
 /** The same bar the activity classifiers use, and for the same reason: an uncertain rewrite is a keep. */
 export const DESCRIPTION_REWRITE_MINIMUM_CONFIDENCE = 0.8;
@@ -128,6 +154,63 @@ export function isTooGenericDescription(value: string): boolean {
   return GENERIC_DESCRIPTIONS.has(normalizeDescription(value));
 }
 
+/**
+ * Words carried by any sentence regardless of subject, and therefore no
+ * evidence about what a work stream is for.
+ *
+ * The list is English-only and deliberately short. It is not doing linguistics:
+ * it is stopping "the", "we", and "should" from being counted as new subject
+ * matter. A work stream held in another language simply finds more of its terms
+ * distinctive, which admits an evaluation rather than suppressing one — the
+ * safe direction for a gate whose failure mode is skipping.
+ */
+const NON_SUBJECT_TERMS: ReadonlySet<string> = new Set([
+  "about", "after", "again", "all", "also", "and", "any", "are", "back", "because", "been", "before",
+  "being", "both", "but", "can", "could", "did", "does", "doing", "done", "down", "each", "even",
+  "every", "for", "from", "get", "going", "got", "had", "has", "have", "her", "here", "him", "his",
+  "how", "into", "its", "just", "know", "let", "like", "look", "made", "make", "many", "may", "might",
+  "more", "most", "much", "need", "new", "not", "now", "off", "once", "one", "only", "other", "our",
+  "out", "over", "own", "please", "put", "really", "right", "said", "same", "say", "see", "she",
+  "should", "since", "some", "still", "such", "sure", "take", "than", "that", "the", "their", "them",
+  "then", "there", "these", "they", "thing", "things", "think", "this", "those", "through", "too",
+  "two", "under", "until", "use", "used", "very", "want", "was", "way", "well", "were", "what",
+  "when", "where", "which", "while", "who", "why", "will", "with", "would", "yes", "yet", "you",
+  "your",
+]);
+
+/** Terms long enough and ordinary enough to carry subject matter. */
+function subjectTerms(value: string): string[] {
+  return normalizeDescription(value)
+    .split(" ")
+    .filter((term) => term.length >= 3 && !NON_SUBJECT_TERMS.has(term));
+}
+
+/**
+ * How many distinct subjects the new messages raise that the description and
+ * title do not already name.
+ *
+ * A term counts only if it appears at least twice across the new messages. One
+ * mention is an aside; a work stream whose purpose has moved returns to the new
+ * subject. That threshold is also what keeps a single long pasted document from
+ * clearing the gate on vocabulary nobody discussed.
+ */
+export function countNovelSubjectTerms(input: {
+  newText: string;
+  description: string;
+  title: string;
+}): number {
+  const known = new Set([...subjectTerms(input.description), ...subjectTerms(input.title)]);
+  const occurrences = new Map<string, number>();
+  for (const term of subjectTerms(input.newText)) {
+    occurrences.set(term, (occurrences.get(term) ?? 0) + 1);
+  }
+  let novel = 0;
+  for (const [term, count] of occurrences) {
+    if (count >= 2 && !known.has(term)) novel += 1;
+  }
+  return novel;
+}
+
 const DescriptionDecisionSchema = z.object({
   decision: z.enum(["keep", "rewrite"]),
   description: z.string().nullable(),
@@ -165,10 +248,12 @@ interface WindowMessageRow {
 
 interface ClaimRow {
   version: number;
+  consecutive_keeps: number;
 }
 
 interface PreviousRefreshRow {
-  evaluated_at: string;
+  rest_until: string;
+  consecutive_keeps: number;
   evaluated_through_sequence: number;
 }
 
@@ -221,11 +306,22 @@ async function evaluate(
 ): Promise<DescriptionRefreshOutcome> {
   if (!env.OPENROUTER_API_KEY) return { status: "skipped", reason: "no_model_access" };
   const now = input.now ?? new Date();
+  const at = now.toISOString();
 
-  const workstream = await env.DB.prepare(
-    `SELECT title, objective, description_source, origin_type, archived_at
-       FROM workstreams WHERE id = ? AND workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<WorkstreamDescriptionRow>();
+  // Cheapest first, and each gate is a reason not to read what the next one
+  // needs. Two single-row lookups decide most terminal runs; only a work stream
+  // that has both rested and changed pays for the window, and only one that has
+  // changed in substance pays for inference.
+  const [workstream, previous] = await Promise.all([
+    env.DB.prepare(
+      `SELECT title, objective, description_source, origin_type, archived_at
+         FROM workstreams WHERE id = ? AND workspace_id = ?`,
+    ).bind(input.workstreamId, input.workspaceId).first<WorkstreamDescriptionRow>(),
+    env.DB.prepare(
+      `SELECT rest_until, consecutive_keeps, evaluated_through_sequence
+         FROM workstream_description_refreshes WHERE workstream_id = ? AND workspace_id = ?`,
+    ).bind(input.workstreamId, input.workspaceId).first<PreviousRefreshRow>(),
+  ]);
   if (!workstream) return { status: "skipped", reason: "workstream_missing" };
   if (workstream.archived_at != null) return { status: "skipped", reason: "archived" };
   // An automation's work stream describes one run of a saved configuration. Its
@@ -233,25 +329,37 @@ async function evaluate(
   // this loop in an argument with the automation that owns it.
   if (workstream.origin_type === "automation") return { status: "skipped", reason: "automation_origin" };
 
-  const previous = await env.DB.prepare(
-    `SELECT evaluated_at, evaluated_through_sequence
-       FROM workstream_description_refreshes WHERE workstream_id = ? AND workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<PreviousRefreshRow>();
-  const dueBefore = new Date(
-    now.getTime() - DESCRIPTION_REFRESH_MINIMUM_INTERVAL_SECONDS * 1_000,
-  ).toISOString();
-  if (previous && String(previous.evaluated_at) > dueBefore) return { status: "skipped", reason: "not_due" };
+  // Gate 1: the clock. A work stream that has not rested is not looked at,
+  // whatever happened in it.
+  if (previous && String(previous.rest_until) > at) return { status: "skipped", reason: "resting" };
 
   const window = await loadWindow(env, input.workspaceId, input.workstreamId, now);
   if (window.messages.length === 0) return { status: "skipped", reason: "empty_window" };
+
+  // Gate 2: the channel. Both conditions have to hold — enough was said, and
+  // enough of it was about something the description does not already name.
   const evaluatedThrough = Number(previous?.evaluated_through_sequence ?? 0);
-  const newMessages = window.messages.filter((message) => message.sequenceNumber > evaluatedThrough).length;
-  if (newMessages < DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES) {
-    return { status: "skipped", reason: "insufficient_new_messages" };
+  const spoken = window.messages.filter(
+    (message) => message.sequenceNumber > evaluatedThrough && message.authorType === "human",
+  );
+  const spokenText = spoken.map((message) => message.text).join("\n");
+  if (
+    spoken.length < DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES
+    || spokenText.length < DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_CHARACTERS
+  ) {
+    return { status: "skipped", reason: "insufficient_new_conversation" };
+  }
+  const novelTerms = countNovelSubjectTerms({
+    newText: spokenText,
+    description: workstream.objective,
+    title: workstream.title,
+  });
+  if (novelTerms < DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS) {
+    return { status: "skipped", reason: "nothing_new_discussed" };
   }
 
-  const claim = await claimEvaluation(env, input, window, dueBefore, now);
-  if (!claim) return { status: "skipped", reason: "not_due" };
+  const claim = await claimEvaluation(env, input, window, now);
+  if (!claim) return { status: "skipped", reason: "resting" };
 
   const routing = await resolveAgentModelRouting(env, "workstream_description", {
     workspaceId: input.workspaceId,
@@ -473,51 +581,108 @@ async function loadWindow(
 }
 
 /**
+ * The rest a work stream has earned, as an instant.
+ *
+ * The floor doubles once per consecutive confirmation, so the loop's cost on a
+ * settled description decays while a description that keeps being corrected
+ * stays on the floor. `keeps` is the count *after* the evaluation being
+ * recorded, so the first confirmation already buys more than the floor.
+ */
+export function restUntil(now: Date, keeps: number): string {
+  const seconds = Math.min(
+    DESCRIPTION_REFRESH_MAXIMUM_INTERVAL_SECONDS,
+    DESCRIPTION_REFRESH_MINIMUM_INTERVAL_SECONDS * 2 ** Math.max(0, keeps),
+  );
+  return new Date(now.getTime() + seconds * 1_000).toISOString();
+}
+
+/**
  * Take the work stream's evaluation window, or report that it is not this run's
  * to take.
  *
- * Stamping `evaluated_at` before the model call rather than after is what stops
- * two runs terminalizing together from both spending one, and what stops a model
- * that is failing from being retried by every run behind it. The interval is
- * re-checked here, inside the write, because the read that admitted this
- * evaluation is not atomic with it.
+ * Pushing `rest_until` forward before the model call rather than after is what
+ * stops two runs terminalizing together from both spending one, and what stops
+ * a model that is failing from being retried by every run behind it. The rest
+ * is re-checked here, inside the write, because the read that admitted this
+ * evaluation is not atomic with it. The claim holds the floor; the outcome
+ * write below replaces it with whatever the decision earned.
  */
 async function claimEvaluation(
   env: Env,
   input: RefreshWorkstreamDescriptionInput,
   window: DescriptionWindow,
-  dueBefore: string,
   now: Date,
 ): Promise<ClaimRow | null> {
   const at = now.toISOString();
   const claimed = await env.DB.prepare(
     `INSERT INTO workstream_description_refreshes
-       (workstream_id, workspace_id, evaluated_at, evaluated_through_sequence,
+       (workstream_id, workspace_id, evaluated_at, rest_until, evaluated_through_sequence,
         window_message_count, decision, version, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 1, ?3, ?3)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', 1, ?3, ?3)
      ON CONFLICT(workstream_id) DO UPDATE SET
        evaluated_at = ?3,
-       evaluated_through_sequence = ?4,
-       window_message_count = ?5,
+       rest_until = ?4,
+       evaluated_through_sequence = ?5,
+       window_message_count = ?6,
        decision = 'pending',
        rejection_code = NULL,
        version = workstream_description_refreshes.version + 1,
        updated_at = ?3
-     WHERE workstream_description_refreshes.evaluated_at <= ?6`,
+     WHERE workstream_description_refreshes.rest_until <= ?3`,
   ).bind(
     input.workstreamId,
     input.workspaceId,
     at,
+    restUntil(now, 0),
     window.latestSequence,
     window.messages.length,
-    dueBefore,
   ).run();
   if ((claimed.meta?.changes ?? 0) === 0) return null;
 
   return env.DB.prepare(
-    `SELECT version FROM workstream_description_refreshes
+    `SELECT version, consecutive_keeps FROM workstream_description_refreshes
       WHERE workstream_id = ? AND workspace_id = ?`,
   ).bind(input.workstreamId, input.workspaceId).first<ClaimRow>();
+}
+
+/**
+ * Record that a person wrote this description themselves, and let the loop rest
+ * a full cycle on the strength of it.
+ *
+ * Someone editing the description has just answered, first-hand, the only
+ * question an evaluation asks. Re-deciding it hours later spends inference to
+ * second-guess the most authoritative statement of intent the work stream has,
+ * and risks reverting it. The rest is the floor rather than a backoff step: the
+ * edit says what the work stream is for now, not that it will stay that way.
+ */
+export async function restDescriptionAfterHumanEdit(
+  env: Env,
+  input: { workspaceId: string; workstreamId: string; now?: Date },
+): Promise<void> {
+  const now = input.now ?? new Date();
+  const at = now.toISOString();
+  const latest = await env.DB.prepare(
+    `SELECT COALESCE(MAX(sequence_number), 0) AS latest_sequence
+       FROM messages WHERE workspace_id = ? AND workstream_id = ?`,
+  ).bind(input.workspaceId, input.workstreamId).first<{ latest_sequence: number }>();
+  await env.DB.prepare(
+    `INSERT INTO workstream_description_refreshes
+       (workstream_id, workspace_id, evaluated_at, rest_until, consecutive_keeps,
+        evaluated_through_sequence, window_message_count, decision, version, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, 'kept', 1, ?3, ?3)
+     ON CONFLICT(workstream_id) DO UPDATE SET
+       evaluated_at = ?3,
+       rest_until = ?4,
+       consecutive_keeps = 0,
+       evaluated_through_sequence = ?5,
+       updated_at = ?3`,
+  ).bind(
+    input.workstreamId,
+    input.workspaceId,
+    at,
+    restUntil(now, 0),
+    Number(latest?.latest_sequence ?? 0),
+  ).run();
 }
 
 interface RecordedOutcome {
@@ -533,8 +698,15 @@ interface RecordedOutcome {
 }
 
 /**
- * Close the claim with what it decided. Guarded on the claim's version so a
- * slow evaluation cannot overwrite the result of the one that superseded it.
+ * Close the claim with what it decided, and set the rest that decision earned.
+ *
+ * Only a confirmation extends the rest. A rewrite means the description was
+ * wrong and the work stream is moving, so it returns to the floor and starts
+ * the count again; a rejection or a model failure decided nothing, so it does
+ * not get to buy quiet on the strength of having been asked.
+ *
+ * Guarded on the claim's version so a slow evaluation cannot overwrite the
+ * result — or the rest — of the one that superseded it.
  */
 async function recordOutcome(
   env: Env,
@@ -542,11 +714,12 @@ async function recordOutcome(
   claim: ClaimRow,
   outcome: RecordedOutcome,
 ): Promise<void> {
+  const keeps = outcome.decision === "kept" ? Number(claim.consecutive_keeps ?? 0) + 1 : 0;
   await env.DB.prepare(
     `UPDATE workstream_description_refreshes
         SET decision = ?, rejection_code = ?, confidence = ?, model = ?,
             previous_description = ?, description = ?, reasoning = ?,
-            window_message_count = ?, updated_at = ?
+            window_message_count = ?, consecutive_keeps = ?, rest_until = ?, updated_at = ?
       WHERE workstream_id = ? AND workspace_id = ? AND version = ?`,
   ).bind(
     outcome.decision,
@@ -557,6 +730,8 @@ async function recordOutcome(
     outcome.description,
     outcome.reasoning,
     outcome.windowMessageCount,
+    keeps,
+    restUntil(outcome.now, keeps),
     outcome.now.toISOString(),
     input.workstreamId,
     input.workspaceId,

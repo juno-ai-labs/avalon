@@ -39,15 +39,27 @@ WHERE origin_type = 'ad_hoc'
 CREATE TABLE IF NOT EXISTS workstream_description_refreshes (
   workstream_id TEXT PRIMARY KEY REFERENCES workstreams(id) ON DELETE CASCADE,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  -- Both the throttle clock and the single-writer claim. It is stamped when an
-  -- evaluation starts, not when it finishes, so two runs terminalizing at once
-  -- cannot both reach the model: the second finds the window already taken. A
-  -- failed evaluation therefore costs one window rather than retrying in a loop
-  -- against a model that just rejected it.
+  -- When the last evaluation started, not when it finished. Provenance only:
+  -- the gate is `rest_until` below.
   evaluated_at TEXT NOT NULL,
+  -- The earliest instant a further evaluation may run, and the single-writer
+  -- claim. Writing it forward when an evaluation *starts* is what stops two
+  -- runs terminalizing at once from both reaching the model, and what stops a
+  -- model that is failing from being retried by every run behind it.
+  --
+  -- It carries the backoff as well as the throttle, because the rest a work
+  -- stream has earned depends on its history rather than on a constant: each
+  -- consecutive `kept` doubles it, a rewrite returns it to the floor, and a
+  -- person editing the description themselves buys a full rest. Storing the
+  -- resolved instant rather than the inputs keeps the admission test one
+  -- comparison and keeps the policy in one place in the service.
+  rest_until TEXT NOT NULL,
+  -- How many evaluations in a row have confirmed the description. The doubling
+  -- above reads this; a rewrite resets it.
+  consecutive_keeps INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_keeps >= 0),
   -- The highest message sequence the last evaluation read. The next evaluation
-  -- requires enough new messages beyond it to be worth spending a model call,
-  -- so a quiet work stream is never re-evaluated on an unchanged transcript.
+  -- measures what is new against it, so a quiet work stream is never
+  -- re-evaluated on a transcript it has already seen.
   evaluated_through_sequence INTEGER NOT NULL CHECK (evaluated_through_sequence >= 0),
   window_message_count INTEGER NOT NULL DEFAULT 0 CHECK (window_message_count >= 0),
   -- `pending` is the claim; the rest are outcomes. `kept` is the common one and
