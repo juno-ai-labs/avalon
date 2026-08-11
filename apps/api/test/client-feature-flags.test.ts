@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createApp } from "../src/app";
 import type { Env, IdentityAuthContext } from "../src/env";
-import {
-  resolveClientFeatureFlags,
-  resolveDeveloperSettingsEnabled,
-} from "../src/services/client-feature-flags";
+import { resolveClientFeatureFlags } from "../src/services/client-feature-flags";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
@@ -109,6 +107,11 @@ function contextOf(flags: Partial<Flagship>): FlagshipEvaluationContext {
   return (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] ?? {};
 }
 
+/** The Developer section's answer, read through the entry point the route calls. */
+async function developerSettings(env: Env, auth: IdentityAuthContext): Promise<boolean> {
+  return (await resolveClientFeatureFlags(env, auth)).developerSettings;
+}
+
 describe("client feature flags", () => {
   it("describes the person in the same vocabulary an agent evaluation uses", async () => {
     const flags = serving(true);
@@ -145,30 +148,30 @@ describe("client feature flags", () => {
     // The staff rollout as it is actually provisioned: one rule on the domain.
     const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
 
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(staffOnly), auth(staffUserId)))
+    await expect(developerSettings(envWithAccounts(staffOnly), auth(staffUserId)))
       .resolves.toBe(true);
     clearFlagTargetingAttributeCache();
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(staffOnly), auth(customerUserId)))
+    await expect(developerSettings(envWithAccounts(staffOnly), auth(customerUserId)))
       .resolves.toBe(false);
   });
 
   it("can be staged per person on an identity that is stable across regions", async () => {
     const chosen = servingWhen((context) => context.userPlatformId === staffPlatformUserId);
 
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(chosen), auth(staffUserId)))
+    await expect(developerSettings(envWithAccounts(chosen), auth(staffUserId)))
       .resolves.toBe(true);
     clearFlagTargetingAttributeCache();
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(chosen), auth(customerUserId)))
+    await expect(developerSettings(envWithAccounts(chosen), auth(customerUserId)))
       .resolves.toBe(false);
   });
 
   it("serves whatever the flag says, with no cohort of its own to override it", async () => {
     // A flag with no rules reaches everyone it is served to. Nothing in the
     // resolver may narrow that; only Flagship decides who is in.
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving(true)), auth(customerUserId)))
+    await expect(developerSettings(envWithAccounts(serving(true)), auth(customerUserId)))
       .resolves.toBe(true);
     clearFlagTargetingAttributeCache();
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving(false)), auth(staffUserId)))
+    await expect(developerSettings(envWithAccounts(serving(false)), auth(staffUserId)))
       .resolves.toBe(false);
   });
 
@@ -176,7 +179,7 @@ describe("client feature flags", () => {
     const flags = serving(true);
     const env = envWithAccounts(flags);
 
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId, null))).resolves.toBe(true);
+    await expect(developerSettings(env, auth(staffUserId, null))).resolves.toBe(true);
     const context = contextOf(flags);
     expect(context).not.toHaveProperty("workspaceId");
     expect(context).not.toHaveProperty("workspaceSlug");
@@ -190,7 +193,7 @@ describe("client feature flags", () => {
     const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
     const env = envWithAccounts(staffOnly);
 
-    await expect(resolveDeveloperSettingsEnabled(env, auth("00000000-0000-4000-8000-0000000000ff")))
+    await expect(developerSettings(env, auth("00000000-0000-4000-8000-0000000000ff")))
       .resolves.toBe(false);
     expect(contextOf(staffOnly)).not.toHaveProperty("userEmailDomain");
   });
@@ -205,7 +208,7 @@ describe("client feature flags", () => {
 
     // Attributes are an enrichment, never a precondition: the identity still
     // reaches the flag, so a rule written on it still decides.
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(true);
+    await expect(developerSettings(env, auth(staffUserId))).resolves.toBe(true);
   });
 
   it("stays off when no binding is attached", async () => {
@@ -220,7 +223,7 @@ describe("client feature flags", () => {
       }),
     });
 
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(false);
+    await expect(developerSettings(env, auth(staffUserId))).resolves.toBe(false);
   });
 
   it("stays off when the flag does not resolve", async () => {
@@ -236,11 +239,11 @@ describe("client feature flags", () => {
       })),
     });
 
-    await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(false);
+    await expect(developerSettings(env, auth(staffUserId))).resolves.toBe(false);
   });
 
   it("stays off when the served value is not a boolean true", async () => {
-    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving("true")), auth(staffUserId)))
+    await expect(developerSettings(envWithAccounts(serving("true")), auth(staffUserId)))
       .resolves.toBe(false);
   });
 
@@ -253,5 +256,57 @@ describe("client feature flags", () => {
     const contexts = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[2]);
     expect(contexts.length).toBeGreaterThan(0);
     for (const context of contexts) expect(context).toEqual(contexts[0]);
+  });
+});
+
+describe("GET /feature-flags", () => {
+  function routeEnv(flags?: Partial<Flagship>): Env {
+    return {
+      ...envWithAccounts(flags),
+      ALLOWED_ORIGINS: "app://avalon",
+      APP_ENV: "development",
+      AVALON_DEV_AUTH: "true",
+    } as Env;
+  }
+
+  function asStaff(): HeadersInit {
+    return {
+      "x-avalon-dev-user-id": staffUserId,
+      "x-avalon-dev-workspace-id": workspaceId,
+    };
+  }
+
+  it("requires a session", async () => {
+    const response = await createApp().request("/feature-flags", {}, routeEnv(serving(true)));
+
+    expect(response.status).toBe(401);
+  });
+
+  it("serves every flag as one object for the signed-in person", async () => {
+    const response = await createApp().request(
+      "/feature-flags",
+      { headers: asStaff() },
+      routeEnv(serving(true)),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ developerSettings: true });
+  });
+
+  it("forbids caching, because the answer is one person's and the client polls it", async () => {
+    const response = await createApp().request(
+      "/feature-flags",
+      { headers: asStaff() },
+      routeEnv(serving(true)),
+    );
+
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("answers off rather than failing when the flag cannot be resolved", async () => {
+    const response = await createApp().request("/feature-flags", { headers: asStaff() }, routeEnv());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ developerSettings: false });
   });
 });
