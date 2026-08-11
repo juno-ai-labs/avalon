@@ -142,16 +142,21 @@ describe("runtime component invariants", () => {
     const prepare = vi.fn((sql: string) => ({
       bind: vi.fn(() => ({
         all: async () => {
+          // The alarm-target union names every due-dated table, so it has to be
+          // matched before the per-table due scans that share those names.
+          if (sql.includes("AS target_kind")) {
+            return {
+              results: [{ target_kind: "schedule", id: scheduleId, due_at: schedule.next_run_at }],
+            };
+          }
           if (sql.includes("SELECT *") && sql.includes("FROM schedules")) {
             return { results: [schedule] };
           }
           if (sql.includes("SELECT id, workspace_id, connection_id, next_poll_at")) {
             return { results: [] };
           }
-          if (sql.includes("AS target_kind")) {
-            return {
-              results: [{ target_kind: "schedule", id: scheduleId, due_at: schedule.next_run_at }],
-            };
+          if (sql.includes("FROM workstream_wakeups")) {
+            return { results: [] };
           }
           throw new Error(`Unexpected all query: ${sql}`);
         },

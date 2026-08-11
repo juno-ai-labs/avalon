@@ -3,6 +3,8 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AvalonDesktopBridge, DesktopSession } from '../../common/desktop';
 import { AppSessionProvider, useAppSession } from './app-session';
+import { clearAllDrafts, readDraftText, writeDraftText } from './draft-cache';
+import { useDraftText } from './use-draft-text';
 import type { AvalonApi } from './api';
 import { readDevicePreferences } from './device-preferences';
 
@@ -664,5 +666,76 @@ describe('single-platform desktop identity routing', () => {
 
     await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent('unexpected sign-in link'));
     expect(bridge.openSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('draft cache lifetime across a session', () => {
+  beforeEach(() => clearAllDrafts());
+
+  it('keeps the drafts a previous run left behind when a session arrives', async () => {
+    await writeDraftText('new-workstream:workspace-eu', 'written before the last quit');
+    bridge.getSession.mockResolvedValue(euSession);
+
+    renderProvider();
+
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await waitFor(() => expect(observedApi).not.toBeNull());
+    expect((await readDraftText('new-workstream:workspace-eu'))?.text).toBe('written before the last quit');
+  });
+
+  it('drops every draft when the session ends without going through signOut', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await writeDraftText('workstream:1', 'half a thought');
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    // Main surrendering a terminally expired credential, not a button press.
+    act(() => sessionListener?.(null));
+
+    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+  });
+
+  it('drops every draft when another account takes over the device', async () => {
+    bridge.getSession.mockResolvedValue(euSession);
+    renderProvider();
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    await writeDraftText('workstream:1', 'half a thought');
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    act(() => sessionListener?.({ ...euSession, user: { ...euSession.user, id: 'user-2' } }));
+
+    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+  });
+
+  it('cannot be repopulated by a composer flushing its draft on the way out', async () => {
+    function ComposerProbe(): React.JSX.Element {
+      const { session } = useAppSession();
+      return session ? <Composer /> : <output>gone</output>;
+    }
+    function Composer(): React.JSX.Element {
+      const draft = useDraftText('workstream:1');
+      return <button onClick={() => draft.setText('typed just before signing out')} type="button">type</button>;
+    }
+    bridge.getSession.mockResolvedValue(euSession);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AppSessionProvider><SessionProbe /><ComposerProbe /></AppSessionProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('eu:European Research')).toBeVisible();
+    // Typed inside the save debounce, so the write is still pending when the
+    // session ends and the composer unmounts.
+    act(() => screen.getByRole('button', { name: 'type' }).click());
+    await waitFor(() => expect(sessionListener).not.toBeNull());
+
+    act(() => sessionListener?.(null));
+
+    expect(await screen.findByText('gone')).toBeVisible();
+    await waitFor(async () => expect(await readDraftText('workstream:1')).toBeNull());
+    // The unmount flush has long since run; the clear still had the last word.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(await readDraftText('workstream:1')).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema } from '@avalon/contracts';
 import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
 import { AvalonApi } from './api';
+import { clearAllDrafts } from './draft-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -79,6 +80,20 @@ function sessionsShareCacheScope(
     && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null)
     && (previousSession.workspace?.region ?? null) === (nextSession.workspace?.region ?? null)
     && (previousSession.workspace?.role ?? null) === (nextSession.workspace?.role ?? null);
+}
+
+/**
+ * Drafts belong to one user's view of one workspace. A role change is not a new
+ * view of it, so being promoted does not cost anyone their unsent message.
+ */
+function sessionsShareDraftScope(
+  previousSession: DesktopSession | null,
+  nextSession: DesktopSession | null,
+): boolean {
+  if (!previousSession || !nextSession) return previousSession === nextSession;
+  return previousSession.apiBaseUrl === nextSession.apiBaseUrl
+    && previousSession.user.id === nextSession.user.id
+    && (previousSession.workspace?.id ?? null) === (nextSession.workspace?.id ?? null);
 }
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
@@ -252,6 +267,28 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     const nextSession = await bridge.createWorkspace({ region: selectedRegion, name: normalized });
     applySession(nextSession);
   }, [applySession, bridge]);
+
+  /**
+   * Drafted text and cached attachment bytes are workspace content, so a device
+   * that leaves a session keeps none of it — however it left. Watching the
+   * session rather than clearing inside `signOut` covers the paths that never
+   * run it: main surrendering a terminally expired credential, and a
+   * `session:changed(null)` broadcast.
+   *
+   * The effect placement is also what makes the wipe final. A composer's
+   * unmount flushes whatever its save debounce was still holding, and React
+   * runs a child's cleanup before a parent's effect, so that write is issued —
+   * and its IndexedDB transaction created — before this one. The clear is last,
+   * and nothing types its way back onto a signed-out device.
+   */
+  const draftScopeRef = useRef<DesktopSession | null>(null);
+  useEffect(() => {
+    const previousSession = draftScopeRef.current;
+    draftScopeRef.current = session;
+    // A first session is an arrival, not a departure: launching Avalon must not
+    // discard the draft the last run left behind.
+    if (previousSession && !sessionsShareDraftScope(previousSession, session)) void clearAllDrafts();
+  }, [session]);
 
   const signOut = useCallback(async () => {
     try {

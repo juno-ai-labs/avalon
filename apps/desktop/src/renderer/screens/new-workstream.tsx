@@ -3,7 +3,9 @@ import { ChevronRight, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import { formatRelative } from '../lib/format';
+import { useDraftText } from '../lib/use-draft-text';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import type { Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
@@ -114,11 +116,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const opportunityKeys = useRef(new Map<string, string>());
-  const [message, setMessage] = useState('');
+  const draftKey = newWorkstreamDraftKey(workspace.id);
+  const { text: message, setText: setMessage } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const attachmentDraft = useFileAttachments(api);
+  const attachmentDraft = useFileAttachments(api, draftKey);
   // The composer autofocuses here, but focus moves away the moment anything else
   // is clicked; a paste landing on the document still reaches the draft.
   useWindowFilePaste(attachmentDraft.addFiles);

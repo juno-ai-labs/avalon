@@ -41,6 +41,7 @@ interface LocalAutomationRow {
   email_address: string | null;
   email_route_status: RouteRow["status"];
   status: "active" | "paused";
+  lifecycle_state: "visible" | "archived" | "deleted";
   updated_at: string;
 }
 
@@ -431,6 +432,7 @@ describe("WorkstreamEmailRoutingService", () => {
       email_address: reservation.emailAddress,
       email_route_status: "reserved",
       status: "active",
+      lifecycle_state: "visible",
       updated_at: "2026-08-02T00:00:00.000Z",
     };
     database.automations.push(automation);

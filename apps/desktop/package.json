@@ -1,6 +1,6 @@
 {
   "name": "@avalon/desktop",
-  "version": "1.44.0",
+  "version": "1.46.0",
   "private": true,
   "description": "Avalon secure Electron desktop client",
   "author": "Avalon",
@@ -65,6 +65,7 @@
     "electron": "43.2.0",
     "electron-builder": "26.15.3",
     "electron-vite": "^5.0.0",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "latest",
     "postcss": "latest",
     "tailwindcss": "^3.4.17",
