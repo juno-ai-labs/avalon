@@ -101,6 +101,13 @@ interrupts somebody on a schedule, wants the subset. A digest passes `true`.
 against automations and watches, recorded in the log, and readable by everyone
 its audience covers. It simply does not interrupt anybody.
 
+**The column's own `DEFAULT 1` is the one part of this that fails open**, and it
+is deliberately left that way — see the changelog entry below for what it cost
+and why changing it is expensive. It governs only an insert that does not name
+the column, which no production code path performs, so anything reaching
+`activity_events` outside `recordActivityEvent` must set `digestible` itself
+rather than expect the column to withhold on its behalf.
+
 **The window still ends at the top of the log.** The cursor steps over what was
 withheld, so a quiet occurrence settles as `empty` and moves on; stopping at the
 last digestible event would make every later occurrence re-scan the same
@@ -131,7 +138,7 @@ Producers today:
 | Producer | Event type | Audience | Digestible |
 | --- | --- | --- | --- |
 | `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
-| `activity-consumer` after routing | `connector.<provider>.<event>` | the connection's own scope | whatever the connector's manifest declared for that activity type |
+| `activity-consumer` after routing | `connector.<provider>.<manifest event type>` — so `connector.github.github.push`, and `connector.google.email.received`, because GitHub's manifest ids carry a provider prefix and Google's do not | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ## The digest
 
@@ -402,15 +409,32 @@ about this column — in [the runbook](RUNBOOK.md#the-window-between-a-migration
 applies migrations before it deploys the Workers, so between `0063` landing at
 `18:56:00` and the Global Worker going live at `18:56:23`, the *previous* Worker
 inserted six `activity_events` rows without naming `digestible`. They took the
-column default of `1` and are marked digestible although every one of them —
-two `github.check_run.completed`, one `github.pull_request.edited`, two
-`google.email.updated` and one `google.sheets.spreadsheet_changed`, stored in
-`activity_events.event_type` under the `connector.<provider>.` prefix the
-consumer adds — is operational under the manifests that shipped in the same
-commit. The default was chosen to leave pre-existing rows alone,
-which the migration's own backfill then overrode anyway; nobody asked what the
-old code would write through it, and for twenty-three seconds that was the only
-thing the default governed.
+column default of `1` and are marked digestible although every one of
+them is operational under the manifests that shipped in the same commit. As
+stored in `activity_events.event_type`, which is the form that will match a row:
+
+```sql
+SELECT * FROM activity_events
+ WHERE digestible = 1 AND event_type IN (
+   'connector.github.github.check_run.completed',      -- 2 rows
+   'connector.github.github.pull_request.edited',      -- 1 row
+   'connector.google.email.updated',                   -- 2 rows
+   'connector.google.sheets.spreadsheet_changed'       -- 1 row
+ );
+```
+
+The doubled `github.` is not a typo, and it is the one place the two namespaces
+meet: `projectActivityEvent` writes `connector.<provider>.<manifest event
+type>`, and GitHub's manifest ids already carry a `github.` prefix while
+Google's do not. A manifest id alone matches no row. The default was chosen to leave pre-existing rows alone.
+For connector rows the migration's own backfill then overrode it — but not for
+first-party ones: `0063`'s `UPDATE` is `WHERE source_kind = 'activity'`, and
+work-stream messages and mentions keep `DEFAULT 1` deliberately, because Avalon
+has always known those are worth telling somebody about. So the default was the
+real answer for a whole class of existing rows, and picking `0` instead would
+have cost a second backfill (`WHERE source_kind <> 'activity'`) rather than
+nothing. What nobody asked was what the *old code* would write through it, and
+for twenty-three seconds that was the only thing the default governed.
 
 **Considered and rejected:** Flipping it to `DEFAULT 0`, which was the first
 instinct and is wrong twice over. It buys almost nothing: every deployed version
