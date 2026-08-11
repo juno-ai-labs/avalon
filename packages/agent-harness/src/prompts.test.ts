@@ -74,7 +74,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "983108d988cf987dbcf10c3a226226bece524e6f54be7b3eadbcbd190e181ad9",
+        hash: "31d8676591f2047f0b8f1341cf82151f2f4ef646a3af3684e96ff75378871263",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -85,7 +85,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "d4afdc133550d7a3139d08bb9e0a08735951889edad66f4226bbfe6f6935cd36",
+        hash: "8de0b32598342e4b6d471ff85ac6ca74437c90225bdf112aafdc8d07d2099bab",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -555,6 +555,10 @@ describe("prompt renderers", () => {
     expect(policy).toContain("Once the automation is well defined, call automation_submit_draft");
     expect(policy).toContain("Default suggestedScope to personal");
     expect(policy).toContain("call automation_submit_draft with ready=false and then core_request_elicitation");
+    // The draft-before-question ordering is stated where an elicitation is
+    // described as well as in Submission: calling the elicitation tool first
+    // throws, and a thrown call spends an iteration the run may not have.
+    expect(policy).toContain("An elicitation follows a saved partial draft");
     expect(policy).toContain("Write assistant text on research turns so that transcript is not silent");
     expect(policy).toContain("one or two sentences roughly every three or four tool calls");
     expect(policy).toContain(
