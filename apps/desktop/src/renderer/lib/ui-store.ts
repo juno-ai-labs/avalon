@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type RailVariant = 'context' | 'background' | 'runs';
+export type RailVariant = 'context' | 'runs';
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
   id: string;
@@ -12,7 +12,6 @@ interface UiState {
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
-  railExpanded: boolean;
   inspector: RailInspector | null;
   hypersightOpen: boolean;
   hypersightWidth: number;
@@ -23,7 +22,6 @@ interface UiState {
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
   setRailWidth: (width: number) => void;
-  toggleRailExpanded: () => void;
   inspect: (inspector: RailInspector | null) => void;
   // HyperSight and the inspector rail share the right sidebar slot, and only
   // one of them is ever open. Which one is open is a personal, per-work-stream
@@ -107,7 +105,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
-  railExpanded: false,
   inspector: null,
   hypersightOpen: false,
   hypersightWidth: loadRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, null),
@@ -119,14 +116,16 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ sidebarWidth });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
-  closeRail: () => set({ railOpen: false, railExpanded: false, inspector: null }),
+  // The detail view is cleared when the rail is next opened rather than as it
+  // closes: the panel is still on screen fading out, and swapping its contents
+  // under the fade would be the last thing seen of it.
+  closeRail: () => set({ railOpen: false }),
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
   setRailWidth: (width) => {
     const railWidth = clampRailWidth(width);
     saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
     set({ railWidth });
   },
-  toggleRailExpanded: () => set((state) => ({ railExpanded: !state.railExpanded })),
   inspect: (inspector) => set({ inspector }),
   setHyperSightOpen: (hypersightOpen) => set({ hypersightOpen }),
   setHyperSightWidth: (width) => {

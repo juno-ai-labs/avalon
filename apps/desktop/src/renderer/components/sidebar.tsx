@@ -656,7 +656,9 @@ export function Sidebar({
           }}
           role="separator"
           tabIndex={0}
-        />
+        >
+          <span />
+        </div>
       </aside>
       <Modal
         footer={(
