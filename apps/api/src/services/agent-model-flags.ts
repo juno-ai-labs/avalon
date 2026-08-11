@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { HYPERSIGHT_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import {
+  loadFlagTargetingAttributes,
+  type FlagTargetingSubject,
+} from "./flag-targeting-attributes";
 
 /**
  * Every distinct model-using agent in Avalon. Each one owns a Flagship flag
@@ -65,11 +69,12 @@ const AgentModelRoutingSchema = z.object({
  */
 const NO_FALLBACK_ROLES: ReadonlySet<AgentModelRole> = new Set<AgentModelRole>(["hypersight"]);
 
-export interface AgentModelFlagContext {
-  workspaceId?: string | undefined;
-  workstreamId?: string | undefined;
-  userId?: string | undefined;
-}
+/**
+ * Who the evaluation is for. The identifiers are all a caller has to supply;
+ * the attributes a rule matches on beyond them are looked up from these, in
+ * `flag-targeting-attributes.ts`.
+ */
+export type AgentModelFlagContext = FlagTargetingSubject;
 
 function splitModelIds(value: string | undefined): string[] {
   return (value ?? "").split(",").map((model) => model.trim()).filter(Boolean);
@@ -121,12 +126,15 @@ function unreachableFlagLevel(env: Env): "debug" | "warn" {
   return env.APP_ENV === "development" || env.APP_ENV === "test" ? "debug" : "warn";
 }
 
-function evaluationContext(
+async function evaluationContext(
   env: Env,
   role: AgentModelRole,
   context: AgentModelFlagContext,
-): FlagshipEvaluationContext {
+): Promise<FlagshipEvaluationContext> {
+  // Attributes are spread first so a loaded fact can never shadow the run's own
+  // identity: `agent`, `region`, and the ids are what bucketing depends on.
   return {
+    ...(await loadFlagTargetingAttributes(env, context)),
     agent: role,
     region: env.AVALON_REGION,
     appEnv: env.APP_ENV,
@@ -152,8 +160,10 @@ export async function resolveAgentModelRouting(
   if (!flags) return fallback;
   const flagKey = AGENT_MODEL_FLAG_KEYS[role];
   let details: FlagshipEvaluationDetails<AgentModelRouting>;
+  let evaluation: FlagshipEvaluationContext;
   try {
-    details = await flags.getObjectDetails(flagKey, fallback, evaluationContext(env, role, context));
+    evaluation = await evaluationContext(env, role, context);
+    details = await flags.getObjectDetails(flagKey, fallback, evaluation);
   } catch (error) {
     // `wrangler dev --local` binds an always-remote binding as an object whose
     // every call throws `Binding FLAGS needs to be run remotely`, so this path
@@ -199,13 +209,17 @@ export async function resolveAgentModelRouting(
     return fallback;
   }
   // The variant and reason are what confirm a staged rollout actually reached
-  // this run; the inference ledger records only the model that resulted.
+  // this run; the inference ledger records only the model that resulted. The
+  // attribute *names* say which targeting rules could even have applied — a
+  // rule on an attribute that was never sent silently never matches — while
+  // their values stay out of the logs.
   logStructuredEvent(env, "debug", "agent_model_flag_resolved", {
     agent: role,
     flag_key: flagKey,
     workspace_id: context.workspaceId,
     variant: details.variant,
     reason: details.reason,
+    attributes: Object.keys(evaluation).sort().join(","),
     model: parsed.data.model,
   });
   if (NO_FALLBACK_ROLES.has(role) && parsed.data.fallbackModels.length > 0) {
