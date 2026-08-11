@@ -1799,6 +1799,14 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
         runtimeStatus: "operational",
         webhookResponseDeadlineMs: 3_000,
       },
+      userDelivery: {
+        targetType: "slack_agent_dm",
+        label: "Slack DM",
+        description: "Avalon Agent DM in this Slack workspace.",
+        // The bot is installed for the whole team, so it can only address a
+        // person once that person has linked their Slack identity to Avalon.
+        requiresPersonalIdentityLink: true,
+      },
       capabilities: [
         ...Object.values(SlackCapabilities)
           .filter((capability) => capability !== SlackCapabilities.agent && capability !== SlackCapabilities.notificationsWrite)
