@@ -31,6 +31,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isEntryPoint } from "./entry-point.mjs";
+
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_DB = join(
   repositoryRoot,
@@ -195,7 +197,7 @@ async function main() {
   for (const entry of written) console.log(`${entry.name.padEnd(18)} ${entry.source.padEnd(18)} ${entry.file}`);
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+if (isEntryPoint(import.meta.url)) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;

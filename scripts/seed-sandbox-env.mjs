@@ -12,9 +12,11 @@
 // mangled form that parses cleanly and is no longer the value.
 
 import { readFile, writeFile } from "node:fs/promises";
-import { argv, env, exit, stderr, stdout } from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { env, exit, stderr, stdout } from "node:process";
+import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+
+import { isEntryPoint } from "./entry-point.mjs";
 
 const BLANK_ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=[ \t]*$/u;
 
@@ -75,7 +77,7 @@ async function main() {
   }
 }
 
-if (argv[1] && import.meta.url === pathToFileURL(argv[1]).href) {
+if (isEntryPoint(import.meta.url)) {
   await main().catch((error) => {
     stderr.write(`${error?.stack ?? error}\n`);
     exit(1);
