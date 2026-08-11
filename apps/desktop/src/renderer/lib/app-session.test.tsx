@@ -1,4 +1,3 @@
-import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -303,7 +302,7 @@ describe('single-platform desktop identity routing', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
       const authorization = new Headers(init?.headers).get('Authorization');
       return Promise.resolve(authorization === `Bearer ${renewedSession.accessToken}`
-        ? new Response(JSON.stringify({ url: 'wss://api.with-avalon.com/socket', ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket') }))
+        ? new Response(JSON.stringify({ url: 'wss://api.with-avalon.com/socket', ticket: 'socket-ticket' }))
         : new Response(JSON.stringify({ error: { code: 'invalid_session' } }), { status: 401 }));
     });
 

@@ -131,7 +131,11 @@ export function isAllowedSocketOrigin(env: Pick<Env, "ALLOWED_ORIGINS">, origin:
  * a client that has moved over cannot be downgraded by a URL it did not build.
  */
 export function socketTicketFromRequest(request: Request, queryTicket: string | undefined): string {
-  const ticket = socketTicketFromProtocols(request.headers.get("sec-websocket-protocol")) ?? queryTicket;
+  const offered = request.headers.get("sec-websocket-protocol");
+  // A client that named the scheme is held to it. Falling back to the query
+  // when its offer is malformed would let a stale URL credential stand in for
+  // the one the client meant to present, which is the opposite of precedence.
+  const ticket = offersSocketTicketSubprotocol(offered) ? socketTicketFromProtocols(offered) : queryTicket;
   if (!ticket) {
     throw new ApiError(401, "socket_ticket_required", "The realtime ticket is missing");
   }
@@ -146,6 +150,12 @@ export function socketTicketFromRequest(request: Request, queryTicket: string | 
  */
 export function withNegotiatedSubprotocol(request: Request, response: Response): Response {
   if (!offersSocketTicketSubprotocol(request.headers.get("sec-websocket-protocol"))) return response;
+  // Only an accepted upgrade is negotiated. A room that refuses one answers
+  // with a JSON 401, 403, or 500, and rebuilding that as a 101 would replace a
+  // readable rejection with a bodyless upgrade carrying no socket — turning
+  // ticket replay, the case this whole path exists to refuse, into a broken
+  // handshake instead of an error the client can act on.
+  if (response.status !== 101 || !response.webSocket) return response;
   const headers = new Headers(response.headers);
   headers.set("sec-websocket-protocol", SOCKET_TICKET_SUBPROTOCOL);
   return new Response(null, { status: 101, webSocket: response.webSocket, headers });
@@ -168,6 +178,9 @@ export class SocketService {
     const rooms = durableObjectNamespaceForRegion(this.env.WORKSTREAM_ROOMS, claims.region, this.env.APP_ENV);
     const durableId = rooms.idFromName(`${this.env.AVALON_REGION}:${claims.workspaceId}:${claims.workstreamId}`);
     const headers = new Headers(request.headers);
+    // The ticket has been verified; the room has no use for it and should not
+    // receive a live credential on a subrequest it does not authenticate with.
+    headers.delete("sec-websocket-protocol");
     headers.set("x-avalon-workspace-id", claims.workspaceId);
     headers.set("x-avalon-workstream-id", claims.workstreamId);
     headers.set("x-avalon-user-id", claims.userId);

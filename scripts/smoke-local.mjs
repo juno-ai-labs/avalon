@@ -69,6 +69,16 @@ async function openSocket(url, { expectOpen, protocols }) {
       }
       socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
     });
+    // `ws` reports the handshake response before erroring, which is the only
+    // place the rejection's status is visible. A replay that arrives as a 500
+    // satisfies "did not open" exactly as well as a clean 401 does, so the
+    // status is the assertion that means something.
+    socket.on("unexpected-response", (_request, response) => {
+      clearTimeout(timeout);
+      socket.terminate();
+      if (expectOpen) reject(new Error(`Realtime handshake returned ${response.statusCode}`));
+      else finish({ opened: false, snapshot: false, status: response.statusCode });
+    });
     socket.addEventListener("error", () => {
       if (expectOpen) {
         clearTimeout(timeout);
@@ -212,6 +222,10 @@ const replaySocket = await openSocket(handshakeUrl, {
   protocols: socketTicketProtocols(ticket.body.ticket),
 });
 assert(!replaySocket.opened, "Realtime ticket replay was accepted");
+assert(
+  replaySocket.status === 401,
+  `A replayed ticket was refused with ${replaySocket.status ?? "no status"} rather than 401`,
+);
 
 // The deprecated query transport stays covered while builds that use it exist.
 const legacyTicket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
@@ -230,5 +244,5 @@ console.log(JSON.stringify({
   firstSocket: "snapshot",
   socketTransport: SOCKET_TICKET_SUBPROTOCOL,
   legacyQuerySocket: "snapshot",
-  replaySocket: "rejected",
+  replaySocket: "rejected 401",
 }));
