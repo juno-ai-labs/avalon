@@ -25,7 +25,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -54,6 +54,9 @@ interface SidebarProps {
 type RecentSidebarItem =
   | { type: 'note'; note: NoteSummary; id: string; lastActivityAt: string }
   | { type: 'workstream'; workstream: WorkstreamSummary; id: string; lastActivityAt: string };
+
+/** How close the pointer comes to the navigation's edge before its pill shows. */
+const EDGE_REVEAL_DISTANCE = 20;
 
 const onboardingItems = [
   {
@@ -374,6 +377,12 @@ export function Sidebar({
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const [resizing, setResizing] = useState(false);
+  // The handle stands in the strip beside the sidebar rather than on its edge,
+  // so the pointer's own position is not the sidebar's width. Holding the
+  // difference from the moment of the grab keeps the edge from jumping out to
+  // meet a pointer that grabbed the far side of the strip.
+  const grabOffset = useRef(0);
+  const [pointerNearEdge, setPointerNearEdge] = useState(false);
   const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -502,10 +511,24 @@ export function Sidebar({
     }
   };
 
+  // The pill is revealed by how close the pointer is to the edge, not by
+  // hovering the handle: a hit area wide enough to be a 20-pixel proximity
+  // sensor would also be a 20-pixel column of the main pane that swallows
+  // clicks, the window-drag region, and the left edge of the title. Watching
+  // the pointer instead keeps the reveal generous and the hit area honest.
+  useEffect(() => {
+    const track = (event: PointerEvent): void => {
+      const near = Math.abs(event.clientX - sidebarWidth) <= EDGE_REVEAL_DISTANCE;
+      setPointerNearEdge((current) => current === near ? current : near);
+    };
+    window.addEventListener('pointermove', track);
+    return () => window.removeEventListener('pointermove', track);
+  }, [sidebarWidth]);
+
   useEffect(() => {
     if (!resizing) return undefined;
 
-    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX);
+    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX - grabOffset.current);
     const stop = (): void => setResizing(false);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
@@ -645,18 +668,21 @@ export function Sidebar({
           aria-valuemax={MAX_SIDEBAR_WIDTH}
           aria-valuemin={MIN_SIDEBAR_WIDTH}
           aria-valuenow={sidebarWidth}
-          className="sidebar-resizer"
+          className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onKeyDown={(event) => {
             if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
             if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);
           }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
+            grabOffset.current = event.clientX - sidebarWidth;
             setResizing(true);
           }}
           role="separator"
           tabIndex={0}
-        />
+        >
+          <span />
+        </div>
       </aside>
       <Modal
         footer={(
