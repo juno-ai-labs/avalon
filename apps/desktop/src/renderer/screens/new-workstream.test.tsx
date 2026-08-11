@@ -44,6 +44,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
     title,
     origin: 'ad_hoc',
     harnessStatus,
+    scope: 'workspace',
     lastActivityAt: '2026-07-31T20:00:00.000Z',
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,

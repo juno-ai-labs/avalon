@@ -122,10 +122,29 @@ CREATE INDEX activity_event_targets_user_idx
 -- compaction, tool invocations, artifacts and the realtime room all key off
 -- `workstream_id`. An internal run that needs the whole loop therefore needs a
 -- work stream, but not a place in anybody's sidebar. `system_kind` marks those:
--- NULL is a normal, user-visible work stream, and any non-NULL value is
--- machinery that every listing surface filters out.
+-- NULL is a normal work stream, and any non-NULL value is machinery that
+-- listing surfaces leave out unless the reader asks for them.
 ALTER TABLE workstreams ADD COLUMN system_kind TEXT
   CHECK (system_kind IS NULL OR system_kind IN ('digest'));
+
+-- Who may see a work stream, in the same vocabulary `notes.scope` already uses:
+-- `personal` is "only the people in it", `workspace` is "anyone in the
+-- workspace". Declared rather than inferred, so privacy is a property of the
+-- row and one rule enforces it — a digest's work stream is private because it
+-- says so, not because a caller remembered to check `system_kind`.
+--
+-- This is deliberately a different question from `system_kind` above. That says
+-- whether a work stream is machinery, which decides whether it is *listed*;
+-- this says who may read it. A future private work stream that is not machinery
+-- needs only this column.
+--
+-- Existing rows are `workspace`: that is what they have always been, and the
+-- one narrower rule already in the code — a personal automation's work stream
+-- being visible to its owner — stays as it is, because those rows carry no
+-- participants and reading them as `personal` would hide them from the very
+-- person they belong to. Folding that in means giving them participants first.
+ALTER TABLE workstreams ADD COLUMN scope TEXT NOT NULL DEFAULT 'workspace'
+  CHECK (scope IN ('personal', 'workspace'));
 
 -- ---------------------------------------------------------------------------
 -- Digest schedules

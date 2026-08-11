@@ -158,6 +158,7 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
+    scope: row.scope === "personal" ? "personal" : "workspace",
     systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest")
   };
 }

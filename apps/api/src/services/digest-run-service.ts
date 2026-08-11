@@ -203,8 +203,8 @@ async function ensureDigestWorkstream(env: Env, schedule: DigestScheduleRow): Pr
     env.DB.prepare(
       `INSERT INTO workstreams
          (id, workspace_id, title, objective, origin_type, created_by_user_id,
-          harness_status, last_activity_at, created_at, updated_at, system_kind)
-       VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'idle', ?, ?, ?, 'digest')`,
+          harness_status, last_activity_at, created_at, updated_at, system_kind, scope)
+       VALUES (?, ?, ?, ?, 'ad_hoc', ?, 'idle', ?, ?, ?, 'digest', 'personal')`,
     ).bind(
       workstreamId,
       schedule.workspace_id,

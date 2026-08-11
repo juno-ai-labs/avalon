@@ -3,10 +3,18 @@ import type {
   NoteDetail as ContractNoteDetail,
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
+  Scope as ContractScope,
 } from '@avalon/contracts';
 
 export type Region = 'global' | 'eu';
+/** How a connection or automation is owned, in the words the UI uses for it. */
 export type Scope = 'you' | 'workspace';
+/**
+ * Who may read an object — `personal` is the people in it, `workspace` is
+ * everyone. Notes and work streams share this one vocabulary, which is the
+ * server's, so "private" means the same thing on both.
+ */
+export type VisibilityScope = ContractScope;
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed';
 export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
 export type NoteSummary = ContractNoteSummary;
@@ -87,9 +95,14 @@ export interface WorkstreamSummary {
   plannedFor?: string;
   preview?: string;
   /**
+   * Who may read it, the same way a note says it. `personal` means only the
+   * people in it, and is what the private marker renders from.
+   */
+  scope: VisibilityScope;
+  /**
    * Set on a work stream that exists so a subsystem can use the agent loop —
-   * a digest run's transcript, for instance. Only ever present when the reader
-   * asked for them, and rendered as secondary when it is.
+   * a digest run's transcript, for instance. A different question from `scope`:
+   * this decides whether it is listed, that decides who may read it.
    */
   systemKind?: 'digest';
 }

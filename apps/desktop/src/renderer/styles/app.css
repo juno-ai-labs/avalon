@@ -1071,6 +1071,19 @@ pre {
 /* Digest — day chips, the time list, and the save bar. The cards reuse
    .settings-list-card so the pane keeps the same surface as every other
    settings section; only the controls inside them are new. */
+/* "Only you can see this", on a work stream. Reuses the badge shape rather than
+   inventing a second private treatment; the lock is what the sidebar's marker
+   already uses, so the two surfaces say it the same way. */
+.badge-private {
+  align-items: center;
+  background: #2a2b26;
+  border-color: #3d3e38;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 4px;
+}
+.badge-private > svg { color: var(--muted-2); }
+
 /* A system work stream is machinery the reader has opted into seeing with
    Application → Developer → Debug enabled. It sits in the same list as real
    work, one level down: dimmed, with a small gear, and no dimming while it is

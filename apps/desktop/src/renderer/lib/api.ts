@@ -345,6 +345,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
+    scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
     preview: workstream.objective,
   };
@@ -967,6 +968,7 @@ export class AvalonApi {
       title: 'Automation run',
       origin: 'automation',
       harnessStatus: 'running',
+      scope: 'workspace',
       lastActivityAt: new Date().toISOString(),
       latestAttentionSequenceNumber: 0,
       readThroughSequenceNumber: 0,
