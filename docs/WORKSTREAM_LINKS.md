@@ -46,8 +46,8 @@ origin**, plus a **status badge only while it is `running`, `needs_input`, or
 agent is blocked.
 
 `completed`, `scheduled`, and `idle` render no badge. "Completed" is not
-something a reader can act on, and because a card is only rewritten when its
-badge changes, a settled work stream would carry that label indefinitely. The
+something a reader can act on, and a settled work stream stops producing the
+changes that rewrite its card, so that label would sit there indefinitely. The
 badge is an emoji leading the title, with the word repeated in the detail line
 so the emoji is never the only carrier of meaning; both come from one table in
 `slack-workstream-card.ts` so they cannot drift apart, and the running and
@@ -117,8 +117,8 @@ Its bounds, all deliberate:
 
 | Bound | Value | Why |
 | --- | --- | --- |
-| Trigger | `harness_status` differs from `rendered_status`, **or** the audience has not been revalidated in 24 hours | Comparing last activity would mark nearly every row stale every pass, since any message bumps it. The audience clock is separate because a channel can become externally shared while the work stream sits still |
-| Rewrite | Only when the rendered **badge** changes, not the raw status | Most states share the same empty badge, so `completed` → `idle` drifts the row without changing a pixel. Such a row records its new status and posts nothing |
+| Trigger | `harness_status` differs from `rendered_status`, the audience has not been revalidated in 24 hours, **or** the row has no `rendered_hash` | Comparing last activity would mark nearly every row stale every pass, since any message bumps it. The audience clock is separate because a channel can become externally shared while the work stream sits still |
+| Rewrite | Only when the card's **rendered blocks** hash differently from what is posted | The real question is "would this render differently?", and no stored field answers it: the drawing code can change, the title and activity stamp both render, and an anonymous card is identical whatever the status does. A selected row whose hash matches records its new status and posts nothing |
 | Age | Links shared in the last 30 days | Nobody is rereading an older message |
 | Per sweep | 100 rows | Bounds the work; the overflow is logged, never silently dropped |
 | Per workspace | 20 rows | `chat.unfurl` is Tier 3 (50+/min per method per workspace) and live `link_shared` unfurls, which someone is waiting on, spend the same budget |
@@ -138,6 +138,24 @@ card older than that is never revisited. That is a deliberate limit rather than
 an oversight — an external party added to a channel can read its message history
 anyway, so the marginal exposure of an old card's title is small next to what
 Slack already showed them.
+
+### What the hash does and does not promise
+
+`rendered_hash` decides whether a **selected** row is rewritten; the selection
+query decides which rows are looked at. Those are different, and the gap is
+worth stating plainly.
+
+Selection matches on status drift, the 24-hour audience clock, or a missing
+hash. A change that alters the card without touching any of those — a renamed
+work stream is the clear case — therefore does not select a row on its own. The
+audience clock picks it up on the next daily pass, and the hash then catches the
+difference. **The guarantee is that a card catches up with any content change
+within 24 hours, not that it is never briefly stale.**
+
+A row with no hash is one recorded before hashing shipped. Null never matches a
+freshly computed hash, so each such card is rewritten exactly once and then
+settles — which is what carries an existing card across a change to the card's
+own layout, with no version constant for a future change to remember to bump.
 
 A refresh that fails with a terminal Slack reason — the message or channel is
 gone — deletes the row rather than retrying forever; anything else leaves
