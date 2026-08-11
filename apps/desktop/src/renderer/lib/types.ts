@@ -521,3 +521,25 @@ export type WorkstreamSocketEvent =
   | { type: 'resource_updated'; resource: WorkstreamResource; sequence: number }
   | { type: 'resync_required'; reason: 'history_unavailable' | 'sequence_ahead'; latestSequence: number; sequence: number }
   | { type: 'error'; message: string; sequence?: number };
+
+/** One person's scheduled digest: which days, what times, and where it goes. */
+export interface DigestSchedule {
+  id: string;
+  enabled: boolean;
+  /** Sunday is 0, matching `Date#getDay`. */
+  days: number[];
+  /** Local wall-clock minutes past midnight in `timezone`. */
+  times: number[];
+  timezone: string;
+  deliveryTargets: DigestDeliveryTarget[];
+  nextRunAt: string | null;
+  lastDeliveredAt: string | null;
+}
+
+export interface DigestDeliveryTarget {
+  type: AutomationDeliveryTargetType;
+  connectionId: string | null;
+  displayName: string;
+  status: 'active' | 'needs_input' | 'disabled';
+  lastDeliveredAt: string | null;
+}

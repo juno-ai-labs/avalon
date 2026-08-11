@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { fireDigestSchedule } from "../services/digest-run-service";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
@@ -40,6 +41,7 @@ interface ScheduleRow {
   workspace_id: string;
   automation_subscription_id: string | null;
   connector_connection_id: string | null;
+  digest_schedule_id: string | null;
   schedule_type: string;
   rrule: string | null;
   interval_seconds: number | null;
@@ -385,6 +387,16 @@ export class WorkspaceScheduler {
       await this.startAutomation(schedule, now);
     } else if (schedule.connector_connection_id) {
       await this.startConnectorPoll(schedule);
+    } else if (schedule.digest_schedule_id) {
+      // The occurrence is identified by the due time, not by this row: several
+      // rows carry the same digest at different times of day, and the delivery's
+      // uniqueness on (schedule, planned_for) is what makes a retried alarm
+      // resolve to the attempt already in flight.
+      await fireDigestSchedule(this.env, {
+        scheduleId: schedule.digest_schedule_id,
+        workspaceId: schedule.workspace_id,
+        plannedFor: schedule.next_run_at,
+      });
     } else {
       throw new Error("unsupported_schedule_target");
     }

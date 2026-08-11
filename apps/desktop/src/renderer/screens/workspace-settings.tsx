@@ -17,6 +17,7 @@ import {
   MailPlus,
   MessageSquare,
   MonitorCog,
+  Newspaper,
   Plug,
   RefreshCcw,
   Search,
@@ -38,6 +39,7 @@ import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
+import { DigestSettings } from '../components/digest-settings';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace, WorkspaceInvitation, WorkstreamConnection } from '../lib/types';
@@ -88,6 +90,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
     items: [
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
       { id: 'workspace', label: 'Workspace', searchTerms: 'region data residency organization members invitations invite roles', icon: Users },
+      { id: 'digest', label: 'Digest', searchTerms: 'digest summary email schedule times days notifications updates slack deliver', icon: Newspaper },
       { id: 'connections', label: 'Connections', searchTerms: 'connectors google github granola meetings notes linear notion slack x integrations', icon: Plug },
     ],
   },
@@ -665,6 +668,14 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   </div>
                 </div>
               </section>
+            )}
+
+            {activeSection === 'digest' && api && (
+              <DigestSettings
+                api={api}
+                connections={connections.data ?? []}
+                timezoneOptions={timezoneOptions}
+              />
             )}
 
             {activeSection === 'workspace' && (
