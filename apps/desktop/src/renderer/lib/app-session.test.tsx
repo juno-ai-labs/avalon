@@ -91,20 +91,26 @@ function renderProvider(): QueryClient {
 }
 
 describe('single-platform desktop identity routing', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  // Every deep link goes through here. Dispatching straight into
-  // `deepLinkListener?.()` swallows the link when the provider has not
-  // registered its listener yet — the handler re-registers whenever the session
-  // or API changes, so there is a real window where it is null — and the test
-  // then fails much later on an assertion that never comes true. Wait for the
-  // listener, then call it unguarded so a missing one throws here instead.
+  // Every deep link goes through here. The provider registers no listener at
+  // all until `getRuntimeConfig` resolves — its effect early-returns while
+  // `runtime` is null — so a dispatch straight into `deepLinkListener?.()` can
+  // land before the first registration, where the optional call swallows the
+  // link and the test then fails much later on an assertion that never comes
+  // true. Wait for the listener, then call it unguarded so a missing one throws
+  // at the dispatch instead.
+  //
+  // This promises a listener, not one closing over the state the test has
+  // asserted: every branch except auth reads the closure's `session` and `api`,
+  // so a dispatch arriving before those settle takes the "Sign in before…" path.
+  // Keep awaiting a session-bearing `findByText` before calling this.
   async function dispatchDeepLink(url: string): Promise<void> {
     await waitFor(() => expect(deepLinkListener).not.toBeNull());
     act(() => deepLinkListener!(url));
   }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -527,8 +533,6 @@ describe('single-platform desktop identity routing', () => {
     });
     renderProvider();
     expect(await screen.findByText('eu:European Research')).toBeVisible();
-    // The optional call is a silent no-op until the provider has registered its
-    // listener, and rendering the session does not guarantee that has happened.
     await dispatchDeepLink(
       `avalon://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
