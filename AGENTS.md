@@ -41,10 +41,6 @@ resolution here.
   `for i in $(seq 20); do pnpm --filter @avalon/<pkg> exec vitest run <file> || break; done`,
   and add `--sequence.shuffle` or `--no-file-parallelism` to separate an
   order-dependent test from a genuinely racy one.
-- The causes are nearly always the same few: an assertion racing a real timer or
-  an unawaited promise, module or mock state leaking between tests, an implicit
-  dependency on test order, and wall-clock or `Date.now()` arithmetic. Fix the
-  cause — await the settled state, isolate the state, or use fake timers.
 - Confirm the fix by looping the test again, then run the full `pnpm test` once
   more before calling the change done.
 - If the cause is genuinely outside the change, still fix it or say plainly in
