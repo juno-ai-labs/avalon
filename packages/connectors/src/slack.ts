@@ -2,7 +2,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
-  isCredentialRejection,
+  isProviderCredentialRejection,
   isRecord,
   jsonHeaders,
   providerJson,
@@ -1828,7 +1828,15 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     connection,
     {
       refresh: (candidate, refreshSignal) => adapter.refreshCredentials!(candidate, refreshSignal),
-      isRejection: isCredentialRejection,
+      // `token_expired` is the one Slack auth code a rotation resolves.
+      // `token_revoked`, `account_inactive`, and `invalid_refresh_token` are
+      // settled answers, and Slack's own policy errors carry no error code at
+      // all — spending a single-use refresh token on any of them would buy a
+      // retry that fails identically.
+      isRejection: (error) => isProviderCredentialRejection(
+        error,
+        (details) => details.error === "token_expired",
+      ),
       canRefresh: (candidate) => Boolean(stringValue(candidate.credentials, "refreshToken")),
       signal,
     },

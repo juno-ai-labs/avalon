@@ -20,7 +20,8 @@ import {
   type ConnectorToolContext,
   type ResolvedConnectorAdapter,
 } from "./types";
-import { isCredentialRejection, withProviderReauthorization } from "./provider-utils";
+import { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
+export { isProviderCredentialRejection, withProviderReauthorization } from "./provider-utils";
 import { createGitHubConnector, type GitHubConnectorConfig } from "./github";
 import { createGranolaConnector, type GranolaConnectorConfig } from "./granola";
 import { createLinearConnector, type LinearConnectorConfig } from "./linear";
@@ -972,7 +973,13 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       connection,
       {
         refresh: refreshGoogleCredentials,
-        isRejection: isCredentialRejection,
+        // The two reasons `attempt` raises that a new access token resolves.
+        // Everything else `unauthorized` covers here is Google refusing the
+        // grant itself.
+        isRejection: (error) => isProviderCredentialRejection(
+          error,
+          (details) => details.reason === "api_unauthorized" || details.reason === "missing_access_token",
+        ),
         canRefresh: (candidate) => Boolean(candidate.credentials.refreshToken),
         signal: init.signal ?? new AbortController().signal
       },

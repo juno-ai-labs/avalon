@@ -111,6 +111,19 @@ declare const credentialFreshness: unique symbol;
  */
 export interface AuthorizedConnectorConnection extends ConnectorConnectionContext {
   readonly [credentialFreshness]: true;
+  /**
+   * Host-serialized credential rotation, supplied by the credential door.
+   *
+   * A rotating refresh token is single-use, so two calls that are in flight
+   * together must not each redeem the stored one. The host serializes rotation
+   * behind the same lease its expiry-driven refresh uses, and hands that in
+   * here. `withProviderReauthorization` prefers it over an adapter's own
+   * `refreshCredentials`; adapters should not call it directly.
+   */
+  readonly rotateCredentials?: (
+    refused: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => Promise<Record<string, unknown>>;
 }
 
 /**
@@ -123,8 +136,11 @@ export interface AuthorizedConnectorConnection extends ConnectorConnectionContex
  */
 export function authorizedConnection(
   connection: ConnectorConnectionContext,
+  rotateCredentials?: AuthorizedConnectorConnection["rotateCredentials"],
 ): AuthorizedConnectorConnection {
-  return connection as AuthorizedConnectorConnection;
+  return (rotateCredentials
+    ? Object.assign(connection, { rotateCredentials })
+    : connection) as AuthorizedConnectorConnection;
 }
 
 export interface ConnectorToolContext {
