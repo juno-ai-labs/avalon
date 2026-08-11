@@ -646,6 +646,7 @@ describe("agent harness", () => {
             description: "Changed file MIME type.",
             valueType: "string",
           }],
+          digestible: false,
         }],
         tools: [{
           name: "google_2_drive_search",
