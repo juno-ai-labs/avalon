@@ -83,15 +83,16 @@ async function cached<T>(
   key: string,
   load: () => Promise<T | null>,
 ): Promise<T | null> {
-  const now = Date.now();
   const hit = cache.get(key);
   if (hit) {
-    if (hit.expiresAt > now) return hit.value;
+    if (hit.expiresAt > Date.now()) return hit.value;
     cache.delete(key);
   }
   const value = await load();
   if (!value) return null;
-  cache.set(key, { value, expiresAt: now + ATTRIBUTE_CACHE_TTL_MS });
+  // Stamped when the value is stored rather than when the lookup began, so a
+  // slow read spends its own latency instead of the entry's life.
+  cache.set(key, { value, expiresAt: Date.now() + ATTRIBUTE_CACHE_TTL_MS });
   if (cache.size > ATTRIBUTE_CACHE_MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
@@ -146,6 +147,7 @@ async function loadRow<T>(
       entity,
       workspace_id: subject.workspaceId,
       workstream_id: subject.workstreamId,
+      user_id: subject.userId,
       error_name: error instanceof Error ? error.name : "UnknownError",
     });
     return null;
