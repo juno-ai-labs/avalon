@@ -191,13 +191,23 @@ export function digestEmailHtml(content: DigestEmailContent): string {
     ? `${content.highlightCount} need${content.highlightCount === 1 ? "s" : ""} you · ${items} in ${content.workspaceName}`
     : `${items} in ${content.workspaceName}`;
 
-  // The canvas runs the height of the reading pane, not just the height of the
-  // text: a short digest otherwise ends in a hard edge with the client's own
-  // white below it. `height:100%` carries the dark down a document the client
-  // sized itself, and `min-height:100vh` grows one it sized to the content — a
-  // client that supports neither renders exactly what it did before. The full
-  // height is why the cell states `valign="top"`; a table cell centres its
-  // contents otherwise, which would float the card in the middle of the pane.
+  // `height:100%` on the document and body, so a short digest does not end in a
+  // hard edge with the client's own white below it.
+  //
+  // A body background normally propagates to the canvas and paints the whole
+  // pane on its own. What defeats that is a client painting its own background
+  // onto `html` — propagation only happens while the root has none — and that
+  // is the only case this chain is for: a full-height body paints the pane
+  // itself rather than relying on a propagation the client has already broken.
+  //
+  // A percentage is load-bearing, and a viewport unit would be wrong. Where a
+  // webmail client strips `<body>` and injects this markup into its own page,
+  // the percentage meets an auto-height ancestor and collapses to nothing,
+  // leaving the message the height of its content — which is what a thread card
+  // wants. `100vh` there would measure the browser window instead of the pane
+  // and hang a tall dark tail off the bottom of the card. Nothing carries a
+  // height on the layout table either: the Word engine reads that as a minimum
+  // against the page box, which is the same tail in a different client.
   return `<!doctype html>
 <html lang="en" style="color-scheme:dark;supported-color-schemes:dark;height:100%;background:${COLOR.canvas}">
   <head>
@@ -209,8 +219,8 @@ export function digestEmailHtml(content: DigestEmailContent): string {
   </head>
   <body style="margin:0;padding:0;width:100%;height:100%;background:${COLOR.canvas};color:${COLOR.ink};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escapeHtml(preheader)}</div>
-    <table role="presentation" width="100%" height="100%" cellspacing="0" cellpadding="0" border="0" style="height:100%;min-height:100vh;background:${COLOR.canvas};padding:36px 14px">
-      <tr><td align="center" valign="top" style="vertical-align:top">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:${COLOR.canvas};padding:36px 14px">
+      <tr><td align="center">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px">
 
           <tr><td style="padding:0 4px 14px">
