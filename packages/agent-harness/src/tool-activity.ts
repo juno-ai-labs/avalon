@@ -107,6 +107,21 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Cleared durable table rows",
     failed: "Could not clear durable table rows",
   },
+  workstream_schedule_wakeup: {
+    started: "Scheduling a wake-up",
+    settled: "Scheduled a wake-up",
+    failed: "Could not schedule a wake-up",
+  },
+  workstream_list_wakeups: {
+    started: "Checking scheduled wake-ups",
+    settled: "Checked scheduled wake-ups",
+    failed: "Could not check scheduled wake-ups",
+  },
+  workstream_cancel_wakeup: {
+    started: "Cancelling a wake-up",
+    settled: "Cancelled a wake-up",
+    failed: "Could not cancel a wake-up",
+  },
   workstream_run_subagent: {
     started: "Running a focused sub-agent",
     settled: "Ran a focused sub-agent",

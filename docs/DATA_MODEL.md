@@ -30,6 +30,7 @@ Every tenant-owned table carries `workspace_id`, and every repository lookup inc
 - The partial unique index on `(automation_subscription_id, planned_for)` converges early-open and alarm-driven scheduled-run creation.
 - `harness_runs` records each bounded model loop. `tool_invocations` is unique on `(harness_run_id, tool_call_id)` and stores input hashes plus side-effect state.
 - `schedules` is canonical. One workspace Durable Object alarm reads due rows and advances them transactionally/idempotently.
+- `workstream_wakeups` holds one-shot prompt wake-ups a run scheduled for itself. It is separate from `schedules` because a wake-up is one-shot, belongs to a work stream rather than a subscription or connection, and carries the prompt text that becomes the resulting run's trigger. The same workspace alarm unions it with `schedules` and `resource_watches`. `(workstream_id, idempotency_key)` is unique, so a replayed tool receipt resolves to the wake-up its first attempt created; `status` moves `pending → fired` under a version guard before the run is launched, making a wake-up at-most-once rather than at-least-once.
 
 ## Connectors and activities
 

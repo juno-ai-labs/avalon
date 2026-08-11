@@ -16,6 +16,7 @@ import {
   composeBeforeToolCallHooks,
   canonicalToolInputHash,
   memberSafeHarnessFailureMessage,
+  renderScheduledWakeupMessage,
   renderTriggerActivityMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
@@ -82,6 +83,24 @@ import {
   buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
+import {
+  ACCEPTED_DELAY_UNITS_HINT,
+  ACCEPTED_TIMESTAMP_HINT,
+  MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
+  MAXIMUM_WAKEUP_PROMPT_LENGTH,
+  MINIMUM_WAKEUP_DELAY_SECONDS,
+  WakeupInputError,
+  cancelWorkstreamWakeup,
+  countPendingWorkstreamWakeups,
+  createWorkstreamWakeup,
+  deleteUnarmedWorkstreamWakeup,
+  findWorkstreamWakeupByIdempotencyKey,
+  formatWakeupLocalTime,
+  listPendingWorkstreamWakeups,
+  loadWorkstreamWakeup,
+  refreshWorkspaceSchedulerAlarm,
+  resolveWakeupInstant,
+} from "./workstream-wakeup-service";
 import {
   admitInlineChildAttempt,
   assertInlineChildAttemptOwned,
@@ -2201,6 +2220,10 @@ async function createInlineChildHarnessSurface(options: {
     .filter((tool) => tool.definition.mode === "read")
     .filter((tool) => !tool.definition.capability.startsWith("memory."))
     .filter((tool) => !tool.definition.capability.startsWith("table."))
+    // A sub-agent runs one bounded read-only investigation and cannot schedule
+    // anything, so its parent's wake-ups are context it can neither use nor act
+    // on. The write half is already excluded by the read-only filter above.
+    .filter((tool) => !tool.definition.capability.startsWith("workstream.wakeup."))
     .filter((tool) =>
       options.parentInput.reason !== "inbound_email"
       || !tool.definition.capability.startsWith("web."))
@@ -3042,6 +3065,20 @@ async function loadRunPromptContext(
     };
     memoryQueryParts.push(JSON.stringify(triggerContext));
     triggerMessage = renderTriggerActivityMessage(triggerContext);
+  }
+  if (input.scheduledWakeupId) {
+    const wakeup = await loadWorkstreamWakeup(env, input.workspaceId, input.scheduledWakeupId);
+    // Re-read against this work stream rather than trusting the workflow input:
+    // the id travels through a durable parameter that outlives the row it names.
+    if (!wakeup || wakeup.workstream_id !== input.workstreamId) {
+      throw new Error("scheduled_wakeup_context_not_found");
+    }
+    memoryQueryParts.push(wakeup.prompt);
+    triggerMessage = renderScheduledWakeupMessage({
+      prompt: wakeup.prompt,
+      scheduledAt: wakeup.created_at,
+      dueAt: wakeup.due_at,
+    });
   }
   const frozenMemory = await freezeRunMemoryContext(
     env,
@@ -4290,9 +4327,14 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     modelId: "avalon_workstream",
     shortWireName: "workstream",
     displayName: "Workstream",
-    searchAliases: ["task", "resources", "artifacts", "participants", "sub-agent"],
-    description: "Read and update the current workstream, its resources, artifacts, and execution lifecycle.",
-    systemMessage: "Use these tools only for the current authorized workstream and its attached resources.",
+    searchAliases: ["task", "resources", "artifacts", "participants", "sub-agent", "wake up", "later", "remind", "schedule"],
+    description: "Read and update the current workstream, its resources, artifacts, and execution lifecycle, including waking it up later to act on a prompt.",
+    systemMessage: [
+      "Use these tools only for the current authorized workstream and its attached resources.",
+      "Use workstream_schedule_wakeup when work genuinely has to happen later — waiting on an external result, or a time a person named — instead of promising it in text. Do the work now when it can be done now.",
+      "Write a wake-up prompt for a run that cannot see this conversation: state the task, its target, and what finishing looks like.",
+      "Check workstream_list_wakeups before scheduling another wake-up so you do not duplicate one, and cancel a wake-up that a later turn made unnecessary.",
+    ].join(" "),
     tools: workstreamTools,
     preload: true,
     explicit: true,
@@ -4320,6 +4362,43 @@ function createAvalonWebPlugin(tools: HarnessTool[]): HarnessPlugin | null {
   };
 }
 
+/**
+ * The zones a run reads local time in.
+ *
+ * `local` is what "5:26pm" means without further qualification: the acting
+ * person's zone for a user run, the workspace's for a workspace run. Both
+ * `core_current_time` and the wake-up tools resolve it the same way, so a model
+ * that checks the time and then schedules against it gets one consistent
+ * answer.
+ */
+async function runLocalTimezones(
+  env: Pick<Env, "DB">,
+  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "executionPrincipal">,
+  requestedTimezone?: string,
+): Promise<{ local: string; workspace: string }> {
+  const configuredWorkspaceTimezone = (await env.DB.prepare(
+    "SELECT timezone FROM workspaces WHERE id = ?",
+  ).bind(input.workspaceId).first<{ timezone: string }>())?.timezone ?? null;
+  const workspace = canonicalIanaTimezone(configuredWorkspaceTimezone ?? "");
+  let configuredUserTimezone: string | null = null;
+  if (!requestedTimezone && input.executionPrincipal.type === "user") {
+    configuredUserTimezone = (await env.DB.prepare(
+      "SELECT timezone FROM users WHERE id = ?",
+    ).bind(input.executionPrincipal.userId).first<{ timezone: string }>())?.timezone ?? null;
+  }
+  return {
+    local: canonicalIanaTimezone(requestedTimezone ?? configuredUserTimezone ?? workspace),
+    workspace,
+  };
+}
+
+const ScheduleWakeupInputSchema = z.object({
+  prompt: z.string().min(1).max(MAXIMUM_WAKEUP_PROMPT_LENGTH),
+  delay: z.string().min(1).max(60).optional(),
+  at: z.string().min(1).max(40).optional(),
+  timezone: z.string().min(1).max(100).optional(),
+}).strict();
+
 function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   const principalUserId = input.executionPrincipal.type === "user"
     ? input.executionPrincipal.userId
@@ -4329,20 +4408,8 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
       execute: async (raw) => {
         const args = z.object({ timezone: z.string().min(1).max(100).optional() }).parse(raw);
-        const configuredWorkspaceTimezone = (await env.DB.prepare(
-          "SELECT timezone FROM workspaces WHERE id = ?",
-        ).bind(input.workspaceId).first<{ timezone: string }>())?.timezone ?? null;
-        const workspaceTimezone = canonicalIanaTimezone(configuredWorkspaceTimezone ?? "");
-        let configuredUserTimezone: string | null = null;
-        if (!args.timezone && input.executionPrincipal.type === "user") {
-          configuredUserTimezone = (await env.DB.prepare(
-            "SELECT timezone FROM users WHERE id = ?",
-          ).bind(input.executionPrincipal.userId).first<{ timezone: string }>())?.timezone ?? null;
-        }
-        const timezone = canonicalIanaTimezone(
-          args.timezone ?? configuredUserTimezone ?? workspaceTimezone,
-        );
-        const text = easyEnglishCurrentTime(new Date(), timezone, workspaceTimezone);
+        const zones = await runLocalTimezones(env, input, args.timezone);
+        const text = easyEnglishCurrentTime(new Date(), zones.local, zones.workspace);
         return { output: text, summary: text };
       },
     },
@@ -4470,6 +4537,252 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
            ON CONFLICT(id) DO NOTHING`,
         ).bind(id, input.workspaceId, input.workstreamId, input.harnessRunId, args.artifactType, args.title, key, args.content.slice(0, 1_000), at, at).run();
         return { output: { artifactId: id, title: args.title }, summary: `Created artifact “${args.title}”`, providerOperationId: id };
+      },
+    },
+    {
+      definition: {
+        name: "schedule_wakeup",
+        description: [
+          "Schedule this work stream to wake up later and act on a prompt you write now.",
+          "Give exactly one of delay or at.",
+          "Relative example: {\"prompt\": \"Check whether the deploy finished and summarize the result\", \"delay\": \"2 hours\"}.",
+          "Specific example: {\"prompt\": \"Send the launch recap\", \"at\": \"2026-08-12T17:26\", \"timezone\": \"America/Los_Angeles\"}.",
+          "An at value that already carries a UTC offset or Z is absolute and must be sent without timezone.",
+          "Write the prompt for a future run that cannot see this conversation: state the task, the target, and what done looks like.",
+        ].join(" "),
+        capability: "workstream.wakeup.write",
+        mode: "write",
+        idempotency: "provider_key",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            prompt: {
+              type: "string",
+              minLength: 1,
+              maxLength: MAXIMUM_WAKEUP_PROMPT_LENGTH,
+              description: "The instruction delivered to the run that this wake-up starts.",
+            },
+            delay: {
+              type: "string",
+              minLength: 1,
+              maxLength: 60,
+              description: `Wake up this long from now, for example "5 minutes", "90 sec", "2 hours", "1h30m", or the ISO-8601 duration "PT2H30M". ${ACCEPTED_DELAY_UNITS_HINT} The maximum is one year.`,
+            },
+            at: {
+              type: "string",
+              minLength: 1,
+              maxLength: 40,
+              description: `Wake up at this exact ISO-8601 timestamp, which must be at least ${MINIMUM_WAKEUP_DELAY_SECONDS} seconds from now. ${ACCEPTED_TIMESTAMP_HINT}`,
+            },
+            timezone: {
+              type: "string",
+              minLength: 1,
+              maxLength: 100,
+              description: "IANA timezone the at value is read in, for example America/Los_Angeles. Omit to use this work stream's local zone, and omit whenever at carries an offset.",
+            },
+          },
+          required: ["prompt"],
+        },
+      },
+      execute: async (raw, context) => {
+        const args = ScheduleWakeupInputSchema.parse(raw);
+        const providerIdempotencyKey = requireProviderIdempotencyKey(
+          "workstream_schedule_wakeup",
+          context.providerIdempotencyKey,
+        );
+        const zones = await runLocalTimezones(env, input);
+        let resolved;
+        try {
+          resolved = resolveWakeupInstant({
+            delay: args.delay,
+            at: args.at,
+            timezone: args.timezone,
+            defaultTimezone: zones.local,
+            now: new Date(),
+          });
+        } catch (error) {
+          if (!(error instanceof WakeupInputError)) throw error;
+          return {
+            output: { error: error.code, reason: error.message, hint: error.hint },
+            summary: `Could not schedule a wake-up: ${error.message}`,
+          };
+        }
+
+        // A replay resolves to the wake-up the first attempt persisted. Check it
+        // before the cap, so a retry cannot be refused by a limit its own first
+        // attempt filled.
+        const replayed = await findWorkstreamWakeupByIdempotencyKey(
+          env,
+          input.workspaceId,
+          input.workstreamId,
+          providerIdempotencyKey,
+        );
+        if (replayed) {
+          // Re-arm on the replay too. The most likely reason this receipt is
+          // being retried at all is that the first attempt inserted the row and
+          // then failed on the refresh below, and that attempt is the one that
+          // owed the workspace an alarm. Refresh is idempotent — it just
+          // recomputes the earliest due target — so paying it again is cheap
+          // next to a pending wake-up in a workspace with nothing else due,
+          // where no later alarm would ever arrive to notice the row.
+          if (replayed.status === "pending") {
+            await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+          }
+          const persistedDueAt = new Date(replayed.dueAt);
+          return {
+            output: {
+              wakeupId: replayed.wakeupId,
+              dueAt: replayed.dueAt,
+              dueAtLocal: formatWakeupLocalTime(persistedDueAt, resolved.timezone),
+              status: replayed.status,
+              prompt: replayed.prompt,
+            },
+            summary: `Wake-up already scheduled for ${formatWakeupLocalTime(persistedDueAt, resolved.timezone)}`,
+            providerOperationId: replayed.wakeupId,
+          };
+        }
+
+        const pending = await countPendingWorkstreamWakeups(
+          env,
+          input.workspaceId,
+          input.workstreamId,
+        );
+        if (pending >= MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM) {
+          return {
+            output: {
+              error: "wakeup_limit_reached",
+              reason: `This work stream already has ${pending} pending wake-ups, the maximum of ${MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM}`,
+              hint: "Cancel a pending wake-up with workstream_cancel_wakeup before scheduling another.",
+              pending: await listPendingWorkstreamWakeups(env, input.workspaceId, input.workstreamId),
+            },
+            summary: `Cannot schedule a wake-up: ${pending} are already pending`,
+          };
+        }
+
+        const { wakeupId } = await createWorkstreamWakeup(env, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          harnessRunId: input.harnessRunId,
+          executionPrincipal: input.executionPrincipal,
+          prompt: args.prompt,
+          dueAt: resolved.dueAt,
+          idempotencyKey: providerIdempotencyKey,
+        });
+        try {
+          await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+        } catch (error) {
+          // The row exists but nothing is armed to fire it, and a workspace with
+          // no other due target will never wake to notice. Roll the insert back
+          // so the model is told the wake-up was not scheduled, rather than
+          // being told it was and having it never arrive. If this delete also
+          // fails, the replay branch above re-arms on the retry.
+          await deleteUnarmedWorkstreamWakeup(env, {
+            workspaceId: input.workspaceId,
+            wakeupId,
+          }).catch(() => undefined);
+          throw error;
+        }
+        const dueAtLocal = formatWakeupLocalTime(resolved.dueAt, resolved.timezone);
+        return {
+          output: {
+            wakeupId,
+            dueAt: resolved.dueAt.toISOString(),
+            dueAtLocal,
+            timezone: resolved.timezone,
+            prompt: args.prompt,
+            pendingWakeups: pending + 1,
+          },
+          summary: `Scheduled a wake-up for ${dueAtLocal}`,
+          providerOperationId: wakeupId,
+        };
+      },
+    },
+    {
+      definition: {
+        name: "list_wakeups",
+        description: "List this work stream's pending wake-ups with their IDs, due times, and prompts. Check this before scheduling another one so you do not duplicate a wake-up that already exists.",
+        capability: "workstream.wakeup.read",
+        mode: "read",
+        idempotency: "safe",
+        inputSchema: { type: "object", additionalProperties: false, properties: {} },
+      },
+      execute: async () => {
+        const pending = await listPendingWorkstreamWakeups(
+          env,
+          input.workspaceId,
+          input.workstreamId,
+        );
+        const zones = await runLocalTimezones(env, input);
+        return {
+          output: {
+            timezone: zones.local,
+            wakeups: pending.map((wakeup) => ({
+              ...wakeup,
+              dueAtLocal: formatWakeupLocalTime(new Date(wakeup.dueAt), zones.local),
+            })),
+          },
+          summary: pending.length === 1
+            ? "1 pending wake-up"
+            : `${pending.length} pending wake-ups`,
+        };
+      },
+    },
+    {
+      definition: {
+        name: "cancel_wakeup",
+        description: "Cancel one pending wake-up in this work stream. Use the wakeupId returned by workstream_schedule_wakeup or workstream_list_wakeups.",
+        capability: "workstream.wakeup.write",
+        mode: "write",
+        idempotency: "provider_key",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            wakeupId: {
+              type: "string",
+              format: "uuid",
+              description: "The wake-up to cancel, as returned by workstream_list_wakeups.",
+            },
+          },
+          required: ["wakeupId"],
+        },
+      },
+      execute: async (raw) => {
+        const args = z.object({ wakeupId: z.string().uuid() }).strict().parse(raw);
+        const outcome = await cancelWorkstreamWakeup(env, {
+          workspaceId: input.workspaceId,
+          workstreamId: input.workstreamId,
+          wakeupId: args.wakeupId,
+        });
+        if (outcome === "not_found") {
+          return {
+            output: {
+              error: "wakeup_not_found",
+              reason: "No wake-up with that ID belongs to this work stream",
+              hint: "Call workstream_list_wakeups for the pending wake-up IDs.",
+              pending: await listPendingWorkstreamWakeups(env, input.workspaceId, input.workstreamId),
+            },
+            summary: "Could not cancel a wake-up: no such wake-up in this work stream",
+          };
+        }
+        if (outcome === "not_pending") {
+          const row = await loadWorkstreamWakeup(env, input.workspaceId, args.wakeupId);
+          return {
+            output: {
+              error: "wakeup_not_pending",
+              reason: `That wake-up is already ${row?.status ?? "resolved"}`,
+              hint: "Only a pending wake-up can be cancelled. Call workstream_list_wakeups for the ones that still are.",
+            },
+            summary: "Could not cancel a wake-up: it is no longer pending",
+          };
+        }
+        await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+        return {
+          output: { wakeupId: args.wakeupId, status: "cancelled" },
+          summary: "Cancelled a scheduled wake-up",
+          providerOperationId: args.wakeupId,
+        };
       },
     },
     {
