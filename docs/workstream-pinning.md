@@ -91,16 +91,25 @@ action reads as the row vanishing from under the cursor, which is the likely cas
 rather than the exotic one: somebody pins a work stream *because* they were tired
 of hunting for it, which means they were scrolled down when they did it.
 
-Two details carry the behaviour. `scrollIntoView({ block: 'nearest' })` scrolls
+Three details carry the behaviour. `scrollIntoView({ block: 'nearest' })` scrolls
 the least it can, so a row already on screen is not moved at all, and the motion
-is `smooth` unless the reader has asked for reduced motion. And the scroll waits
-for the *list* to carry the change rather than for the request to resolve: the
-reveal records which side of the sidebar the row was moved to, and the effect
-does nothing until the work stream it is holding actually reports that
-`pinPosition`. The cache write reaches the component through React Query's
+is `smooth` unless the reader has asked for reduced motion.
+
+The scroll waits for the *list* to carry the change rather than for the request
+to resolve: the reveal records which side of the sidebar the row was moved to,
+and the effect does nothing until the work stream it is holding actually reports
+that `pinPosition`. The cache write reaches the component through React Query's
 scheduler a tick or more after the action resolves, so a scroll on the first
 render after the await lands on the row's *old* position and is left pointing at
 empty space — the same failure, one render earlier.
+
+And only the action whose response was applied arms the reveal at all.
+`onPinWorkstream` answers whether its response was the one that took the list,
+because the shell discards a response a later pin superseded: without that,
+two pins made close together let the older completion drag the viewport back to
+a row the reader has already finished with. A reveal is also dropped rather than
+held when the row leaves the list entirely, so it cannot sit armed and seize the
+viewport if that work stream reappears on some later poll.
 
 ## Invariants
 
@@ -237,6 +246,12 @@ the action asked for. Any future path that moves a row between these sections �
 a bulk pin, an unpin triggered by archiving — has to set that pair or the row
 will move without being followed. Rows carry `data-workstream-id` so the sidebar
 can find one after re-rendering; it is a hook for this, not a test seam.
+
+`onPinWorkstream` now returns whether its response was applied rather than
+`void`, which makes "did this action actually change anything" a question the
+sidebar can ask. Anything else that arms the reveal has to answer it too:
+scrolling on a superseded response points the viewport at work the reader has
+moved past.
 
 ### 2026-08-11 — There is no limit on how many work streams a person may pin
 

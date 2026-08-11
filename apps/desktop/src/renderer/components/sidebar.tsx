@@ -48,8 +48,14 @@ interface SidebarProps {
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
-  /** Pin or unpin for the signed-in person, on every device they use. */
-  onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<void>;
+  /**
+   * Pin or unpin for the signed-in person, on every device they use.
+   *
+   * Resolves to whether the response was the one applied — `false` when a later
+   * pin was issued behind it and took the list instead. Only the action that
+   * won gets to move the viewport; see `reveal`.
+   */
+  onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<boolean>;
   /** The pinned list's new order, in full, after a drag or a keyboard move. */
   onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
@@ -308,7 +314,7 @@ function WorkstreamRow({
         <div
           className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
           // How the sidebar finds this row again after pinning has moved it to
-          // a different section — see `revealWorkstreamId`.
+          // a different section — see the `reveal` effect.
           data-workstream-id={workstream.id}
           draggable={drag !== undefined}
           onDragEnd={drag
@@ -750,12 +756,16 @@ export function Sidebar({
   const togglePin = async (workstream: WorkstreamSummary, pinned: boolean): Promise<void> => {
     setPinPendingWorkstreamId(workstream.id);
     try {
-      await onPinWorkstream(workstream, pinned);
       // The row has just moved to a different section, which is off screen
       // whenever the reader had scrolled down to reach it — the ordinary case,
       // since being tired of hunting for something is why anyone pins it. Left
       // alone, the action reads as the row vanishing under the cursor.
-      setReveal({ id: workstream.id, pinned });
+      //
+      // Only when this response is the one that took the list, though. Two pins
+      // made close together resolve in either order, and the older one landing
+      // last would otherwise drag the viewport back to the row the reader has
+      // already finished with.
+      if (await onPinWorkstream(workstream, pinned)) setReveal({ id: workstream.id, pinned });
     } catch (error) {
       setMenuError({
         title: pinned ? 'Work stream could not be pinned' : 'Work stream could not be unpinned',
@@ -894,7 +904,15 @@ export function Sidebar({
   useEffect(() => {
     if (reveal === null) return;
     const row = workstreams.find((workstream) => workstream.id === reveal.id);
-    if (row === undefined || (row.pinPosition !== null) !== reveal.pinned) return;
+    // A row the list does not carry at all is not one that is about to arrive:
+    // every path that arms this acts on a row the reader just right-clicked.
+    // Waiting for it would leave the reveal armed indefinitely, ready to seize
+    // the viewport if that work stream ever reappeared.
+    if (row === undefined) {
+      setReveal(null);
+      return;
+    }
+    if ((row.pinPosition !== null) !== reveal.pinned) return;
     setReveal(null);
     const rendered = [...scrollRef.current?.querySelectorAll('[data-workstream-id]') ?? []]
       .find((candidate) => candidate.getAttribute('data-workstream-id') === reveal.id);
