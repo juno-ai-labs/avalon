@@ -1836,6 +1836,66 @@ describe("connectors", () => {
       code: "invalid_payload",
       details: { reason: "wrong_id_family", expected: "spreadsheet" }
     });
+    // The remedy names the tool to call, not a description of it: the caller
+    // can match `sheets.read_spreadsheet` against its own prefixed wire name.
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      {
+        connection: googleConnection(["docs.read", "drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toThrow(/sheets\.read_spreadsheet/u);
+  });
+
+  it("names the family from every Docs and Sheets tool that takes an id, not just the two readers", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      // Drive answers what the id really is; every other host refuses it.
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({
+          mimeType: "application/vnd.google-apps.document",
+          isAppAuthorized: true,
+          capabilities: { canEdit: true }
+        });
+      }
+      return googleJson({ error: { code: 400, message: "Invalid" } }, 400);
+    };
+    const context = {
+      connection: googleConnection(["drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(2_000)
+    };
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["sheets.read_values", { spreadsheetId: "a-doc", range: "A1:B2" }],
+      ["sheets.update_values", { spreadsheetId: "a-doc", range: "A1:B2", values: [["x"]] }],
+      ["sheets.append_values", { spreadsheetId: "a-doc", range: "A1:B2", values: [["x"]] }]
+    ];
+    for (const [tool, args] of calls) {
+      await expect(googleAdapter(fetcher).executeTool(tool, args, context))
+        .rejects.toMatchObject({ details: { reason: "wrong_id_family", expected: "document" } });
+    }
+  });
+
+  it("declares the same Drive file types it parses", () => {
+    const search = createGoogleConnector({
+      clientId: "google-client",
+      clientSecret: "google-secret",
+      redirectUri: "https://avalon.example/oauth/google/callback"
+    }).manifest.tools.find((tool) => tool.name === "drive.search");
+    const schema = search?.inputSchema as { properties: { fileType: { enum: string[] } } };
+    // The advertised vocabulary and the one the executor enforces are the same
+    // list, so a type added to one cannot be missing from the other.
+    expect(schema.properties.fileType.enum).toEqual([
+      "document",
+      "spreadsheet",
+      "presentation",
+      "form",
+      "drawing",
+      "folder",
+      "pdf"
+    ]);
   });
 
   it("leaves the provider failure alone when Drive cannot say what the id is", async () => {
