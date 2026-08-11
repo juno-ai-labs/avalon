@@ -36,6 +36,7 @@ import {
   type StructuredModelDiagnostic,
   toolActivityName,
 } from "@avalon/agent-harness";
+import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import {
   ElicitationSchema,
   ModelPluginIdSchema,
@@ -4910,7 +4911,7 @@ function createFirecrawlWebTools(env: Env): HarnessTool[] {
     recency: z.enum(["day", "week", "month", "year"]).optional(),
   });
   const fetchInputSchema = z.object({
-    url: z.string().url(),
+    url: HttpUrlSchema,
     must_be_fresh: z.boolean().optional(),
   });
   const client = new FirecrawlClient({ apiKey });

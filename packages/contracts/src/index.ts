@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
+import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -48,7 +49,7 @@ export const UserSchema = z.object({
   id: IdSchema,
   email: z.string().email(),
   name: z.string().min(1),
-  avatarUrl: z.string().url().nullable(),
+  avatarUrl: HttpUrlSchema.nullable(),
   timezone: IanaTimezoneSchema,
   createdAt: TimestampSchema
 });
@@ -113,7 +114,7 @@ export const CreateWorkspaceInvitationRequestSchema = z.object({
 });
 export const CreateWorkspaceInvitationResponseSchema = z.object({
   invitation: WorkspaceInvitationSchema,
-  inviteUrl: z.string().url(),
+  inviteUrl: HttpUrlSchema,
   emailDelivery: z.enum(["sent", "skipped"])
 });
 export const AcceptWorkspaceInvitationRequestSchema = z.object({
@@ -163,7 +164,7 @@ export const ExternalActorSchema = z.object({
   providerAccountId: z.string().min(1).max(200),
   providerUserId: z.string().min(1).max(200),
   displayName: z.string().min(1).max(180),
-  avatarUrl: z.string().url().nullable(),
+  avatarUrl: HttpUrlSchema.nullable(),
 });
 
 export const MessageAuthorSchema = z.discriminatedUnion("type", [
@@ -178,7 +179,7 @@ export const MentionSchema = z.object({
   userId: IdSchema.nullable(),
   connectorType: z.string().max(80).nullable(),
   displayName: z.string().min(1).max(180).nullable().optional(),
-  avatarUrl: z.string().url().nullable().optional(),
+  avatarUrl: HttpUrlSchema.nullable().optional(),
   startOffset: z.number().int().nonnegative(),
   endOffset: z.number().int().positive()
 });
@@ -217,7 +218,7 @@ export const ResourceSchema = z.object({
   providerResourceId: z.string().max(500).nullable(),
   title: z.string().min(1).max(300),
   mimeType: z.string().max(160).nullable(),
-  canonicalUrl: z.string().url().nullable(),
+  canonicalUrl: HttpUrlSchema.nullable(),
   watchEnabled: z.boolean(),
   watchStatus: z.enum(["watching", "paused", "unsupported", "error"]),
   lastHydratedAt: TimestampSchema.nullable(),
@@ -853,7 +854,7 @@ export const SessionSchema = z.object({
   expiresAt: TimestampSchema,
   user: UserSchema,
   workspace: WorkspaceSchema.nullable(),
-  apiBaseUrl: z.string().url()
+  apiBaseUrl: HttpUrlSchema
 });
 
 export const DesktopExchangeRequestSchema = z.object({
@@ -866,7 +867,7 @@ export const DesktopExchangeRequestSchema = z.object({
 export const ConnectorOAuthProviderSchema = z.enum(ConnectorOAuthProviders);
 export const ConnectorOAuthAttemptStatusSchema = z.enum(["pending", "succeeded", "denied", "failed"]);
 export const ConnectorOAuthStartSchema = z.object({
-  url: z.string().url(),
+  url: HttpUrlSchema,
   attemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
 });
 export const ConnectorOAuthAttemptSchema = z.object({
@@ -1140,7 +1141,7 @@ export const SlackOriginAttachmentSchema = z.object({
   title: z.string().max(500).nullable(),
   mimeType: z.string().max(255).nullable(),
   fileType: z.string().max(120).nullable(),
-  permalink: z.string().url().max(2000).nullable()
+  permalink: httpUrlSchema(2000).nullable()
 }).strict();
 
 export const SlackOriginNearbyMessageSchema = z.object({

@@ -1,5 +1,4 @@
 import {
-  OpenRouterClient,
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
 } from "@avalon/agent-harness";
@@ -21,7 +20,8 @@ import type { Env } from "../env";
 import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
-import { resolveAgentModelRouting, scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 
 interface ActivityRow {
@@ -562,8 +562,9 @@ async function triggerMatches(
   if (!matchesFilters(activity, trigger.deterministicPrefilter)) return false;
   if (!env.OPENROUTER_API_KEY) return false;
 
-  const client = await structuredClient(env, activity.workspace_id);
-  const result = await client.structured({
+  const { result } = await runStructuredInference(env, {
+    role: "activity_structured",
+    context: { workspaceId: activity.workspace_id },
     messages: renderSemanticTriggerMessages({
       condition: trigger.condition,
       activity: {
@@ -737,8 +738,9 @@ async function routeContextually(
   const eligible = candidates.results.filter((candidate) => !excludedWorkstreamIds.has(candidate.id));
   if (eligible.length === 0) return false;
 
-  const client = await structuredClient(env, activity.workspace_id);
-  const result = await client.structured({
+  const { result } = await runStructuredInference(env, {
+    role: "activity_structured",
+    context: { workspaceId: activity.workspace_id },
     messages: renderActivityRoutingMessages({
       activity: {
         provider: activity.provider,
@@ -774,17 +776,6 @@ async function routeContextually(
     matchedEntities: result.matchedEntities,
   });
   return true;
-}
-
-async function structuredClient(env: Env, workspaceId: string): Promise<OpenRouterClient> {
-  const routing = await resolveAgentModelRouting(env, "activity_structured", { workspaceId });
-  return new OpenRouterClient({
-    apiKey: env.OPENROUTER_API_KEY,
-    primaryModel: routing.model,
-    fallbackModels: routing.fallbackModels,
-    appUrl: env.PUBLIC_API_BASE_URL,
-    appName: "Avalon"
-  });
 }
 
 async function isWorkstreamVisibleToUser(

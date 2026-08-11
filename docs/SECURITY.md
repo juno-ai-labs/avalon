@@ -33,6 +33,8 @@ Every API resource query includes `workspace_id`. Mutations additionally resolve
 
 WebSocket upgrades require an exact match against `ALLOWED_ORIGINS`; missing origins and suffix lookalikes are rejected before the short-lived socket ticket is forwarded to a room. Tickets bind user, workspace, work stream, region, and one-time ID, and the room atomically rejects reuse.
 
+Renderer WebSockets may be constructed only from a URL returned by the authenticated work-stream or transcription ticket endpoints; ESLint enforces that provenance at each production constructor. Runtime URL schemas likewise name their accepted scheme contract explicitly—HTTP(S), HTTPS-only, `avalon:`, or the intentional HTTP(S)/Avalon handoff union. Bare Zod URL validation is forbidden because it accepts non-web schemes such as `javascript:` and `data:` while hiding the product boundary being enforced.
+
 ## Side effects and retries
 
 Tool arguments are runtime-validated and canonically hashed. The system records a write as started before provider execution and reuses completed results on workflow retry. If a process stops after a provider write but before confirmation is stored, the invocation becomes `ambiguous`, the work stream becomes `needs_input`, and the write is not automatically repeated.
