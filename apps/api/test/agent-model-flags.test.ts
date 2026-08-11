@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HYPERSIGHT_MODEL, type Env } from "../src/env";
 import type { AgentModelRouting } from "../src/services/agent-model-flags";
 import {
@@ -9,6 +10,25 @@ import {
   resolveAgentModelRouting,
   scheduledWorkstreamModel,
 } from "../src/services/agent-model-flags";
+import type * as FlagTargetingModule from "../src/services/flag-targeting-attributes";
+import type { FlagTargetingAttributes } from "../src/services/flag-targeting-attributes";
+import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+
+/**
+ * Lets one case serve attributes the real loader would never produce — a key
+ * that collides with the run's identity — while every other case keeps the
+ * loader that reads the seeded database.
+ */
+const servedAttributes = vi.hoisted(() => ({ value: null as FlagTargetingAttributes | null }));
+vi.mock("../src/services/flag-targeting-attributes", async (importOriginal) => {
+  const actual = await importOriginal<typeof FlagTargetingModule>();
+  return {
+    ...actual,
+    loadFlagTargetingAttributes: async (env: Env, subject: Parameters<typeof actual.loadFlagTargetingAttributes>[1]) =>
+      servedAttributes.value ?? actual.loadFlagTargetingAttributes(env, subject),
+  };
+});
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
 // quiet the way it does in development.
@@ -39,7 +59,59 @@ function serving(value: unknown, variant = "current"): DetailsStub {
   return async (flagKey) => ({ flagKey, value, variant, reason: "STATIC" });
 }
 
+/**
+ * A workspace, its owner, and one work stream — enough for every attribute the
+ * resolver adds to the evaluation context to have a fact behind it.
+ */
+const openDatabases: DatabaseSync[] = [];
+
+function seededEnv(env: Env): Env {
+  const database = migratedSqliteDatabase();
+  // Closed by `afterEach` rather than by the caller: a failing assertion throws
+  // past any close at the end of a case and leaks the handle into the rest of
+  // the file.
+  openDatabases.push(database);
+  const at = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at)
+       VALUES (?1, 'google-1', 'ada@dogfood.example', 'Ada Lovelace', NULL, ?2, ?2)`,
+    )
+    .run("00000000-0000-4000-8000-000000000011", at);
+  database
+    .prepare(
+      `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+       VALUES (?1, 'Dogfood', 'dogfood', 'global', ?2, ?3, ?3)`,
+    )
+    .run("ws-1", "00000000-0000-4000-8000-000000000011", at);
+  database
+    .prepare(
+      `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+       VALUES (?1, ?2, 'owner', 'active', ?3)`,
+    )
+    .run("ws-1", "00000000-0000-4000-8000-000000000011", at);
+  database
+    .prepare(
+      `INSERT INTO workstreams (
+         id, workspace_id, title, objective, origin_type, created_by_user_id,
+         automation_subscription_id, automation_run_id, planned_for, harness_status,
+         next_sequence_number, last_activity_at, created_at, updated_at, archived_at
+       ) VALUES (?1, ?2, 'Ship it', '', 'ad_hoc', ?3, NULL, NULL, NULL, 'idle', 1, ?4, ?4, ?4, NULL)`,
+    )
+    .run("wst-1", "ws-1", "00000000-0000-4000-8000-000000000011", at);
+  return { ...env, DB: sqliteD1(database) };
+}
+
 describe("agent model flags", () => {
+  beforeEach(() => {
+    clearFlagTargetingAttributeCache();
+    servedAttributes.value = null;
+  });
+
+  afterEach(() => {
+    while (openDatabases.length > 0) openDatabases.pop()?.close();
+  });
+
   it("gives every agent its own flag key", () => {
     const keys = AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role]);
     expect(new Set(keys).size).toBe(AGENT_MODEL_ROLES.length);
@@ -94,6 +166,106 @@ describe("agent model flags", () => {
         userId: "usr-1",
       },
     );
+  });
+
+  // Identifiers alone target nothing a human can reason about: a rule has to be
+  // able to say "the dogfooding workspace", "teams", "work streams a person
+  // started" without anybody pasting a uuid into Flagship.
+  it("describes the workspace, the person, and the work stream to targeting rules", async () => {
+    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "DEFAULT",
+    }));
+    const env = seededEnv(envWithFlags(getObjectDetails));
+
+    await resolveAgentModelRouting(env, "workstream", {
+      workspaceId: "ws-1",
+      workstreamId: "wst-1",
+      userId: "00000000-0000-4000-8000-000000000011",
+    });
+
+    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
+      agent: "workstream",
+      region: "global",
+      appEnv: "production",
+      workspaceId: "ws-1",
+      workstreamId: "wst-1",
+      userId: "00000000-0000-4000-8000-000000000011",
+      workspaceSlug: "dogfood",
+      workspaceMemberCount: 1,
+      workspaceAgeDays: 0,
+      workspaceOwnerEmailDomain: "dogfood.example",
+      userEmailDomain: "dogfood.example",
+      userRole: "owner",
+      workstreamOrigin: "ad_hoc",
+      workstreamScope: "workspace",
+      workstreamFromOpportunity: false,
+      workstreamIsSystem: false,
+      workstreamCreatedByUserId: "00000000-0000-4000-8000-000000000011",
+      workstreamCreatorEmailDomain: "dogfood.example",
+    });
+  });
+
+  // An attribute is a fact about the subject, never a redefinition of it: the
+  // ids and the region are what bucketing and per-region staging depend on.
+  // Served deliberately colliding keys, because no attribute the real loader
+  // emits is named like an identity field — without a collision this asserts
+  // nothing about the spread order it exists to pin down.
+  it("keeps an attribute from shadowing the identity the evaluation buckets on", async () => {
+    const getObjectDetails = vi.fn<DetailsStub>(async (flagKey, defaultValue) => ({
+      flagKey,
+      value: defaultValue,
+      reason: "DEFAULT",
+    }));
+    servedAttributes.value = {
+      workspaceId: "spoofed-workspace",
+      workstreamId: "spoofed-workstream",
+      userId: "spoofed-user",
+      region: "eu",
+      appEnv: "development",
+      agent: "spoofed-agent",
+    };
+
+    await resolveAgentModelRouting(envWithFlags(getObjectDetails), "workstream", {
+      workspaceId: "ws-1",
+      workstreamId: "wst-1",
+      userId: "usr-1",
+    });
+
+    expect(getObjectDetails.mock.calls[0]?.[2]).toEqual({
+      agent: "workstream",
+      region: "global",
+      appEnv: "production",
+      workspaceId: "ws-1",
+      workstreamId: "wst-1",
+      userId: "usr-1",
+    });
+  });
+
+  // The field answers "which facts did this evaluation actually have?", so the
+  // identity keys — present on every evaluation — would only bury the answer.
+  it("logs the loaded attributes it resolved on, not the identity every run sends", async () => {
+    const debugged: string[] = [];
+    const debug = vi.spyOn(console, "debug").mockImplementation((entry: unknown) => {
+      debugged.push(JSON.stringify(entry));
+    });
+    const env = seededEnv({
+      ...envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] })),
+      LOG_LEVEL: "debug",
+    } as Env);
+
+    await resolveAgentModelRouting(env, "workstream", { workspaceId: "ws-1" });
+
+    const resolved = debugged.find((entry) => entry.includes("agent_model_flag_resolved"));
+    const attributes = (JSON.parse(resolved ?? "{}") as { attributes?: string }).attributes ?? "";
+    expect(attributes.split(",")).toEqual([
+      "workspaceAgeDays",
+      "workspaceMemberCount",
+      "workspaceOwnerEmailDomain",
+      "workspaceSlug",
+    ]);
+    debug.mockRestore();
   });
 
   it("uses the flag's OpenRouter model ids when the flag is served", async () => {
