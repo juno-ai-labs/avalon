@@ -2360,7 +2360,6 @@ function assertGoogleCapabilitiesGranted(
     ),
     "docs.read": has(
       GoogleCapabilityScopes.docsRead[0],
-      GoogleCapabilityScopes.docsWrite[0],
       "https://www.googleapis.com/auth/drive",
     ),
     "docs.write": has(
@@ -2369,7 +2368,6 @@ function assertGoogleCapabilitiesGranted(
     ),
     "sheets.read": has(
       GoogleCapabilityScopes.sheetsRead[0],
-      GoogleCapabilityScopes.sheetsWrite[0],
       "https://www.googleapis.com/auth/drive",
     ),
     "sheets.write": has(

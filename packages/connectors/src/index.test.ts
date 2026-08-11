@@ -571,6 +571,7 @@ describe("connectors", () => {
   });
 
   it("hydrates Google resources into bounded, provider-specific context", async () => {
+    let driveMetadataFields: string | null = null;
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
       if (url.pathname.endsWith("/threads/thread-1")) {
@@ -599,12 +600,15 @@ describe("connectors", () => {
         return new Response("Avalon text", { headers: { "content-type": "text/plain" } });
       }
       if (url.pathname.endsWith("/files/file-1")) {
+        driveMetadataFields = url.searchParams.get("fields");
         return googleJson({
           id: "file-1",
           name: "notes.txt",
           mimeType: "text/plain",
           size: "11",
-          modifiedTime: "2026-07-31T12:00:00Z"
+          modifiedTime: "2026-07-31T12:00:00Z",
+          isAppAuthorized: true,
+          capabilities: { canEdit: true }
         });
       }
       throw new Error(`Unexpected Google URL: ${url}`);
@@ -638,9 +642,12 @@ describe("connectors", () => {
     expect(drive).toMatchObject({
       resourceType: "drive_file",
       id: "file-1",
+      writableByAvalon: true,
       textContent: "Avalon text",
       contentTruncated: false
     });
+    expect(driveMetadataFields).toContain("isAppAuthorized");
+    expect(driveMetadataFields).toContain("capabilities(canEdit)");
   });
 
   it("exposes bounded scoped read tools without raw Gmail parts or PDF base64", async () => {
@@ -986,6 +993,9 @@ describe("connectors", () => {
           capabilities: { canEdit: false }
         });
       }
+      if (url.pathname.endsWith("/files/doc-hidden-from-app")) {
+        return googleJson({ error: { code: 404, message: "File not found" } }, 404);
+      }
       if ((init?.method ?? "GET") !== "GET") mutationUrls.push(url);
       throw new Error(`Unexpected Google mutation: ${url}`);
     };
@@ -1013,7 +1023,7 @@ describe("connectors", () => {
       principal,
       signal
     })).rejects.toMatchObject({
-      code: "provider_error",
+      code: "unsupported_capability",
       details: { reason: "drive_file_not_writable", isAppAuthorized: false, canEdit: true }
     });
     await expect(adapter.executeTool("sheets.update_values", {
@@ -1025,8 +1035,19 @@ describe("connectors", () => {
       principal,
       signal
     })).rejects.toMatchObject({
-      code: "provider_error",
+      code: "unsupported_capability",
       details: { reason: "drive_file_not_writable", isAppAuthorized: true, canEdit: false }
+    });
+    await expect(adapter.executeTool("docs.append_text", {
+      documentId: "doc-hidden-from-app",
+      text: "Do not write"
+    }, {
+      connection: googleConnection(["docs.write"]),
+      principal,
+      signal
+    })).rejects.toMatchObject({
+      code: "unsupported_capability",
+      details: { reason: "drive_file_not_writable", isAppAuthorized: false, canEdit: false }
     });
     expect(mutationUrls).toEqual([]);
   });
