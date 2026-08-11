@@ -87,13 +87,30 @@ test("rejects a route response that never meets its contract", () => {
   assert.match(messages[0].message, /contract schema/u);
 });
 
+test("rejects a parse that is not a contract's", () => {
+  // `.parse` alone is not evidence of a contract — the chain has to be rooted
+  // at a schema, or the rule passes on exactly the response it exists to catch.
+  for (const source of [
+    'routes.get("/", async (c) => c.json(JSON.parse(await service.raw())));',
+    'routes.get("/", async (c) => c.json(parser.parse(await service.raw())));',
+    // The context is named `context` in several handlers; a rule that only knew
+    // `c` would hold by naming convention rather than by checking anything.
+    'routes.get("/", async (context) => context.json(await service.list()));',
+  ]) {
+    assert.equal(lint(source, "require-validated-response").length, 1, source);
+  }
+});
+
 test("accepts a parsed response and a body the route owns", () => {
   for (const source of [
     'routes.get("/", async (c) => c.json(PageSchema.parse(await service.list())));',
-    'routes.get("/", async (c) => c.json(await SchemaWithAsync.parseAsync(value)));',
+    'routes.get("/", async (c) => c.json(WorkstreamSchema.shape.scope.parse(value)));',
+    'routes.get("/", async (c) => c.json(await AsyncPageSchema.parseAsync(value)));',
     'routes.post("/", async (c) => c.json({ ok: true }));',
     'routes.post("/", async (c) => c.json({ challenge: "" }, 200));',
     'routes.delete("/", async (c) => c.body(null, 204));',
+    // Reading a body takes no argument, so it is not a response.
+    'routes.get("/", async (c) => { const body = await response.json(); return c.json(PageSchema.parse(body)); });',
   ]) {
     assert.deepEqual(lint(source, "require-validated-response"), [], source);
   }

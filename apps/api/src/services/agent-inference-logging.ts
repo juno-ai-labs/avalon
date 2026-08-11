@@ -131,7 +131,6 @@ export function createAgentInferenceLogger(
           fallback_attempt: attempt.cursor.stageIndex,
           attempt: attempt.cursor.endpointAttempt,
           provider_error_code: attempt.providerError?.code,
-          provider_error_message: attempt.providerError?.message,
           provider_error_provider: attempt.providerError?.providerName,
         });
       }

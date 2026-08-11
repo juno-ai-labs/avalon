@@ -60,6 +60,10 @@ export const errorHandler: ErrorHandler<HonoAppEnv> = (error, c) => {
     ...(error instanceof z.ZodError
       ? {
         path: c.req.path,
+        // The template, not the resolved path: `/workstreams/:id` is what makes
+        // 131 failures on one work stream aggregate into one line rather than
+        // one per id.
+        route: c.req.routePath,
         method: c.req.method,
         validation_issues: error.issues.slice(0, 25).map((issue) => ({
           path: issue.path.map(String).join(".") || "(root)",
