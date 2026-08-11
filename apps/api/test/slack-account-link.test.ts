@@ -76,6 +76,54 @@ describe("Slack account linking", () => {
     expect(challengeCount(database)).toBe(0);
   });
 
+  it("recognizes a connect button raised from inside a view", async () => {
+    const database = await seededDatabase();
+    const slack = stubSlack();
+
+    // The docs tell future surfaces to reuse `connectPromptBlocks`; one placed
+    // in a modal reports that view's callback id, which must not shadow the
+    // button's own and drop the click into the shortcut fallback.
+    await new SlackAgentService(environment(database)).processInteraction({
+      ...connectClick(),
+      view: { callback_id: "avalon_some_modal", hash: "view-hash" },
+      callback_id: "avalon_some_modal",
+    }, "embedded-hash");
+
+    const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
+    expect(view.callback_id).toBe("avalon_connect_link");
+    expect(challengeCount(database)).toBe(1);
+  });
+
+  it("leaves the previous link redeemable when the new modal fails to open", async () => {
+    const database = await seededDatabase();
+    await seedChallenge(database, "earlier-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ ok: false, error: "expired_trigger_id" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )));
+
+    await expect(new SlackAgentService(environment(database)).processInteraction(connectClick(), "failed-open-hash"))
+      .rejects.toThrow();
+
+    // The member is still holding the modal this click failed to replace. It
+    // was the mint that used to retire it, before the replacement existed.
+    await expect(new SlackAgentService(environment(database)).previewLink(auth(), "earlier-token"))
+      .resolves.toMatchObject({ slackUserId: "U456" });
+  });
+
+  it("retires the previous link once the new modal has opened", async () => {
+    const database = await seededDatabase();
+    await seedChallenge(database, "earlier-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
+    stubSlack();
+    const service = new SlackAgentService(environment(database));
+
+    await service.processInteraction(connectClick(), "supersede-hash");
+
+    await expect(service.previewLink(auth(), "earlier-token"))
+      .rejects.toMatchObject({ code: "slack_link_consumed" });
+    expect(challengeCount(database)).toBe(2);
+  });
+
   it("offers a reconnect instead of a link the installation cannot honor", async () => {
     const database = await seededDatabase();
     database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");
