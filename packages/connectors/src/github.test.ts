@@ -15,7 +15,10 @@ import {
   type GitHubConnectorConfig,
 } from "./github";
 import type { FetchLike } from "./provider-utils";
-import type { ConnectorConnectionContext } from "./types";
+import {
+  type AuthorizedConnectorConnection,
+  authorizedConnection,
+} from "./types";
 
 const FIXED_NOW = 1_788_000_000_000;
 
@@ -741,8 +744,8 @@ function githubConfig(fetcher: FetchLike, privateKey = dummyPrivateKey()): GitHu
   };
 }
 
-function personalConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function personalConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: "connection-github-personal",
     workspaceId: "workspace-1",
     scope: "personal",
@@ -757,11 +760,11 @@ function personalConnection(grantedScopes: string[]): ConnectorConnectionContext
     },
     cursor: {},
     config: { region: "global" },
-  };
+  });
 }
 
-function workspaceConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function workspaceConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: "00000000-0000-4000-8000-000000000002",
     workspaceId: "00000000-0000-4000-8000-000000000001",
     scope: "workspace",
@@ -775,7 +778,7 @@ function workspaceConnection(grantedScopes: string[]): ConnectorConnectionContex
     },
     cursor: {},
     config: { region: "global" },
-  };
+  });
 }
 
 function requestUrl(input: string | URL | Request): URL {

@@ -34,6 +34,7 @@ import {
   type RunHarnessInput,
   type HarnessTool,
   type ModelMessage,
+  type PluginAuthorization,
   type StructuredModelDiagnostic,
   toolActivityName,
 } from "@avalon/agent-harness";
@@ -60,6 +61,7 @@ import {
   ConnectorError,
   GoogleFileWriteAuthorizationGuidance,
   pollCheckpointedActivityStreams,
+  type AuthorizedConnectorConnection,
   type ConnectorActivityStreamError,
   type ConnectorConnectionContext,
   type ConnectorToolContext,
@@ -68,7 +70,7 @@ import {
 import { z } from "zod";
 import type { Env } from "../env";
 import { numericEnv } from "../env";
-import { encryptString, sha256 } from "../lib/crypto";
+import { sha256 } from "../lib/crypto";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
@@ -81,7 +83,7 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
-import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
   buildAttachmentModelParts,
@@ -241,12 +243,12 @@ function eligibleConnectionCapabilityMap(
 
 async function persistInitialPluginActivations(
   requestedPluginIds: readonly string[],
-  reauthorize: (pluginId: string) => boolean | Promise<boolean>,
+  reauthorize: (pluginId: string) => PluginAuthorization | Promise<PluginAuthorization>,
   persist: (pluginId: string) => void | Promise<void>,
 ): Promise<string[]> {
   const activationHints: string[] = [];
   for (const pluginId of [...new Set(requestedPluginIds)].sort()) {
-    if (!await reauthorize(pluginId)) continue;
+    if (await reauthorize(pluginId) !== "authorized") continue;
     await persist(pluginId);
     activationHints.push(pluginId);
   }
@@ -334,7 +336,7 @@ function classifyHarnessToolFailure(
 }
 
 function createConnectorToolContext(
-  connection: ConnectorConnectionContext,
+  connection: AuthorizedConnectorConnection,
   principal: ExecutionPrincipal,
   signal: AbortSignal,
   providerIdempotencyKey?: string,
@@ -1097,16 +1099,15 @@ async function executeAutomationCreatorConnectorTool(
     capability,
     signal,
   );
-  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
-  return withConnectorCredentialLifecycle(env, connection, async () => {
+  return withAuthorizedConnection(env, { connection, adapter, signal }, async (authorized) => {
     await assertAutomationCreatorConnectionAuthorized(env, input, frozen, capability);
-    const effectivePrincipal = connection.scope === "workspace"
+    const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : { type: "user" as const, userId: input.userId };
     return adapter.executeTool(
       toolName,
       toolInput,
-      createConnectorToolContext(connection, effectivePrincipal, signal, providerIdempotencyKey),
+      createConnectorToolContext(authorized, effectivePrincipal, signal, providerIdempotencyKey),
     );
   });
 }
@@ -1539,7 +1540,7 @@ export async function runWorkstreamHarness(
       const frozen = harnessTools.frozenConnections.get(pluginId);
       return frozen
         ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal)
-        : isLoadableBuiltinHarnessPlugin(pluginId, harnessTools);
+        : builtinPluginAuthorization(pluginId, harnessTools);
     },
     async (pluginId) => {
       await persistWorkstreamPluginActivation(
@@ -1677,7 +1678,7 @@ export async function runWorkstreamHarness(
       signal: harnessSignal,
       reauthorizePlugin: async (pluginId) => {
         const frozen = harnessTools.frozenConnections.get(pluginId);
-        if (!frozen) return isLoadableBuiltinHarnessPlugin(pluginId, harnessTools);
+        if (!frozen) return builtinPluginAuthorization(pluginId, harnessTools);
         // Cancellable: this runs inside the bind loop's Workflow step, so an
         // uncancellable thirty-second timer outlives the reauthorization it
         // guarded and holds the invocation open.
@@ -2669,7 +2670,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childSignal,
                   assertChildOwned,
                 )
-              : isLoadableBuiltinHarnessPlugin(pluginId, childHarnessTools);
+              : builtinPluginAuthorization(pluginId, childHarnessTools);
           },
           persistActivation: async (pluginId) => {
             await assertChildOwned();
@@ -3811,30 +3812,28 @@ async function executeAuthorizedConnectorTool(
     signal,
     ownershipGuard,
   );
-  await ensureFreshConnectorCredentials(env, connection, adapter, signal);
-  return withConnectorCredentialLifecycle(env, connection, async () => {
-    await ownershipGuard?.();
+  return withAuthorizedConnection(env, { connection, adapter, signal }, async (authorized) => {
     await ownershipGuard?.();
     // Membership, ownership, grants, and stored health are checked again after
     // credentials are available and immediately before external execution.
     await assertFrozenConnectionAuthorized(env, input, frozen, capability);
     await ownershipGuard?.();
-    const effectivePrincipal = connection.scope === "workspace"
+    const effectivePrincipal = authorized.scope === "workspace"
       ? { type: "workspace" as const, workspaceId: input.workspaceId }
       : input.executionPrincipal;
     const result = await adapter.executeTool(
       toolName,
       toolInput,
       createConnectorToolContext(
-        connection,
+        authorized,
         effectivePrincipal,
         signal,
         providerIdempotencyKey,
         frozen.connectorType === "slack"
           && input.slackSearchAuthorization
           && input.slackOrigin
-          && (connection.config.providerAccountId === input.slackOrigin.teamId
-            || connection.credentials.teamId === input.slackOrigin.teamId)
+          && (authorized.config.providerAccountId === input.slackOrigin.teamId
+            || authorized.credentials.teamId === input.slackOrigin.teamId)
           ? { slackActionToken: input.slackSearchAuthorization.actionToken }
           : undefined,
       ),
@@ -4111,7 +4110,7 @@ async function reauthorizeFrozenPlugin(
   frozen: FrozenConnectorPlugin,
   signal: AbortSignal,
   ownershipGuard?: () => Promise<void>,
-): Promise<boolean> {
+): Promise<PluginAuthorization> {
   try {
     await ownershipGuard?.();
     const { connection, adapter } = await loadAuthorizedConnectionContext(
@@ -4122,12 +4121,42 @@ async function reauthorizeFrozenPlugin(
       signal,
       ownershipGuard,
     );
-    const health = await raceWithSignal(adapter.healthCheck(connection), signal);
+    const health = await withAuthorizedConnection(
+      env,
+      { connection, adapter, signal },
+      (authorized) => raceWithSignal(adapter.healthCheck(authorized), signal),
+    );
     await ownershipGuard?.();
-    return health.ok;
-  } catch {
-    return false;
+    if (health.ok) return "authorized";
+    logPluginAuthorizationFailure(env, input, frozen, health.message);
+    // An adapter reports a withdrawn grant as `reconnectRequired`. Every other
+    // unhealthy result — an unreachable provider, a malformed response — says
+    // nothing about this run's authority.
+    return health.reconnectRequired ? "denied" : "indeterminate";
+  } catch (error) {
+    logPluginAuthorizationFailure(env, input, frozen, error);
+    return error instanceof ConnectorError && error.code === "unauthorized"
+      ? "denied"
+      : "indeterminate";
   }
+}
+
+function logPluginAuthorizationFailure(
+  env: Env,
+  input: WorkstreamWorkflowInput,
+  frozen: FrozenConnectorPlugin,
+  cause: unknown,
+): void {
+  logStructuredEvent(env, "warn", "connector_plugin_reauthorization_failed", {
+    request_id: input.harnessRunId,
+    workspace_id: input.workspaceId,
+    workstream_id: input.workstreamId,
+    plugin_id: frozen.pluginId,
+    connection_id: frozen.connectionId,
+    connector_type: frozen.connectorType,
+    reason: cause instanceof Error ? cause.message : String(cause),
+    ...(cause instanceof ConnectorError ? { code: cause.code } : {}),
+  });
 }
 
 function combineAbortSignals(...signals: AbortSignal[]): AbortSignal {
@@ -4168,6 +4197,17 @@ function isCoreHarnessPlugin(
 ): boolean {
   return pluginId === AVALON_DISCOVERY_PLUGIN_ID
     || harnessTools.corePlugins.some((plugin) => plugin.canonicalId === pluginId);
+}
+
+/**
+ * A built-in plugin carries no credential, so its authorization is settled by
+ * the run scope alone and can never be indeterminate.
+ */
+function builtinPluginAuthorization(
+  pluginId: string,
+  harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
+): PluginAuthorization {
+  return isLoadableBuiltinHarnessPlugin(pluginId, harnessTools) ? "authorized" : "denied";
 }
 
 function isLoadableBuiltinHarnessPlugin(
@@ -5228,14 +5268,13 @@ export async function pollConnectorConnection(
   // An `AbortSignal.timeout` here would stay armed for the rest of its window
   // and hold the workflow invocation open long after the poll finished, until
   // the runtime cancelled it as a hang. The deadline is disposed instead.
-  const result = await withDeadline(pollTimeoutMs, async (signal) => {
-    await ensureFreshConnectorCredentials(env, context, adapter, signal);
-    return withConnectorCredentialLifecycle(env, context, async () => {
-      return adapter.pollingActivity
-        ? pollCheckpointedActivityStreams(adapter.pollingActivity, context, signal)
-        : adapter.poll!(context, signal);
-    });
-  });
+  const result = await withDeadline(pollTimeoutMs, async (signal) => withAuthorizedConnection(
+    env,
+    { connection: context, adapter, signal },
+    async (authorized) => adapter.pollingActivity
+      ? pollCheckpointedActivityStreams(adapter.pollingActivity, authorized, signal)
+      : adapter.poll!(authorized, signal),
+  ));
   const activityIds = new Set<string>();
   for (const activity of result.activities) {
     for (const activityId of await persistPolledActivity(env.DB, activity)) {
@@ -5289,10 +5328,11 @@ export async function hydrateConnectorActivitySource(
   // Hydration runs inside the activity queue consumer, which ends when this
   // returns; see `pollConnectorConnection` for why the deadline is disposed
   // rather than left armed.
-  return withDeadline(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000), async (signal) => {
-    await ensureFreshConnectorCredentials(env, connection, adapter, signal);
-    return withConnectorCredentialLifecycle(env, connection, () => adapter.hydrateResource!(
-      connection,
+  return withDeadline(numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000), (signal) => withAuthorizedConnection(
+    env,
+    { connection, adapter, signal },
+    (authorized) => adapter.hydrateResource!(
+      authorized,
       {
         providerResourceId: input.providerResourceId,
         provider_resource_id: input.providerResourceId,
@@ -5300,107 +5340,10 @@ export async function hydrateConnectorActivitySource(
         resource_type: input.resourceType,
       },
       signal,
-    ));
-  });
+    ),
+  ));
 }
 
-async function withConnectorCredentialLifecycle<T>(
-  env: Pick<Env, "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION">,
-  connection: ConnectorConnectionContext,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const credentialsBefore = JSON.stringify(connection.credentials);
-  try {
-    return await operation();
-  } catch (error) {
-    if (!isReconnectRequiredConnectorError(error)) throw error;
-    const reason = reconnectReason(error);
-    await markConnectorNeedsReconnect(env.DB, connection, reason);
-    throw new ConnectorError(
-      "unauthorized",
-      "This connector connection needs reconnecting",
-      {
-        reconnectRequired: true,
-        reason,
-      },
-    );
-  } finally {
-    if (JSON.stringify(connection.credentials) !== credentialsBefore) {
-      await persistConnectorCredentials(env, connection);
-    }
-  }
-}
-
-function isReconnectRequiredConnectorError(error: unknown): error is ConnectorError {
-  if (!(error instanceof ConnectorError) || error.code !== "unauthorized") return false;
-  const details = error.details;
-  return Boolean(
-    details &&
-    typeof details === "object" &&
-    "reconnectRequired" in details &&
-    details.reconnectRequired === true
-  );
-}
-
-function reconnectReason(error: ConnectorError): string {
-  const details = error.details;
-  if (!details || typeof details !== "object" || !("reason" in details) || typeof details.reason !== "string") {
-    return "authorization_failed";
-  }
-  return [
-    "invalid_grant",
-    "api_unauthorized",
-    "missing_access_token",
-    "missing_credentials",
-    "missing_refresh_token",
-  ].includes(details.reason)
-    ? details.reason
-    : "authorization_failed";
-}
-
-async function persistConnectorCredentials(
-  env: Pick<Env, "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION">,
-  connection: ConnectorConnectionContext,
-): Promise<void> {
-  const encrypted = await encryptString(
-    JSON.stringify(connection.credentials),
-    env.CONNECTOR_CREDENTIALS_KEY,
-    connection.id,
-  );
-  await env.DB.prepare(
-    `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
-     credential_key_version = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
-  ).bind(
-    encrypted.ciphertext,
-    encrypted.iv,
-    Number(env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-    nowIso(),
-    connection.id,
-    connection.workspaceId,
-  ).run();
-}
-
-async function markConnectorNeedsReconnect(
-  database: D1Database,
-  connection: Pick<ConnectorConnectionContext, "id" | "workspaceId">,
-  reason: string,
-): Promise<void> {
-  await database.prepare(
-    `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status != 'disabled'`,
-  ).bind(
-    JSON.stringify({
-      code: "connector_reauthorization_required",
-      message: "Reconnect this connector account",
-      reconnectRequired: true,
-      reason,
-    }),
-    nowIso(),
-    connection.id,
-    connection.workspaceId,
-  ).run();
-}
 
 async function persistPolledActivity(
   database: D1Database,
@@ -5735,7 +5678,7 @@ export const __integrationTesting = {
   persistSuccessfulToolResult,
   persistToolTranscriptMessage,
   persistPolledActivity,
-  withConnectorCredentialLifecycle,
+  withAuthorizedConnection,
   createStreamDeltaBatcher,
   classifyHarnessToolFailure,
   createConnectorToolContext,

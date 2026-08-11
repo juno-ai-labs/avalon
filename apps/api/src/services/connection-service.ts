@@ -36,7 +36,7 @@ import { encryptString, openString, randomToken, sealString, sha256 } from "../l
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
-import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -1008,21 +1008,14 @@ export class ConnectionService {
     const connection = await this.loadAuthorized(id);
     const context = await this.context(connection);
     const adapter = this.registry().get(connection.connector_type);
-    let before = JSON.stringify(context.credentials);
+    const before = JSON.stringify(context.credentials);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
     try {
-      if (connection.status === "healthy") {
-        await ensureFreshConnectorCredentials(
-          this.env,
-          context,
-          adapter,
-          AbortSignal.timeout(10_000),
-        );
-        // The refresh coordinator persists rotating credentials itself. Only
-        // persist mutations made by the health check below a second time.
-        before = JSON.stringify(context.credentials);
-      }
-      result = await adapter.healthCheck(context);
+      result = await withAuthorizedConnection(
+        this.env,
+        { connection: context, adapter, signal: AbortSignal.timeout(10_000) },
+        (authorized) => adapter.healthCheck(authorized),
+      );
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
       result = { ok: false, message: error.message, reconnectRequired: true };
@@ -1063,6 +1056,10 @@ export class ConnectionService {
         }
       }
     }
+    // The door persists what it and the health check changed, but only for a
+    // connection D1 still holds as healthy. A probe that revives a
+    // `needs_reconnect` connection is the case that write skips, so the
+    // identity a successful check recovered is stored here instead.
     if (JSON.stringify(context.credentials) !== before) {
       await this.persistCredentials(connection, context.credentials);
     }
@@ -1112,7 +1109,12 @@ export class ConnectionService {
     let remoteRevocation: "skipped" | "succeeded" | "failed" = "skipped";
     try {
       if (mayRevokeRemotely && adapter.revoke) {
-        await adapter.revoke(await this.context(connection), AbortSignal.timeout(15_000));
+        const signal = AbortSignal.timeout(15_000);
+        await withAuthorizedConnection(
+          this.env,
+          { connection: await this.context(connection), adapter, signal },
+          (authorized) => adapter.revoke!(authorized, signal),
+        );
         remoteRevocation = "succeeded";
       }
     } catch {
@@ -1343,16 +1345,11 @@ export class ConnectionService {
       );
     }
 
-    const health = await adapter.healthCheck({
-      id: "x-installation-probe",
-      workspaceId: auth.workspaceId,
-      scope: "workspace",
-      ownerUserId: null,
-      grantedScopes: capabilities,
-      credentials: {},
-      cursor: {},
-      config: { region: this.env.AVALON_REGION },
-    });
+    // No connection exists yet, and X authenticates with the regional
+    // TwitterAPI.io key rather than per-connection credentials. The
+    // connectionless health check is the accurate probe here; a synthetic
+    // context would only be claiming a freshness nothing established.
+    const health = await adapter.healthCheck();
     if (!health.ok) throw new ApiError(503, "x_connector_unhealthy", health.message);
 
     const id = newId();

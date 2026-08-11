@@ -2210,6 +2210,18 @@ export interface HarnessCompactionConfig {
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
 }
 
+/**
+ * The outcome of revalidating one plugin's authorization.
+ *
+ * `denied` is a decision about authority: the credential was revoked, the
+ * grant was withdrawn, the principal no longer owns it. `indeterminate` is the
+ * absence of a decision — a provider timeout, a transport failure, a host
+ * error. Both leave the plugin inactive, and they are deliberately separate:
+ * only `denied` may be reported to the model as an authorization outcome, so a
+ * failure to verify is never presented to a run as a revoked grant.
+ */
+export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
+
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
     maxIterations: number;
@@ -2288,7 +2300,7 @@ export interface RunHarnessInput {
     inputHash: string,
     policy: { pluginId: string } & HarnessToolPolicyIdentity,
   ) => Promise<HarnessToolResult | null>;
-  reauthorizePlugin?: (canonicalId: string) => boolean | Promise<boolean>;
+  reauthorizePlugin?: (canonicalId: string) => PluginAuthorization | Promise<PluginAuthorization>;
   persistActivation?: (canonicalId: string) => void | Promise<void>;
   onActivationDropped?: (drop: unknown) => void | Promise<void>;
   beforeToolCall?: BeforeToolCallHook;
