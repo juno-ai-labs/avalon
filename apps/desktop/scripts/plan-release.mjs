@@ -107,6 +107,53 @@ export function planRelease({
   return release(`${outstanding.length} path(s) changed since ${short}: ${outstanding.slice(0, 5).join(', ')}`);
 }
 
+// Returns null when the ref cannot be read — a pruned commit, or a file that
+// does not exist at it — so every caller can fall back rather than fail.
+function gitOutput(args) {
+  try {
+    return execFileSync('/usr/bin/git', args, {
+      cwd: repositoryDirectory,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The commit a branch push is planned from.
+ *
+ * `actions/checkout` hands this job the commit that triggered the run, but a
+ * run that waited in the release queue was triggered long before it got the
+ * slot — and the release ahead of it pushes `Record Avalon <version> release
+ * config` to main as its last act. Planning from the trigger therefore reads a
+ * record that predates a release which has already shipped, and cuts that
+ * version a second time. Its tag is already pushed by then, so the run dies at
+ * `git tag`, and the bump step's resume path cannot tell that apart from a
+ * release that failed before publishing.
+ *
+ * Main's tip is also the commit the release job actually builds — its bump step
+ * resets to `origin/main` on the same reasoning — so planning from it removes a
+ * disagreement between the two rather than introducing one. An unreadable tip
+ * falls back to the checkout, which is the behaviour this replaces.
+ */
+export function planningCommit(headSha, tipSha) {
+  return tipSha ?? headSha;
+}
+
+// The release record as it stands at a commit, rather than in the working tree,
+// so the plan reads the same state the release job will build against.
+export function releaseRecordAt(commit) {
+  const contents = gitOutput(['show', `${commit}:${RELEASE_RECORD_PATH}`]);
+  if (contents === null) return null;
+  try {
+    return JSON.parse(contents);
+  } catch {
+    return null;
+  }
+}
+
 // Returns null when the watermark is not reachable in this checkout — a
 // force-push or a pruned commit — which the planner treats as unknown.
 export function changedPathsSince(releasedCommit, headSha) {
@@ -127,18 +174,24 @@ async function main() {
   const headSha = process.env.GITHUB_SHA;
   const inputTag = process.env.RELEASE_INPUT_TAG || undefined;
 
-  const siteRelease = await readFile(resolve(repositoryDirectory, 'apps/site/release.config.json'), 'utf8')
-    .then(JSON.parse);
+  // A dispatch replays a named tag and never reads the record, so it plans from
+  // the checkout it was handed. A branch push plans from main's tip.
+  const planFrom = eventName === 'workflow_dispatch'
+    ? headSha
+    : planningCommit(headSha, gitOutput(['rev-parse', 'origin/main']));
+
+  const siteRelease = releaseRecordAt(planFrom)
+    ?? await readFile(resolve(repositoryDirectory, RELEASE_RECORD_PATH), 'utf8').then(JSON.parse);
   const releasedCommit = typeof siteRelease.commit === 'string' ? siteRelease.commit : undefined;
 
   const plan = planRelease({
     eventName,
     inputTag,
-    headSha,
+    headSha: planFrom,
     publishedVersion: siteRelease.version,
     releasedCommit,
     changedPaths: releasedCommit && eventName !== 'workflow_dispatch'
-      ? changedPathsSince(releasedCommit, headSha)
+      ? changedPathsSince(releasedCommit, planFrom)
       : [],
   });
 
