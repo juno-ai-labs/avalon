@@ -1,6 +1,8 @@
 import { AtSign, LoaderCircle, Square, UserPlus } from 'lucide-react';
 import { type RefObject, useMemo, useRef, useState } from 'react';
 import type { AvalonApi, MentionIdentity } from '../lib/api';
+import { workstreamDraftKey } from '../lib/draft-keys';
+import { useDraftText } from '../lib/use-draft-text';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { AttachmentPreview } from './attachments';
@@ -69,10 +71,14 @@ export function WorkstreamComposer({
 }: WorkstreamComposerProps): React.JSX.Element {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRevisionRef = useRef(0);
-  const [text, setText] = useState('');
+  const {
+    text,
+    setText,
+    mentions: selectedMentions,
+    setMentions: setSelectedMentions,
+  } = useDraftText(workstreamDraftKey(workstream.id));
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState(false);
-  const [selectedMentions, setSelectedMentions] = useState<MentionIdentity[]>([]);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;

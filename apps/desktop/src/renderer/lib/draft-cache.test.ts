@@ -1,0 +1,141 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  DRAFT_CACHE_TTL_MS,
+  clearAllDrafts,
+  deleteDraftAttachments,
+  nextDraftSortKey,
+  pruneExpiredDrafts,
+  readDraftAttachments,
+  readDraftText,
+  closeDraftCache,
+  updateDraftAttachment,
+  writeDraftAttachment,
+  writeDraftText,
+} from './draft-cache';
+import type { WorkstreamResource } from './types';
+
+const resource: WorkstreamResource = {
+  id: '019fcc00-0000-7000-8000-000000000001',
+  title: 'notes.txt',
+  resourceType: 'uploaded_file',
+  provider: 'avalon_upload',
+  mimeType: 'text/plain',
+  watchEnabled: false,
+  watchStatus: 'unsupported',
+  contentAvailable: true,
+  sizeBytes: 5,
+};
+
+function bytes(text: string): ArrayBuffer {
+  return new TextEncoder().encode(text).buffer as ArrayBuffer;
+}
+
+function decode(buffer: ArrayBuffer): string {
+  return new TextDecoder().decode(new Uint8Array(buffer));
+}
+
+async function cacheAttachment(draftKey: string, localId: string, contents: string): Promise<void> {
+  await writeDraftAttachment({
+    draftKey,
+    localId,
+    sortKey: nextDraftSortKey(),
+    fileName: `${localId}.txt`,
+    mimeType: 'text/plain',
+    lastModified: 1,
+    bytes: bytes(contents),
+  });
+}
+
+describe('draft cache', () => {
+  beforeEach(() => clearAllDrafts());
+  afterEach(() => vi.useRealTimers());
+
+  it('round-trips drafted text and its mentions', async () => {
+    await writeDraftText('workstream:1', 'half a thought', [
+      { type: 'person', label: 'Ada', userId: 'user-1', connectorType: null },
+    ]);
+
+    const stored = await readDraftText('workstream:1');
+
+    expect(stored?.text).toBe('half a thought');
+    expect(stored?.mentions).toEqual([{ type: 'person', label: 'Ada', userId: 'user-1', connectorType: null }]);
+  });
+
+  it('drops the row when the draft is cleared to empty', async () => {
+    await writeDraftText('workstream:1', 'half a thought');
+
+    await writeDraftText('workstream:1', '');
+
+    expect(await readDraftText('workstream:1')).toBeNull();
+  });
+
+  it('keeps attachments in insertion order and scoped to their draft', async () => {
+    await cacheAttachment('workstream:1', 'first', 'one');
+    await cacheAttachment('workstream:1', 'second', 'two');
+    await cacheAttachment('workstream:2', 'other', 'three');
+
+    const stored = await readDraftAttachments('workstream:1');
+
+    expect(stored.map((attachment) => attachment.localId)).toEqual(['first', 'second']);
+    expect(decode(stored[0]!.bytes)).toBe('one');
+    expect((await readDraftAttachments('workstream:2')).map((attachment) => attachment.localId)).toEqual(['other']);
+  });
+
+  it('records the uploaded resource without disturbing the cached bytes', async () => {
+    await cacheAttachment('workstream:1', 'first', 'one');
+
+    await updateDraftAttachment('workstream:1', 'first', { resource });
+
+    const stored = await readDraftAttachments('workstream:1');
+    expect(stored[0]?.resource?.id).toBe(resource.id);
+    expect(decode(stored[0]!.bytes)).toBe('one');
+  });
+
+  it('deletes only the named attachments', async () => {
+    await cacheAttachment('workstream:1', 'first', 'one');
+    await cacheAttachment('workstream:1', 'second', 'two');
+
+    await deleteDraftAttachments('workstream:1', ['first']);
+
+    expect((await readDraftAttachments('workstream:1')).map((attachment) => attachment.localId)).toEqual(['second']);
+  });
+
+  it('deletes every attachment under a key when none are named', async () => {
+    await cacheAttachment('workstream:1', 'first', 'one');
+    await cacheAttachment('workstream:1', 'second', 'two');
+
+    await deleteDraftAttachments('workstream:1');
+
+    expect(await readDraftAttachments('workstream:1')).toEqual([]);
+  });
+
+  it('hides and prunes drafts past the cache lifetime, reporting their resources', async () => {
+    await writeDraftText('workstream:1', 'stale');
+    await cacheAttachment('workstream:1', 'first', 'one');
+    await updateDraftAttachment('workstream:1', 'first', { resource });
+    // Only the clock moves: IndexedDB drives its transactions off real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + DRAFT_CACHE_TTL_MS + 1_000);
+
+    expect(await readDraftText('workstream:1')).toBeNull();
+    expect(await readDraftAttachments('workstream:1')).toEqual([]);
+
+    const expired = await pruneExpiredDrafts();
+
+    expect(expired.map((attachment) => attachment.resource?.id)).toEqual([resource.id]);
+    vi.useRealTimers();
+    expect(await pruneExpiredDrafts()).toEqual([]);
+  });
+
+  it('degrades to empty results when IndexedDB is unavailable', async () => {
+    closeDraftCache();
+    vi.stubGlobal('indexedDB', undefined);
+
+    await expect(writeDraftText('workstream:1', 'half a thought')).resolves.toBeUndefined();
+    expect(await readDraftText('workstream:1')).toBeNull();
+    expect(await readDraftAttachments('workstream:1')).toEqual([]);
+
+    vi.unstubAllGlobals();
+    closeDraftCache();
+  });
+});
