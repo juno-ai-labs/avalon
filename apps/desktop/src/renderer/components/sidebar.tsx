@@ -77,6 +77,11 @@ const onboardingItems = [
   },
 ] as const;
 
+// DISABLED — see the commented-out render call near the bottom of `Sidebar`
+// for why this is not mounted. Left in place (rather than deleted) so the
+// eventual real version has a starting point; do not delete this function
+// without also resolving that comment.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for the reasons above; not currently rendered.
 function OnboardingChecklist(): React.JSX.Element {
   const [completed, setCompleted] = useState<Set<string>>(new Set());
   const completedCount = completed.size;
@@ -684,7 +689,25 @@ export function Sidebar({
           </section>
         </nav>
 
-        <OnboardingChecklist />
+        {/*
+          OnboardingChecklist is disabled: it was left over from a demo and
+          never wired to real product state. `completed` is local-only
+          `useState`, seeded empty on every mount and never persisted, so the
+          "3 / 3" a user sees is just three checkboxes they clicked themselves
+          in the current session — there is no dismiss action because the box
+          was never meant to reflect (or need clearing based on) anything
+          real. Reported (Aug 2026) as blocking the chat input with no way to
+          close it even at "3 / 3"; Morgan Ellis confirmed this is dead demo
+          code, not a real feature.
+
+          To bring this back for real: replace `completed` with derived state
+          from actual signals (a connected tool/integration exists, an
+          automation has been created, a teammate has been invited), and add
+          a dismiss mechanism (e.g. a persisted "onboarding dismissed" flag)
+          once those signals exist — a checklist that can reach 3/3 has to be
+          closeable.
+        */}
+        {/* <OnboardingChecklist /> */}
 
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
