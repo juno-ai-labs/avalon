@@ -96,20 +96,26 @@ test('a dispatch plans without reading the release record at all', () => {
   } finally {
     // Best effort, so a cleanup failure cannot replace whatever the test was
     // actually reporting with a git error — `worktree add` failing early would
-    // otherwise guarantee that swap. Prune covers a registration whose removal
-    // failed, and the directory goes either way: mkdtemp created it before git
-    // was involved, so nothing above is a precondition for deleting it.
+    // otherwise guarantee that swap. The directory goes either way: mkdtemp
+    // created it before git was involved, so nothing above is a precondition
+    // for deleting it.
+    let removed = false;
     try {
       execFileSync(GIT, ['worktree', 'remove', '--force', worktree], {
         cwd: repositoryRoot,
         stdio: 'ignore',
       });
-    } catch {
+      removed = true;
+    } catch { /* The registration is cleared below instead. */ }
+    rmSync(worktree, { recursive: true, force: true });
+    if (!removed) {
+      // `prune` drops only registrations whose directory is already gone, so it
+      // has to follow the delete. Running it first — while the worktree is still
+      // on disk — is a no-op that leaves the registration behind for good.
       try {
         execFileSync(GIT, ['worktree', 'prune'], { cwd: repositoryRoot, stdio: 'ignore' });
       } catch { /* A stale registration outlives the run at worst. */ }
     }
-    rmSync(worktree, { recursive: true, force: true });
   }
 });
 
