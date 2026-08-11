@@ -98,6 +98,27 @@ function automationTextMessage(
   });
 }
 
+/**
+ * How much narration a failed compile leaves behind, and from which end.
+ *
+ * The opening plan and the first progress updates are the part that explains a
+ * failure; a run that degenerates does so at the end. A compiler stuck
+ * repairing a rejected submission has been observed narrating the rejected
+ * schema itself, and persisting that into the transcript is worse than
+ * persisting nothing — so the tail is what gets dropped, not the head.
+ */
+const RETAINED_NARRATION_CHARACTERS = 1_500;
+
+export function retainableNarration(narration: string): string {
+  const trimmed = narration.trim();
+  if (trimmed.length <= RETAINED_NARRATION_CHARACTERS) return trimmed;
+  // Cut at the last paragraph break inside the budget so the message ends on a
+  // finished thought; fall back to the hard cut when there is no break to use.
+  const head = trimmed.slice(0, RETAINED_NARRATION_CHARACTERS);
+  const lastBreak = head.lastIndexOf('\n\n');
+  return `${(lastBreak > 0 ? head.slice(0, lastBreak) : head).trimEnd()}\n\n…`;
+}
+
 function settleThought(turns: Message[], thoughtId: string): Message[] {
   const settledAt = Date.now();
   return turns.map((message) => {
@@ -546,10 +567,39 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
-  const [streamingAssistant, setStreamingAssistant] = useState<{ hasText: boolean; text: string }>({
-    hasText: false,
-    text: '',
-  });
+  const [streamingText, setStreamingText] = useState('');
+  /**
+   * The same narration, readable from a settled-mutation callback. `onError`
+   * runs after the stream is over and has to keep what the architect said;
+   * the state above is the render source and this is the imperative read, both
+   * written only by `applyNarration` below.
+   */
+  const streamingNarrationRef = useRef('');
+  const applyNarration = useCallback((next: (current: string) => string) => {
+    const settled = next(streamingNarrationRef.current);
+    streamingNarrationRef.current = settled;
+    setStreamingText(settled);
+  }, []);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Narration and tool rows grow the transcript past the viewport, and this
+   * screen has no virtualizer following it the way a work stream does. The
+   * view is pinned to the bottom while a compile streams, and unpinned the
+   * moment the reader scrolls up: yanking someone back who has deliberately
+   * looked at an earlier step is worse than not following at all.
+   */
+  const followStreamRef = useRef(true);
+  /**
+   * The offset Avalon's own follow last scrolled to, which is what makes the
+   * threshold below safe to keep tight. A scroll event is dispatched at frame
+   * time, not when the offset is assigned, so by the time the follow's own
+   * event arrives more narration has usually landed and the surface is
+   * hundreds of pixels short of a bottom that moved after the assignment.
+   * Measuring that as the reader scrolling up unpins the follow on its own
+   * scroll — the feature switching itself off a second into a compile. An
+   * event that reports this offset is Avalon's; anything else is the reader's.
+   */
+  const autoScrollTopRef = useRef(-1);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
@@ -762,7 +812,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         // somebody else's transcript.
         if (!showsTurn(payload)) return;
         if (event.type === 'started') {
-          setStreamingAssistant({ hasText: false, text: '' });
+          applyNarration(() => '');
           return;
         }
         if (event.type === 'thinking') {
@@ -816,13 +866,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           });
           return;
         }
-        setStreamingAssistant((current) => ({
-          hasText: true,
-          text: event.reset ? event.delta : current.text + event.delta,
-        }));
+        applyNarration((current) => event.reset ? event.delta : current + event.delta);
       }),
     onMutate: (payload) => {
-      setStreamingAssistant({ hasText: false, text: '' });
+      followStreamRef.current = true;
+      applyNarration(() => '');
       setTurns((current) => {
         const updated = payload.elicitation
           ? resolveElicitationMessages(current, payload.elicitation.id, payload.elicitation.answer)
@@ -846,7 +894,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // conversation — but nothing about it belongs on screen, least of all
       // the URL write below, which would drag the reader back to it.
       if (!showsTurn(payload)) return;
-      setStreamingAssistant({ hasText: false, text: '' });
+      applyNarration(() => '');
       setDraft(response);
       // The turn wrote a draft automation, which the sidebar lists. Naming it
       // in the URL is what makes that row the active one and what lets this
@@ -874,10 +922,35 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     },
     onError: (_error, payload) => {
       if (!showsTurn(payload)) return;
-      setStreamingAssistant({ hasText: false, text: '' });
-      setTurns((current) => settleThought(current, `${payload.turnId}-thought`));
+      // Keep what the architect said. A compile that exhausts the harness's
+      // wall clock is exactly when the narration is worth the most — "GitHub
+      // holds the data but no connector is authorized" explains a timeout
+      // that a column of tool rows does not — and clearing it here would
+      // delete the explanation at the one moment it is needed.
+      const narration = retainableNarration(streamingNarrationRef.current);
+      applyNarration(() => '');
+      setTurns((current) => {
+        const settled = settleThought(current, `${payload.turnId}-thought`);
+        return narration
+          ? [...settled, automationTextMessage(crypto.randomUUID(), 'agent', narration)]
+          : settled;
+      });
     },
   });
+
+  const compilePending = compile.isPending;
+  useEffect(() => {
+    // Only while a compile streams. Once the draft settles the summary below
+    // the transcript is what the reader wants, and jumping past it to the
+    // create button would hide the thing they are being asked to accept.
+    if (!compilePending || !followStreamRef.current) return;
+    const element = transcriptScrollRef.current;
+    if (!element) return;
+    element.scrollTop = element.scrollHeight;
+    // Read back rather than reusing the assigned value: the browser clamps to
+    // its own fractional maximum, and the scroll event reports that.
+    autoScrollTopRef.current = element.scrollTop;
+  }, [compilePending, streamingText, turns]);
 
   const deliveryConnection = (connections.data ?? []).find((connection) =>
     connection.id === deliveryConnectionId && connection.userDelivery);
@@ -946,7 +1019,21 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const draftId = draft?.draftId;
 
   return (
-    <div className="new-automation-screen screen-with-titlebar">
+    <div
+      className="new-automation-screen screen-with-titlebar"
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        if (element.scrollTop === autoScrollTopRef.current) return;
+        // Sub-pixel, not the 80px a work stream uses. That threshold covers a
+        // virtualizer whose estimated row heights settle after paint; nothing
+        // here is virtualized, and at 80px a reader who nudged up a few pixels
+        // would still be pinned and get yanked forward by the next fragment.
+        // Only the browser's fractional clamp needs absorbing, and the guard
+        // above is what keeps that true while the transcript is growing.
+        followStreamRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+      }}
+      ref={transcriptScrollRef}
+    >
       <div className="screen-drag-strip window-drag" />
       <div className="new-automation-actions window-no-drag">
         <DropdownMenu.Root>
@@ -1061,8 +1148,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   />
                 ))}
                 {compile.isPending && (
-                  streamingAssistant.hasText
-                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingAssistant.text, true)} />
+                  // Trimmed, not just non-empty: an abandoned first turn
+                  // resets to '' and a model that opens a narration turn with
+                  // a bare newline sends whitespace before it sends a word.
+                  // Either would render as Avalon having said something blank.
+                  streamingText.trim().length > 0
+                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingText, true)} />
                     : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
                       ? null
                       : <AgentWorkTiming
