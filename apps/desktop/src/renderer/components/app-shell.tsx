@@ -61,10 +61,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railWidth = useUiStore((state) => state.railWidth);
   const hypersightOpen = useUiStore((state) => state.hypersightOpen);
   const hypersightWidth = useUiStore((state) => state.hypersightWidth);
+  const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   // HyperSight and the inspector rail are the same slot, so the main pane makes
-  // room for whichever one holds it.
-  const showShellRail = (railOpen || hypersightOpen) && !location.pathname.startsWith('/notes/');
+  // room for whichever one holds it — including a panel that has lost the slot
+  // and is still fading out, which is on screen and has to be laid out for.
+  const slotHolder = hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : railLeaving;
+  const showShellRail = slotHolder !== null && !location.pathname.startsWith('/notes/');
   const automations = useQuery({
     queryKey: ['automations'],
     queryFn: ({ signal }) => api!.getAutomations(signal),
@@ -96,9 +99,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
 
   // One custom property carries the right sidebar's width, so the panel in the
   // slot, the grab handle beside it, and the room the main pane leaves for it
-  // all animate together when the slot changes hands.
+  // all animate together when the slot changes hands. It follows whichever panel
+  // is on screen, so a panel closing on its own dissolves at its own width
+  // rather than resizing to a width nothing is about to show.
   const shellStyle = {
-    '--rail-width': `${hypersightOpen ? hypersightWidth : railWidth}px`,
+    '--rail-width': `${slotHolder === 'hypersight' ? hypersightWidth : railWidth}px`,
     '--sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 

@@ -55,6 +55,9 @@ type RecentSidebarItem =
   | { type: 'note'; note: NoteSummary; id: string; lastActivityAt: string }
   | { type: 'workstream'; workstream: WorkstreamSummary; id: string; lastActivityAt: string };
 
+/** How close the pointer comes to the navigation's edge before its pill shows. */
+const EDGE_REVEAL_DISTANCE = 20;
+
 const onboardingItems = [
   {
     id: 'connect-tools',
@@ -379,6 +382,7 @@ export function Sidebar({
   // difference from the moment of the grab keeps the edge from jumping out to
   // meet a pointer that grabbed the far side of the strip.
   const grabOffset = useRef(0);
+  const [pointerNearEdge, setPointerNearEdge] = useState(false);
   const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -506,6 +510,20 @@ export function Sidebar({
       setRenaming(false);
     }
   };
+
+  // The pill is revealed by how close the pointer is to the edge, not by
+  // hovering the handle: a hit area wide enough to be a 20-pixel proximity
+  // sensor would also be a 20-pixel column of the main pane that swallows
+  // clicks, the window-drag region, and the left edge of the title. Watching
+  // the pointer instead keeps the reveal generous and the hit area honest.
+  useEffect(() => {
+    const track = (event: PointerEvent): void => {
+      const near = Math.abs(event.clientX - sidebarWidth) <= EDGE_REVEAL_DISTANCE;
+      setPointerNearEdge((current) => current === near ? current : near);
+    };
+    window.addEventListener('pointermove', track);
+    return () => window.removeEventListener('pointermove', track);
+  }, [sidebarWidth]);
 
   useEffect(() => {
     if (!resizing) return undefined;
@@ -650,7 +668,7 @@ export function Sidebar({
           aria-valuemax={MAX_SIDEBAR_WIDTH}
           aria-valuemin={MIN_SIDEBAR_WIDTH}
           aria-valuenow={sidebarWidth}
-          className="sidebar-resizer"
+          className={clsx('sidebar-resizer', pointerNearEdge && 'is-near')}
           onKeyDown={(event) => {
             if (event.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
             if (event.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);

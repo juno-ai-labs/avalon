@@ -39,7 +39,7 @@ import { createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
-import { type RailVariant, useUiStore } from '../lib/ui-store';
+import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
@@ -602,6 +602,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const openRail = useUiStore((state) => state.openRail);
   const railOpen = useUiStore((state) => state.railOpen);
   const setHyperSightOpen = useUiStore((state) => state.setHyperSightOpen);
+  const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -731,7 +732,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   // Handing the sidebar from one panel to the other keeps the panel that lost
   // it on screen a moment longer, fading out over the one that took it while
   // the slot animates between their two widths.
-  const railLeaving = useRailCrossFade(hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : null);
+  const railLeaving = useRailCrossFade<RailPanel>(hypersightOpen ? 'hypersight' : railOpen ? 'inspector' : null);
   const hypersight = useQuery({
     queryKey: ['hypersight', id],
     queryFn: ({ signal }) => api!.getHyperSight(id, signal),
@@ -930,10 +931,15 @@ export function WorkstreamScreen(): React.JSX.Element {
   }, [hypersightPreferred, openRail, persistHyperSightPreference]);
 
   // The shell lays the main pane out against whichever panel holds the right
-  // sidebar, and only this screen knows whether HyperSight has it.
+  // sidebar, and only this screen knows whether HyperSight has it — or which
+  // panel is still fading out of it.
   useEffect(() => {
     setHyperSightOpen(hypersightOpen);
   }, [hypersightOpen, setHyperSightOpen]);
+  useEffect(() => {
+    setRailLeaving(railLeaving);
+    return () => setRailLeaving(null);
+  }, [railLeaving, setRailLeaving]);
   useEffect(() => () => setHyperSightOpen(false), [setHyperSightOpen]);
 
   const stop = useMutation({
