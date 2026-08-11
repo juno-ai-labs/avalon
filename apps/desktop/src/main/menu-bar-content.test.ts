@@ -381,6 +381,38 @@ describe('menu bar content', () => {
     expect(subject.logWarning).toHaveBeenCalledTimes(2);
   });
 
+  it('does not let a failing report undo a newer one that succeeded', async () => {
+    let releaseFirst: () => void = () => undefined;
+    const firstReport = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let reports = 0;
+    subject.requestJson.mockImplementation((path: string) => {
+      if (path === '/work-opportunities/impressions') {
+        reports += 1;
+        return reports === 1 ? firstReport.then(() => Promise.reject(new Error('offline'))) : Promise.resolve(null);
+      }
+      if (path.startsWith('/work-opportunities')) {
+        return Promise.resolve({ items: [{ id: `o${reports}`, version: 1, displayPrompt: 'Reply to Dana' }] });
+      }
+      return Promise.resolve(workstreamPage([]));
+    });
+
+    await subject.store.refresh();
+    const failing = subject.store.recordImpressions();
+    // A newer set is shown and reported while the first report is still on the
+    // wire.
+    await subject.store.refresh();
+    await subject.store.recordImpressions();
+    releaseFirst();
+    await failing;
+
+    // Clearing the key unconditionally would report the newer set a second
+    // time, which is the invariant the key exists to hold.
+    await subject.store.recordImpressions();
+    expect(reports).toBe(2);
+  });
+
   it('rejects an unreadable response rather than emptying the menu', async () => {
     respond(subject.requestJson, {
       '/workstreams': { items: [{ id: 'a' }] },

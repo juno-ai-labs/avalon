@@ -189,6 +189,9 @@ destination, so the hidden state is not sticky.
   Otherwise Avalon starts invisible with no menu bar presence, reachable only by
   hunting for it in the Dock. The Startup toggle's own copy says so, because the
   quiet start is what it promises.
+- **`menuBarEnabled` is a preference; `menuBarPresent` is a fact.** Both cross
+  the bridge, because a toggle that succeeded and an item that exists are
+  different claims and only the second one is what the person asked for.
 - **A surface that shows suggestions reports them.** The ranking cannot tell a
   suggestion nobody wanted from one nobody was shown, so a surface that displays
   without reporting freezes its own list.
@@ -263,7 +266,8 @@ the link there first, not a second navigation channel here.
 | An impression report fails | Logged, and the set is forgotten so the next open reports it again. Nothing on screen waits on it. A 204 is a success, not a failure — `readJsonBody` is what makes that true. |
 | No status item on this platform, or the preference is off | No content is fetched at all. `clear()` still runs on sign-out, so a cache from a session where the item was on cannot outlive it. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
-| The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
+| The `Tray` cannot be created | Logged and skipped, and Settings says so beneath the toggle — the write succeeded, so without that the switch reads on beside an empty menu bar. The preference stays on, so the next launch tries again. |
+| The preference file cannot be read at launch | `initialize` still settles presence, falling back to the shipped default of on. Skipping it would leave `enabled()` true with no tray, and the caller fetching content nothing can render. |
 | Not macOS | No status item; `menuBarAvailable` is false and Settings omits the toggle. The preference is still stored, so the same profile on a Mac gets the choice rather than the default. |
 
 `menuBarLabel` counts and cuts in **graphemes**, via `Intl.Segmenter` — a title
@@ -380,6 +384,37 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 `sendDeepLink` and `activate` already do.
 
 **Not done:** a submenu for older work streams.
+
+### 2026-08-11 — Review round four: three failures that were reported as successes
+
+**What changed:** `DesktopApplicationSettings` gained `menuBarPresent`, and
+Settings says so when the preference is on and no item exists.
+`MenuBarController.initialize` settles presence in a `finally`. A failed
+impression report clears the recorded set only when nothing newer has been
+recorded since.
+
+**Why:** all three had the same shape — something failed and the surface above
+it reported success. Turning the toggle on when `createTray` throws resolved
+cleanly and reported `menuBarEnabled: true`, so the switch moved and the menu bar
+stayed empty with nothing said. An unreadable preference file left `enabled()` on
+its default of `true` with no tray, and the launch path then fetched and cached
+work-stream titles that nothing could render. And clearing `recordedImpressions`
+unconditionally on failure discarded the record of a *newer* set reported
+successfully while the failing POST was in flight, so that set was reported twice
+— the same double-count this field exists to prevent, arrived at from the other
+direction.
+
+**Considered and rejected:** having `set()` reject when `createTray` fails. It
+reads as the honest thing and it is worse: the preference genuinely did change,
+the next launch will retry it, and a rejected toggle would flip back and imply
+the choice was not stored. Reporting the preference and the fact separately is
+what lets Settings be accurate about both.
+
+**Consequences:** `present()` now has two callers with different reasons — the
+launch decision and the Settings report — so a change to what it means has to
+answer both. `initialize` no longer guarantees the preference was read when it
+returns; callers that need that must await it and handle the rejection, which
+`index.ts` does by logging.
 
 ### 2026-08-11 — Review round three: the impression report never worked
 

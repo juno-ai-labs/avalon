@@ -198,6 +198,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -208,6 +209,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     }));
@@ -218,6 +220,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     }));
@@ -228,6 +231,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     }));
@@ -238,6 +242,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin,
       launchAtLoginAvailable: true,
     }));
@@ -968,6 +973,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -989,6 +995,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -1051,6 +1058,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: false,
       launchAtLoginAvailable: true,
     });
@@ -1072,6 +1080,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: false,
       launchAtLoginAvailable: false,
     });
@@ -1082,6 +1091,45 @@ describe('Workspace settings', () => {
     expect(screen.queryByRole('switch', { name: 'Open Avalon at login' })).toBeNull();
   });
 
+  it('says so when the status item could not be added, instead of a switch beside an empty menu bar', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      // The write succeeded; creating the item did not.
+      menuBarPresent: false,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' })).toBeChecked();
+    expect(await screen.findByText(/could not add itself to the menu bar/u)).toBeVisible();
+  });
+
+  it('says nothing about a missing status item while the preference is off', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: false,
+      menuBarAvailable: true,
+      menuBarPresent: false,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    expect(await screen.findByRole('switch', { name: 'Show Avalon in the menu bar' })).not.toBeChecked();
+    expect(screen.queryByText(/could not add itself to the menu bar/u)).toBeNull();
+  });
+
   it('offers no menu bar toggle where there is no menu bar to put Avalon in', async () => {
     getApplicationSettings.mockResolvedValue({
       lockdownMode: false,
@@ -1090,6 +1138,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: false,
+      menuBarPresent: false,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -1124,6 +1173,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -1159,6 +1209,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -1179,6 +1230,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -1200,6 +1252,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
@@ -1214,6 +1267,7 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      menuBarPresent: true,
       launchAtLogin: true,
       launchAtLoginAvailable: true,
     });
