@@ -652,6 +652,22 @@ pre {
 .sidebar-skeleton.tall { height: 150px; }
 @keyframes skeleton-pulse { 50% { opacity: 0.45; } }
 
+/* Stands in for a title Avalon is still choosing. Sized in `em` and `ch` so it
+   takes the line height and roughly the width of the name it is waiting for,
+   in the sidebar row and the header alike. The fill is light enough to read as
+   a placeholder on the selected row, which is the lightest thing it sits on and
+   is where a work stream being named almost always is. */
+.title-skeleton {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+  background: #56574f;
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.72em;
+  vertical-align: middle;
+  width: 18ch;
+}
+.title-skeleton.title-skeleton-header { width: 22ch; }
+
 .account-trigger {
   align-items: center;
   background: var(--sidebar);

@@ -32,7 +32,7 @@ import { desktopBridge } from '../lib/platform';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
-import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot } from './primitives';
+import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 
 interface SidebarProps {
   workspace: Workspace;
@@ -235,7 +235,9 @@ function WorkstreamRow({
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">
                 {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
-                {workstream.title}
+                {workstream.titleStatus === 'naming'
+                  ? <TitleSkeleton />
+                  : workstream.title}
               </span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">

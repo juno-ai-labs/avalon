@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { WORKSTREAM_NAMING_GRACE_MS } from '@avalon/contracts';
 import type { DesktopSession } from '../../common/desktop';
 import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
@@ -26,6 +27,7 @@ vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText, getRuntime
 const headerWorkstream: WorkstreamDetail = {
   id: 'workstream-header',
   title: 'Daily product brief',
+  titleStatus: 'settled' as const,
   origin: 'automation',
   automationName: 'Daily monitor',
   harnessStatus: 'completed',
@@ -279,6 +281,84 @@ describe('WorkstreamHeader inline rename', () => {
     // Keyboard activation of a button reports a detail of 0.
     fireEvent.click(title, { detail: 0 });
     expect(screen.getByRole('textbox', { name: 'Work stream name' })).toBeInTheDocument();
+  });
+
+  it('holds the header for a name instead of showing the request it was created from', () => {
+    const { rerender } = renderWorkstreamHeader({
+      ...headerWorkstream,
+      title: 'Create an email draft to Danny from Mucker that shares the download link',
+      titleStatus: 'naming',
+      // A work stream is named seconds after it is created, which is the only
+      // time the skeleton is shown; the fixture's own date is days old, and
+      // past the grace the provisional title is the title.
+      createdAt: new Date().toISOString(),
+    });
+
+    // The heading is what carries the name, so it is the heading that has to
+    // say a name is coming — a label on the placeholder itself reaches nobody.
+    expect(screen.getByRole('heading', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+    expect(screen.queryByText(/Create an email draft/u)).not.toBeInTheDocument();
+    // Nothing to rename yet: the title on the row is a placeholder, and the
+    // editor returns with the name a second later.
+    expect(screen.queryByRole('button', { name: /Create an email draft/u })).not.toBeInTheDocument();
+
+    // A name that arrives on its own has to be announced, or the skeleton has
+    // promised something the header never delivers.
+    const line = document.querySelector('.workstream-title-line');
+    expect(line).toHaveAttribute('aria-live', 'polite');
+
+    rerender(
+      <Tooltip.Provider>
+        <WorkstreamHeader
+          hypersightOpen={false}
+          hypersightPreferencePending={false}
+          onAddParticipant={vi.fn()}
+          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+          onRename={async () => undefined}
+          onToggleHyperSight={vi.fn()}
+          socketState="connected"
+          workstream={{ ...headerWorkstream, title: 'Download link email to Danny' }}
+        />
+      </Tooltip.Provider>,
+    );
+    expect(screen.getByRole('heading', { name: 'Download link email to Danny' })).toBeInTheDocument();
+  });
+
+  it('gives up on a name that never arrives rather than pulsing for the session', () => {
+    vi.useFakeTimers();
+    try {
+      const created = new Date('2026-08-07T12:00:00.000Z');
+      vi.setSystemTime(created);
+      renderWorkstreamHeader({
+        ...headerWorkstream,
+        title: 'Create an email draft to Danny from Mucker',
+        titleStatus: 'naming',
+        createdAt: created.toISOString(),
+      });
+
+      expect(screen.getByRole('heading', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+
+      // Nothing refetches this query on its own, so a rename event that never
+      // arrived would otherwise leave the skeleton up for good.
+      act(() => { vi.advanceTimersByTime(WORKSTREAM_NAMING_GRACE_MS + 1_000); });
+
+      expect(screen.queryByRole('heading', { name: 'Avalon is naming this work stream' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Create an email draft to Danny from Mucker' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops announcing the title line while someone is typing a new name into it', () => {
+    renderWorkstreamHeader();
+
+    expect(document.querySelector('.workstream-title-line')).toHaveAttribute('aria-live', 'polite');
+
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Daily product brief' }));
+
+    // The person renaming it is typing the new name; reading their own edit
+    // back to them, and the swap from heading to form, is noise.
+    expect(document.querySelector('.workstream-title-line')).toHaveAttribute('aria-live', 'off');
   });
 
   it('opens the editor on F2', () => {

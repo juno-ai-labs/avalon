@@ -10,6 +10,7 @@ function stream(
   return {
     id,
     title: id,
+    titleStatus: 'settled' as const,
     origin: 'ad_hoc',
     harnessStatus,
     scope: 'workspace',

@@ -28,6 +28,7 @@ export const AGENT_MODEL_ROLES = [
   "hypersight",
   "meeting_notes",
   "addressing_classifier",
+  "workstream_naming",
   "activity_structured",
   "work_opportunity_admission",
   "work_opportunity_ranking",
@@ -44,6 +45,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   hypersight: "agent-model-hypersight",
   meeting_notes: "agent-model-meeting-notes",
   addressing_classifier: "agent-model-addressing-classifier",
+  workstream_naming: "agent-model-workstream-naming",
   activity_structured: "agent-model-activity-structured",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
@@ -106,6 +108,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "automation_compiler":
       return { model: modelId(env.OPENROUTER_AUTOMATION_MODEL), fallbackModels };
     case "addressing_classifier":
+    case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
     case "activity_structured":
     case "work_opportunity_admission":

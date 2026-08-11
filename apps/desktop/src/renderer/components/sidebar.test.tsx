@@ -72,6 +72,7 @@ function workstream(
   return {
     id,
     title,
+    titleStatus: 'settled',
     origin,
     harnessStatus,
     scope: 'workspace' as const,
@@ -243,6 +244,30 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('img', { name: /Automation-generated/u })).not.toBeInTheDocument();
     expect(document.querySelector('.brand-lockup')).toBeNull();
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
+  });
+
+  it('waits for a name rather than showing the request a work stream was created from', () => {
+    const naming = { ...workstream('naming', 'Create an email draft to Danny from Mucker that…', 'running'), titleStatus: 'naming' as const };
+    render(
+      <MemoryRouter initialEntries={['/workstreams/naming']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[naming, workstream('named', 'Board decision', 'needs_input')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /naming this work stream/u });
+    expect(row.querySelector('.title-skeleton')).not.toBeNull();
+    expect(row.textContent).not.toContain('Create an email draft');
+    // A settled title is text, not a skeleton — the placeholder is only for the
+    // second or so before Avalon answers.
+    expect(screen.getByRole('link', { name: /Board decision/u }).querySelector('.title-skeleton')).toBeNull();
   });
 
   it('explains a work-stream dot color on hover', async () => {

@@ -19,6 +19,7 @@ type StructuredInferenceRole = Extract<
   | "work_opportunity_admission"
   | "work_opportunity_ranking"
   | "workstream_description"
+  | "workstream_naming"
 >;
 
 export async function runStructuredInference<T>(
@@ -30,7 +31,13 @@ export async function runStructuredInference<T>(
     schemaName: string;
     jsonSchema: Record<string, unknown>;
     parse: (value: unknown) => T;
-    reasoningEffort?: "low" | "medium" | "high";
+    /**
+     * `"none"` asks the provider to switch reasoning off rather than leaving it
+     * to the model's default, which differs by model — a mechanical one-turn
+     * role would otherwise start paying for thinking the first time a flag
+     * retargets it at a model that reasons unless told not to.
+     */
+    reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal;
     onModelResolved?: (model: string) => void;
   },
