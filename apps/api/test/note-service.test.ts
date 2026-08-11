@@ -636,7 +636,8 @@ describe("NoteService", () => {
     await reapDeletedNoteObjects(env);
     expect(database.prepare("SELECT COUNT(*) AS count FROM note_resource_deletion_outbox").get())
       .toEqual({ count: 1 });
-    expect(warning).toHaveBeenCalledWith("Deleted note object cleanup failed", expect.objectContaining({
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "note_object_cleanup_failed",
       reason: "temporary R2 outage",
     }));
 

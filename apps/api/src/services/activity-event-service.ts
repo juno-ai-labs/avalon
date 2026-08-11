@@ -1,6 +1,7 @@
 import { newId, nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
+import { logWarn } from "../observability/logger";
 
 /**
  * The first-party activity log: what happened in Avalon, for whoever should
@@ -103,7 +104,7 @@ export async function recordActivityEvent(
   try {
     return await recordActivityEventOrThrow(env, input);
   } catch (error) {
-    console.warn("Activity event could not be recorded", {
+    logWarn(env, "activity_event_record_failed", {
       workspace_id: input.workspaceId,
       event_type: input.eventType,
       reason: error instanceof Error ? error.message : "unknown",

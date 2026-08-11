@@ -1,5 +1,6 @@
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logError } from "../observability/logger";
 import {
   isAllowedSocketOrigin,
   issueTranscriptionSocketTicket,
@@ -249,9 +250,9 @@ export class RealtimeTranscriptionService {
           lastError = error;
         }
       }
-      console.error("realtime_transcription_session_release_failed", {
-        sessionId,
-        error: lastError instanceof Error ? lastError.message : String(lastError),
+      logError(this.env, "realtime_transcription_session_release_failed", {
+        session_id: sessionId,
+        reason: lastError instanceof Error ? lastError.message : String(lastError),
       });
     };
     const deferRelease = (): void => {
@@ -308,9 +309,9 @@ export class RealtimeTranscriptionService {
         if (now - leaseRefreshedAt >= SESSION_LEASE_REFRESH_MS) {
           leaseRefreshedAt = now;
           const renewal = renewTranscriptionSession(this.env, sessionId).catch((error: unknown) => {
-            console.error("realtime_transcription_session_renewal_failed", {
-              sessionId,
-              error: error instanceof Error ? error.message : String(error),
+            logError(this.env, "realtime_transcription_session_renewal_failed", {
+              session_id: sessionId,
+              reason: error instanceof Error ? error.message : String(error),
             });
           });
           try { this.defer(renewal); } catch { void renewal; }
