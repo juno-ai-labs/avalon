@@ -368,6 +368,11 @@ export class SlackAgentService {
       ? payload.actions[0] as Record<string, unknown>
       : null;
     const callbackId = String(payload.callback_id ?? action?.action_id ?? "");
+    // Slack follows a `url` button's link itself, so the interaction it also
+    // sends needs nothing but an acknowledgement. Matched on the action id
+    // rather than `callbackId`: one of these buttons now sits inside a modal,
+    // and a view-sourced payload can carry that view's callback id instead.
+    if (type === "block_actions" && String(action?.action_id ?? "").startsWith("avalon_open_")) return {};
     if (type === "block_actions" && callbackId === "avalon_claim_workstream") {
       if (typeof action?.value !== "string" || !action.value) {
         throw new ApiError(422, "slack_claim_invalid", "The Slack task claim is invalid");
@@ -382,7 +387,20 @@ export class SlackAgentService {
       return {};
     }
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
-      if (callbackId.startsWith("avalon_open_") || callbackId === "avalon_connect" || callbackId === "avalon_create_automation") return {};
+      if (callbackId.startsWith("avalon_open_") || callbackId === "avalon_create_automation") return {};
+      if (callbackId === "avalon_connect") {
+        // The click is the mint. Slack signed this payload and named the member
+        // in it, which is the same authority App Home had when it published the
+        // button — but a challenge issued now is redeemed seconds later instead
+        // of however long the view has been on screen.
+        await slackApi(token, "views.open", {
+          trigger_id: triggerId,
+          view: connection.status === "healthy"
+            ? connectModal(await this.createLink(connection, slackUserId))
+            : reconnectRequiredModal(),
+        }, AbortSignal.timeout(1_500));
+        return {};
+      }
       if (callbackId === "avalon_preferences") {
         const preferences = await this.env.DB.prepare(
           `SELECT notify_needs_input, notify_automation_completed
@@ -683,7 +701,7 @@ export class SlackAgentService {
     const [claimed, linked] = results;
     if (!claimed || !linked) throw new ApiError(500, "slack_link_failed", "Slack could not be connected");
     if (Number(claimed.meta.changes ?? 0) !== 1 || Number(linked.meta.changes ?? 0) !== 1) {
-      throw new ApiError(409, "slack_link_consumed", "This Slack link has already been used; open Avalon Home in Slack for a new link");
+      throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Avalon in Slack to get a new one");
     }
     await this.assignWorkspaceSessions(
       String(challenge.connection_id),
@@ -871,17 +889,35 @@ export class SlackAgentService {
     };
   }
 
+  /**
+   * Loads a challenge and says precisely why it cannot be redeemed.
+   *
+   * The conditions are checked one at a time rather than folded into the
+   * `WHERE` clause, because a single row-not-found reports every one of them as
+   * expiry — including an installation that needs reconnecting, which no new
+   * link will fix and which the member cannot resolve themselves.
+   */
   private async loadLinkChallenge(auth: AuthContext, tokenHash: string): Promise<Record<string, unknown>> {
     const challenge = await this.env.DB.prepare(
       `SELECT c.*, cc.workspace_id, cc.provider_account_id
-              , cc.display_name
+              , cc.display_name, cc.status AS connection_status
        FROM slack_link_challenges c
        JOIN connector_connections cc ON cc.id = c.connection_id
-       WHERE c.token_hash = ? AND c.consumed_at IS NULL AND c.expires_at > ?
-         AND cc.connector_type = 'slack' AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
-    ).bind(tokenHash, nowIso()).first<Record<string, unknown>>();
-    if (!challenge) throw new ApiError(404, "slack_link_expired", "This Slack link has expired; open Avalon Home in Slack for a new link");
+       WHERE c.token_hash = ?
+         AND cc.connector_type = 'slack' AND cc.scope = 'workspace'`,
+    ).bind(tokenHash).first<Record<string, unknown>>();
+    // Scheduled maintenance keeps rows for 30 days, far beyond the 15-minute
+    // lifetime, so nothing that merely aged out arrives here as a missing row.
+    if (!challenge) throw new ApiError(404, "slack_link_unknown", "Avalon does not recognize this Slack connection link; click Connect Avalon in Slack to get a new one");
+    // Ahead of the state checks: their answers are not owed to a caller who
+    // holds a token minted for a different Avalon workspace.
     if (challenge.workspace_id !== auth.workspaceId) throw new ApiError(409, "slack_link_workspace_mismatch", "This Slack installation belongs to another Avalon workspace");
+    if (typeof challenge.consumed_at === "string") throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Avalon in Slack to get a new one");
+    // Still a 404, as an unusable challenge always was: `ApiError` curates the
+    // statuses this API emits, and the honest 410 is not worth widening it for
+    // when the distinction clients act on is the code.
+    if (String(challenge.expires_at) <= nowIso()) throw new ApiError(404, "slack_link_expired", "This Slack connection link has expired; click Connect Avalon in Slack to get a new one");
+    if (challenge.connection_status !== "healthy") throw new ApiError(409, "slack_installation_unhealthy", "This Slack workspace's Avalon installation needs to be reconnected before accounts can be linked; an Avalon workspace owner or admin can reconnect it under Settings → Connections");
     return challenge;
   }
 
@@ -963,11 +999,15 @@ export class SlackAgentService {
       }
       if (outcomeStatus === "needs_input" && session.execution_scope === "workspace") {
         const dmChannel = await this.openDm(token, session.slack_user_id);
-        const link = await this.createLink(connection, session.slack_user_id);
+        // A button rather than a minted URL: this DM is a notification a member
+        // may open hours later, and a challenge embedded in it would be long
+        // dead by then with nothing on screen to say so.
+        const claimPrompt = "This workspace-owned task needs personal Avalon authority. Connect your Avalon account to claim it.";
         await slackApi(token, "chat.postMessage", {
           channel: dmChannel,
           client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:claim-link`),
-          text: `This workspace-owned task needs personal Avalon authority. Connect your Avalon account to claim it: ${link}`,
+          text: claimPrompt,
+          blocks: connectPromptBlocks(claimPrompt),
         }, AbortSignal.timeout(10_000));
         if (dmChannel !== session.slack_channel_id) {
           await slackApi(token, "chat.postMessage", {
@@ -1494,7 +1534,7 @@ export class SlackAgentService {
       if (!justCreated) {
         if (openElicitation?.targetUserId
           && openElicitation.targetUserId !== identity?.auth.userId) {
-          if (!identity) await this.sendPrivateClaimLink(connection, slackUserId, token);
+          if (!identity) await this.sendPrivateClaimPrompt(slackUserId, token);
           await slackApi(token, "chat.postMessage", {
             channel,
             thread_ts: thread,
@@ -1515,7 +1555,7 @@ export class SlackAgentService {
               : "This question requires the targeted Avalon member’s personal authority. Connect your Avalon account, then use the claim button before replying.",
             blocks: workspaceClaimBlocks(session.id, identity === null),
           }, AbortSignal.timeout(5_000));
-          if (!identity) await this.sendPrivateClaimLink(connection, slackUserId, token);
+          if (!identity) await this.sendPrivateClaimPrompt(slackUserId, token);
           return;
         }
         const externalIdentity = actor
@@ -2017,7 +2057,7 @@ export class SlackAgentService {
     if (!session) throw new ApiError(404, "slack_session_not_found", "This Slack task is no longer available");
     const identity = await this.linkedIdentity(teamId, slackUserId);
     if (!identity) {
-      await this.sendPrivateClaimLink(connection, slackUserId, token);
+      await this.sendPrivateClaimPrompt(slackUserId, token);
       return;
     }
     let status: "claimed" | "already_claimed";
@@ -2058,15 +2098,12 @@ export class SlackAgentService {
     return row ? { id: row.id, targetUserId: row.target_user_id } : null;
   }
 
-  private async sendPrivateClaimLink(
-    connection: SlackConnectionRow,
-    slackUserId: string,
-    token: string,
-  ): Promise<void> {
-    const link = await this.createLink(connection, slackUserId);
+  private async sendPrivateClaimPrompt(slackUserId: string, token: string): Promise<void> {
+    const prompt = "Connect your Avalon account to claim this workspace-owned task.";
     await slackApi(token, "chat.postMessage", {
       channel: await this.openDm(token, slackUserId),
-      text: `Connect your Avalon account to claim this workspace-owned task: ${link}`,
+      text: prompt,
+      blocks: connectPromptBlocks(prompt),
     }, AbortSignal.timeout(5_000));
   }
 
@@ -2246,8 +2283,10 @@ export class SlackAgentService {
     ).bind(connection.id, slackUserId).first<{ user_id: string; name: string; timezone: string; role: string }>();
     let blocks: Record<string, unknown>[];
     if (!link) {
-      const url = await this.createLink(connection, slackUserId);
-      blocks = unlinkedHome(url);
+      // No challenge is minted here. App Home is a published document with no
+      // expiry of its own, so a token embedded in it dies where the member can
+      // still see it; `avalon_connect` mints one against the click instead.
+      blocks = unlinkedHome();
     } else {
       const [tasks, automations, personalSlack] = await Promise.all([
         this.env.DB.prepare(
@@ -3003,12 +3042,40 @@ function feedbackModal(workstreamId: string): Record<string, unknown> {
   ] };
 }
 
-function unlinkedHome(link: string): Record<string, unknown>[] {
+// Every surface that asks an unlinked member to connect carries this button and
+// no URL, so no Slack surface holds a challenge that can go stale on it.
+function connectPromptBlocks(text: string): Record<string, unknown>[] {
+  return [
+    { type: "section", text: { type: "mrkdwn", text } },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
+  ];
+}
+
+// The one place a link challenge is ever rendered. It is opened in response to
+// the click that minted it, so its lifetime is a member deciding whether to
+// continue rather than however long App Home has been sitting published.
+function connectModal(link: string): Record<string, unknown> {
+  return { type: "modal", callback_id: "avalon_connect_link", title: { type: "plain_text", text: "Connect Avalon" }, close: { type: "plain_text", text: "Cancel" }, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: "Opening Avalon connects this Slack account to the Avalon account you are signed in to on this device." } },
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Open Avalon" }, url: link, action_id: "avalon_open_connect" }] },
+    { type: "context", elements: [{ type: "mrkdwn", text: "This link works once and expires in 15 minutes. Click *Connect Avalon* again for a new one." }] },
+  ] };
+}
+
+function reconnectRequiredModal(): Record<string, unknown> {
+  return { type: "modal", callback_id: "avalon_connect_unavailable", title: { type: "plain_text", text: "Connect Avalon" }, close: { type: "plain_text", text: "Close" }, blocks: [
+    { type: "section", text: { type: "mrkdwn", text: "This Slack workspace's Avalon installation needs to be reconnected before accounts can be linked. An Avalon workspace owner or admin can reconnect it from *Settings → Connections* in Avalon." } },
+  ] };
+}
+
+function unlinkedHome(): Record<string, unknown>[] {
   return [
     { type: "header", text: { type: "plain_text", text: "Meet Avalon" } },
     { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Avalon workspace tools and remain attributed to your Slack identity. Avalon uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
     { type: "section", text: { type: "mrkdwn", text: "Connect your Avalon account to claim tasks that need personal authority, use your personal connectors, and see assigned work in Avalon." } },
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, url: link, action_id: "avalon_connect" }] },
+    // Deliberately not a `url` button: the handoff URL carries a single-use
+    // challenge, and this view outlives any expiry short enough to be safe.
+    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Avalon" }, action_id: "avalon_connect" }] },
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: "*Try now*\n• Summarize this thread and propose next steps\n• Investigate this issue with workspace tools\n• Draft a status update for this channel\n\nAfter connecting: create personal automations such as “Check my Gmail every morning and send my top 3 emails here.”" } },
     { type: "context", elements: [{ type: "mrkdwn", text: "Avalon Agent features require paid Slack and Avalon plans." }] },

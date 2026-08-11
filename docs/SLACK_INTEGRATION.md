@@ -93,11 +93,32 @@ Avalon OAuth flow again to grant additive `users:read`, `users:read.email`, and
 email. If an already-admitted prompt discovers that `reactions:write` is missing, Avalon
 continues that task but marks the installation for reconnect before accepting later prompts.
 
-1. An unlinked user opens Avalon Home or sends a prompt.
-2. The regional service creates a random, hashed, 15-minute link challenge bound to the workspace installation and Slack user ID.
+1. An unlinked member clicks **Connect Avalon** — on App Home, or on the private
+   prompt Avalon sends when a workspace-owned task needs personal authority.
+2. The regional service creates a random, hashed, 15-minute link challenge bound
+   to the workspace installation and Slack user ID, and returns it in a modal
+   opened against that same click.
 3. The HTTPS handoff keeps the token in a URL fragment, removes it from browser history, and opens the signed-in Avalon desktop app.
 4. The desktop app calls authenticated `POST /connections/slack/link` against its active regional session; the endpoint consumes the challenge and binds that Avalon user to the Slack identity.
 5. Every later invocation verifies active Avalon membership, the active link, the installation, and the owning region.
+
+**A challenge is minted by the click that redeems it, and never earlier.** No
+Slack surface holds a handoff URL: App Home and the claim DM carry a button
+whose only job is to ask for one. This is a hard rule rather than a preference —
+App Home is a published document with no expiry of its own and the claim DM is
+read whenever the member gets to it, so a token rendered into either dies where
+it is still visible, and a member clicking it has no way to tell. A new surface
+that invites a member to connect uses the same button; it does not embed a link.
+
+Minting invalidates any challenge still outstanding for that member, so only the
+most recently requested one can be redeemed. A challenge that cannot be redeemed
+is refused with the reason rather than a single generic expiry:
+`slack_link_unknown`, `slack_link_consumed` (already used, or superseded),
+`slack_link_expired`, `slack_link_workspace_mismatch`, and
+`slack_installation_unhealthy`. Only the first three are answered by clicking
+**Connect Avalon** again; an unhealthy installation needs an Avalon workspace
+owner or admin to reconnect it, and Slack is told so at the click rather than
+handing the member a link that cannot work.
 
 Suspended members and revoked links cannot start or continue tasks. A user may link separately in every connected Slack team.
 
@@ -149,7 +170,8 @@ App Home is a personalized control surface published per user. Avalon publishes 
 ### Unlinked
 
 - concise description of Avalon and its data behavior
-- **Connect Avalon** call to action
+- **Connect Avalon** call to action — an action button carrying no URL, so
+  publishing Home mints nothing and nothing on the published view expires
 - example prompts, including the morning Gmail briefing
 - AI fallibility notice
 - paid Slack and Avalon plan disclosure
@@ -176,6 +198,9 @@ Home is updated on `app_home_opened`, after account linking, and after settings 
 - Global shortcut **Start an Avalon task**: open a task modal.
 - Message shortcut **Work on this with Avalon**: prefill the task modal with the selected message.
 - `/avalon [request]`: start the request; an empty command opens the modal.
+- **Connect Avalon**: mint a link challenge and open it in a modal whose single
+  button is the desktop handoff, or explain the reconnect an unhealthy
+  installation needs.
 - Result buttons: open the canonical task or provide feedback.
 - Avalon person mention: notify the matched member in the Avalon Agent DM, falling back to email.
 - Avalon links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Avalon authorization for its contents.
@@ -188,7 +213,7 @@ in its path, to be unfurled at all; `avalon://` links pasted by a member never
 produce an event and cannot be previewed. The unfurl handler also still accepts
 the legacy `/open#target=` handoff already sitting in channel history.
 
-Every other web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history.
+Every other web button uses a static, allowlisted HTTPS-to-desktop handoff. Workstream IDs may cross that boundary; connector tokens and Slack link challenges stay in fragments and are removed from browser history. The single button carrying a link challenge is the one inside the connect modal, which exists only for as long as that modal is open.
 
 Modal submissions are validated server-side. Modals never request Avalon or provider passwords.
 
@@ -324,3 +349,58 @@ briefing's three/one/zero-result cases.
 8. Submit the exact scopes and test credentials/instructions. Explain why broad user scopes are optional and user initiated, why public-channel membership does not ingest ordinary channel traffic, how account linking works, and how automation approval/delivery binding works.
 
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Validation does not replace deployment or Marketplace review.
+
+## Changelog
+
+This document predates the [module document](module-documents.md) convention and
+had no changelog until the entry below; the reasoning behind everything above it
+was not recorded and is not reconstructed here.
+
+### 2026-08-11 — A link challenge is minted by the click that redeems it
+
+**What changed:** **Connect Avalon** on App Home is an action button with no URL.
+Clicking it mints the challenge and opens it in a modal, which is now the only
+Slack surface that ever holds a handoff link. The claim DM Avalon sends when a
+workspace-owned task needs personal authority carries the same button instead of
+a minted URL. A challenge that cannot be redeemed is refused with the specific
+reason — unknown, consumed, expired, workspace mismatch, or unhealthy
+installation — where every one of them previously read as expiry.
+
+**Why:** A member clicked **Connect Avalon** and Avalon told them the link had
+expired. App Home is published once and stays on screen until something
+republishes it, while the challenge embedded in its button lived fifteen minutes,
+so the visible button rotted in place with nothing to indicate it. Worse,
+publishing Home minted a new challenge and consumed every outstanding one for
+that member, so the *act of opening Home* killed the token in the copy already on
+screen — and `views.publish` returns silently on `hash_conflict`, meaning two
+near-simultaneous `app_home_opened` events left the displayed view holding a
+consumed token and no replacement rendered, dead until the next successful
+publish. Because every one of those states produced the same row-not-found, they
+all reported "expired", including an installation needing reconnect, which sent
+the member to fetch a new link that would fail identically.
+
+**Considered and rejected:** Reusing a live challenge in `createLink` instead of
+consuming it. It removes the rotation race but not the defect underneath — a
+token published into a durable view still expires while the member is looking at
+it. Also rejected: a stable, non-secret URL on the button, exchanged for a
+challenge when followed. That URL is then a permanent bearer credential for
+claiming a Slack identity, sitting in browser history, which is the exact
+property the single-use fragment exists to avoid. Lengthening the TTL only
+trades the failure for a longer-lived secret.
+
+**Consequences:** Connecting costs one extra click — button, then **Open Avalon**
+in the modal — bought in exchange for a link that cannot be stale when it is
+clicked. Any future surface inviting a member to connect must use
+`connectPromptBlocks` and must not embed a handoff URL; the rule is stated under
+[Identity linking](#identity-linking) because a surface that breaks it will not
+fail any test. `createLink` now has exactly one caller, the `avalon_connect`
+interaction, which is also where an unhealthy installation is refused before a
+challenge exists. `loadLinkChallenge` checks its conditions in a deliberate order
+— workspace mismatch ahead of every state check, so a caller holding a token
+minted for another Avalon workspace learns nothing about it — and a new condition
+has to be placed in that order rather than appended.
+
+Slack's rendering of the new modal and buttons was verified structurally, against
+the Block Kit payloads in `apps/api/test/slack-account-link.test.ts`; Slack
+cannot be driven from the sandbox, so the first real render is worth a look
+during the App Home/linking case of the `docs/E2E.md` matrix.

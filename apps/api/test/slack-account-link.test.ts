@@ -1,0 +1,253 @@
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { AuthContext, Env } from "../src/env";
+import { encryptString, sha256 } from "../src/lib/crypto";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { SlackAgentService } from "../src/services/slack-agent-service";
+
+const credentialsKey = "slack-account-link-test-key";
+const workspaceId = "00000000-0000-7000-8000-000000000001";
+const userId = "00000000-0000-7000-8000-000000000002";
+const connectionId = "00000000-0000-7000-8000-000000000003";
+const databases: DatabaseSync[] = [];
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  for (const database of databases.splice(0)) database.close();
+});
+
+describe("Slack account linking", () => {
+  it("publishes App Home for an unlinked member without minting a link challenge", async () => {
+    const database = await seededDatabase();
+    const slack = stubSlack();
+    const service = new SlackAgentService(environment(database));
+
+    await expect(service.processEvent(appHomeOpened(), "home-hash")).resolves.toEqual({ ok: true });
+    await service.processQueuedIngress("event:EvHome");
+
+    const published = slack.calls.find((call) => call.method === "views.publish");
+    const connect = connectButton(published?.body.view as Record<string, unknown>);
+    expect(connect).toMatchObject({ action_id: "avalon_connect", style: "primary" });
+    // The whole point: App Home is published once and stays on screen
+    // indefinitely, so it must not carry anything that can expire on it.
+    expect(connect).not.toHaveProperty("url");
+    expect(challengeCount(database)).toBe(0);
+  });
+
+  it("mints the challenge when Connect Avalon is clicked, and redeems it", async () => {
+    const database = await seededDatabase();
+    const slack = stubSlack();
+    const service = new SlackAgentService(environment(database));
+
+    await expect(service.processInteraction(connectClick(), "connect-hash")).resolves.toEqual({});
+
+    const opened = slack.calls.find((call) => call.method === "views.open");
+    expect(opened?.body.trigger_id).toBe("trigger-1");
+    const view = opened?.body.view as Record<string, unknown>;
+    expect(view.callback_id).toBe("avalon_connect_link");
+    const button = connectButton(view) as { url: string; action_id: string };
+    expect(button.action_id).toBe("avalon_open_connect");
+    expect(challengeCount(database)).toBe(1);
+
+    const handoff = new URL(button.url);
+    expect(handoff.origin + handoff.pathname).toBe("https://with-avalon.com/slack/link");
+    const token = new URLSearchParams(handoff.hash.slice(1)).get("token") ?? "";
+    await expect(new SlackAgentService(environment(database)).previewLink(auth(), token))
+      .resolves.toMatchObject({ teamId: "T123", slackUserId: "U456" });
+  });
+
+  it("acknowledges the modal's own handoff button without opening a second modal", async () => {
+    const database = await seededDatabase();
+    const slack = stubSlack();
+
+    await expect(new SlackAgentService(environment(database)).processInteraction({
+      ...connectClick(),
+      // Slack reports the modal a block action came from. Its callback id must
+      // not be read as the interaction's own, or this ack falls through to the
+      // shortcut path and opens a task modal on top of the handoff.
+      view: { callback_id: "avalon_connect_link", hash: "view-hash" },
+      callback_id: "avalon_connect_link",
+      actions: [{ action_id: "avalon_open_connect", type: "button" }],
+    }, "handoff-hash")).resolves.toEqual({});
+
+    expect(slack.calls).toEqual([]);
+    expect(challengeCount(database)).toBe(0);
+  });
+
+  it("offers a reconnect instead of a link the installation cannot honor", async () => {
+    const database = await seededDatabase();
+    database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");
+    const slack = stubSlack();
+
+    await new SlackAgentService(environment(database)).processInteraction(connectClick(), "unhealthy-hash");
+
+    const view = slack.calls.find((call) => call.method === "views.open")?.body.view as Record<string, unknown>;
+    expect(view.callback_id).toBe("avalon_connect_unavailable");
+    // Minting here would hand the member a link that fails at redemption for a
+    // reason only an admin can fix.
+    expect(challengeCount(database)).toBe(0);
+  });
+
+  it("distinguishes an unknown, used, expired, and unredeemable link", async () => {
+    const database = await seededDatabase();
+    await seedChallenge(database, "fresh-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
+    await seedChallenge(database, "used-token", { expiresAt: "2099-01-01T00:00:00.000Z", consumedAt: "2026-01-01T00:00:00.000Z" });
+    await seedChallenge(database, "old-token", { expiresAt: "2020-01-01T00:00:00.000Z" });
+    const service = new SlackAgentService(environment(database));
+
+    await expect(service.previewLink(auth(), "never-minted")).rejects.toMatchObject({ code: "slack_link_unknown", status: 404 });
+    await expect(service.previewLink(auth(), "used-token")).rejects.toMatchObject({ code: "slack_link_consumed", status: 409 });
+    await expect(service.previewLink(auth(), "old-token")).rejects.toMatchObject({ code: "slack_link_expired", status: 404 });
+    // A live challenge whose installation went unhealthy after it was minted:
+    // reported as expired before, which sent the member back for another link
+    // that would fail in exactly the same way.
+    database.exec("UPDATE connector_connections SET status = 'needs_reconnect'");
+    await expect(service.previewLink(auth(), "fresh-token")).rejects.toMatchObject({
+      code: "slack_installation_unhealthy",
+      status: 409,
+    });
+  });
+
+  it("tells a caller from another workspace nothing about the challenge's state", async () => {
+    const database = await seededDatabase();
+    await seedChallenge(database, "used-token", { expiresAt: "2099-01-01T00:00:00.000Z", consumedAt: "2026-01-01T00:00:00.000Z" });
+
+    await expect(new SlackAgentService(environment(database)).previewLink(
+      { ...auth(), workspaceId: "workspace-other" },
+      "used-token",
+    )).rejects.toMatchObject({ code: "slack_link_workspace_mismatch", status: 409 });
+  });
+
+  it("consumes the challenge exactly once", async () => {
+    const database = await seededDatabase();
+    await seedChallenge(database, "fresh-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
+    stubSlack();
+    const service = new SlackAgentService(environment(database));
+
+    await expect(service.linkUser(auth(), "fresh-token")).resolves.toMatchObject({ linked: true, slackUserId: "U456" });
+    await expect(service.linkUser(auth(), "fresh-token")).rejects.toMatchObject({ code: "slack_link_consumed" });
+  });
+});
+
+function appHomeOpened() {
+  return {
+    type: "event_callback",
+    api_app_id: "A1",
+    team_id: "T123",
+    event_id: "EvHome",
+    event: { type: "app_home_opened", user: "U456", tab: "home", view: { hash: "view-hash" } },
+  };
+}
+
+function connectClick() {
+  return {
+    type: "block_actions",
+    team: { id: "T123" },
+    user: { id: "U456" },
+    trigger_id: "trigger-1",
+    actions: [{ action_id: "avalon_connect", type: "button" }],
+  };
+}
+
+/** The primary button in the first `actions` block of a view or block list. */
+function connectButton(view: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const blocks = Array.isArray(view?.blocks) ? view.blocks as Record<string, unknown>[] : [];
+  const actions = blocks.find((block) => block.type === "actions");
+  const elements = Array.isArray(actions?.elements) ? actions.elements as Record<string, unknown>[] : [];
+  return elements[0];
+}
+
+function challengeCount(database: DatabaseSync): number {
+  return Number((database.prepare(
+    "SELECT COUNT(*) AS count FROM slack_link_challenges",
+  ).get() as { count: number }).count);
+}
+
+function auth(): AuthContext {
+  return {
+    sessionId: "session-taylor",
+    userId,
+    workspaceId,
+    region: "global",
+    role: "member",
+  } as AuthContext;
+}
+
+interface SlackCall { method: string; body: Record<string, unknown> }
+
+/** Records every Slack Web API call and answers each one `ok`. */
+function stubSlack(): { calls: SlackCall[] } {
+  const calls: SlackCall[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+    calls.push({
+      method: url.pathname.split("/").pop() ?? "",
+      body: JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>,
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }));
+  return { calls };
+}
+
+async function seedChallenge(
+  database: DatabaseSync,
+  token: string,
+  options: { expiresAt: string; consumedAt?: string },
+): Promise<void> {
+  database.prepare(
+    `INSERT INTO slack_link_challenges
+     (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, consumed_at, created_at)
+     VALUES (?, '${connectionId}', 'T123', 'U456', ?, ?, '2026-01-01')`,
+  ).run(await sha256(token), options.expiresAt, options.consumedAt ?? null);
+}
+
+async function seededDatabase(): Promise<DatabaseSync> {
+  const database = migratedSqliteDatabase();
+  databases.push(database);
+  const encrypted = await encryptString(
+    JSON.stringify({ botAccessToken: "xoxb-test" }),
+    credentialsKey,
+    connectionId,
+  );
+  database.exec(`
+    INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES ('${userId}', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+    INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES ('${workspaceId}', 'Slack Workspace', 'slack-workspace', 'global',
+            '${userId}', '2026-01-01', '2026-01-01');
+    INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+    VALUES ('${workspaceId}', '${userId}', 'owner', 'active', '2026-01-01');
+    INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+       display_name, encrypted_credentials, credential_iv, credential_key_version,
+       granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+       model_plugin_id)
+    VALUES ('${connectionId}', '${workspaceId}', 'slack', 'workspace', NULL, 'T123',
+            'Juno Labs', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+            '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+            'plugin_slack_workspace');
+  `);
+  return database;
+}
+
+function environment(database: DatabaseSync): Env {
+  return {
+    DB: sqliteD1(database),
+    ACTIVITY_QUEUE: { send: async () => {} },
+    AVALON_REGION: "global",
+    CONNECTOR_CREDENTIALS_KEY: credentialsKey,
+    CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+    PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+    SLACK_APP_ID: "A1",
+    SLACK_CLIENT_ID: "client",
+    SLACK_CLIENT_SECRET: "secret",
+    SLACK_SIGNING_SECRET: "signing",
+    LOG_LEVEL: "error",
+  } as unknown as Env;
+}
