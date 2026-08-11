@@ -60,15 +60,36 @@ interface WorkstreamFacts {
   system: boolean;
 }
 
+/**
+ * How long a *failed* read is left alone. A miss is never remembered (see
+ * `cached`), but a failure is a different event with a different consequence:
+ * while D1 is unhealthy every evaluation on every agent path would otherwise
+ * re-issue its reads and warn again, turning an outage into a log flood on top
+ * of it. Seconds rather than the attribute TTL, so recovery is still prompt and
+ * a row written moments later is still picked up.
+ */
+const FAILURE_SUPPRESSION_MS = 10_000;
+
+type EntityKind = "workspace" | "user" | "workstream";
+
+/** A read's two distinguishable outcomes: no such row, or the read did not happen. */
+interface LoadOutcome<T> {
+  value: T | null;
+  failed: boolean;
+}
+
 const workspaceCache = new Map<string, CacheEntry<WorkspaceFacts>>();
 const userCache = new Map<string, CacheEntry<UserFacts>>();
 const workstreamCache = new Map<string, CacheEntry<WorkstreamFacts>>();
+/** Namespaced `entity:key` → the moment that key may be read again after a failure. */
+const failureSuppression = new Map<string, number>();
 
 /** Drops every cached fact. Exists for tests, which must not inherit each other's rows. */
 export function clearFlagTargetingAttributeCache(): void {
   workspaceCache.clear();
   userCache.clear();
   workstreamCache.clear();
+  failureSuppression.clear();
 }
 
 /**
@@ -76,28 +97,40 @@ export function clearFlagTargetingAttributeCache(): void {
  * stream is routinely flagged one statement before its row is inserted — the
  * automation paths resolve the model for an id they are about to write — so
  * remembering "no such row" would keep that work stream unattributed for the
- * whole of its first runs.
+ * whole of its first runs. A *failed* read is held down briefly instead, which
+ * is the one case where retrying immediately helps nobody.
  */
 async function cached<T>(
   cache: Map<string, CacheEntry<T>>,
+  entity: EntityKind,
   key: string,
-  load: () => Promise<T | null>,
+  load: () => Promise<LoadOutcome<T>>,
 ): Promise<T | null> {
   const hit = cache.get(key);
   if (hit) {
     if (hit.expiresAt > Date.now()) return hit.value;
     cache.delete(key);
   }
-  const value = await load();
-  if (!value) return null;
+  const suppressionKey = `${entity}:${key}`;
+  const suppressedUntil = failureSuppression.get(suppressionKey);
+  if (suppressedUntil !== undefined) {
+    if (suppressedUntil > Date.now()) return null;
+    failureSuppression.delete(suppressionKey);
+  }
+  const outcome = await load();
+  if (outcome.failed) {
+    failureSuppression.set(suppressionKey, Date.now() + FAILURE_SUPPRESSION_MS);
+    return null;
+  }
+  if (!outcome.value) return null;
   // Stamped when the value is stored rather than when the lookup began, so a
   // slow read spends its own latency instead of the entry's life.
-  cache.set(key, { value, expiresAt: Date.now() + ATTRIBUTE_CACHE_TTL_MS });
+  cache.set(key, { value: outcome.value, expiresAt: Date.now() + ATTRIBUTE_CACHE_TTL_MS });
   if (cache.size > ATTRIBUTE_CACHE_MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
-  return value;
+  return outcome.value;
 }
 
 /**
@@ -136,12 +169,12 @@ function text(value: unknown): string | undefined {
 async function loadRow<T>(
   env: Env,
   subject: FlagTargetingSubject,
-  entity: "workspace" | "user" | "workstream",
+  entity: EntityKind,
   sql: string,
   bindings: (string | null)[],
-): Promise<T | null> {
+): Promise<LoadOutcome<T>> {
   try {
-    return await env.DB.prepare(sql).bind(...bindings).first<T>();
+    return { value: await env.DB.prepare(sql).bind(...bindings).first<T>(), failed: false };
   } catch (error) {
     logStructuredEvent(env, "warn", "flag_targeting_attributes_unavailable", {
       entity,
@@ -150,13 +183,23 @@ async function loadRow<T>(
       user_id: subject.userId,
       error_name: error instanceof Error ? error.name : "UnknownError",
     });
-    return null;
+    return { value: null, failed: true };
   }
 }
 
+/** Maps a read's outcome onto facts, keeping "no such row" and "no read" apart. */
+function mapped<Row, Facts>(
+  outcome: LoadOutcome<Row>,
+  toFacts: (row: Row) => Facts,
+): LoadOutcome<Facts> {
+  return outcome.value
+    ? { value: toFacts(outcome.value), failed: false }
+    : { value: null, failed: outcome.failed };
+}
+
 async function workspaceFacts(env: Env, subject: FlagTargetingSubject, workspaceId: string) {
-  return cached(workspaceCache, workspaceId, async () => {
-    const row = await loadRow<{
+  return cached(workspaceCache, "workspace", workspaceId, async () => {
+    const outcome = await loadRow<{
       slug: string;
       created_at: string;
       owner_email: string | null;
@@ -173,13 +216,12 @@ async function workspaceFacts(env: Env, subject: FlagTargetingSubject, workspace
         WHERE w.id = ?1`,
       [workspaceId],
     );
-    if (!row) return null;
-    return {
+    return mapped(outcome, (row) => ({
       slug: row.slug,
       createdAt: text(row.created_at) ?? null,
       ownerEmailDomain: emailDomain(row.owner_email),
       memberCount: Number(row.member_count ?? 0),
-    } satisfies WorkspaceFacts;
+    } satisfies WorkspaceFacts));
   });
 }
 
@@ -187,8 +229,8 @@ async function userFacts(env: Env, subject: FlagTargetingSubject, userId: string
   // The role is a property of the pair, not of the user, so a user evaluated in
   // two workspaces must not read one workspace's role from the other's entry.
   const key = `${userId}:${subject.workspaceId ?? ""}`;
-  return cached(userCache, key, async () => {
-    const row = await loadRow<{ email: string; role: string | null }>(
+  return cached(userCache, "user", key, async () => {
+    const outcome = await loadRow<{ email: string; role: string | null }>(
       env,
       subject,
       "user",
@@ -198,17 +240,16 @@ async function userFacts(env: Env, subject: FlagTargetingSubject, userId: string
         WHERE u.id = ?1`,
       [userId, subject.workspaceId ?? null],
     );
-    if (!row) return null;
-    return {
+    return mapped(outcome, (row) => ({
       emailDomain: emailDomain(row.email),
       role: text(row.role),
-    } satisfies UserFacts;
+    } satisfies UserFacts));
   });
 }
 
 async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstreamId: string) {
-  return cached(workstreamCache, workstreamId, async () => {
-    const row = await loadRow<{
+  return cached(workstreamCache, "workstream", workstreamId, async () => {
+    const outcome = await loadRow<{
       origin_type: string;
       scope: string;
       system_kind: string | null;
@@ -226,31 +267,52 @@ async function workstreamFacts(env: Env, subject: FlagTargetingSubject, workstre
         WHERE s.id = ?1`,
       [workstreamId],
     );
-    if (!row) return null;
-    return {
+    return mapped(outcome, (row) => ({
       origin: row.origin_type,
       scope: row.scope,
       createdByUserId: text(row.created_by_user_id),
       creatorEmailDomain: emailDomain(row.creator_email),
       fromOpportunity: Boolean(row.created_from_opportunity_id),
       system: Boolean(row.system_kind),
-    } satisfies WorkstreamFacts;
+    } satisfies WorkstreamFacts));
   });
 }
 
 /**
  * The attributes a Flagship targeting rule may match on for one subject, on top
  * of the identifiers the caller already sends. Everything here is a fact about
- * a workspace, a work stream, or a person's relationship to them — a slug, a
- * count, an age, a role, an origin, an email *domain*. No name, no address, no
- * title, and nothing a person wrote ever becomes an attribute; see
- * `docs/FEATURE_FLAGS.md` for why that line is where it is.
+ * a workspace, a work stream, or a person's relationship to them — a count, an
+ * age, a role, an origin, an email *domain* — with `workspaceSlug` as the one
+ * deliberate exception: it is user-authored text, and it crosses anyway because
+ * a uuid is unreadable in a rule six weeks later. No name, no address, no
+ * title, and nothing else a person wrote ever becomes an attribute;
+ * `docs/FEATURE_FLAGS.md` owns that boundary and the slug's carve-out.
  *
  * Never throws and never blocks on more than one round trip: the three reads
  * are independent, each is cached in the isolate, and each failure degrades to
- * "no attributes from that entity".
+ * "no attributes from that entity". The outer guard is what lets callers await
+ * this outside their own error handling — the contract is structural, not a
+ * property of the current body.
  */
 export async function loadFlagTargetingAttributes(
+  env: Env,
+  subject: FlagTargetingSubject,
+): Promise<FlagTargetingAttributes> {
+  try {
+    return await collectAttributes(env, subject);
+  } catch (error) {
+    logStructuredEvent(env, "warn", "flag_targeting_attributes_unavailable", {
+      entity: "subject",
+      workspace_id: subject.workspaceId,
+      workstream_id: subject.workstreamId,
+      user_id: subject.userId,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+    });
+    return {};
+  }
+}
+
+async function collectAttributes(
   env: Env,
   subject: FlagTargetingSubject,
 ): Promise<FlagTargetingAttributes> {
