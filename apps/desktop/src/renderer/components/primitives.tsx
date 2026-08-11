@@ -72,7 +72,7 @@ export function StatusDot({
     <Tooltip.Root delayDuration={300}>
       <Tooltip.Trigger asChild>{indicator}</Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content className="tooltip" side="right" sideOffset={8}>
+        <Tooltip.Content align="start" className="tooltip" side="top" sideOffset={8}>
           {statusDescription[status]}
           <Tooltip.Arrow className="tooltip-arrow" />
         </Tooltip.Content>
