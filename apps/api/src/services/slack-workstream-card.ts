@@ -1,13 +1,16 @@
 import { ConnectorError, slackApi } from "@avalon/connectors";
 import { z } from "zod";
 
+import { sha256 } from "../lib/crypto";
+
 /**
  * The Slack unfurl card for a work-stream link, shared by the live
  * `link_shared` path and the maintenance sweep that refreshes posted cards.
  *
- * The card carries the work stream's title, status, last activity, and
- * automation origin — enough to know whether the link is worth opening and
- * whether the agent is blocked — and no work-stream contents. See
+ * The card carries the work stream's title, last activity, and automation
+ * origin, plus a status badge while it is running, needs input, or failed —
+ * enough to know whether the link is worth opening and whether the agent is
+ * blocked — and no work-stream contents. See
  * `docs/WORKSTREAM_LINKS.md` for the audience rule that decides between this
  * and the anonymous card.
  */
@@ -20,6 +23,25 @@ export interface WorkstreamUnfurlSummary {
 
 /** Slack sends at most a handful of links per message; bound the batch anyway. */
 export const SLACK_UNFURL_MAX_LINKS = 10;
+
+/**
+ * A fingerprint of the attachment posted on a message.
+ *
+ * The sweep needs to answer "would this card render differently now?", and no
+ * single stored field does: the drawing code can change, the title and activity
+ * stamp both render, and an anonymous card is identical whatever the status is.
+ * Hashing the emitted blocks answers it directly, and needs no constant that a
+ * future change has to remember to bump.
+ *
+ * `JSON.stringify` is stable here because these blocks are built by
+ * `workstreamUnfurlBlocks` with a fixed key order rather than assembled from
+ * user data.
+ */
+export async function workstreamUnfurlCardHash(
+  blocks: Record<string, unknown>[],
+): Promise<string> {
+  return sha256(JSON.stringify(blocks));
+}
 
 /**
  * Slack errors that mean this message can never carry an unfurl. Retrying is
@@ -60,14 +82,27 @@ export function workstreamUnfurlSummary(row: Record<string, unknown>): Workstrea
   };
 }
 
-const SLACK_UNFURL_STATUS_LABELS: Record<string, string> = {
-  needs_input: ":warning: Needs input",
-  running: ":large_green_circle: Running",
-  scheduled: "Scheduled",
-  completed: "Completed",
-  failed: ":red_circle: Failed",
-  idle: "Idle",
+/**
+ * Only a work stream someone can act on wears a badge: one that is working, one
+ * that is waiting on a person, and one that stopped because it broke.
+ * `completed`, `scheduled`, and `idle` render none — "Completed" tells a reader
+ * nothing to do, and a settled work stream stops producing the changes that
+ * rewrite its card, so that label would sit there for the message's whole life.
+ *
+ * The emoji leads the title so the state is legible before the text is read,
+ * and the word follows in the detail line so the emoji is never the only
+ * carrier of meaning. Both come from this one table so they cannot drift apart,
+ * and the running and needs-input marks match App Home's task rows.
+ */
+const SLACK_UNFURL_STATUS_BADGES: Record<string, { emoji: string; label: string }> = {
+  needs_input: { emoji: ":warning:", label: "Needs input" },
+  running: { emoji: ":large_green_circle:", label: "Running" },
+  failed: { emoji: ":red_circle:", label: "Failed" },
 };
+
+function unfurlStatusBadge(harnessStatus: string): { emoji: string; label: string } | null {
+  return SLACK_UNFURL_STATUS_BADGES[harnessStatus] ?? null;
+}
 
 function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -148,13 +183,20 @@ export function workstreamUnfurlBlocks(
   }
   // Truncate before escaping, or a cut can land inside an `&amp;` entity.
   const title = escapeMrkdwn(summary.title.trim().slice(0, 200) || "Untitled work stream");
+  const badge = unfurlStatusBadge(summary.harnessStatus);
   const detail = [
-    SLACK_UNFURL_STATUS_LABELS[summary.harnessStatus] ?? null,
+    badge?.label ?? null,
     slackUnfurlUpdatedAt(summary.lastActivityAt),
     summary.automationName ? `via ${escapeMrkdwn(summary.automationName.trim().slice(0, 100))}` : null,
   ].filter((part): part is string => part !== null).join(" · ");
   return [
-    { type: "section", text: { type: "mrkdwn", text: `*<${url}|${title}>*${detail ? `\n${detail}` : ""}` } },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `${badge ? `${badge.emoji} ` : ""}*<${url}|${title}>*${detail ? `\n${detail}` : ""}`,
+      },
+    },
     openButton,
   ];
 }

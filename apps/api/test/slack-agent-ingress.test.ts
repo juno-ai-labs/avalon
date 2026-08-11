@@ -549,8 +549,10 @@ describe("work-stream link unfurl card", () => {
     }, url);
 
     const text = cardText(blocks);
-    expect(text).toContain(`*<${url}|Daily product brief>*`);
-    expect(text).toContain(":warning: Needs input");
+    // The emoji leads the title so the state reads before the text does; the
+    // word follows in the detail line so the emoji is never the only carrier.
+    expect(text).toContain(`:warning: *<${url}|Daily product brief>*`);
+    expect(text.split("\n")[1]).toMatch(/^Needs input · /u);
     expect(text).toContain("via Daily monitor");
     // Rendered in each reader's own timezone, and it cannot rot into a lie the
     // way a baked "24m ago" would on a card that is never re-rendered.
@@ -566,8 +568,39 @@ describe("work-stream link unfurl card", () => {
       automationName: null,
     }, url));
 
-    expect(text).toContain(":large_green_circle: Running");
+    expect(text).toContain(":large_green_circle: *<");
+    expect(text.split("\n")[1]).toMatch(/^Running · /u);
     expect(text).not.toContain("via ");
+  });
+
+  it("badges a failed work stream, which is as actionable as one needing input", () => {
+    const text = cardText(workstreamUnfurlBlocks({
+      title: "Board decision",
+      harnessStatus: "failed",
+      lastActivityAt: "2026-08-10T12:00:00.000Z",
+      automationName: null,
+    }, url));
+
+    expect(text).toContain(":red_circle: *<");
+    expect(text.split("\n")[1]).toMatch(/^Failed · /u);
+  });
+
+  it("shows no status badge for a settled work stream", () => {
+    // "Completed" is not something a reader can act on, and a card is only
+    // rewritten when its badge changes — so a settled work stream would carry
+    // that label indefinitely. Only the actionable states say anything.
+    for (const harnessStatus of ["completed", "scheduled", "idle"]) {
+      const text = cardText(workstreamUnfurlBlocks({
+        title: "Daily product brief",
+        harnessStatus,
+        lastActivityAt: "2026-08-10T12:00:00.000Z",
+        automationName: null,
+      }, url));
+
+      expect(text.startsWith("*<"), harnessStatus).toBe(true);
+      expect(text, harnessStatus).not.toMatch(/Completed|Scheduled|Idle/u);
+      expect(text.split("\n")[1], harnessStatus).toMatch(/^Updated /u);
+    }
   });
 
   it("escapes a title that would otherwise inject mrkdwn", () => {
