@@ -23,6 +23,7 @@ import {
   workstreamViewerBindings,
 } from "../mappers/workstream";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
+import { memberSafeHarnessError } from "../services/workstream-service";
 
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
@@ -1043,14 +1044,23 @@ export async function loadWorkstreamRoomSnapshot(
       )
         .bind(workstreamId)
         .all<Record<string, unknown>>(),
+      // The same columns and the same order as `GET /workstreams/:id`. A
+      // snapshot replaces the client's whole detail, so anything it omits is
+      // lost until the next REST read — omitting the run itself left a running
+      // work stream with no work timer for the life of the run — and anything
+      // it answers differently overwrites the right answer with a wrong one.
+      // `created_at` rather than `started_at` for exactly that reason: a
+      // `scheduled` run is inserted with `started_at` NULL, SQLite sorts NULLs
+      // last under DESC, and this would otherwise hand the client an older run.
       env.DB.prepare(
-        `SELECT id FROM harness_runs
+        `SELECT id, origin, status, model, error_json, started_at, completed_at, created_at
+           FROM harness_runs
           WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
             AND origin != 'hypersight_block'
-          ORDER BY started_at DESC LIMIT 1`
+          ORDER BY created_at DESC LIMIT 1`
       )
         .bind(workstreamId)
-        .first<{ id: string }>()
+        .first<Record<string, unknown>>()
     ]);
 
   return WorkstreamDetailSchema.parse({
@@ -1111,6 +1121,17 @@ export async function loadWorkstreamRoomSnapshot(
       createdAt: suggestion.created_at,
       resolvedAt: suggestion.resolved_at
     })),
-    latestHarnessRunId: latestRun?.id ?? null
+    latestHarnessRunId: latestRun?.id == null ? null : String(latestRun.id),
+    latestHarnessRun: latestRun ? {
+      id: String(latestRun.id),
+      origin: String(latestRun.origin),
+      status: String(latestRun.status),
+      model: latestRun.model == null ? null : String(latestRun.model),
+      error: memberSafeHarnessError(latestRun.error_json),
+      requestId: String(latestRun.id),
+      startedAt: latestRun.started_at == null ? null : String(latestRun.started_at),
+      completedAt: latestRun.completed_at == null ? null : String(latestRun.completed_at),
+      createdAt: String(latestRun.created_at)
+    } : null
   });
 }

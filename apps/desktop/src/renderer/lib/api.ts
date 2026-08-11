@@ -1017,6 +1017,7 @@ export class AvalonApi {
       messageId: response.messageId,
       clientMessageId: `opportunity:${id}:v${version}`,
       createdAt: response.workstream.createdAt,
+      harnessRunId: response.harnessRunId,
     };
   }
 
@@ -1220,6 +1221,7 @@ export class AvalonApi {
       messageId: response.messageId,
       clientMessageId,
       createdAt: response.workstream.createdAt,
+      harnessRunId: response.harnessRunId,
     };
   }
 
