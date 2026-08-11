@@ -26,8 +26,9 @@ update it in the same change.
   such document carries a running changelog recording *why* each change was made.
   [`module-documents.md`](module-documents.md) defines the threshold, the
   sections, and the changelog rules. Read it first.
-- **Adding a document?** Create `docs/<NAME>.md` and register it in the correct
-  table below. This index is the only registry — the root
+- **Adding a document?** Create `docs/<lower-kebab-name>.md` and register it in
+  the correct table below. The `SCREAMING_SNAKE_CASE` names here predate that
+  convention; do not add new ones. This index is the only registry — the root
   [`README.md`](../README.md) points here instead of listing documents, so there
   is nothing to update there. **A PRD is the exception**: it goes in a dated
   folder under `docs/PRDs/` per [`prds.md`](prds.md), and is registered here at

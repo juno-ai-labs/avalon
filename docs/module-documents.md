@@ -54,6 +54,12 @@ paragraph of context before the diff makes sense, the context belongs in
   document only when it has grown a genuinely separate subsystem inside it, and
   say so in both files.
 - **A point-in-time proposal.** That is a [PRD](prds.md).
+- **A house specification or a process guide.** [`prds.md`](prds.md),
+  [`pull-requests.md`](pull-requests.md), [`dev-environment.md`](dev-environment.md),
+  [`SANDBOX.md`](SANDBOX.md), [`E2E.md`](E2E.md), and this document describe how
+  we work rather than a subsystem of the running product. They live in `docs/`
+  and are registered like everything else, but they are not module documents and
+  carry no changelog.
 
 ## Where it lives and what it is called
 
@@ -84,8 +90,8 @@ the first `##`. No creation date, no owner: dates on a living document mislead,
 and an owner line is stale the day someone changes teams. The commit history
 knows who wrote it.
 
-Then Markdown `##` headings. The first six are **required** and stay in this
-order; the **Changelog** is required and always sits last. Optional sections go
+Then Markdown `##` headings. Seven are **required**: the six below, in this
+order, and the **Changelog**, which always sits last. Optional sections go
 between them, in the order given below, and are omitted entirely — no empty
 headings — when they do not apply. A required section with genuinely nothing to
 say keeps its heading and gets `N/A — <reason>`, so a reader knows the question
@@ -346,6 +352,16 @@ decisions taken before this date is not recorded and was not reconstructed —
 `git log` and the linked PRDs are what exist.
 ```
 
+A document that predates this rule takes a third path, and it is the one most of
+`docs/` will take: the document already exists and is registered, and it grows
+its `## Changelog` section on the next substantial change to the module. There,
+the first entry **is** that change, written in full, and its **Consequences**
+field says that the reasoning behind everything before it is not recorded and was
+not reconstructed. Do not open with a `Document created` entry for a document
+that was not created that day, and do not mine `git log` for motivations to
+back-fill — a reconstructed why is the one thing this section must not contain.
+The record starts where the record starts.
+
 ### What belongs somewhere else
 
 | The thing you are writing | Where it goes |
@@ -362,7 +378,7 @@ decisions taken before this date is not recorded and was not reconstructed —
 **Creating a module:**
 
 1. Create `docs/<lower-kebab-name>.md` with the title, the orienting paragraphs,
-   and the six required sections.
+   the six required sections, and the `## Changelog` heading beneath them.
 2. Register it in [the documentation index](README.md), in the table matching its
    area, with a scope line.
 3. Write the first changelog entry: why the module exists, what was rejected on
