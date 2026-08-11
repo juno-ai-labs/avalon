@@ -1742,9 +1742,9 @@ pre {
 .agent-work-timing-label { display: inline-block; font-weight: 480; }
 .agent-work-timing-active .agent-work-timing-label {
   animation: plugin-activity-shimmer 2.4s ease-in-out infinite;
-  background: linear-gradient(100deg, #77766f 10%, #d5d4cf 42%, #8c8b84 58%, #77766f 90%);
+  background: linear-gradient(100deg, #77766f 27%, #d5d4cf 45%, #8c8b84 55%, #77766f 73%);
   background-clip: text;
-  background-size: 240% 100%;
+  background-size: 400% 100%;
   color: transparent;
   -webkit-background-clip: text;
 }
@@ -2876,16 +2876,23 @@ pre {
 
 :is(.workstream-screen, .automation-chat-surface) .plugin-activity.tool-started .tool-summary strong {
   animation: plugin-activity-shimmer 2.4s ease-in-out infinite;
-  background: linear-gradient(100deg, #77766f 10%, #d5d4cf 42%, #8c8b84 58%, #77766f 90%);
+  background: linear-gradient(100deg, #77766f 27%, #d5d4cf 45%, #8c8b84 55%, #77766f 73%);
   background-clip: text;
-  background-size: 240% 100%;
+  background-size: 400% 100%;
   color: transparent;
   -webkit-background-clip: text;
 }
 
+/* The highlight has to rest clear of the text at both ends of the cycle, or the
+   pause between sweeps parks a bright band mid-word. The gradient tiles at four
+   times the label width with the lit band confined to 27%–73% of the tile, so
+   at `100%` (offset -3W) the band ends at -0.08W and at `0%` (offset 0) it
+   starts at 1.08W — off the left and right edges respectively. Repeating tiles
+   stay 4W away, which keeps a single highlight in play and lets the neighbour
+   fill the text with the base colour rather than leaving it transparent. */
 @keyframes plugin-activity-shimmer {
-  0%, 18% { background-position: 115% 0; }
-  68%, 100% { background-position: -115% 0; }
+  0%, 18% { background-position: 100% 0; }
+  68%, 100% { background-position: 0% 0; }
 }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-summary small {
