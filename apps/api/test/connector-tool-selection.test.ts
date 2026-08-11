@@ -697,6 +697,7 @@ describe("connector tools selected for harness runs", () => {
     // The plugin message carries only Gmail mechanics; not inventing an address
     // is platform policy and lives in the work-stream system prompt.
     expect(mail?.systemMessage).toContain("Resolve an unknown recipient address");
+    expect(mail?.systemMessage).toContain("rather than inferring it from a signature or a header");
     expect(mail?.systemMessage).not.toContain("plausible placeholder");
     // Worked examples name this connection's own tools, and only the ones its
     // grants can actually call.
@@ -712,6 +713,7 @@ describe("connector tools selected for harness runs", () => {
       tools: mail!.tools,
     })).toEqual([]);
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
+      "gmail.read_profile",
       "gmail.search",
       "gmail.find_contacts",
       "gmail.read_thread",

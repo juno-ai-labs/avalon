@@ -46,6 +46,11 @@ describe("tool activity names", () => {
     // Named for its object rather than its verb, and still not the generic row.
     expect(toolActivityName({ toolName: "google_2_gmail_find_contacts", status: "started", plugin: drive }))
       .toBe("Looking up contacts in Google Drive · Work");
+    expect(toolActivityName({ toolName: "google_2_gmail_read_profile", status: "completed", plugin: drive }))
+      .toBe("Checked the connected account on Google Drive · Work");
+    // Composing a draft is a write; the generic row read as a review of it.
+    expect(toolActivityName({ toolName: "google_2_gmail_create_draft", status: "completed", plugin: drive }))
+      .toBe("Drafted in Google Drive · Work");
   });
 
   it("does not describe a connector write as a read", () => {

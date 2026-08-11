@@ -1842,7 +1842,7 @@ describe("agent harness", () => {
       "call load_plugin with the exact plugin id",
     );
     expect(requestBodies[0]!.messages[0]!.content).toContain(
-      "Before claiming that a capability or its data is unavailable, inspect the compact catalog",
+      "or requesting it from a person, inspect the compact catalog",
     );
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain("gh1_search");
     expect(requestBodies[1]!.messages[0]!.content).toContain(
