@@ -39,7 +39,7 @@ import {
   publishWorkstreamEvent,
   startWorkstreamWorkflow,
 } from "./integrations";
-import { logStructuredEvent } from "../observability/logger";
+import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
@@ -913,7 +913,7 @@ export class WorkstreamService {
         message.id,
         mentionedOtherUsers,
       ).catch((error: unknown) => {
-        console.warn("Could not enqueue mentioned-user work opportunities", {
+        logWarn(this.env, "mention_work_opportunity_enqueue_failed", {
           workspace_id: this.auth.workspaceId,
           workstream_id: id,
           message_id: message.id,
@@ -1545,9 +1545,8 @@ export class WorkstreamService {
 
   private scheduleMentionNotifications(message: Message, workstream: Workstream): void {
     this.deferTask(this.sendMentionNotifications(message, workstream).catch((error: unknown) => {
-      console.warn("Mention notification delivery failed", {
-        messageId: message.id,
-        region: this.env.AVALON_REGION,
+      logWarn(this.env, "mention_notification_delivery_failed", {
+        message_id: message.id,
         reason: error instanceof ApiError ? error.code : "unknown_error",
       });
     }));

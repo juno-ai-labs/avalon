@@ -742,7 +742,8 @@ describe("Slack public channel membership", () => {
     await new SlackAgentService(env).processQueuedIngress(`event:${reactionError}`);
 
     expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
-    expect(warning).toHaveBeenCalledWith("Slack activation acknowledgement failed", expect.objectContaining({
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_activation_ack_failed",
       reason: reactionError,
     }));
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });

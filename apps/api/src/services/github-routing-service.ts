@@ -7,6 +7,7 @@ import type { Region } from "@avalon/contracts";
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { githubRegionFromInstallState } from "../lib/github-install-state";
+import { logWarn } from "../observability/logger";
 import {
   ConnectionService,
   type GitHubSetupResult,
@@ -368,8 +369,7 @@ export class GitHubRoutingService {
         ).bind(row.delivery_id, new Date(this.now()).toISOString()).run();
       }
     } catch (error) {
-      console.warn("GitHub pending delivery cleanup failed", {
-        region: this.env.AVALON_REGION,
+      logWarn(this.env, "github_pending_delivery_cleanup_failed", {
         reason: error instanceof Error ? error.message : "unknown cleanup error",
       });
     }
@@ -379,8 +379,7 @@ export class GitHubRoutingService {
     try {
       await this.replayPending(installationId);
     } catch (error) {
-      console.warn("GitHub pending delivery replay failed", {
-        region: this.env.AVALON_REGION,
+      logWarn(this.env, "github_pending_delivery_replay_failed", {
         installation_id: installationId,
         reason: error instanceof Error ? error.message : "unknown replay error",
       });
@@ -392,8 +391,7 @@ export class GitHubRoutingService {
       await this.env.PAYLOADS.delete(payloadRef);
       return true;
     } catch (error) {
-      console.warn("GitHub pending payload cleanup failed", {
-        region: this.env.AVALON_REGION,
+      logWarn(this.env, "github_pending_payload_cleanup_failed", {
         reason: error instanceof Error ? error.message : "unknown R2 cleanup error",
       });
       return false;

@@ -15,6 +15,7 @@ import {
   type AttemptIdentity,
   type AttemptLease,
 } from "../runtime/harness-run-runtime";
+import { logWarn } from "../observability/logger";
 import { runWorkstreamHarness } from "../services/integrations";
 import {
   hyperSightBlockRunFromRow,
@@ -365,7 +366,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
       // Only the first is rethrown, so the rest would otherwise be lost — and
       // which one that is depends on settle order rather than on severity.
       for (const failure of failures) {
-        console.warn("Automation result delivery failed", {
+        logWarn(this.env, "automation_result_delivery_failed", {
           workspace_id: input.workspaceId,
           workstream_id: input.workstreamId,
           reason: failure instanceof Error ? failure.message : "unknown",

@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 
@@ -148,7 +149,10 @@ export async function sendWorkstreamMentionSlack(
       }), nowIso(), connectionId).run();
     }
     const outcome = postedChunks > 0 ? "partial" : "skipped";
-    console.warn(`Slack mention delivery ${outcome}`, {
+    // One event with the outcome as a field, not two event names: the saved
+    // views filter on `outcome`, and a template literal is not queryable.
+    logWarn(env, "slack_mention_delivery_incomplete", {
+      outcome,
       message_id: input.messageId,
       recipient_user_id: input.recipientUserId,
       connection_id: connectionId,
