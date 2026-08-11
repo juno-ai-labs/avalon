@@ -12,7 +12,7 @@ import {
   type PropsWithChildren,
   type ReactNode,
 } from 'react';
-import { statusLabel } from '../lib/format';
+import { statusDescription, statusLabel } from '../lib/format';
 import type { HarnessStatus, WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
@@ -50,13 +50,34 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   );
 });
 
-export function StatusDot({ status, compact = false }: { status: HarnessStatus; compact?: boolean }): React.JSX.Element {
-  return (
+export function StatusDot({
+  status,
+  compact = false,
+  tooltip = false,
+}: {
+  status: HarnessStatus;
+  compact?: boolean;
+  /** Explain the color on hover. For a compact dot that carries no visible label. */
+  tooltip?: boolean;
+}): React.JSX.Element {
+  const indicator = (
     <span className={clsx('status-indicator', `status-${status}`, compact && 'status-compact')}>
       <span aria-hidden="true" className="status-dot" />
       {!compact && <span>{statusLabel[status]}</span>}
       {compact && <span className="sr-only">{statusLabel[status]}</span>}
     </span>
+  );
+  if (!tooltip) return indicator;
+  return (
+    <Tooltip.Root delayDuration={300}>
+      <Tooltip.Trigger asChild>{indicator}</Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip" side="right" sideOffset={8}>
+          {statusDescription[status]}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   );
 }
 

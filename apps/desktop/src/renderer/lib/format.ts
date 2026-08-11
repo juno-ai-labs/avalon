@@ -50,6 +50,15 @@ export const statusLabel: Record<HarnessStatus, string> = {
   failed: 'Needs intervention',
 };
 
+/** What each dot color means, for the surfaces that show the dot on its own. */
+export const statusDescription: Record<HarnessStatus, string> = {
+  scheduled: 'Scheduled — the next run has not started yet.',
+  running: 'Running — the agent is working on it now.',
+  needs_input: 'Needs input — the agent is waiting on an answer.',
+  completed: 'Latest run completed — nothing is running now.',
+  failed: 'Needs intervention — the last run failed and stopped.',
+};
+
 export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';
 
 const hourInMilliseconds = 3_600_000;

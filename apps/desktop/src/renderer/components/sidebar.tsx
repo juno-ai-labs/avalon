@@ -216,7 +216,7 @@ function WorkstreamRow({
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
-              <StatusDot compact status={workstream.harnessStatus} />
+              <StatusDot compact status={workstream.harnessStatus} tooltip />
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{workstream.title}</span>
