@@ -1806,7 +1806,7 @@ export class SlackAgentService {
               v.trigger_definitions_json
        FROM automation_subscriptions s
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND s.status = 'active'
+       WHERE s.workspace_id = ? AND s.status = 'active' AND s.lifecycle_state = 'visible'
          AND EXISTS (
            SELECT 1 FROM json_each(s.connector_bindings_json)
            WHERE json_each.value = ?
