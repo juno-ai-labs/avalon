@@ -4,7 +4,7 @@ import { ConnectorError, SlackWorkspaceBotScopes } from "@avalon/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
-import { workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
+import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -693,5 +693,40 @@ describe("recording shared work-stream links for refresh", () => {
       new Map([[url, workstreamId]]),
       new Map(),
     )).toEqual([]);
+  });
+});
+
+describe("unfurl audience check", () => {
+  function conversationsInfo(channel: Record<string, unknown>): typeof fetch {
+    return (async () => new Response(JSON.stringify({ ok: true, channel }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+  }
+
+  it("treats an ordinary 1:1 DM as internal", async () => {
+    // Slack omits `is_private` from an `im` response. When the schema required
+    // it the parse threw, the catch swallowed it, and every link shared in a DM
+    // rendered the anonymous card with no refresh row to ever recover from.
+    vi.stubGlobal("fetch", conversationsInfo({ id: "D123", is_im: true, user: "U1", is_open: true }));
+
+    await expect(slackChannelIsExternallyShared("tok", "D123")).resolves.toBe(false);
+  });
+
+  it("still catches a Slack Connect DM, which also has a D channel id", async () => {
+    vi.stubGlobal("fetch", conversationsInfo({ id: "D999", is_im: true, user: "U2", is_ext_shared: true }));
+
+    await expect(slackChannelIsExternallyShared("tok", "D999")).resolves.toBe(true);
+  });
+
+  it("reports an unconfirmed audience as null rather than as external", async () => {
+    // The two callers need to tell these apart: posting a new card fails
+    // closed, but rewriting one must not redact it over a transient blip.
+    vi.stubGlobal("fetch", (async () => new Response(JSON.stringify({ ok: false, error: "ratelimited" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch);
+
+    await expect(slackChannelIsExternallyShared("tok", "CGENERAL")).resolves.toBeNull();
   });
 });

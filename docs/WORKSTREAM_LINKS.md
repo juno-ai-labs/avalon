@@ -54,9 +54,16 @@ deliberately permissive, because the alternative blocks nearly every real link:
 | Condition | Card |
 | --- | --- |
 | Work stream is not in the workspace bound to this Slack team | Anonymous |
+| Work stream is archived | Anonymous |
 | Slack Connect: externally shared channel or external DM | Anonymous |
-| Audience lookup (`conversations.info`) failed | Anonymous |
+| Audience lookup (`conversations.info`) failed | Anonymous when posting; **no rewrite at all** when refreshing |
 | Anything else — public, private, DM, group DM | Summary |
+
+The two paths treat an unconfirmed audience differently on purpose. Posting a
+new card fails closed, because nothing is lost by withholding detail. Rewriting
+an existing one must not, because a five-second timeout would otherwise redact a
+correct card and persist that as the truth — so a failed lookup leaves the row
+completely untouched and the next sweep retries.
 
 The workspace check is the one that is not a matter of taste: naming another
 Avalon workspace's work stream inside this Slack team is a cross-tenant leak.

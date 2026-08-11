@@ -30,6 +30,7 @@ import {
 import { newId, nowIso } from "@avalon/db";
 import {
   SLACK_UNFURL_MAX_LINKS,
+  TERMINAL_UNFURL_REASONS,
   WORKSTREAM_UNFURL_COLUMNS,
   WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
@@ -2244,8 +2245,10 @@ export class SlackAgentService {
     // company in the room. Every conversation inside the workspace — public,
     // private, DM, group DM — sees it, and an audience lookup that fails falls
     // back to the anonymous card rather than dropping the unfurl.
+    // Posting a new card fails closed: an audience we could not confirm is
+    // treated as external. The refresh sweep deliberately does the opposite.
     const externallyShared = await slackChannelIsExternallyShared(token, channel);
-    const summaries = externallyShared
+    const summaries = externallyShared !== false
       ? new Map<string, WorkstreamUnfurlSummary>()
       : await this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]);
     const unfurls: Record<string, unknown> = {};
@@ -2257,7 +2260,22 @@ export class SlackAgentService {
         ),
       };
     }
-    await slackApi(token, "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
+    try {
+      await slackApi(token, "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
+    } catch (error) {
+      // A message that can never carry an unfurl is not a failed job. Letting
+      // it throw marks the `link_shared` ingress job non-retryable, which pins
+      // its attempt count at the ceiling and reads downstream as a job that
+      // exhausted its retry budget — an alert nobody can act on. Anything else
+      // still throws, so a rate limit or outage keeps its durable retry.
+      if (!TERMINAL_UNFURL_REASONS.has(slackErrorReason(error))) throw error;
+      console.info("Slack declined to unfurl a work-stream link", {
+        team_id: teamId,
+        channel_id: channel,
+        reason: slackErrorReason(error),
+      });
+      return;
+    }
     await this.recordUnfurledLinks(connection, channel, ts, linkedWorkstreams, summaries);
   }
 
@@ -2317,10 +2335,14 @@ export class SlackAgentService {
     // must fall through to the anonymous card rather than be named in this
     // Slack team. A miss is indistinguishable from a link that never existed.
     const rows = await this.env.DB.prepare(
+      // Archiving retires a work stream from view, including App Home's own
+      // task list, so an archived one falls through to the anonymous card
+      // rather than keeping its title alive in Slack.
       `SELECT w.id, ${WORKSTREAM_UNFURL_COLUMNS}
          FROM workstreams w
          ${WORKSTREAM_UNFURL_JOINS}
-        WHERE w.workspace_id = ? AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
+        WHERE w.workspace_id = ? AND w.archived_at IS NULL
+          AND w.id IN (${workstreamIds.map(() => "?").join(", ")})`,
     ).bind(workspaceId, ...workstreamIds).all<Record<string, unknown>>();
     return new Map((rows.results ?? []).map((row) => [String(row.id), workstreamUnfurlSummary(row)]));
   }
@@ -2726,7 +2748,10 @@ async function resolveSlackChannelType(
     }, AbortSignal.timeout(5_000));
     const channelName = result.channel.name?.trim().slice(0, 255) || null;
     if (result.channel.is_im === true) return { channelType: "im", channelName, failure: null };
-    if (result.channel.is_mpim === true || result.channel.is_private) {
+    // `is_private` is optional on the wire. Only an explicit `false` classifies
+    // a conversation as public; anything else stays private, because this
+    // classification gates whether Avalon will start a workspace task here.
+    if (result.channel.is_mpim === true || result.channel.is_private !== false) {
       return { channelType: "private", channelName, failure: null };
     }
     return { channelType: "public", channelName, failure: null };
