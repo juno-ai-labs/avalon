@@ -85,6 +85,7 @@ hold:
 | Condition | Floor | Why |
 | --- | --- | --- |
 | New messages a **person** wrote | 10 | An agent's own turns restate the ask it was given and a system notice is the host talking to itself. Counting them would let one request that provoked a long agent transcript buy a fresh evaluation. |
+| — *and a person means an external one too* | | A work stream run from Slack has **no** messages authored by an Avalon account: `createExternalMessage` stores every participant as `author_type = 'system'` carrying an `external_actor_json`. Reading the column alone would file a whole Slack conversation as host notices and exclude all of its people, so the descriptions most in need of this loop would be the only ones it could never reach. The loop classifies a row with an external actor as `external`, counts it as a person, and gives the model the actor's display name. |
 | Characters of that new human text | 600 | The difference between a conversation and a row of acknowledgements. |
 | Novel subject terms | 5 | The one that matters — see below. |
 
@@ -111,6 +112,15 @@ first-hand, the only question an evaluation asks; re-deciding it hours later
 spends inference to second-guess the most authoritative statement of intent the
 work stream has, and risks reverting it. `WorkstreamService.update` writes a
 full rest and records the transcript as read through its current end.
+
+That rest lands **in the same D1 batch as the `objective` write itself**, and
+the ordering matters. As two separate statements there is a window between them
+in which an evaluation can read the newly edited description, find no rest
+recorded yet, claim, and go on to overwrite the text the person just wrote —
+and its own guard would not catch that, because the description it read *is*
+the one in force. Batching closes the window: an evaluation sees both writes or
+neither. An evaluation that claimed *before* the edit is still caught by the
+guard, and records `description_changed_during_evaluation`.
 
 `workstream_description_refreshes` holds one row per work stream. `rest_until`
 is pushed forward **before** the model call, not after: that is what stops two
@@ -164,10 +174,24 @@ overwriting it is the one outcome that would make this loop untrustworthy.
 ## Who wrote the description
 
 `workstreams.description_source` records whether a person wrote the description
-in force (`authored`) or it was derived (`derived`). It is set to `authored`
-only where a person supplied the text — an explicit objective at creation, or an
-objective in a work-stream update — and back to `derived` whenever this loop
-rewrites it. Every other creation path derives.
+in force (`authored`) or it was derived (`derived`).
+
+**It is the caller's explicit assertion, never inferred from whether an
+objective was supplied.** Those are different claims: a supplied objective means
+the caller had one, which is true of every machine-derived path — a Slack
+mention slices its own prompt into the field. Inferring authorship from presence
+would mark a copied-in first message as authored and tell the loop to protect
+exactly the descriptions it exists to fix, and it would do so inconsistently:
+the same Slack message creates an `authored` work stream through the linked
+identity path and a `derived` one through the unlinked path beside it.
+
+So `authored` is set in exactly two places — the API handler for a person
+creating a work stream with an objective they typed, and a work-stream update
+that changes the description — and every other path takes the `derived` default.
+The loop sets it back to `derived` whenever it rewrites.
+
+A resubmitted, byte-identical description is not an authorship event and is
+ignored, so a no-op `PATCH` cannot flip the provenance or disturb the rest.
 
 The model is told which it is looking at, and told to prefer keeping an authored
 description unless the transcript contradicts it outright. Without the column
@@ -177,7 +201,11 @@ into the field.
 
 Migration `0057` backfills `authored` for the ad-hoc work streams that can still
 be shown to have been authored: those whose description is not simply their
-opening message.
+opening message. It runs once and cannot be re-run, so it also excludes the two
+shapes where "differs from the opening message" is not evidence of a person — an
+attachment-only work stream carrying the literal `Review the attached files`
+fallback, and a Slack mention past the objective's 4,000-character limit, whose
+description is that message truncated rather than a different text.
 
 ## What is recorded
 
@@ -189,9 +217,26 @@ one, the model, the confidence, the description before and after, and the
 model's reasoning, so an automatic rewrite can be explained to whoever notices
 it.
 
-Two log events are emitted: `workstream_description_rewritten` and
-`workstream_description_rejected`. A run of the second on one rejection code is
-the signal that either a guard or the model's routing needs attention.
+A person's own edit is recorded as `authored`, **not** as `kept` — the loop did
+not look, and this row is the only place that distinction survives. It clears
+every field an evaluation would have filled, including `rejection_code`, which
+the table's `CHECK` requires to be null for any decision but `rejected` or
+`failed`; a decision written over a failed evaluation without clearing it would
+fail the constraint and take the person's edit down with it.
+
+`description` always means *what is in force after this row was written*. On a
+`description_changed_during_evaluation` refusal that is the other writer's text,
+so it is re-read rather than recorded as the superseded value the evaluation
+happened to have in hand.
+
+Four log events are emitted:
+
+| Event | Means |
+| --- | --- |
+| `workstream_description_rewritten` | A description was replaced. |
+| `workstream_description_rewrite_rejected` | A proposal was refused by a guard. A run of these on one `rejection_code` is the signal that either the guard or the model's routing needs attention. |
+| `workstream_description_change_below_threshold` | Every gate cleared except novelty. Carries the novel-term count, which is the only source of data for tuning that threshold: a rewrite the loop is deferring shows up as a run of these on one work stream, with the count sitting just below the floor. |
+| `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
 
 A skipped evaluation writes nothing. That is deliberate — most terminal runs
 skip, and recording each would cost a write to say a work stream was quiet — but

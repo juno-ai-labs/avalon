@@ -44,9 +44,15 @@ workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
   return c.json(await new WorkstreamService(c.env, getAuth(c)).list(query.limit, query.before));
 });
-workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).create(c.req.valid("json")), 201),
-);
+workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  // This is the one create path where a person is at a keyboard, so it is the
+  // only one that can claim an objective was authored rather than derived.
+  return c.json(await new WorkstreamService(c.env, getAuth(c)).create({
+    ...body,
+    descriptionSource: body.objective ? "authored" : "derived",
+  }), 201);
+});
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
   c.json(await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id)),
 );

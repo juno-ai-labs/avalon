@@ -92,6 +92,48 @@ function renderProvider(): QueryClient {
   return client;
 }
 
+/**
+ * The baseline every test in this file assumes: cleared mocks and storage, no
+ * stored session, and a bridge whose listeners are wired to the module-level
+ * captures above.
+ *
+ * It lives at file scope because both `describe` blocks need it. It used to sit
+ * inside the first one, so the second passed only when a test from the first
+ * had already run and left the bridge configured — an ordering the runner
+ * happens to give it today and is under no obligation to keep.
+ */
+function resetDesktopBridge(): void {
+  vi.clearAllMocks();
+  window.localStorage.clear();
+  deepLinkListener = null;
+  sessionListener = null;
+  observedApi = null;
+  observedSignOutIfCleared = null;
+  bridge.getRuntimeConfig.mockResolvedValue({
+    appVersion: 'test',
+    isPackaged: true,
+    platform: 'darwin',
+    api: {
+      global: 'https://api.with-avalon.com',
+      eu: 'https://eu.api.with-avalon.com',
+    },
+    webBaseUrl: 'https://with-avalon.com',
+    devAuthEnabled: false,
+  });
+  bridge.getSession.mockResolvedValue(null);
+  bridge.hasStoredCredential.mockResolvedValue(false);
+  bridge.consumePendingDeepLinks.mockResolvedValue([]);
+  bridge.onDeepLink.mockImplementation((listener: (url: string) => void) => {
+    deepLinkListener = listener;
+    return () => { deepLinkListener = null; };
+  });
+  bridge.onSessionChanged.mockImplementation((listener: (session: DesktopSession | null) => void) => {
+    sessionListener = listener;
+    return () => { sessionListener = null; };
+  });
+  bridge.exchangeDesktopTicket.mockResolvedValue(globalIdentitySession);
+}
+
 describe('single-platform desktop identity routing', () => {
   // Every deep link goes through here. The provider registers no listener at
   // all until `getRuntimeConfig` resolves — its effect early-returns while
@@ -114,37 +156,7 @@ describe('single-platform desktop identity routing', () => {
     vi.useRealTimers();
   });
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    window.localStorage.clear();
-    deepLinkListener = null;
-    sessionListener = null;
-    observedApi = null;
-    observedSignOutIfCleared = null;
-    bridge.getRuntimeConfig.mockResolvedValue({
-      appVersion: 'test',
-      isPackaged: true,
-      platform: 'darwin',
-      api: {
-        global: 'https://api.with-avalon.com',
-        eu: 'https://eu.api.with-avalon.com',
-      },
-      webBaseUrl: 'https://with-avalon.com',
-      devAuthEnabled: false,
-    });
-    bridge.getSession.mockResolvedValue(null);
-    bridge.hasStoredCredential.mockResolvedValue(false);
-    bridge.consumePendingDeepLinks.mockResolvedValue([]);
-    bridge.onDeepLink.mockImplementation((listener: (url: string) => void) => {
-      deepLinkListener = listener;
-      return () => { deepLinkListener = null; };
-    });
-    bridge.onSessionChanged.mockImplementation((listener: (session: DesktopSession | null) => void) => {
-      sessionListener = listener;
-      return () => { sessionListener = null; };
-    });
-    bridge.exchangeDesktopTicket.mockResolvedValue(globalIdentitySession);
-  });
+  beforeEach(resetDesktopBridge);
 
   it('accepts a callback only from the Global identity service', async () => {
     window.localStorage.setItem('avalon:selected-region', 'eu');
@@ -670,7 +682,10 @@ describe('single-platform desktop identity routing', () => {
 });
 
 describe('draft cache lifetime across a session', () => {
-  beforeEach(() => clearAllDrafts());
+  beforeEach(async () => {
+    resetDesktopBridge();
+    await clearAllDrafts();
+  });
 
   it('keeps the drafts a previous run left behind when a session arrives', async () => {
     await writeDraftText('new-workstream:workspace-eu', 'written before the last quit');
