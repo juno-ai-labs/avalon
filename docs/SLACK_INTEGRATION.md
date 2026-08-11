@@ -114,7 +114,9 @@ A member's earlier challenges are retired once a newer one has reached them, so
 only the most recently requested link can be redeemed. That retirement happens
 **after** the modal carrying the replacement opens, never as part of minting: a
 `views.open` that fails would otherwise have invalidated the link the member is
-still looking at, in exchange for one they never received. A challenge that cannot be redeemed
+still looking at, in exchange for one they never received. Retirement is bounded
+by mint time, so clicks racing each other cannot retire one another and strand
+the member with no live link at all. A challenge that cannot be redeemed
 is refused with the reason rather than a single generic expiry:
 `slack_link_unknown`, `slack_link_consumed` (already used, or superseded),
 `slack_link_expired`, `slack_link_workspace_mismatch`, and
@@ -407,9 +409,12 @@ Two orderings in the interaction handler are load-bearing and look arbitrary.
 Avalon's buttons are matched on the Slack action id and never on the payload's
 `callback_id`, whose fallback prefers a top-level value that a block action
 raised from inside a view carries — matching the other way sends a connect button
-placed in a modal down the shortcut path instead. And `supersedeOtherLinks` runs
-after `views.open`, not inside the mint, so a modal that fails to open cannot
-retire the link the member is still holding.
+placed in a modal down the shortcut path instead. And `supersedeLinksMintedBefore`
+runs after `views.open` rather than inside the mint, so a modal that fails to
+open cannot retire the link the member is still holding, and it is bounded by
+mint time rather than retiring every token but its own — two clicks in flight
+together would otherwise each retire the other's, leaving two modals on screen
+and no redeemable link between them.
 
 Slack's rendering of the new modal and buttons was verified structurally, against
 the Block Kit payloads in `apps/api/test/slack-account-link.test.ts`; Slack
