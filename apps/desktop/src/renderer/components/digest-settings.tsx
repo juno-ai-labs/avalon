@@ -7,7 +7,7 @@ import type {
   DigestSchedule,
   WorkstreamConnection,
 } from '../lib/types';
-import { AvalonMark, Button, DropdownSelect, InlineError, LoadingState } from './primitives';
+import { AvalonMark, Button, InlineError, LoadingState } from './primitives';
 
 /** Sunday first, matching `Date#getDay` and every calendar in the product. */
 const WEEKDAYS = [
@@ -97,7 +97,6 @@ interface DraftSchedule {
   enabled: boolean;
   days: number[];
   times: number[];
-  timezone: string;
   targetKeys: string[];
 }
 
@@ -111,7 +110,6 @@ function draftFromSchedule(schedule: DigestSchedule): DraftSchedule {
     enabled: schedule.enabled,
     days: [...schedule.days].sort((left, right) => left - right),
     times: [...schedule.times].sort((left, right) => left - right),
-    timezone: schedule.timezone,
     targetKeys: schedule.deliveryTargets.map((target) => targetKey(target.type, target.connectionId)),
   };
 }
@@ -119,11 +117,12 @@ function draftFromSchedule(schedule: DigestSchedule): DraftSchedule {
 export function DigestSettings({
   api,
   connections,
-  timezoneOptions,
+  onEditTimezone,
 }: {
   api: AvalonApi;
   connections: WorkstreamConnection[];
-  timezoneOptions: string[];
+  /** Takes the reader to the one place the timezone is actually set. */
+  onEditTimezone: () => void;
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<DraftSchedule | null>(null);
@@ -147,7 +146,6 @@ export function DigestSettings({
       enabled: next.enabled,
       days: next.days,
       times: next.times,
-      timezone: next.timezone,
       deliveryTargets: next.targetKeys.map((key) => {
         const [type, connectionId] = key.split(':', 2) as [AutomationDeliveryTargetType, string | undefined];
         return { type, connectionId: connectionId ?? null };
@@ -170,7 +168,8 @@ export function DigestSettings({
   // The error branch comes first: a failed load leaves `draft` null forever, so
   // checking for the draft ahead of it would show "Loading" with nothing coming.
   if (digest.error) return <InlineError>{digest.error.message}</InlineError>;
-  if (digest.isLoading || !draft) return <LoadingState label="Loading your digest" />;
+  const saved = digest.data;
+  if (!saved || !draft) return <LoadingState label="Loading your digest" />;
 
   const update = (patch: Partial<DraftSchedule>): void => setDraft({ ...draft, ...patch });
   const toggleDay = (day: number): void => update({
@@ -201,7 +200,7 @@ export function DigestSettings({
 
   const incomplete = draft.enabled
     && (draft.days.length === 0 || draft.times.length === 0 || draft.targetKeys.length === 0);
-  const dirty = digest.data ? JSON.stringify(draft) !== JSON.stringify(draftFromSchedule(digest.data)) : true;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(draftFromSchedule(saved));
 
   return (
     <section aria-labelledby="settings-title" className="settings-pane">
@@ -219,8 +218,8 @@ export function DigestSettings({
           <span className="settings-row-copy">
             <strong>Send me a digest</strong>
             <small>
-              {draft.enabled && digest.data?.nextRunAt
-                ? `Next one ${instantInTimezone(digest.data.nextRunAt, digest.data.timezone)}.`
+              {draft.enabled && saved.nextRunAt
+                ? `Next one ${instantInTimezone(saved.nextRunAt, saved.timezone)}.`
                 : 'Avalon writes it at the times you choose and sends it where you choose.'}
             </small>
           </span>
@@ -307,16 +306,16 @@ export function DigestSettings({
           </Button>
         </div>
         {timeError && <InlineError>{timeError}</InlineError>}
-        <label className="digest-timezone">
-          <span>Times are in</span>
-          <DropdownSelect
-            ariaLabel="Digest timezone"
-            onValueChange={(timezone) => update({ timezone })}
-            options={timezoneOptions.map((timezone) => ({ label: timezone, value: timezone }))}
-            value={draft.timezone}
-            variant="secondary"
-          />
-        </label>
+        <p className="digest-timezone">
+          {/* Not a picker. A digest runs in this person's own day, and Account
+              already owns that preference; a second control here would be a
+              second answer to the same question. */}
+          <span>Times are in your timezone,</span>
+          <strong>{saved.timezone}</strong>
+          <button className="digest-timezone-link" onClick={onEditTimezone} type="button">
+            Change in Account
+          </button>
+        </p>
       </div>
 
       <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Deliver to</h2></div>
@@ -371,8 +370,8 @@ export function DigestSettings({
         <small>
           {incomplete
             ? 'An enabled digest needs at least one day, one time, and one destination.'
-            : digest.data?.lastDeliveredAt
-              ? `Last sent ${instantInTimezone(digest.data.lastDeliveredAt, digest.data.timezone)}.`
+            : saved.lastDeliveredAt
+              ? `Last sent ${instantInTimezone(saved.lastDeliveredAt, saved.timezone)}.`
               : 'Nothing has been sent yet.'}
         </small>
         <Button

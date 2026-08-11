@@ -138,8 +138,14 @@ CREATE TABLE digest_schedules (
   -- Bit 0 is Sunday through bit 6 Saturday. A digest picks days and, separately,
   -- times; it deliberately cannot vary the times per day, so one integer and a
   -- set of times is the whole model rather than a seven-way join.
+  --
+  -- There is no timezone column. A digest's times are wall-clock times in the
+  -- owner's own day, and `users.timezone` already says when that is. A second
+  -- copy here would be a second answer to the same question, and the two would
+  -- disagree the first time somebody moved. The derived `schedules` rows carry
+  -- the resolved zone, because that is the scheduler's own contract, and they
+  -- are rebuilt when the account timezone changes.
   day_mask INTEGER NOT NULL CHECK (day_mask BETWEEN 0 AND 127),
-  timezone TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   -- The hidden work stream this schedule's runs execute in, created lazily on
   -- the first firing.
@@ -158,7 +164,7 @@ CREATE TABLE digest_schedules (
 
 CREATE TABLE digest_schedule_times (
   digest_schedule_id TEXT NOT NULL REFERENCES digest_schedules(id) ON DELETE CASCADE,
-  -- Local wall-clock minute in the schedule's timezone, 0..1439.
+  -- Local wall-clock minute in the owner's own timezone, 0..1439.
   minute_of_day INTEGER NOT NULL CHECK (minute_of_day BETWEEN 0 AND 1439),
   PRIMARY KEY (digest_schedule_id, minute_of_day)
 );

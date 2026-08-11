@@ -26,7 +26,13 @@ const resourceParam = z.object({ id: IdSchema, resourceId: IdSchema });
 const elicitationParam = z.object({ id: IdSchema, elicitationId: IdSchema });
 const suggestionParam = z.object({ id: IdSchema, suggestionId: IdSchema });
 const artifactParam = z.object({ id: IdSchema, artifactId: IdSchema });
-const listQuery = z.object({ limit: z.coerce.number().int().min(1).max(250).default(100), before: z.string().datetime({ offset: true }).optional() });
+const listQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(250).default(100),
+  before: z.string().datetime({ offset: true }).optional(),
+  // Opt-in, because these are machinery. It widens what is shown, never who may
+  // see it: a system work stream still requires participation.
+  includeSystem: z.enum(["true", "false"]).default("false"),
+});
 const messageQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
   before: z.coerce.number().int().positive().optional(),
@@ -42,7 +48,11 @@ export const workstreamRoutes = new Hono<HonoAppEnv>();
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).list(query.limit, query.before));
+  return c.json(await new WorkstreamService(c.env, getAuth(c)).list(
+    query.limit,
+    query.before,
+    query.includeSystem === "true",
+  ));
 });
 workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const body = c.req.valid("json");

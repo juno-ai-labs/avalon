@@ -14,7 +14,8 @@ describe("digest markdown rendering", () => {
       "- Reviewed [the plan](https://example.com/plan)",
     ].join("\n"));
 
-    expect(html).toContain("<h3");
+    // Two heading levels and no more: a third reads as noise in a mail client.
+    expect(html).toContain("<h2");
     expect(html).toContain("Launch");
     expect(html).toContain("<ul");
     expect(html).toContain("<strong");
@@ -39,7 +40,7 @@ describe("digest markdown rendering", () => {
     expect(html).toContain("click");
   });
 
-  it("keeps every inline style inline, because mail clients drop stylesheets", () => {
+  it("keeps every style inline, because mail clients drop stylesheets", () => {
     const html = digestEmailHtml({
       recipientName: "Ada",
       workspaceName: "Avalon Studio",
@@ -47,6 +48,7 @@ describe("digest markdown rendering", () => {
       bodyMarkdown: "## Launch\n\n- One thing happened",
       itemCount: 4,
       highlightCount: 1,
+      appUrl: "https://with-avalon.com",
       settingsUrl: "https://with-avalon.com/app/settings/digest",
     });
 
@@ -54,7 +56,28 @@ describe("digest markdown rendering", () => {
     expect(html).toContain("Tuesday 11 August · 9:00 AM");
     expect(html).toContain("1 for you");
     expect(html).toContain("4 updates");
-    expect(html).toContain("Hi Ada,");
+    expect(html).toContain("Hi Ada — here");
+    // The preheader is what a phone shows beside the subject, so it leads with
+    // the number that decides whether this is opened now.
+    expect(html).toContain("1 needs you · 4 updates in Avalon Studio");
+  });
+
+  it("declares itself dark so no client repaints it", () => {
+    const html = digestEmailHtml({
+      recipientName: "Ada",
+      workspaceName: "Avalon Studio",
+      occurrenceLabel: "Tuesday",
+      bodyMarkdown: "Something happened",
+      itemCount: 1,
+      highlightCount: 0,
+      appUrl: "https://with-avalon.com",
+      settingsUrl: "https://with-avalon.com/app/settings/digest",
+    });
+
+    expect(html).toContain('name="color-scheme" content="dark"');
+    expect(html).toContain("color-scheme:dark");
+    // The app's own canvas token, so the email and the product are one surface.
+    expect(html).toContain("background:#111210");
   });
 
   it("singularizes the update count", () => {
@@ -65,12 +88,13 @@ describe("digest markdown rendering", () => {
       bodyMarkdown: "Something happened",
       itemCount: 1,
       highlightCount: 0,
+      appUrl: "https://with-avalon.com",
       settingsUrl: "https://with-avalon.com/app/settings/digest",
     });
 
     expect(html).toContain("1 update<");
     expect(html).not.toContain("for you");
-    expect(html).toContain("Here is your Avalon digest.");
+    expect(html).toContain("Here is what moved");
   });
 });
 

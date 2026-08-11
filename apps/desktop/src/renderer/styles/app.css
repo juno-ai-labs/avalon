@@ -1071,6 +1071,22 @@ pre {
 /* Digest — day chips, the time list, and the save bar. The cards reuse
    .settings-list-card so the pane keeps the same surface as every other
    settings section; only the controls inside them are new. */
+/* A system work stream is machinery the reader has opted into seeing with
+   Application → Developer → Debug enabled. It sits in the same list as real
+   work, one level down: dimmed, with a small gear, and no dimming while it is
+   the active row — hierarchy should not cost legibility once you are in it. */
+.workstream-row.is-system { opacity: .58; }
+.workstream-row.is-system:hover,
+.workstream-row.is-system.is-active { opacity: 1; }
+.workstream-row.is-system .sidebar-row-title {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 5px;
+}
+.workstream-row.is-system .sidebar-row-title > svg { color: var(--muted-2); flex: none; }
+.workstream-row.is-system.is-active .sidebar-row-title { color: var(--ink-soft); }
+
 .digest-card { display: flex; flex-direction: column; gap: 14px; padding: 14px; }
 
 .digest-day-presets { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1156,11 +1172,22 @@ pre {
   align-items: center;
   border-top: 1px solid var(--line-soft);
   display: flex;
-  gap: 10px;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
   padding-top: 12px;
 }
 .digest-timezone > span { color: var(--muted); font-size: 10.5px; }
+.digest-timezone > strong { color: var(--ink-soft); font-size: 10.5px; font-weight: 600; }
+.digest-timezone-link {
+  background: transparent;
+  color: var(--brand);
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-left: 3px;
+  padding: 0;
+}
+.digest-timezone-link:hover { text-decoration: underline; }
 
 .digest-actions {
   align-items: center;

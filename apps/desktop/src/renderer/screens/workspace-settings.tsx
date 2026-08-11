@@ -89,8 +89,10 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
     label: 'Settings',
     items: [
       { id: 'account', label: 'Account', searchTerms: 'profile identity email sign out', icon: UserRound },
-      { id: 'workspace', label: 'Workspace', searchTerms: 'region data residency organization members invitations invite roles', icon: Users },
+      // Directly under Account, because a digest is a personal preference like
+      // the timezone it borrows — not a workspace-level setting.
       { id: 'digest', label: 'Digest', searchTerms: 'digest summary email schedule times days notifications updates slack deliver', icon: Newspaper },
+      { id: 'workspace', label: 'Workspace', searchTerms: 'region data residency organization members invitations invite roles', icon: Users },
       { id: 'connections', label: 'Connections', searchTerms: 'connectors google github granola meetings notes linear notion slack x integrations', icon: Plug },
     ],
   },
@@ -674,7 +676,7 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
               <DigestSettings
                 api={api}
                 connections={connections.data ?? []}
-                timezoneOptions={timezoneOptions}
+                onEditTimezone={() => setActiveSection('account')}
               />
             )}
 

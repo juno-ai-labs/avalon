@@ -86,6 +86,12 @@ export interface WorkstreamSummary {
   lastActivityAt: string;
   plannedFor?: string;
   preview?: string;
+  /**
+   * Set on a work stream that exists so a subsystem can use the agent loop —
+   * a digest run's transcript, for instance. Only ever present when the reader
+   * asked for them, and rendered as secondary when it is.
+   */
+  systemKind?: 'digest';
 }
 
 export interface Participant extends WorkspaceMember {

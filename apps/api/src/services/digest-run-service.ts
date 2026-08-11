@@ -70,7 +70,7 @@ export async function fireDigestSchedule(
   input: DigestScheduleFireInput,
 ): Promise<DigestFireOutcome> {
   const schedule = await env.DB.prepare(
-    `SELECT d.id, d.workspace_id, d.user_id, d.timezone, d.enabled,
+    `SELECT d.id, d.workspace_id, d.user_id, u.timezone, d.enabled,
             d.system_workstream_id, d.execution_principal_json,
             u.name AS user_name, w.name AS workspace_name
        FROM digest_schedules d
@@ -286,7 +286,15 @@ async function appendDigestBriefMessage(
  * It states the job, then lays out the window grouped by subject, because "what
  * moved in this work stream" is what a person wants read back to them — not a
  * flat chronological list. Events the reader is a named target of are marked, so
- * the model can lead with them rather than having to infer importance.
+ * the model can lead with them rather than infer importance, and each group
+ * carries its canonical link so the digest can point at the real thing instead
+ * of describing it.
+ *
+ * The output contract is Markdown rather than a structured schema, because the
+ * run is the ordinary agent loop and its product is a message. The instructions
+ * name the small subset the email renderer styles richly — `##` sections,
+ * bullets, links, bold, blockquote — and anything outside it degrades to
+ * readable text rather than breaking the layout.
  */
 export function renderDigestBrief(
   schedule: Pick<DigestScheduleRow, "user_name" | "workspace_name" | "timezone">,
@@ -300,14 +308,17 @@ export function renderDigestBrief(
 
   const sections = [...bySubject.values()].map((group) => {
     const first = group[0]!;
+    const heading = first.canonical_url
+      ? `### ${first.title} — ${first.subject_type} — link: ${first.canonical_url}`
+      : `### ${first.title} — ${first.subject_type}`;
     const lines = group.map((event) => {
       const target = event.is_target === 1
-        ? ` [${event.target_relations ?? "involves you"} — you]`
+        ? ` [${event.target_relations ?? "involves you"} — THIS NAMES THEM]`
         : "";
       const body = truncateUtf16Safe(event.body.replace(/\s+/gu, " ").trim(), MAX_EVENT_BODY_CHARACTERS);
       return `  - ${event.occurred_at} · ${event.actor_label || "someone"}${target}: ${body || event.title}`;
     });
-    return [`### ${first.title} (${first.subject_type})`, ...lines].join("\n");
+    return [heading, ...lines].join("\n");
   });
 
   const targeted = events.filter((event) => event.is_target === 1).length;
@@ -315,15 +326,22 @@ export function renderDigestBrief(
     `You are writing the scheduled digest for ${schedule.user_name} in the ${schedule.workspace_name} workspace.`,
     `Their timezone is ${schedule.timezone}. Everything below happened since their last digest and is already filtered to what they are allowed to see.`,
     "",
-    "Write the digest as Markdown, addressed to them. Requirements:",
-    "- Summarize only what is new. Do not restate anything you have already digested in this work stream.",
-    `- Lead with anything marked as involving them directly${targeted > 0 ? ` (${targeted} such item${targeted === 1 ? "" : "s"} below)` : ""}.`,
-    "- Group by what it is about, one short section each, and say what changed and what it means — not who clicked what.",
-    "- Call out anything that appears to need a decision or a reply from them.",
-    "- If an item below is only a fragment and the detail matters, use your tools to read the full context before summarizing it.",
-    "- No preamble, no sign-off, no restating these instructions. Start with the content.",
+    "Write the digest as Markdown addressed to them. It is rendered into an email, so structure is what makes it readable:",
     "",
-    `## What changed (${events.length} item${events.length === 1 ? "" : "s"})`,
+    "- Open with one short sentence naming the single most important thing. No greeting — the email adds one.",
+    targeted > 0
+      ? `- Use \`## \` for each section. Start with \`## Needs you\` covering the ${targeted} item${targeted === 1 ? "" : "s"} marked THIS NAMES THEM.`
+      : "- Use `## ` for each section. Nothing below names them directly, so do not write a \"Needs you\" section.",
+    "- Group the rest by what it is about, one `## ` section each, most consequential first. Name the section after the thing, not the tool it came from.",
+    "- Under each section use `- ` bullets, one per real development. Say what changed and what it means, never who clicked what.",
+    "- Where an item below carries a `link:`, link its name with `[name](url)` the first time it appears in that section. Never invent a URL.",
+    "- Lead a bullet with a single emoji only where it earns its place — a decision needed, a blocker, something shipped. Most bullets take none.",
+    "- Bold the few phrases that carry the decision. Use `> ` for a quote worth reading verbatim.",
+    "- Summarize only what is new. Do not restate anything you have already digested in this work stream.",
+    "- If an item below is only a fragment and the detail matters, use your tools to read the full context before summarizing it.",
+    "- No sign-off, no restating these instructions, no commentary about being an assistant.",
+    "",
+    `## Source material (${events.length} item${events.length === 1 ? "" : "s"})`,
     ...sections,
   ].join("\n");
   return truncateUtf16Safe(brief, MAX_PROMPT_CHARACTERS);
