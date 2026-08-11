@@ -1,0 +1,613 @@
+/**
+ * One-shot prompt wake-ups for a work stream.
+ *
+ * A run can ask to be woken later — "in two hours", or "on 12 August at 5:26pm
+ * Pacific" — with the prompt it wants delivered when that instant arrives. The
+ * canonical row lives in `workstream_wakeups`; the workspace scheduler Durable
+ * Object owns the alarm that fires it, exactly as it already does for recurring
+ * schedules and resource watches.
+ *
+ * This module holds everything that has no opinion about the harness: time
+ * resolution, the limits, and the SQL. The tool surface lives in
+ * `integrations.ts` and the firing side lives in `workstream-service.ts`, so
+ * neither of those has to import the other through here.
+ */
+import type { ExecutionPrincipal } from "@avalon/contracts";
+import { ExecutionPrincipalSchema } from "@avalon/contracts";
+import { newId, nowIso } from "@avalon/db";
+
+import type { Env } from "../env";
+import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+
+/**
+ * One minute, applied to the resolved instant — so it binds an absolute `at`
+ * exactly as it binds a relative `delay`.
+ *
+ * Second-granularity units are still accepted input: "90 sec" is a legitimate
+ * wake-up. It is the resulting instant that has to clear a minute, because
+ * every wake-up starts a full harness run, and anything sooner than that is
+ * work the current run should simply do itself.
+ */
+export const MINIMUM_WAKEUP_DELAY_SECONDS = 60;
+/** A year is far past any work stream's useful life; beyond it a wake-up is a lost row, not a plan. */
+export const MAXIMUM_WAKEUP_DELAY_SECONDS = 365 * 24 * 60 * 60;
+/** Hard, principal-independent cap: identical calls succeed or fail for reasons the model can predict. */
+export const MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM = 20;
+export const MAXIMUM_WAKEUP_PROMPT_LENGTH = 4_000;
+
+export interface WorkstreamWakeupRow {
+  id: string;
+  workspace_id: string;
+  workstream_id: string;
+  execution_principal_json: string;
+  prompt: string;
+  due_at: string;
+  status: "pending" | "fired" | "cancelled";
+  version: number;
+  created_at: string;
+}
+
+export interface PendingWakeup {
+  wakeupId: string;
+  dueAt: string;
+  prompt: string;
+}
+
+/**
+ * A deterministic rejection the model can act on.
+ *
+ * These never throw: the harness treats a throw as transient and may retry it,
+ * and no retry fixes a bad instant or an exhausted cap. The caller renders
+ * `code` and `hint` into the tool's `output`, which is the half the model
+ * actually reads.
+ */
+export class WakeupInputError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly hint: string,
+  ) {
+    super(message);
+    this.name = "WakeupInputError";
+  }
+}
+
+/** Canonicalize an IANA zone, rejecting anything `Intl` will not accept. */
+export function canonicalWakeupTimezone(timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: timezone }).resolvedOptions().timeZone;
+  } catch {
+    throw new WakeupInputError(
+      "wakeup_timezone_invalid",
+      `Invalid IANA timezone: ${timezone}`,
+      "Pass an IANA timezone such as America/Los_Angeles, or omit timezone to use this work stream's local zone.",
+    );
+  }
+}
+
+/**
+ * Every spelling of a duration unit this tool accepts.
+ *
+ * The list is deliberately generous about how a unit is written and strict
+ * about everything else: a model that reaches for "5 min", "5m", or
+ * "5 minutes" should not have to guess which one this tool wanted, but a
+ * unit it invents has to fail loudly rather than be silently dropped.
+ */
+const DELAY_UNIT_SECONDS = new Map<string, number>([
+  ["s", 1], ["sec", 1], ["secs", 1], ["second", 1], ["seconds", 1],
+  ["m", 60], ["min", 60], ["mins", 60], ["minute", 60], ["minutes", 60],
+  ["h", 3_600], ["hr", 3_600], ["hrs", 3_600], ["hour", 3_600], ["hours", 3_600],
+  ["d", 86_400], ["day", 86_400], ["days", 86_400],
+  ["w", 604_800], ["week", 604_800], ["weeks", 604_800],
+]);
+
+/** Named in every delay rejection, so a retry does not have to guess the vocabulary. */
+export const ACCEPTED_DELAY_UNITS_HINT = [
+  "Accepted units are seconds (s, sec, secs, second, seconds),",
+  "minutes (m, min, mins, minute, minutes),",
+  "hours (h, hr, hrs, hour, hours),",
+  "days (d, day, days), and weeks (w, week, weeks).",
+  "Write a whole number before each unit and combine larger units with smaller ones, for example",
+  "\"5 minutes\", \"90 sec\", \"2 hours\", \"1h30m\", or the ISO-8601 duration \"PT2H30M\".",
+  "The resulting time must be at least one minute from now.",
+].join(" ");
+
+/** Named in every `at` rejection. */
+export const ACCEPTED_TIMESTAMP_HINT = [
+  "Pass a full ISO-8601 date and time.",
+  "Either offset-bearing and absolute, for example \"2026-08-12T17:26:00-07:00\" or \"2026-08-12T17:26:00Z\",",
+  "or a local reading with no offset, for example \"2026-08-12T17:26\", paired with timezone.",
+  "A date alone, a time alone, or words such as \"tomorrow\" are not accepted.",
+].join(" ");
+
+/** `<number><unit>` terms, optionally separated by spaces or commas: "1h30m", "2 hours 15 minutes". */
+const DELAY_TERM = /(\d+)\s*([a-z]+)/giu;
+const DELAY_GRAMMAR = /^(?:\d+\s*[a-z]+[\s,]*)+$/iu;
+/** ISO-8601 duration, days and below. Weeks and months are excluded as separate grammars. */
+const ISO_DURATION = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/u;
+
+/**
+ * A full ISO-8601 timestamp, offset optional.
+ *
+ * Deliberately not `Date.parse`, which accepts a bare date, a bare year, and a
+ * pile of non-ISO strings, silently turning "2026-08-12" into midnight UTC —
+ * twelve hours from what a person writing that meant.
+ */
+const ISO_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})?$/iu;
+
+/**
+ * Parse a human or ISO-8601 duration into whole seconds.
+ *
+ * Strict on every axis that could silently mean the wrong thing: a bare number
+ * has no unit to trust, a fraction has no rounding this tool is entitled to
+ * choose, and a repeated unit is more likely a typo than a sum.
+ */
+export function parseWakeupDelay(raw: string): number {
+  const text = raw.trim();
+  if (text.length === 0) {
+    throw new WakeupInputError(
+      "wakeup_delay_invalid",
+      "delay is empty",
+      ACCEPTED_DELAY_UNITS_HINT,
+    );
+  }
+
+  const isoDuration = ISO_DURATION.exec(text.toUpperCase());
+  if (isoDuration && text.toUpperCase() !== "P") {
+    const [, days, hours, minutes, seconds] = isoDuration;
+    if (!days && !hours && !minutes && !seconds) {
+      throw new WakeupInputError(
+        "wakeup_delay_invalid",
+        `delay names no amount of time: ${text}`,
+        ACCEPTED_DELAY_UNITS_HINT,
+      );
+    }
+    return Number(days ?? 0) * 86_400
+      + Number(hours ?? 0) * 3_600
+      + Number(minutes ?? 0) * 60
+      + Number(seconds ?? 0);
+  }
+
+  if (/^\d+$/u.test(text)) {
+    throw new WakeupInputError(
+      "wakeup_delay_unit_missing",
+      `delay needs a unit: ${text} could mean seconds, minutes, or hours`,
+      ACCEPTED_DELAY_UNITS_HINT,
+    );
+  }
+  if (/\d+\s*\.\s*\d/u.test(text) || /\d\.\d/u.test(text)) {
+    throw new WakeupInputError(
+      "wakeup_delay_invalid",
+      `delay must use whole numbers: ${text}`,
+      `Combine units instead of using a fraction — write "1h30m" rather than "1.5h". ${ACCEPTED_DELAY_UNITS_HINT}`,
+    );
+  }
+  if (!DELAY_GRAMMAR.test(text)) {
+    throw new WakeupInputError(
+      "wakeup_delay_invalid",
+      `Could not read delay as a duration: ${text}`,
+      ACCEPTED_DELAY_UNITS_HINT,
+    );
+  }
+
+  let totalSeconds = 0;
+  const seenUnits = new Set<number>();
+  DELAY_TERM.lastIndex = 0;
+  for (let term = DELAY_TERM.exec(text); term !== null; term = DELAY_TERM.exec(text)) {
+    const unit = term[2]!.toLowerCase();
+    const unitSeconds = DELAY_UNIT_SECONDS.get(unit);
+    if (unitSeconds === undefined) {
+      throw new WakeupInputError(
+        "wakeup_delay_unit_unknown",
+        `delay uses an unrecognized unit: ${term[2]}`,
+        ACCEPTED_DELAY_UNITS_HINT,
+      );
+    }
+    if (seenUnits.has(unitSeconds)) {
+      throw new WakeupInputError(
+        "wakeup_delay_invalid",
+        `delay repeats the same unit: ${text}`,
+        `State each unit once and add them in order, largest first. ${ACCEPTED_DELAY_UNITS_HINT}`,
+      );
+    }
+    seenUnits.add(unitSeconds);
+    totalSeconds += Number(term[1]) * unitSeconds;
+  }
+  return totalSeconds;
+}
+
+/** How far `timeZone` is ahead of UTC at `instant`, in milliseconds. */
+function zoneOffsetMs(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(instant);
+  const field = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const asIfUtc = Date.UTC(
+    field("year"),
+    field("month") - 1,
+    field("day"),
+    field("hour"),
+    field("minute"),
+    field("second"),
+  );
+  // formatToParts drops sub-second precision, so compare against a whole second.
+  return asIfUtc - Math.floor(instant.getTime() / 1_000) * 1_000;
+}
+
+/**
+ * Resolve a wall-clock reading in `timeZone` to the UTC instant it names.
+ *
+ * The offset depends on the instant, and the instant is what we are solving
+ * for, so guess with the offset in force at the naive value and correct once
+ * with the offset in force at the guess. Two passes is exact everywhere except
+ * the hour a DST transition skips or repeats, where any answer is a choice and
+ * the resolved instant is echoed back to the caller in local terms.
+ */
+function instantFromLocalWallClock(naiveAsIfUtcMs: number, timeZone: string): number {
+  const firstGuess = naiveAsIfUtcMs - zoneOffsetMs(new Date(naiveAsIfUtcMs), timeZone);
+  return naiveAsIfUtcMs - zoneOffsetMs(new Date(firstGuess), timeZone);
+}
+
+export interface WakeupInstantRequest {
+  delay?: string | undefined;
+  at?: string | undefined;
+  timezone?: string | undefined;
+  /** The work stream's local zone, used when `at` carries no offset and no `timezone` is given. */
+  defaultTimezone: string;
+  now: Date;
+}
+
+export interface ResolvedWakeupInstant {
+  dueAt: Date;
+  /** The zone the result is reported in — the requested one, else the work stream's. */
+  timezone: string;
+}
+
+/**
+ * Turn "in N seconds" or a timestamp into one UTC instant.
+ *
+ * Exactly one of `delaySeconds` and `at` must be present. An `at` that already
+ * carries an offset is absolute; one without is read in `timezone`, which is
+ * how "August 12th at 5:26pm Pacific" arrives without the model having to know
+ * whether that date is on daylight time.
+ */
+export function resolveWakeupInstant(request: WakeupInstantRequest): ResolvedWakeupInstant {
+  const hasDelay = request.delay !== undefined;
+  const hasAt = request.at !== undefined;
+  if (hasDelay && hasAt) {
+    throw new WakeupInputError(
+      "wakeup_time_ambiguous",
+      "delay and at cannot both be set",
+      `Pass delay for a relative wake-up or at for a specific time, never both. ${ACCEPTED_DELAY_UNITS_HINT} ${ACCEPTED_TIMESTAMP_HINT}`,
+    );
+  }
+  if (!hasDelay && !hasAt) {
+    throw new WakeupInputError(
+      "wakeup_time_missing",
+      "A wake-up needs a time",
+      `Pass delay for a relative wake-up, or at for a specific time. ${ACCEPTED_DELAY_UNITS_HINT} ${ACCEPTED_TIMESTAMP_HINT}`,
+    );
+  }
+
+  const timezone = canonicalWakeupTimezone(request.timezone ?? request.defaultTimezone);
+  const dueAt = hasDelay
+    ? new Date(request.now.getTime() + parseWakeupDelay(request.delay!) * 1_000)
+    : resolveTimestamp(request.at!, request.timezone, timezone);
+
+  const delayMs = dueAt.getTime() - request.now.getTime();
+  if (delayMs < MINIMUM_WAKEUP_DELAY_SECONDS * 1_000) {
+    throw new WakeupInputError(
+      "wakeup_too_soon",
+      `That time is ${Math.round(delayMs / 1_000)} seconds away, and a wake-up must be at least ${MINIMUM_WAKEUP_DELAY_SECONDS} seconds away`,
+      `Pick a time at least ${MINIMUM_WAKEUP_DELAY_SECONDS} seconds from now, or do the work in this run instead of scheduling it. ${ACCEPTED_DELAY_UNITS_HINT}`,
+    );
+  }
+  if (delayMs > MAXIMUM_WAKEUP_DELAY_SECONDS * 1_000) {
+    throw new WakeupInputError(
+      "wakeup_too_distant",
+      `That time is ${Math.round(delayMs / 86_400_000)} days away, and a wake-up must be within ${MAXIMUM_WAKEUP_DELAY_SECONDS / 86_400} days`,
+      `Pick a time within one year from now. ${ACCEPTED_DELAY_UNITS_HINT}`,
+    );
+  }
+  return { dueAt, timezone };
+}
+
+/** Read one exact ISO-8601 timestamp, offset-bearing or local. */
+function resolveTimestamp(
+  raw: string,
+  requestedTimezone: string | undefined,
+  timezone: string,
+): Date {
+  const text = raw.trim();
+  const parsed = ISO_TIMESTAMP.exec(text);
+  if (!parsed) {
+    throw new WakeupInputError(
+      "wakeup_time_invalid",
+      `Could not read at as an ISO-8601 timestamp: ${text}`,
+      ACCEPTED_TIMESTAMP_HINT,
+    );
+  }
+  const [, year, month, day, hour, minute, second, millisecond, offset] = parsed;
+  const fields = {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+    second: Number(second ?? "0"),
+    millisecond: Number((millisecond ?? "").padEnd(3, "0") || "0"),
+  };
+  const asIfUtc = Date.UTC(
+    fields.year,
+    fields.month - 1,
+    fields.day,
+    fields.hour,
+    fields.minute,
+    fields.second,
+    fields.millisecond,
+  );
+  // Date.UTC rolls a bad field over rather than failing — month 13 becomes the
+  // next January, 31 February becomes March. Round-trip it so an impossible
+  // date is rejected instead of quietly becoming a different one.
+  const roundTripped = new Date(asIfUtc);
+  if (
+    roundTripped.getUTCFullYear() !== fields.year
+    || roundTripped.getUTCMonth() !== fields.month - 1
+    || roundTripped.getUTCDate() !== fields.day
+    || roundTripped.getUTCHours() !== fields.hour
+    || roundTripped.getUTCMinutes() !== fields.minute
+    || roundTripped.getUTCSeconds() !== fields.second
+  ) {
+    throw new WakeupInputError(
+      "wakeup_time_invalid",
+      `at names a date or time that does not exist: ${text}`,
+      ACCEPTED_TIMESTAMP_HINT,
+    );
+  }
+
+  if (!offset) {
+    // A local reading with no `timezone` is resolved in the work stream's own
+    // zone, which is the reading whoever wrote it would expect.
+    return new Date(instantFromLocalWallClock(asIfUtc, timezone));
+  }
+  if (requestedTimezone !== undefined) {
+    // The offset and the zone are two answers to the same question. Picking one
+    // silently is how a wake-up lands seven hours from where it was meant.
+    throw new WakeupInputError(
+      "wakeup_time_ambiguous",
+      `at already carries the UTC offset ${offset}, so timezone would be a second, conflicting answer`,
+      `Either drop timezone and keep the offset in at, or drop the offset from at and keep timezone. ${ACCEPTED_TIMESTAMP_HINT}`,
+    );
+  }
+  if (offset.toUpperCase() === "Z") return new Date(asIfUtc);
+  const offsetSign = offset.startsWith("-") ? -1 : 1;
+  const offsetHours = Number(offset.slice(1, 3));
+  const offsetMinutes = Number(offset.slice(4, 6));
+  if (offsetHours > 23 || offsetMinutes > 59) {
+    throw new WakeupInputError(
+      "wakeup_time_invalid",
+      `at carries an impossible UTC offset: ${offset}`,
+      ACCEPTED_TIMESTAMP_HINT,
+    );
+  }
+  return new Date(asIfUtc - offsetSign * (offsetHours * 3_600_000 + offsetMinutes * 60_000));
+}
+
+/** Render an instant the way a person reading the transcript would write it. */
+export function formatWakeupLocalTime(instant: Date, timezone: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).formatToParts(instant).map((part) => [part.type, part.value]),
+  );
+  return `${parts.month} ${parts.day}, ${parts.year} at ${parts.hour}:${parts.minute} ${parts.dayPeriod} ${timezone}`;
+}
+
+export async function countPendingWorkstreamWakeups(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  workstreamId: string,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS pending FROM workstream_wakeups
+      WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'`,
+  ).bind(workspaceId, workstreamId).first<{ pending: number }>();
+  return Number(row?.pending ?? 0);
+}
+
+export async function listPendingWorkstreamWakeups(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  workstreamId: string,
+): Promise<PendingWakeup[]> {
+  const rows = await env.DB.prepare(
+    `SELECT id, due_at, prompt FROM workstream_wakeups
+      WHERE workspace_id = ? AND workstream_id = ? AND status = 'pending'
+      ORDER BY due_at ASC
+      LIMIT ?`,
+  ).bind(workspaceId, workstreamId, MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM)
+    .all<{ id: string; due_at: string; prompt: string }>();
+  return (rows.results ?? []).map((row) => ({
+    wakeupId: row.id,
+    dueAt: row.due_at,
+    prompt: row.prompt,
+  }));
+}
+
+export async function findWorkstreamWakeupByIdempotencyKey(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  workstreamId: string,
+  idempotencyKey: string,
+): Promise<{ wakeupId: string; dueAt: string; prompt: string; status: string } | null> {
+  const row = await env.DB.prepare(
+    `SELECT id, due_at, prompt, status FROM workstream_wakeups
+      WHERE workspace_id = ? AND workstream_id = ? AND idempotency_key = ?`,
+  ).bind(workspaceId, workstreamId, idempotencyKey)
+    .first<{ id: string; due_at: string; prompt: string; status: string }>();
+  return row
+    ? { wakeupId: row.id, dueAt: row.due_at, prompt: row.prompt, status: row.status }
+    : null;
+}
+
+/**
+ * Insert one pending wake-up.
+ *
+ * The unique `(workstream_id, idempotency_key)` makes a replayed tool receipt
+ * resolve to the row the first attempt created instead of scheduling a second
+ * wake-up, so the caller re-reads on conflict rather than treating the insert
+ * as authoritative.
+ */
+export async function createWorkstreamWakeup(
+  env: Pick<Env, "DB">,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    harnessRunId: string;
+    executionPrincipal: ExecutionPrincipal;
+    prompt: string;
+    dueAt: Date;
+    idempotencyKey: string;
+  },
+): Promise<{ wakeupId: string; created: boolean }> {
+  const id = newId();
+  const at = nowIso();
+  const inserted = await env.DB.prepare(
+    `INSERT INTO workstream_wakeups
+       (id, workspace_id, workstream_id, created_by_harness_run_id, execution_principal_json,
+        prompt, due_at, status, idempotency_key, fired_at, cancelled_at, version,
+        created_at, updated_at)
+     SELECT ?1, ?2, w.id, ?4, ?5, ?6, ?7, 'pending', ?8, NULL, NULL, 1, ?9, ?9
+       FROM workstreams w
+      WHERE w.id = ?3 AND w.workspace_id = ?2 AND w.archived_at IS NULL
+     ON CONFLICT(workstream_id, idempotency_key) DO NOTHING`,
+  ).bind(
+    id,
+    input.workspaceId,
+    input.workstreamId,
+    input.harnessRunId,
+    JSON.stringify(input.executionPrincipal),
+    input.prompt,
+    input.dueAt.toISOString(),
+    input.idempotencyKey,
+    at,
+  ).run();
+  if ((inserted.meta.changes ?? 0) > 0) return { wakeupId: id, created: true };
+
+  const existing = await findWorkstreamWakeupByIdempotencyKey(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+    input.idempotencyKey,
+  );
+  if (existing) return { wakeupId: existing.wakeupId, created: false };
+  throw new Error("workstream_wakeup_target_unavailable");
+}
+
+export async function cancelWorkstreamWakeup(
+  env: Pick<Env, "DB">,
+  input: { workspaceId: string; workstreamId: string; wakeupId: string },
+): Promise<"cancelled" | "not_pending" | "not_found"> {
+  const at = nowIso();
+  const cancelled = await env.DB.prepare(
+    `UPDATE workstream_wakeups
+        SET status = 'cancelled', cancelled_at = ?1, version = version + 1, updated_at = ?1
+      WHERE id = ?2 AND workspace_id = ?3 AND workstream_id = ?4 AND status = 'pending'`,
+  ).bind(at, input.wakeupId, input.workspaceId, input.workstreamId).run();
+  if ((cancelled.meta.changes ?? 0) > 0) return "cancelled";
+
+  const row = await env.DB.prepare(
+    `SELECT status FROM workstream_wakeups
+      WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
+  ).bind(input.wakeupId, input.workspaceId, input.workstreamId).first<{ status: string }>();
+  return row ? "not_pending" : "not_found";
+}
+
+/**
+ * Take exclusive ownership of a due wake-up.
+ *
+ * Claiming before the run starts biases the whole path to at-most-once: a
+ * crash after the claim loses a wake-up, where a crash after an unclaimed
+ * launch would start the same prompt twice and repeat whatever external writes
+ * it makes. A launch that fails cleanly releases the claim below.
+ */
+export async function claimDueWorkstreamWakeup(
+  env: Pick<Env, "DB">,
+  row: Pick<WorkstreamWakeupRow, "id" | "workspace_id" | "version">,
+): Promise<boolean> {
+  const at = nowIso();
+  const claimed = await env.DB.prepare(
+    `UPDATE workstream_wakeups
+        SET status = 'fired', fired_at = ?1, version = version + 1, updated_at = ?1
+      WHERE id = ?2 AND workspace_id = ?3 AND status = 'pending' AND version = ?4`,
+  ).bind(at, row.id, row.workspace_id, row.version).run();
+  return (claimed.meta.changes ?? 0) > 0;
+}
+
+/** Undo a claim whose run never started, so the next alarm retries it. */
+export async function releaseClaimedWorkstreamWakeup(
+  env: Pick<Env, "DB">,
+  row: Pick<WorkstreamWakeupRow, "id" | "workspace_id">,
+): Promise<void> {
+  const at = nowIso();
+  await env.DB.prepare(
+    `UPDATE workstream_wakeups
+        SET status = 'pending', fired_at = NULL, version = version + 1, updated_at = ?1
+      WHERE id = ?2 AND workspace_id = ?3 AND status = 'fired'`,
+  ).bind(at, row.id, row.workspace_id).run();
+}
+
+export async function loadWorkstreamWakeup(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  wakeupId: string,
+): Promise<WorkstreamWakeupRow | null> {
+  return await env.DB.prepare(
+    `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
+            due_at, status, version, created_at
+       FROM workstream_wakeups
+      WHERE id = ? AND workspace_id = ?`,
+  ).bind(wakeupId, workspaceId).first<WorkstreamWakeupRow>();
+}
+
+export function wakeupExecutionPrincipal(row: WorkstreamWakeupRow): ExecutionPrincipal {
+  return ExecutionPrincipalSchema.parse(JSON.parse(row.execution_principal_json));
+}
+
+/**
+ * Recompute the workspace alarm.
+ *
+ * Every canonical mutation of a due time has to do this, or the wake-up sits in
+ * D1 until some unrelated schedule happens to wake the same Durable Object.
+ */
+export async function refreshWorkspaceSchedulerAlarm(
+  env: Pick<Env, "WORKSPACE_SCHEDULERS" | "AVALON_REGION" | "APP_ENV">,
+  workspaceId: string,
+): Promise<void> {
+  const schedulers = durableObjectNamespaceForRegion(
+    env.WORKSPACE_SCHEDULERS,
+    env.AVALON_REGION,
+    env.APP_ENV,
+  );
+  const id = schedulers.idFromName(`${env.AVALON_REGION}:${workspaceId}`);
+  const response = await schedulers.get(id).fetch("https://scheduler.internal/refresh", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workspaceId, region: env.AVALON_REGION }),
+  });
+  if (!response.ok) throw new Error(`Scheduler refresh failed (${response.status})`);
+}
