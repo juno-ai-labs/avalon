@@ -123,10 +123,22 @@ pinned work stream with it.
 A pin comes from one place — the model selector in the composers that start work,
 which appears only while Application → Developer → **Debug enabled** is on. A new
 work stream carries the choice directly; a new automation holds it on the
-subscription and copies it onto the work stream each run creates, so a run
-resolves its model from its own row like every other work stream. Nothing else
-writes the column, and choosing nothing writes nothing, so an ordinary work
-stream is unpinned and reads exactly as this document describes above.
+subscription, and **every** path that creates a run copies it onto that run's
+work stream, so a run resolves its model from its own row like every other work
+stream. There are three such paths and they are easy to miss: `createRun` in
+`automation-service.ts` (manual runs and inbound email), `startAutomation` in
+the workspace scheduler (scheduled runs), and `startActivityAutomation` in the
+activity queue consumer (connector-activity runs). The last two build the work
+stream row inline rather than going through the service, so a new column on it
+has to be added to each by hand — a pin that reaches only `createRun` looks
+correct under **Run now** and is silently ignored by every scheduled run, which
+is how this shipped in review.
+
+Nothing else writes the column, and choosing nothing writes nothing, so an
+ordinary work stream is unpinned and reads exactly as this document describes
+above. The selector says so plainly: unpinned is its own menu entry, labelled
+**Default** and described as following this flag, rather than named after a
+model the renderer cannot know is being served.
 
 The pin carries **no fallbacks**. It is a request to observe one specific model,
 and routing onward would answer a question nobody asked — the same reasoning

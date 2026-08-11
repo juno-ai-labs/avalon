@@ -11,7 +11,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
-import { scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
+import { agentModelOverride, scheduledWorkstreamModelForExisting } from "../services/agent-model-flags";
 import { fireDigestSchedule } from "../services/digest-run-service";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
@@ -57,6 +57,7 @@ interface ScheduleRow {
 interface AutomationSourceRow {
   subscription_id: string;
   execution_principal_json: string;
+  model_override: string | null;
   template_name: string;
   template_description: string;
   instructions: string;
@@ -449,6 +450,7 @@ export class WorkspaceScheduler {
     const source = await this.env.DB.prepare(
       `SELECT s.id AS subscription_id,
               s.execution_principal_json,
+              s.model_override,
               t.name AS template_name,
               t.description AS template_description,
               tv.instructions
@@ -502,9 +504,10 @@ export class WorkspaceScheduler {
           `INSERT INTO workstreams (
              id, workspace_id, title, objective, email_address, email_route_status, origin_type,
              created_by_user_id, automation_subscription_id, automation_run_id,
-             planned_for, harness_status, last_activity_at, created_at, updated_at, archived_at
+             planned_for, harness_status, last_activity_at, created_at, updated_at, archived_at,
+             model_override
            ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, ?7,
-                     'scheduled', ?8, ?8, ?8, NULL)`
+                     'scheduled', ?8, ?8, ?8, NULL, ?9)`
         )
           .bind(
             workstreamId,
@@ -514,7 +517,12 @@ export class WorkspaceScheduler {
             emailRoute.emailAddress,
             subscriptionId,
             schedule.next_run_at,
-            timestamp
+            timestamp,
+            // The automation's pin follows every run it produces, not only the
+            // ones `AutomationService.createRun` builds. `ensureHarnessRun`
+            // below resolves the model from this row, so copying it here is
+            // what makes a scheduled run honour the choice.
+            agentModelOverride(source.model_override)
           )
           .run();
       }

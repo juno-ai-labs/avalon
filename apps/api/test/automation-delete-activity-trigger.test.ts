@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
+import type * as AgentModelFlags from "../src/services/agent-model-flags";
 import { __testing } from "../src/queues/activity-consumer";
 import { AutomationService } from "../src/services/automation-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -24,7 +25,11 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
     }
   },
 }));
-vi.mock("../src/services/agent-model-flags", () => ({
+vi.mock("../src/services/agent-model-flags", async (importOriginal) => ({
+  // Only the flag lookups are stubbed. `agentModelOverride` is pure validation
+  // against the contract's list, and replacing it here would let a subscription
+  // pin something the real one rejects.
+  ...(await importOriginal<typeof AgentModelFlags>()),
   resolveAgentModelRouting: vi.fn(async () => ({ model: "test-model" })),
   scheduledWorkstreamModel: vi.fn(async () => "test-model"),
 }));
