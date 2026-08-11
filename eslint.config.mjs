@@ -95,7 +95,14 @@ export default tseslint.config(
     // summary. A bare `console` call satisfies neither reliably, so the two
     // structured loggers own the only calls in either Worker — each one an
     // explicit `eslint-disable` at the line that emits.
-    files: ["apps/api/src/**/*.ts", "apps/release-retention/src/**/*.ts"],
+    // `apps/site` is the fourth Worker and has no logger of its own: it serves
+    // static assets and logs nothing. The rule holds the line there rather than
+    // waiting for the first bare `console` call to need migrating.
+    files: [
+      "apps/api/src/**/*.ts",
+      "apps/release-retention/src/**/*.ts",
+      "apps/site/src/**/*.ts",
+    ],
     rules: {
       "no-console": "error",
     },

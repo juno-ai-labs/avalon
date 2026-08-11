@@ -391,7 +391,8 @@ Cloudflare can terminate long-lived connections during network deployments, so r
 ### Log shape
 
 `no-console` is an error across `apps/api/src`, `apps/release-retention/src`,
-and `apps/desktop/src`. Every diagnostic goes through a logger instead:
+`apps/site/src`, and `apps/desktop/src`. Every diagnostic goes through a logger
+instead:
 
 | Code | Logger | Call |
 | --- | --- | --- |
@@ -399,6 +400,11 @@ and `apps/desktop/src`. Every diagnostic goes through a logger instead:
 | API Worker, everywhere else | same | `logInfo`/`logWarn`/`logError(env, event, fields)` |
 | Retention Worker | `apps/release-retention/src/logger.ts` | `logEvent(level, event, fields)` |
 | Desktop client | `apps/desktop/src/common/logger.ts` | `logWarn`/`logError(scope, message, …detail)` |
+
+`apps/site` is the fourth Worker and appears in no row: it serves static assets
+and logs nothing, so it has no logger. It keeps Workers Logs enabled without a
+head sampling rate and without traces; give it a logger of its own before adding
+the first diagnostic there, rather than reaching for `console`.
 
 The two Workers emit one object per `console` call, which is what Workers Logs
 wants: it indexes the object's properties as queryable fields and renders its

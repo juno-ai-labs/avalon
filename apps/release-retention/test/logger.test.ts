@@ -26,6 +26,15 @@ describe("retention Worker logging", () => {
     });
   });
 
+  it("bounds the report arrays that would otherwise truncate the entry", () => {
+    const entry = capture("info", () => logEvent("info", "desktop_release_retention_completed", {
+      report: { candidateKeys: Array.from({ length: 120 }, (_, index) => `stable/darwin/arm64/${index}`) },
+    }));
+
+    const report = entry.report as { candidateKeys: string[] };
+    expect(report.candidateKeys).toHaveLength(50);
+  });
+
   it("never lists a blank row, with or without a caller message", () => {
     expect(capture("info", () => logEvent("info", "desktop_release_retention_skipped")).message)
       .toBe("desktop_release_retention_skipped");
