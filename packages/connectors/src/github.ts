@@ -1022,7 +1022,7 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       assertPrincipalAccess(context.connection, context.principal);
       const definition = githubTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
-        throw connectorCapabilityRefused("GitHub", definition?.capability ?? name, context.connection.grantedScopes);
+        throw connectorCapabilityRefused("GitHub", definition?.capability ?? name, githubTools, context.connection.grantedScopes);
       }
       return executeGitHubTool(name, rawArgs, context, request);
     },

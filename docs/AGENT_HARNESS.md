@@ -228,3 +228,46 @@ That split — a labelled trigger message for the model, a system row for the pe
 Stopping a run persists `cancellation_requested_at`; it does not terminate the Workflow out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. The same leased Workflow then commits one fenced `stopped` lifecycle event and returns the work stream to `idle`, preventing a stop/complete race.
 
 The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
+
+## Changelog
+
+This log starts here. The reasoning behind everything above it predates the log
+and was not recorded; do not read the absence of an entry as an absence of a
+reason for any of it.
+
+### 2026-08-11 — A connector row finds its verb anywhere in the tool name
+
+**What changed:** The prose for a connector transcript row picks its verb by
+scanning every segment of the tool name and taking the last one that is a verb,
+rather than reading the trailing segment. A test walks the connector registry and
+fails on any tool that reaches the generic row, or that describes a `write` in
+passive words.
+
+**Why:** Reading one fixed position assumed every connector names a tool the same
+way, and none of them agreed. Five put the verb first (`send_message`), two put
+it last (`drive_search`), and those two push it into the middle wherever an area
+prefix comes first (`calendar_create_event`). So 63 of 75 connector tools fell
+through to "Reviewed <connector>" — including every Slack message sent, every
+Linear issue created, and every calendar event written on someone's behalf. That
+row is the only account a person gets of what a run did to their account, and it
+was describing a write to another human as a glance at something. The Gmail case
+was found in production, on a screenshot, and fixed for Gmail alone; the same
+fallthrough stayed live on 63 other tools for as long as the lookup did.
+
+**Considered and rejected:** An entry per tool in `CONNECTOR_TOOL_PROSE`. It
+would have worked once and rotted immediately — the map is hand-maintained, it is
+keyed on an action path that carries no connector namespace unless the tool name
+happens to start with an area segment, and the disagreement about word order is
+the actual defect. Four such entries were written during this change and then
+removed for exactly that reason.
+
+**Consequences:** A connector added later either names its tools with a
+recognized verb or declares its own prose; it cannot quietly land in the generic
+row, because `apps/api/test/connector-tool-prose.test.ts` walks the registry
+rather than a list. Keep it walking the registry — a rewrite that enumerates
+tools by hand stops testing the thing it exists to test. Adding a verb to
+`CONNECTOR_ACTION_PROSE` is the cheap fix and should stay the first one reached
+for; adding an object-keyed entry claims that path for every connector at once
+and is only correct when the verb reading is actually wrong rather than vague.
+
+Shipped in #100.
