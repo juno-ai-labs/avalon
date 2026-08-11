@@ -283,7 +283,13 @@ export function HyperSightRail({
         aria-label="HyperSight"
         className="hypersight-rail"
         onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose();
+          // The block prompt's dialog is portalled to the document body, but a
+          // React synthetic event still bubbles up the React tree to here — so
+          // without this, dismissing that dialog would also close the sidebar
+          // and persist HyperSight off. Only Escapes raised inside the sidebar
+          // itself close it.
+          if (event.key !== 'Escape' || !event.currentTarget.contains(event.target as Node)) return;
+          onClose();
         }}
         ref={railRef}
         style={{ width }}

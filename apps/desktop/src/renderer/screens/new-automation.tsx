@@ -36,6 +36,7 @@ import {
 import { desktopBridge } from '../lib/platform';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
+import { useWindowFilePaste } from '../lib/use-file-paste';
 import type {
   AutomationActivitySource,
   AutomationDraftQuestion,
@@ -498,6 +499,9 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
   const attachmentDraft = useFileAttachments(api);
+  // This composer does not autofocus either, so a paste landing on the document
+  // reaches the draft rather than going nowhere.
+  useWindowFilePaste(attachmentDraft.addFiles);
 
   const connections = useQuery({
     queryKey: ['connections'],

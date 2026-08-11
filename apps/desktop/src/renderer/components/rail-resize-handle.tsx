@@ -17,10 +17,14 @@ const KEYBOARD_STEP = 16;
 export function RailResizeHandle({
   label,
   width,
+  displayedWidth = width,
   onResize,
 }: {
   label: string;
+  /** The stored width the keyboard steps from, and the one `onResize` writes. */
   width: number;
+  /** What the sidebar is actually rendered at, when the two can differ. */
+  displayedWidth?: number;
   onResize: (width: number) => void;
 }): React.JSX.Element {
   const [resizing, setResizing] = useState(false);
@@ -45,7 +49,7 @@ export function RailResizeHandle({
       aria-orientation="vertical"
       aria-valuemax={MAX_RAIL_WIDTH}
       aria-valuemin={MIN_RAIL_WIDTH}
-      aria-valuenow={width}
+      aria-valuenow={displayedWidth}
       className={clsx('rail-resizer', resizing && 'is-resizing')}
       onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
