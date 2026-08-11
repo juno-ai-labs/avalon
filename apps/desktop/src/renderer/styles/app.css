@@ -1544,8 +1544,11 @@ pre {
 .header-origin-icon { align-items: center; color: #9b9a94; display: flex; flex: 0 0 auto; }
 .workstream-title-block { display: flex; flex-direction: column; min-width: 0; }
 .workstream-title-line { align-items: center; display: flex; gap: 8px; min-width: 0; }
-.workstream-title-line h1 { border-radius: 5px; font-size: 13px; margin: 0 0 0 -4px; overflow: hidden; padding: 1px 4px; text-overflow: ellipsis; white-space: nowrap; }
-.workstream-title-line h1:hover { background: var(--raised-hover); }
+.workstream-title-line h1 { font-size: 13px; margin: 0; min-width: 0; }
+/* A single click does nothing here — the editor opens on a double click — so
+   the pointer cursor would promise an action the button does not perform. */
+.workstream-title-button { background: transparent; border-radius: 5px; cursor: default; display: block; margin-left: -4px; max-width: 100%; overflow: hidden; padding: 1px 4px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-title-button:hover { background: var(--raised-hover); }
 .workstream-title-edit { align-items: center; display: flex; gap: 3px; margin-left: -5px; min-width: 0; }
 .workstream-title-input { background: #191a17; border: 1px solid #3b3c36; border-radius: 6px; color: var(--ink); font-size: 13px; font-weight: 600; min-width: 90px; outline: 0; padding: 1px 6px; width: 340px; }
 .workstream-title-input:focus { border-color: #77786f; box-shadow: 0 0 0 2px rgba(130, 151, 172, .12); }

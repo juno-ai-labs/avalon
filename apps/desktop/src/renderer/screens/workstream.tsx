@@ -282,9 +282,14 @@ export function WorkstreamHeader({
   const [renaming, setRenaming] = useState(false);
   // The route keeps this component mounted across work streams, so an open
   // editor would otherwise carry the previous stream's draft into the next one.
+  // The ref lets an in-flight rename recognize that it is no longer the one on
+  // screen: the promise it is waiting on outlives the navigation.
+  const shownWorkstreamId = useRef(workstream.id);
   useEffect(() => {
+    shownWorkstreamId.current = workstream.id;
     setRenameDraft(null);
     setRenameError(null);
+    setRenaming(false);
   }, [workstream.id]);
   const startRename = (): void => {
     setRenameDraft(workstream.title);
@@ -303,15 +308,22 @@ export function WorkstreamHeader({
       cancelRename();
       return;
     }
+    // Every completion below is guarded on the work stream still being the one
+    // on screen. Navigating away mid-flight otherwise lands the old stream's
+    // failure under the new stream's title, or closes an editor the user has
+    // since opened on it.
+    const submittedFor = workstream.id;
     setRenaming(true);
     setRenameError(null);
     try {
       await onRename(title);
+      if (shownWorkstreamId.current !== submittedFor) return;
       setRenameDraft(null);
     } catch (error) {
+      if (shownWorkstreamId.current !== submittedFor) return;
       setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
     } finally {
-      setRenaming(false);
+      if (shownWorkstreamId.current === submittedFor) setRenaming(false);
     }
   };
   // Copy the canonical HTTPS link, not the `avalon://` deep link. A copied link
@@ -337,18 +349,30 @@ export function WorkstreamHeader({
         <div className="workstream-title-block">
           <div className="workstream-title-line">
             {renameDraft === null ? (
-              <h1
-                onDoubleClick={startRename}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === 'F2') {
-                    event.preventDefault();
-                    startRename();
-                  }
-                }}
-                tabIndex={0}
-                title="Double-click to rename"
-              >
-                {workstream.title}
+              <h1>
+                {/* A heading cannot carry the interaction itself: a focusable
+                    h1 is still announced as a heading, so a screen-reader user
+                    is never told there is anything to activate. A real button
+                    inside it is announced as one, and the heading keeps its
+                    name from the button's text. A mouse click reports a detail
+                    of 1 or more and is ignored — only a double click opens the
+                    editor — while keyboard activation reports 0. */}
+                <button
+                  aria-keyshortcuts="Enter F2"
+                  className="workstream-title-button"
+                  onClick={(event) => { if (event.detail === 0) startRename(); }}
+                  onDoubleClick={startRename}
+                  onKeyDown={(event) => {
+                    if (event.key === 'F2') {
+                      event.preventDefault();
+                      startRename();
+                    }
+                  }}
+                  title="Double-click to rename"
+                  type="button"
+                >
+                  {workstream.title}
+                </button>
               </h1>
             ) : (
               <form
