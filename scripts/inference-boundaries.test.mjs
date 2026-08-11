@@ -9,6 +9,7 @@ import {
   requireWebSocketTicketRule,
 } from "./eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./eslint-rules/no-bare-zod-url.mjs";
+import { requireValidatedResponseRule } from "./eslint-rules/require-validated-response.mjs";
 
 const rules = {
   "no-bare-zod-url": noBareZodUrlRule,
@@ -16,6 +17,7 @@ const rules = {
   "no-direct-openrouter-client": noDirectOpenRouterClientRule,
   "require-inference-diagnostics": requireInferenceDiagnosticsRule,
   "require-inference-signal": requireInferenceSignalRule,
+  "require-validated-response": requireValidatedResponseRule,
   "require-websocket-ticket": requireWebSocketTicketRule,
 };
 
@@ -73,4 +75,35 @@ test("rejects bare Zod URL validators but permits imported explicit contracts", 
     import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
     const schema = HttpUrlSchema.optional();
   `, "no-bare-zod-url").length, 0);
+});
+
+test("rejects a route response that never meets its contract", () => {
+  // The shape the desktop client would reject on arrival as `invalid_response`,
+  // with nothing on the server naming the field or recording that it happened.
+  const messages = lint(`
+    routes.get("/", async (c) => c.json(await service.list()));
+  `, "require-validated-response");
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].message, /contract schema/u);
+});
+
+test("accepts a parsed response and a body the route owns", () => {
+  for (const source of [
+    'routes.get("/", async (c) => c.json(PageSchema.parse(await service.list())));',
+    'routes.get("/", async (c) => c.json(await SchemaWithAsync.parseAsync(value)));',
+    'routes.post("/", async (c) => c.json({ ok: true }));',
+    'routes.post("/", async (c) => c.json({ challenge: "" }, 200));',
+    'routes.delete("/", async (c) => c.body(null, 204));',
+  ]) {
+    assert.deepEqual(lint(source, "require-validated-response"), [], source);
+  }
+});
+
+test("sees through an envelope built around unvalidated service output", () => {
+  // `items` is the service's, not the route's, so the literal exemption must
+  // not cover it.
+  const messages = lint(`
+    routes.get("/", async (c) => c.json({ items: await service.list() }));
+  `, "require-validated-response");
+  assert.equal(messages.length, 1);
 });

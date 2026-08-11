@@ -1,9 +1,19 @@
 import { parseSlackEventEnvelope, verifySlackRequest } from "@avalon/connectors";
 import { Hono } from "hono";
+import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { isSharedSlackIngress, SlackRoutingService } from "../services/slack-routing-service";
+
+/**
+ * These bodies go back to Slack rather than to an Avalon client, so the shapes
+ * are Slack's: a URL-verification echo, and an acknowledgement whose contents
+ * Slack defines. Bounding them here still stops an unrelated internal object
+ * being handed to a third party by accident.
+ */
+const SlackChallengeResponseSchema = z.object({ challenge: z.string() });
+const SlackAckResponseSchema = z.record(z.string(), z.unknown());
 
 export const slackIngressRoutes = new Hono<HonoAppEnv>();
 
@@ -18,7 +28,9 @@ slackIngressRoutes.post("/events", async (c) => {
     throw new ApiError(400, "slack_payload_invalid", "Slack sent malformed JSON");
   }
   const envelope = parseSlackEventEnvelope(payload, c.env.SLACK_APP_ID);
-  if (envelope.type === "url_verification") return c.json({ challenge: envelope.challenge ?? "" });
+  if (envelope.type === "url_verification") {
+    return c.json(SlackChallengeResponseSchema.parse({ challenge: envelope.challenge ?? "" }));
+  }
   const operation = isSharedSlackIngress(c.env, c.req.url)
     ? new SlackRoutingService(c.env).processEvent(payload, verified.bodyHash)
     : new SlackAgentService(c.env).processEvent(payload, verified.bodyHash);
@@ -43,7 +55,8 @@ slackIngressRoutes.post("/interactivity", async (c) => {
   const operation = isSharedSlackIngress(c.env, c.req.url)
     ? new SlackRoutingService(c.env).processInteraction(interaction, verified.bodyHash)
     : new SlackAgentService(c.env).processInteraction(interaction, verified.bodyHash);
-  return c.json(await slackOperationWithinAckDeadline(operation, startedAt, c.executionCtx));
+  return c.json(SlackAckResponseSchema.parse(
+    await slackOperationWithinAckDeadline(operation, startedAt, c.executionCtx)));
 });
 
 slackIngressRoutes.post("/commands", async (c) => {
@@ -54,7 +67,8 @@ slackIngressRoutes.post("/commands", async (c) => {
   const operation = isSharedSlackIngress(c.env, c.req.url)
     ? new SlackRoutingService(c.env).processCommand(form, verified.bodyHash)
     : new SlackAgentService(c.env).processCommand(form, verified.bodyHash);
-  return c.json(await slackOperationWithinAckDeadline(operation, startedAt, c.executionCtx));
+  return c.json(SlackAckResponseSchema.parse(
+    await slackOperationWithinAckDeadline(operation, startedAt, c.executionCtx)));
 });
 
 const SLACK_ACK_BUDGET_MS = 2_600;

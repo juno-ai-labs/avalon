@@ -4,6 +4,8 @@ import {
   CreateWorkspaceRequestSchema,
   IdSchema,
   OnboardingRegionRequestSchema,
+  SessionSchema,
+  WorkspaceOnboardingStateSchema,
 } from "@avalon/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -16,13 +18,14 @@ const invitationParam = z.object({ id: IdSchema });
 export const onboardingRoutes = new Hono<HonoAppEnv>();
 
 onboardingRoutes.get("/", async (c) =>
-  c.json(await new PlatformOnboardingService(c.env, getIdentityAuth(c)).state()),
+  c.json(WorkspaceOnboardingStateSchema.parse(
+    await new PlatformOnboardingService(c.env, getIdentityAuth(c)).state())),
 );
 
 onboardingRoutes.post("/workspace", zValidator("json", CreateWorkspaceRequestSchema), async (c) => {
   const body = c.req.valid("json");
-  return c.json(await new PlatformOnboardingService(c.env, getIdentityAuth(c))
-    .createWorkspace(body.name, body.region), 201);
+  return c.json(SessionSchema.parse(await new PlatformOnboardingService(c.env, getIdentityAuth(c))
+    .createWorkspace(body.name, body.region)), 201);
 });
 
 onboardingRoutes.post(
@@ -30,8 +33,8 @@ onboardingRoutes.post(
   zValidator("json", ActivateWorkspaceRequestSchema),
   async (c) => {
     const body = c.req.valid("json");
-    return c.json(await new PlatformOnboardingService(c.env, getIdentityAuth(c))
-      .activate(body.region, body.workspaceId));
+    return c.json(SessionSchema.parse(await new PlatformOnboardingService(c.env, getIdentityAuth(c))
+      .activate(body.region, body.workspaceId)));
   },
 );
 
@@ -40,8 +43,8 @@ onboardingRoutes.post(
   zValidator("param", invitationParam),
   zValidator("json", OnboardingRegionRequestSchema),
   async (c) => {
-    return c.json(await new PlatformOnboardingService(c.env, getIdentityAuth(c))
-      .acceptInvitation(c.req.valid("param").id, c.req.valid("json").region));
+    return c.json(SessionSchema.parse(await new PlatformOnboardingService(c.env, getIdentityAuth(c))
+      .acceptInvitation(c.req.valid("param").id, c.req.valid("json").region)));
   },
 );
 

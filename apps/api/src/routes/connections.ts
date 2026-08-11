@@ -1,6 +1,9 @@
 import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
+  ConnectionSchema,
+  ConnectorOAuthAttemptSchema,
+  ConnectorOAuthStartSchema,
   CreateWebhookConnectionRequestSchema,
   IdSchema,
   ScopeSchema,
@@ -110,60 +113,108 @@ const googleCallback = z.object({
   error: z.string().min(1).optional(),
 }).refine((value) => Boolean(value.code || value.error), { message: "Google returned neither a code nor an error" });
 const slackLink = z.object({ token: z.string().min(20).max(500) });
+/**
+ * Response contracts for this route's envelopes. The connector entities come
+ * from `@avalon/contracts`; the wrappers, the webhook credentials and the
+ * provider acknowledgements are shaped here.
+ */
+const ConnectionPageSchema = z.object({ items: z.array(ConnectionSchema) });
+const ConnectorCatalogSchema = z.object({ availableConnectorTypes: z.array(z.string().min(1)) });
+const CreatedConnectionSchema = z.object({ connection: ConnectionSchema });
+const ConnectionTestSchema = z.object({
+  ok: z.boolean(),
+  message: z.string(),
+  reconnectRequired: z.boolean().optional(),
+});
+const WebhookCredentialsSchema = z.object({
+  endpoint: z.string().min(1),
+  signingSecret: z.string().min(1),
+  signatureFormat: z.string().min(1),
+});
+const WebhookConnectionSchema = WebhookCredentialsSchema.extend({ connection: ConnectionSchema });
+const SlackLinkPreviewSchema = z.object({
+  teamId: z.string().min(1),
+  slackUserId: z.string().min(1),
+  workspaceName: z.string(),
+});
+const SlackLinkedSchema = z.object({
+  linked: z.literal(true),
+  teamId: z.string().min(1),
+  slackUserId: z.string().min(1),
+});
+/** What a provider is told about a delivery it just made. */
+const WebhookIngestionSchema = z.object({
+  accepted: z.literal(true),
+  duplicate: z.boolean(),
+  activityCount: z.number().int().nonnegative(),
+});
+const ConnectorWebhookIngestionSchema = z.object({
+  duplicate: z.boolean(),
+  activityId: IdSchema.nullable().optional(),
+});
+
 export const connectionRoutes = new Hono<HonoAppEnv>();
 
-connectionRoutes.get("/", async (c) => c.json({ items: await new ConnectionService(c.env, getAuth(c)).list() }));
-connectionRoutes.get("/catalog", async (c) => c.json({
+connectionRoutes.get("/", async (c) =>
+  c.json(ConnectionPageSchema.parse({ items: await new ConnectionService(c.env, getAuth(c)).list() })));
+connectionRoutes.get("/catalog", async (c) => c.json(ConnectorCatalogSchema.parse({
   availableConnectorTypes: new ConnectionService(c.env, getAuth(c)).availableConnectorTypes(),
-}));
+})));
 connectionRoutes.post("/google/start", zValidator("json", googleStart), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).beginGoogle(c.req.valid("json"))),
+  c.json(ConnectorOAuthStartSchema.parse(await new ConnectionService(c.env, getAuth(c)).beginGoogle(c.req.valid("json")))),
 );
 connectionRoutes.post("/linear/start", zValidator("json", linearStart), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("linear", c.req.valid("json"))),
+  c.json(ConnectorOAuthStartSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).beginProvider("linear", c.req.valid("json")))),
 );
 connectionRoutes.post("/github/start", zValidator("json", githubStart), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).beginGitHub(c.req.valid("json"))),
+  c.json(ConnectorOAuthStartSchema.parse(await new ConnectionService(c.env, getAuth(c)).beginGitHub(c.req.valid("json")))),
 );
 connectionRoutes.post("/notion/start", zValidator("json", notionStart), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("notion", c.req.valid("json"))),
+  c.json(ConnectorOAuthStartSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).beginProvider("notion", c.req.valid("json")))),
 );
 connectionRoutes.post("/granola/start", zValidator("json", granolaStart), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("granola", c.req.valid("json"))),
+  c.json(ConnectorOAuthStartSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).beginProvider("granola", c.req.valid("json")))),
 );
 connectionRoutes.post("/granola/workspace", zValidator("json", granolaWorkspace), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).createGranolaWorkspace(c.req.valid("json")), 201),
+  c.json(CreatedConnectionSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).createGranolaWorkspace(c.req.valid("json"))), 201),
 );
 connectionRoutes.post("/slack/start", zValidator("json", slackStart), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json"))),
+  c.json(ConnectorOAuthStartSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).beginProvider("slack", c.req.valid("json")))),
 );
 connectionRoutes.post("/x", zValidator("json", xCreate), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).createX(c.req.valid("json")), 201),
+  c.json(CreatedConnectionSchema.parse(await new ConnectionService(c.env, getAuth(c)).createX(c.req.valid("json"))), 201),
 );
 connectionRoutes.post("/slack/link/preview", zValidator("json", slackLink), async (c) =>
-  c.json(await new SlackAgentService(c.env).previewLink(getAuth(c), c.req.valid("json").token)),
+  c.json(SlackLinkPreviewSchema.parse(await new SlackAgentService(c.env).previewLink(getAuth(c), c.req.valid("json").token))),
 );
 connectionRoutes.post("/slack/link", zValidator("json", slackLink), async (c) =>
-  c.json(await new SlackAgentService(c.env).linkUser(getAuth(c), c.req.valid("json").token)),
+  c.json(SlackLinkedSchema.parse(await new SlackAgentService(c.env).linkUser(getAuth(c), c.req.valid("json").token))),
 );
 connectionRoutes.get("/oauth-attempts/:attemptId", zValidator("param", oauthAttemptParam), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).getOAuthAttempt(c.req.valid("param").attemptId)),
+  c.json(ConnectorOAuthAttemptSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).getOAuthAttempt(c.req.valid("param").attemptId))),
 );
 connectionRoutes.post("/:id/reconnect", zValidator("param", idParam), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).reconnect(c.req.valid("param").id)),
+  c.json(ConnectorOAuthStartSchema.parse(await new ConnectionService(c.env, getAuth(c)).reconnect(c.req.valid("param").id))),
 );
 connectionRoutes.post("/:id/test", zValidator("param", idParam), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id)),
+  c.json(ConnectionTestSchema.parse(await new ConnectionService(c.env, getAuth(c)).test(c.req.valid("param").id))),
 );
 connectionRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   await new ConnectionService(c.env, getAuth(c)).disable(c.req.valid("param").id);
   return c.body(null, 204);
 });
 connectionRoutes.post("/webhook", zValidator("json", CreateWebhookConnectionRequestSchema), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json")), 201),
+  c.json(WebhookConnectionSchema.parse(await new ConnectionService(c.env, getAuth(c)).createWebhook(c.req.valid("json"))), 201),
 );
 connectionRoutes.post("/:id/webhook-secret/rotate", zValidator("param", idParam), async (c) =>
-  c.json(await new ConnectionService(c.env, getAuth(c)).rotateWebhookSecret(c.req.valid("param").id)),
+  c.json(WebhookCredentialsSchema.parse(
+    await new ConnectionService(c.env, getAuth(c)).rotateWebhookSecret(c.req.valid("param").id))),
 );
 
 export const connectionCallbackRoutes = new Hono<HonoAppEnv>();
@@ -276,7 +327,7 @@ webhookIngestionRoutes.post("/github", async (c) => {
   const result = isSharedGitHubIngress(c.env, c.req.url)
     ? await new GitHubRoutingService(c.env).ingestGitHub(rawBody, c.req.raw.headers)
     : await new ProviderWebhookService(c.env).ingestGitHub(rawBody, c.req.raw.headers);
-  return c.json(result, result.duplicate ? 200 : 202);
+  return c.json(WebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
 });
 webhookIngestionRoutes.post("/linear", async (c) => {
   const rawBody = new Uint8Array(await c.req.arrayBuffer());
@@ -286,7 +337,7 @@ webhookIngestionRoutes.post("/linear", async (c) => {
   // Linear treats every non-200 response as a failed delivery and retries it.
   // A verified delivery has been durably recorded before this returns, so both
   // first deliveries and duplicates must be acknowledged with an exact 200.
-  return c.json(result, 200);
+  return c.json(WebhookIngestionSchema.parse(result), 200);
 });
 webhookIngestionRoutes.post("/notion", async (c) => {
   const result = await new ProviderWebhookService(c.env).ingestNotion(
@@ -297,7 +348,7 @@ webhookIngestionRoutes.post("/notion", async (c) => {
   // Notion requires a successful 2xx response; acknowledge verified durable
   // deliveries consistently with 200 so setup and normal delivery semantics
   // do not depend on whether a receipt was already present.
-  return c.json(result, 200);
+  return c.json(WebhookIngestionSchema.parse(result), 200);
 });
 webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestGranolaWebhook(
@@ -309,7 +360,7 @@ webhookIngestionRoutes.post("/granola/:id", zValidator("param", idParam), async 
       webhookSignature: c.req.header("webhook-signature") ?? null,
     },
   );
-  return c.json(result, result.duplicate ? 200 : 202);
+  return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
 });
 webhookIngestionRoutes.post("/webhook/:id", zValidator("param", idParam), async (c) => {
   const result = await new ConnectionService(c.env).ingestWebhook(
@@ -317,5 +368,5 @@ webhookIngestionRoutes.post("/webhook/:id", zValidator("param", idParam), async 
     new Uint8Array(await c.req.arrayBuffer()),
     c.req.header("x-avalon-signature") ?? null,
   );
-  return c.json(result, result.duplicate ? 200 : 202);
+  return c.json(ConnectorWebhookIngestionSchema.parse(result), result.duplicate ? 200 : 202);
 });

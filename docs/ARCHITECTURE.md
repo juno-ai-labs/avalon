@@ -128,6 +128,40 @@ packages/
 docs/                      Product, architecture, security, setup, runbooks
 ```
 
+## Contract boundaries
+
+Every boundary a value crosses is parsed at runtime, not asserted by a type that
+build erases. That covers HTTP requests, JSON responses, queue messages, Workflow
+params and step results, Durable Object fetches and their stored state, both
+directions of a WebSocket, provider webhooks, provider API responses, model
+structured output, agent tool arguments, feature flags, desktop IPC, and the
+desktop client's own reading of every response.
+
+Four of those are recent and worth naming, because each was a place where a type
+stood in for a check:
+
+- **`Env`** is asserted once per isolate at the entrypoints (`assertEnvContract`).
+  A missing variable used to surface as a `TypeError` inside whichever request
+  first read it, and a malformed numeric one never surfaced at all, because
+  `numericEnv` silently substitutes its fallback for anything unparseable.
+- **The internal RPC surface** — the `WorkerEntrypoint` bridges — parses each
+  argument at the hop (`lib/rpc-contracts.ts`). Same account is not the same
+  guarantee, and `region`/`workspaceId` decide which side of the Global/EU
+  boundary a record lands on.
+- **D1 rows** are parsed at the read rather than coerced field by field, mirroring
+  the columns' own CHECK constraints, so a bad row fails where it is read and
+  names its column. `mappers/connection.ts` and the row schemas in
+  `workstream-service.ts` and `note-service.ts` are the pattern; the readers in
+  `integrations.ts`, `automation-service.ts`, `workspace-service.ts` and
+  `connection-service.ts` still hand-coerce and are the remaining work.
+- **Route responses** pass their contract before serializing, enforced by the
+  `avalon/require-validated-response` lint rule. Without it the strict side of
+  the contract was the far side of the network: the desktop client parses every
+  response it receives, so a malformed body left the Worker with a 200 and became
+  a client-side `invalid_response` with nothing on the server naming the field.
+  A body the route builds from literals is exempt — the route is its own contract
+  there.
+
 ## Security boundaries
 
 The Electron renderer never receives provider credentials, native PKCE verifiers, OpenRouter keys, Cloudflare administration keys, raw IPC, Node integration, or arbitrary navigation. Main validates every exposed IPC call against a live Avalon window and its pinned renderer origin. API logs redact tokens, codes, bodies, file contents, model context, and unnecessary personal information. External actions and authorization decisions create audit records with structured correlation IDs. Immutable run scopes and live connection reauthorization ensure progressive plugin activation can narrow, but never widen, a run's original authority.

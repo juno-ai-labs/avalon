@@ -1,4 +1,5 @@
 import { newId, nowIso } from "@avalon/db";
+import { z } from "zod";
 import type {
   AppendNoteTranscriptSegmentRequest,
   CreateNoteRequest,
@@ -21,38 +22,52 @@ const OMITTED_CONTEXT_MARKER = "\n\n[… middle content omitted to fit model con
 
 type MeetingNotesGenerator = Pick<MeetingNotesService, "generate">;
 
-interface NoteRow extends Record<string, unknown> {
-  id: string;
-  workspace_id: string;
-  owner_user_id: string;
-  resource_id: string;
-  scope: "personal" | "workspace";
-  title: string;
-  recording_status: "idle" | "recording" | "complete";
-  manual_notes_markdown: string;
-  live_notes_markdown: string;
-  notes_through_sequence: number;
-  recorded_ms: number;
-  started_at: string | null;
-  ended_at: string | null;
-  generated_at: string | null;
-  last_activity_at: string;
-  created_at: string;
-  updated_at: string;
-  archived_at: string | null;
-}
+/**
+ * Row contracts for the `notes` reads.
+ *
+ * These were interfaces handed to `first<NoteRow>()`, which is a cast rather
+ * than a check — the shape was asserted, never confirmed. The enums and bounds
+ * below are the columns' own CHECK constraints, so a row that fails one is a row
+ * that should not exist, and the failure names the column instead of travelling
+ * on to be rejected by the response schema as an anonymous 500.
+ */
+const NoteRowSchema = z.object({
+  id: z.string().min(1),
+  workspace_id: z.string().min(1),
+  owner_user_id: z.string().min(1),
+  resource_id: z.string().min(1),
+  scope: z.enum(["personal", "workspace"]),
+  title: z.string(),
+  recording_status: z.enum(["idle", "recording", "complete"]),
+  manual_notes_markdown: z.string(),
+  live_notes_markdown: z.string(),
+  notes_through_sequence: z.number().int().nonnegative(),
+  recorded_ms: z.number().int().nonnegative(),
+  started_at: z.string().nullable(),
+  ended_at: z.string().nullable(),
+  generated_at: z.string().nullable(),
+  last_activity_at: z.string().min(1),
+  created_at: z.string().min(1),
+  updated_at: z.string().min(1),
+  archived_at: z.string().nullable(),
+});
+type NoteRow = z.infer<typeof NoteRowSchema>;
 
-interface SegmentRow extends Record<string, unknown> {
-  id: string;
-  note_id: string;
-  sequence_number: number;
-  start_offset_ms: number;
-  end_offset_ms: number;
-  captured_at: string;
-  speaker_label: string | null;
-  text_content: string;
-  created_at: string;
-}
+const SegmentRowSchema = z.object({
+  id: z.string().min(1),
+  note_id: z.string().min(1),
+  sequence_number: z.number().int().min(1),
+  start_offset_ms: z.number().int().nonnegative(),
+  end_offset_ms: z.number().int().nonnegative(),
+  captured_at: z.string().min(1),
+  speaker_label: z.string().nullable(),
+  text_content: z.string(),
+  created_at: z.string().min(1),
+});
+type SegmentRow = z.infer<typeof SegmentRowSchema>;
+
+/** Exposed so a test can hold the contracts against real rows. */
+export const noteRowSchemas = { notes: NoteRowSchema, segments: SegmentRowSchema } as const;
 
 const NOTE_SELECT = `SELECT * FROM notes
   WHERE id = ? AND workspace_id = ? AND archived_at IS NULL
@@ -370,18 +385,18 @@ export class NoteService {
       ? await this.env.DB.prepare(
           `SELECT * FROM notes
            WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
-        ).bind(id, this.auth.workspaceId, this.auth.userId).first<NoteRow>()
+        ).bind(id, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>()
       : await this.env.DB.prepare(NOTE_SELECT)
-          .bind(id, this.auth.workspaceId, this.auth.userId).first<NoteRow>();
+          .bind(id, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "note_not_found", "Note not found");
-    return row;
+    return NoteRowSchema.parse(row);
   }
 
   private async loadSegments(id: string): Promise<SegmentRow[]> {
     const result = await this.env.DB.prepare(
       `SELECT * FROM note_transcript_segments WHERE note_id = ? ORDER BY sequence_number ASC`,
-    ).bind(id).all<SegmentRow>();
-    return result.results ?? [];
+    ).bind(id).all<Record<string, unknown>>();
+    return (result.results ?? []).map((row) => SegmentRowSchema.parse(row));
   }
 
   private async materialize(id: string): Promise<void> {
