@@ -31,6 +31,10 @@ noteRoutes.get("/:id", zValidator("param", idParam), async (c) =>
 noteRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateNoteRequestSchema), async (c) =>
   c.json(await new NoteService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))),
 );
+noteRoutes.post("/:id/archive", zValidator("param", idParam), async (c) => {
+  await new NoteService(c.env, getAuth(c)).archive(c.req.valid("param").id);
+  return c.body(null, 204);
+});
 noteRoutes.post(
   "/:id/segments",
   zValidator("param", idParam),

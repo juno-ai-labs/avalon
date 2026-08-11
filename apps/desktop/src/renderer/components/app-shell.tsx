@@ -5,7 +5,7 @@ import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
-import type { Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
@@ -63,6 +63,25 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           await api.archiveDraftAutomation(automation.id);
           await queryClient.invalidateQueries({ queryKey: ['automations'] });
           if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+        }}
+        onArchiveNote={async (note) => {
+          if (!api) return;
+          await api.archiveNote(note.id);
+          await queryClient.invalidateQueries({ queryKey: ['notes'] });
+          queryClient.removeQueries({ queryKey: ['note', note.id] });
+          // The archived note's own screen would keep polling a note the API no
+          // longer serves, so leave it the way a deleted automation does.
+          if (location.pathname === `/notes/${note.id}`) void navigate('/workstreams/new');
+        }}
+        onChangeNoteScope={async (note, scope) => {
+          if (!api) return;
+          const updated = await api.updateNote(note.id, { scope });
+          queryClient.setQueryData<NoteSummary[]>(['notes'], (current) =>
+            current?.map((item) => item.id === updated.id ? { ...item, scope: updated.scope } : item),
+          );
+          queryClient.setQueryData<NoteDetail>(['note', updated.id], (current) =>
+            current ? { ...current, scope: updated.scope } : current,
+          );
         }}
         onDeleteAutomation={async (automation) => {
           if (!api) return;

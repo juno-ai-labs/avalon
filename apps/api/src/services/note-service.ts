@@ -194,6 +194,19 @@ export class NoteService {
     return this.get(id);
   }
 
+  /** Hides a note from the sidebar, its resource from every listing, and the
+   * agent context that reads it, without destroying the transcript. Only the
+   * owner may archive: a workspace note stays readable to the rest of the
+   * members, and the read guard already keeps a private id opaque. */
+  async archive(id: string): Promise<void> {
+    const at = nowIso();
+    const result = await this.env.DB.prepare(
+      `UPDATE notes SET archived_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
+    ).bind(at, at, id, this.auth.workspaceId, this.auth.userId).run();
+    if (!result.meta.changes) throw new ApiError(404, "note_not_found", "Note not found");
+  }
+
   async appendSegment(id: string, input: AppendNoteTranscriptSegmentRequest): Promise<NoteTranscriptSegment> {
     await this.requireNote(id, true);
     const duplicate = await this.env.DB.prepare(
