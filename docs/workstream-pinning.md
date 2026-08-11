@@ -108,8 +108,20 @@ And only the action whose response was applied arms the reveal at all.
 because the shell discards a response a later pin superseded: without that,
 two pins made close together let the older completion drag the viewport back to
 a row the reader has already finished with. A reveal is also dropped rather than
-held when the row leaves the list entirely, so it cannot sit armed and seize the
-viewport if that work stream reappears on some later poll.
+held when the row leaves the list entirely, and in any case expires after
+`REVEAL_DEADLINE_MS`, so an intent the list never honours cannot sit armed
+against a fifteen-second poll and fire whenever the state happens to match.
+
+**Focus moves with the row, not just the viewport.** The two sections are
+separate subtrees, so a row moving between them is unmounted and remounted, and
+the focus Radix restores when the context menu closes has nothing left to
+restore to — it lands on the body, and the next Tab restarts at the top of the
+window. For somebody driving the sidebar from the keyboard, *where I was* is
+focus rather than `scrollTop`, so scrolling alone follows the row for the
+pointer half of the audience and abandons the half with the least other way to
+find it again. The reveal therefore focuses the moved row's link with
+`preventScroll: true` — but only when focus was lost, which is exactly the case
+it repairs. Focus resting anywhere real belongs to whoever put it there.
 
 ## Invariants
 
@@ -212,6 +224,45 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-11 — Following the row means focus too, and the intent to follow expires
+
+**What changed:** The reveal added below now also moves focus to the row it
+scrolled to, when focus was lost by the move. Only the pin whose response was
+applied arms it, and any reveal the list does not honour within
+`REVEAL_DEADLINE_MS` is dropped.
+
+**Why:** Three things the scroll on its own got wrong, all found in review.
+
+Focus was the substantive one. A row moving between the two sections is
+unmounted and remounted, so Radix's focus restore on menu close has nothing left
+to restore to and focus falls to the body — confirmed by probe: an action that
+leaves the row in place ends with focus on the row's link, and **Pin** ends with
+focus on `document.body`. Scrolling repairs "the row vanished" for people who
+can see where it went, and leaves it exactly as broken for the people who
+cannot. That is the wrong half to fix.
+
+The other two are the same defect at two removes. The reveal armed on any pin
+that resolved, including one whose response the shell had already discarded as
+superseded, so overlapping pins could drag the viewport back to a row the reader
+had finished with. And because the reveal only cleared once the list agreed, an
+intent that was never honoured stayed armed against a fifteen-second poll and
+fired whenever the state eventually matched — scrolling, now also moving focus,
+under somebody a minute past caring.
+
+**Considered and rejected:** Detecting whether the reader is on the keyboard
+before moving focus. Radix restores focus to the trigger whichever way the menu
+was opened, so both pointer and keyboard end on the body and the modality is not
+observable at the point it would be needed. Restoring only when focus was
+*lost* is the same guarantee without the guess, and it cannot take focus from a
+composer or a dialog because those are not the body.
+
+**Consequences:** The deadline makes following a row a promise with a limit
+rather than a standing intent — anything that arms a reveal has to expect it to
+expire, and lengthening the wait re-opens the poll problem. The focus move is
+conditional on `document.activeElement`, so a future path that arms a reveal
+while focus sits somewhere real will scroll without moving focus, which is
+deliberate.
 
 ### 2026-08-11 — Pinning scrolls the row it moved back into view
 
