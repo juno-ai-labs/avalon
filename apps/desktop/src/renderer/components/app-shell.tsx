@@ -52,6 +52,29 @@ export function staleHarnessStatusWorkstreamId(
   return detail.dataUpdatedAt <= summariesUpdatedAt ? activeWorkstreamId : null;
 }
 
+/**
+ * Apply a pin response — the caller's whole pinned list, in order — to the
+ * cached work-stream list.
+ *
+ * Every row is rewritten, not just the ones named: the response *is* the pinned
+ * set, so a work stream absent from it is one this person no longer has pinned,
+ * whichever window unpinned it. Patching only the named rows would leave a pin
+ * removed on another device sitting in this sidebar until the next poll, in a
+ * position the server has already given to something else.
+ */
+export function applyPinnedWorkstreams(
+  queryClient: ReturnType<typeof useQueryClient>,
+  pinned: WorkstreamSummary[],
+): void {
+  const positions = new Map(pinned.map((workstream) => [workstream.id, workstream.pinPosition]));
+  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+    current?.map((item) => {
+      const pinPosition = positions.get(item.id) ?? null;
+      return item.pinPosition === pinPosition ? item : { ...item, pinPosition };
+    }),
+  );
+}
+
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
   const navigate = useNavigate();
@@ -192,6 +215,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             current ? { ...current, ...updated } : current,
           );
           if (location.pathname === `/workstreams/${updated.id}`) void navigate('/workstreams/new');
+        }}
+        onPinWorkstream={async (workstream, pinned) => {
+          if (!api) return;
+          applyPinnedWorkstreams(
+            queryClient,
+            pinned ? await api.pinWorkstream(workstream.id) : await api.unpinWorkstream(workstream.id),
+          );
+        }}
+        onReorderPinnedWorkstreams={async (workstreamIds) => {
+          if (!api) return;
+          applyPinnedWorkstreams(queryClient, await api.reorderWorkstreamPins(workstreamIds));
         }}
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;
