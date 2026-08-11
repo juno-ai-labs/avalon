@@ -328,22 +328,48 @@ rather than workspace auth: eligibility belongs to the account, and a device
 that has not chosen an organization yet still has to be told the feature is off
 rather than read a 403 as an outage.
 
-### Two gates, and why the domain is not one of them
+The Developer section is for Juno staff, and **that is a Flagship targeting
+rule, not a condition in the Worker** — see [the rule the flag is provisioned
+with](#provisioning). `client-feature-flags.ts` contains no cohort of its own:
+it describes the person, evaluates the flag, and serves the answer. Changing who
+gets the section is a flag change with a changelog entry, not a deploy, and the
+console shows the whole truth about who is in.
 
-The Developer section is for Juno staff. That is enforced in **code**, before
-Flagship is called at all: `resolveDeveloperSettingsEnabled` reads the
-account's email, and an address outside `juno-labs.com`
-(`DEVELOPER_SETTINGS_EMAIL_DOMAIN`) returns off without an evaluation, so the
-address never enters an evaluation context and no targeting rule can reach the
-account. The flag is the second gate, and it only ever *narrows*: it can
-withdraw the section from staff, or stage it among them by `userId`, but it
-cannot hand it to a customer. A mis-scoped rule is therefore inert rather than a
-release.
+### The evaluation context
 
-Everything that is not an explicit `true` resolves to off — no binding, a
-binding that throws, a flag that does not resolve, a non-boolean value, an
-unreadable account. `resolveClientFeatureFlags` never throws, so a Flagship
-outage cannot fail the poll; it just leaves the answer off.
+The resolver's real job is that description. Every attribute a rule may match a
+client flag on comes from `clientFlagEvaluationContext`:
+
+| Attribute | Value |
+| --- | --- |
+| `userId` | The account, and the right key to bucket a percentage rollout by |
+| `email` | The full address, lower-cased, for targeting one person |
+| `emailDomain` | Lower-cased domain, for targeting an organization such as staff |
+| `accountCreatedAt` | ISO timestamp, for targeting by tenure |
+| `workspaceId` | Present once an organization is chosen |
+| `workspaceRole` | `owner`, `admin`, or `member`, likewise |
+| `region` | `global` or `eu` |
+| `appEnv` | `development`, `test`, `staging`, or `production` |
+
+An attribute is **omitted rather than sent empty** when it is unknown — before
+an organization is chosen, or when the account row cannot be read. A rule keyed
+on a missing attribute does not match, so an unreadable account falls out of
+every cohort instead of into one. That is the whole of the fail-closed behavior
+on the targeting side; there is no special case for it.
+
+Every client flag is evaluated against one context built once per request, so
+two flags can never disagree about who is asking. Widening what rules can say
+means adding a row here — not adding a condition to a resolver.
+
+Everything that is not an explicit `true` resolves to off: no binding, a binding
+that throws, a flag that does not resolve, a non-boolean value.
+`resolveClientFeatureFlags` never throws, so a Flagship outage cannot fail the
+poll; it just leaves the answer off.
+
+A resolution logs `client_flag_resolved` at `debug` with the served `variant`
+and `reason`, which is how you tell a rule that excluded someone from one that
+never fired. The `email_domain` is logged and the address is not — enough to
+read a cohort rule by, and it identifies nobody.
 
 ### The desktop half
 
@@ -365,8 +391,8 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   while the flag is off. The stored bit is left alone rather than rewritten, so
   the choice is still there when the flag comes back.
 - The Settings pane hides the whole section rather than disabling its toggle. A
-  section nobody outside Juno can turn on is not a control that happens to be
-  unavailable.
+  section the account is not in the cohort for is not a control that happens to
+  be unavailable.
 - A poll that cannot reach the service leaves the last answer standing.
   Revoking the section on a dropped connection would flicker it, and it crosses
   no trust boundary — it reveals debugging affordances the renderer already
@@ -447,23 +473,43 @@ resolves to:
 pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type boolean \
   -V off=false -V on=true \
   --default off \
-  -d "Application → Developer, Juno staff only"
+  -d "Application → Developer"
 ```
 
-Turning it on for everyone it can reach is a `set` — the email-domain gate in
-`client-feature-flags.ts` is what keeps that from meaning every account:
+**The staff scope is this rule, and it is the only thing holding it.** Nothing
+in the Worker narrows the flag, so a `developer-settings` served with no rule
+reaches every account it is evaluated for. Add the rule in the same sitting as
+the flag:
 
 ```bash
-pnpm exec wrangler flagship flags set <APP_ID> developer-settings -V on
+pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
+  --add-rule "serve=on; when=emailDomain equals juno-labs.com"
 ```
 
-To stage it among staff instead, bucket by `userId`; there is no workspace worth
-keeping consistent here, because the section describes one person's device:
+Leave the default variation at `off` rather than promoting `on` with the rule
+attached: the default is what an account the rule does not match falls through
+to, so `set … -V on` would hand the section to everyone regardless of the rule.
+
+To stage it among staff, roll out within that rule and bucket by `userId`; there
+is no workspace worth keeping consistent here, because the section describes one
+person's device:
 
 ```bash
 pnpm exec wrangler flagship flags rollout <APP_ID> developer-settings \
   --to on --from off --percentage 50 --by userId
 ```
+
+To hand it to one person outside a cohort — a contractor, a support session —
+add a second rule on `email` rather than editing any code:
+
+```bash
+pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
+  --add-rule "serve=on; when=email equals someone@example.com"
+```
+
+Withdrawing the section from everyone is `set … -V off`, which overrides every
+rule, and `wrangler flagship flags changelog <APP_ID> developer-settings` is the
+audit trail for who had it when.
 
 ## Changing an agent's models
 
@@ -549,11 +595,15 @@ To exercise a real flag locally you need Cloudflare credentials and
    behavior an outage has to reproduce.
 3. Parse the served value with zod and reject it whole on failure. A boolean
    flag is the degenerate case — anything that is not `true` is off.
-4. Put anything a flag must never be able to grant into code rather than into a
-   targeting rule, the way the staff email domain is. A rule is edited by
-   whoever holds Flagship write; an invariant should not be.
-5. Add the flag to the table above and create it in the `avalon-api` app. There
-   is one app for both regions, so it is created once.
+4. **Write who gets it as a targeting rule, never as a condition in the
+   resolver.** A cohort in code is invisible from the console, needs a deploy to
+   change, and overrides the flag it is supposed to implement. If a rule cannot
+   express the cohort, add the missing *attribute* below — that is the fix, not
+   an `if`.
+5. Add the flag to the table above and create it in the `avalon-api` app,
+   together with the rules that scope it. There is one app for both regions, so
+   it is created once — and a flag created without its rule is live and
+   unscoped until the rule lands.
 
 ## Adding an attribute
 
