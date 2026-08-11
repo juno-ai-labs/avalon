@@ -13,6 +13,16 @@ APPLICATION_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "app-icon
 APPLICATION_ICON_PREVIEW_DIRECTORY = (
     ROOT / "apps" / "desktop" / "src" / "renderer" / "assets" / "app-icons"
 )
+MENU_BAR_ICON_DIRECTORY = ROOT / "apps" / "desktop" / "resources" / "menu-bar"
+MENU_BAR_ICON_POINT_SIZE = 16
+# One device pixel of breathing room at 1x. The mark is a full-bleed ring, and a
+# status item that touches its own bounds reads as clipped next to the system
+# extras, which all carry optical padding of their own.
+MENU_BAR_ICON_INSET = 1 / 16
+# The source mark carries a wide halo of near-zero alpha. Cropping on the raw
+# bounding box would keep it and shrink the visible ring to roughly two thirds of
+# the menu bar, so the crop is taken at a threshold instead.
+MENU_BAR_ICON_ALPHA_THRESHOLD = 16
 PRIMARY = (206, 220, 0, 255)  # #CEDC00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
@@ -103,6 +113,31 @@ def macos_app_icon(
     return result
 
 
+def menu_bar_template_icon(size: int) -> Image.Image:
+    """Render the status-item glyph as a macOS template image.
+
+    A template image carries only an alpha mask; macOS paints it black, white,
+    or the accent colour to match the menu bar it is drawn into, which is the
+    only treatment that survives the translucent menu bar in macOS 26 and 27.
+    Any colour baked in here would be discarded, so the artwork is pure black.
+    """
+    source = Image.open(SOURCE).convert("RGBA")
+    alpha = source.getchannel("A")
+    box = alpha.point(
+        lambda value: 255 if value >= MENU_BAR_ICON_ALPHA_THRESHOLD else 0
+    ).getbbox()
+    if box is None:
+        raise ValueError("The Avalon mark source has no visible artwork")
+    inset = round(size * MENU_BAR_ICON_INSET)
+    extent = size - 2 * inset
+    glyph = alpha.crop(box).resize((extent, extent), Image.Resampling.LANCZOS)
+    stencil = Image.new("RGBA", (extent, extent), (0, 0, 0, 255))
+    stencil.putalpha(glyph)
+    result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    result.alpha_composite(stencil, (inset, inset))
+    return result
+
+
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     names = (
         ["/System/Library/Fonts/SFNS.ttf", "DejaVuSans-Bold.ttf"]
@@ -172,6 +207,18 @@ def main() -> None:
         / "avalon-mark.png",
     )
     save(dark_macos_icon, ROOT / "apps" / "desktop" / "resources" / "icon.icns")
+    # `…Template` is what makes AppKit treat the file as a mask, and the `@2x`
+    # sibling is how `nativeImage` finds the Retina rendition. Both names are
+    # load-bearing; renaming either turns the menu bar item into a black square
+    # on a dark menu bar.
+    save(
+        menu_bar_template_icon(MENU_BAR_ICON_POINT_SIZE),
+        MENU_BAR_ICON_DIRECTORY / "avalonTemplate.png",
+    )
+    save(
+        menu_bar_template_icon(MENU_BAR_ICON_POINT_SIZE * 2),
+        MENU_BAR_ICON_DIRECTORY / "avalonTemplate@2x.png",
+    )
     save(app_icon(64), ROOT / "apps" / "site" / "public" / "favicon.png")
     save(app_icon(180), ROOT / "apps" / "site" / "public" / "apple-touch-icon.png")
     save(social_card(), ROOT / "apps" / "site" / "public" / "og.png")
