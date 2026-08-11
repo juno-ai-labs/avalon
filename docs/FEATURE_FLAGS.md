@@ -36,6 +36,7 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 | HyperSight block | `agent-model-hypersight` | `HYPERSIGHT_MODEL` (`apps/api/src/env.ts`) | none |
 | Meeting notes | `agent-model-meeting-notes` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Addressing classifier | `agent-model-addressing-classifier` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Activity classifier | `agent-model-activity-structured` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
@@ -44,11 +45,12 @@ Every model-using agent owns exactly one flag, keyed `agent-model-<agent>`:
 The first five names match the `AgentInferenceSource` values written to the
 inference ledger, so a ledger row and a flag key name the same agent. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness classifier helper; semantic activity triggering, contextual
-routing, the two halves of suggested work, and the work-stream description loop
-use the bounded structured-inference gateway. Admission and ranking get separate
-flags because admission turns connector activity into prompts while ranking
-orders them per user, and pinning one should not move the other.
+agent-harness classifier helper; work-stream naming, semantic activity
+triggering, contextual routing, the two halves of suggested work, and the
+work-stream description loop use the bounded structured-inference gateway.
+Admission and ranking get separate flags because admission turns connector
+activity into prompts while ranking orders them per user, and pinning one should
+not move the other.
 
 The description loop is the one role whose default is most likely to want
 raising. It reads a window of up to 600 messages and decides whether a work
@@ -57,6 +59,11 @@ shares a default with — see
 [`workstream-descriptions.md`](workstream-descriptions.md). Retarget the flag
 rather than changing the shared `OPENROUTER_STRUCTURED_MODEL` variable, which
 would move the classifiers with it.
+
+Naming sits at the other end: it relabels one request in a single turn, runs
+while somebody watches for the result, and asks for no reasoning at all, so the
+smallest classifier model is the right default and latency is the thing a
+retarget would spend.
 
 **Adding an agent means adding a flag.** The set above is the whole of what
 `agent-model-flags.ts` knows about; an agent that reads `OPENROUTER_*` directly
@@ -114,7 +121,7 @@ A caller supplies only these, and only what it knows:
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
 | `workstreamId` | Present on work-stream, subagent, HyperSight, and classifier evaluations |
-| `userId` | Present on automation-compiler and meeting-notes evaluations |
+| `userId` | Present on automation-compiler, meeting-notes, and work-stream naming evaluations |
 
 Identity wins over attributes: the loaded facts are spread underneath these, so
 nothing read from D1 can redefine the id a percentage rollout buckets on.

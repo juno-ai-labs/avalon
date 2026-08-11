@@ -132,6 +132,10 @@ function parseJson<T>(value: unknown, fallback: T): T {
   }
 }
 
+function workstreamTitleStatus(value: unknown): Workstream["titleStatus"] {
+  return value === "naming" || value === "automatic" ? value : "settled";
+}
+
 function toWorkstream(row: Record<string, unknown>): Workstream {
   const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
   return {
@@ -148,6 +152,7 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),
     plannedFor: row.planned_for == null ? null : String(row.planned_for),
     harnessStatus: String(row.harness_status) as HarnessStatus,
+    titleStatus: workstreamTitleStatus(row.title_status),
     latestAttentionSequenceNumber,
     readThroughSequenceNumber: latestAttentionSequenceNumber,
     manualUnreadFromSequenceNumber: null,
@@ -219,6 +224,8 @@ export interface CreateWorkstreamInput {
   id?: string;
   workspaceId: string;
   title: string;
+  /** `naming` when the title is a placeholder the naming agent will replace. */
+  titleStatus?: "naming" | "automatic" | "settled";
   objective: string;
   /**
    * Whether a person wrote `objective` or it was derived at creation. Defaults
@@ -326,15 +333,16 @@ export function createDatabase(db: D1DatabaseLike) {
         db
           .prepare(
             `INSERT INTO workstreams
-             (id, workspace_id, title, objective, description_source, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
+             (id, workspace_id, title, title_status, objective, description_source, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
               next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at,
               created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash)
-             VALUES (?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?)`
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             workstreamId,
             input.workspaceId,
             input.title,
+            input.titleStatus ?? "settled",
             input.objective,
             input.descriptionSource ?? "derived",
             input.emailAddress,
