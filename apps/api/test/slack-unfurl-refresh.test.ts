@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { refreshSlackWorkstreamUnfurls } from "../src/services/slack-unfurl-refresh";
+import { workstreamUnfurlBlocks, workstreamUnfurlCardHash } from "../src/services/slack-workstream-card";
 
 const connectionId = "00000000-0000-7000-8000-000000000041";
 const workspaceId = "00000000-0000-7000-8000-000000000042";
@@ -85,6 +86,33 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
 
+  it("does not rewrite a card when the status moved but the badge did not", async () => {
+    // completed -> idle drifts the row, but both render without a badge, so
+    // posting would spend a chat.unfurl rewriting the card into itself. The
+    // row still has to advance or it re-matches on every sweep for 30 days.
+    const database = await seed({ harnessStatus: "idle", renderedStatus: "completed" });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+    expect(renderedStatus(database)).toBe("idle");
+  });
+
+  it("rewrites a card when the work stream settles out of a badged state", async () => {
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "needs_input" });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    const body = unfurlBody(calls);
+    expect(body).toContain("Quarterly planning");
+    expect(body).not.toContain("Needs input");
+    expect(body).not.toContain("warning");
+  });
+
   it("redacts a card whose channel became externally shared after it was posted", async () => {
     const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
     const calls: SlackCall[] = [];
@@ -96,6 +124,82 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(body).toContain("*Avalon*");
     expect(body).not.toContain("Quarterly planning");
     expect(body).not.toContain("Completed");
+  });
+
+  it("rewrites a card recorded before hashing shipped, even if nothing moved", async () => {
+    // The upgrade case. A card posted by an older build carries the old layout,
+    // and its status matches, so nothing about the work stream marks it stale.
+    // A null hash never matches a fresh one, so it is rewritten exactly once.
+    const database = await seed({
+      harnessStatus: "completed",
+      renderedStatus: "completed",
+      renderedHash: null,
+    });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(1);
+    // And it settles: the row now carries a hash, so a second pass posts nothing.
+    const second: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(second));
+    await refreshSlackWorkstreamUnfurls(environment(database));
+    expect(second.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+  });
+
+  it("rewrites a card on the next sweep when the work stream is renamed", async () => {
+    // A rename changes the card without touching its status, so `updated_at`
+    // moving past `refreshed_at` is what selects the row; the hash then
+    // confirms the card really would differ. Inline rename from the header
+    // (#60) makes this an ordinary gesture rather than a rare one.
+    const database = await seed({ harnessStatus: "running", renderedStatus: "running" });
+    database.prepare("UPDATE workstreams SET title = ?, updated_at = ? WHERE id = ?")
+      .run("Quarterly planning (revised)", justEdited(), workstreamId);
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(unfurlBody(calls)).toContain("Quarterly planning (revised)");
+  });
+
+  it("does not repost an identical anonymous card when the status moves beneath it", async () => {
+    // An anonymous card renders the same whatever the status does, so a badge
+    // change under a still-external channel must not spend a rewrite on it.
+    const database = await seed({
+      harnessStatus: "needs_input",
+      renderedStatus: "completed",
+      renderedAnonymous: 1,
+    });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls, { external: true }));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+    expect(renderedStatus(database)).toBe("needs_input");
+  });
+
+  it("settles a work-stream edit that never reaches the card", async () => {
+    // The objective is not rendered, so bumping `updated_at` selects the row
+    // but the hash matches and nothing is posted. Every field the selection
+    // query reads has to advance anyway, or this row is re-selected on every
+    // sweep for the next 30 days.
+    const database = await seed({ harnessStatus: "running", renderedStatus: "running" });
+    database.prepare("UPDATE workstreams SET objective = ?, updated_at = ? WHERE id = ?")
+      .run("A revised objective the card never shows", justEdited(), workstreamId);
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+
+    // The row must no longer select, or the sweep spins on it forever.
+    const row = database.prepare(
+      "SELECT refreshed_at, updated_at FROM slack_unfurled_links l JOIN workstreams w ON w.id = l.workstream_id",
+    ).get() as { refreshed_at: string; updated_at: string };
+    expect(row.refreshed_at >= row.updated_at).toBe(true);
   });
 
   it("ignores links shared too long ago to still be read", async () => {
@@ -222,8 +326,9 @@ describe("Slack work-stream unfurl refresh", () => {
       database.prepare(
         `INSERT INTO slack_unfurled_links
          (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-          rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
-         VALUES (?, 'CBUSY', ?, ?, ?, ?, 'running', 0, ?, ?, ?)`,
+          rendered_status, rendered_anonymous, rendered_hash, audience_checked_at,
+          shared_at, refreshed_at)
+         VALUES (?, 'CBUSY', ?, ?, ?, ?, 'running', 0, NULL, ?, ?, ?)`,
       ).run(connectionId, `1700000${String(index).padStart(3, "0")}.000000`, url,
         workspaceId, workstreamId, nowish(), nowish(), nowish());
     }
@@ -231,8 +336,9 @@ describe("Slack work-stream unfurl refresh", () => {
     database.prepare(
       `INSERT INTO slack_unfurled_links
        (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-        rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
-       VALUES (?, 'CQUIET', '1700000500.000000', ?, ?, ?, 'running', 0, ?, ?, ?)`,
+        rendered_status, rendered_anonymous, rendered_hash, audience_checked_at,
+        shared_at, refreshed_at)
+       VALUES (?, 'CQUIET', '1700000500.000000', ?, ?, ?, 'running', 0, NULL, ?, ?, ?)`,
     ).run(quiet.connectionId, url, quiet.workspaceId, quiet.workstreamId,
       nowish(), nowish(), nowish());
     const calls: SlackCall[] = [];
@@ -252,8 +358,9 @@ describe("Slack work-stream unfurl refresh", () => {
     database.prepare(
       `INSERT INTO slack_unfurled_links
        (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-        rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
-       VALUES (?, 'CGENERAL', '1700000009.000000', ?, ?, ?, 'running', 0, ?, ?, ?)`,
+        rendered_status, rendered_anonymous, rendered_hash, audience_checked_at,
+        shared_at, refreshed_at)
+       VALUES (?, 'CGENERAL', '1700000009.000000', ?, ?, ?, 'running', 0, NULL, ?, ?, ?)`,
     ).run(connectionId, url, workspaceId, workstreamId, nowish(), nowish(), nowish());
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
@@ -267,6 +374,11 @@ describe("Slack work-stream unfurl refresh", () => {
 
 function nowish(): string {
   return new Date(Date.now() - 60_000).toISOString();
+}
+
+/** Strictly after `nowish()`, so an edit really does outrun `refreshed_at`. */
+function justEdited(): string {
+  return new Date().toISOString();
 }
 
 function renderedAnonymous(database: DatabaseSync): number {
@@ -332,12 +444,32 @@ async function addQuietWorkspace(database: DatabaseSync): Promise<{
   return quiet;
 }
 
+/** The hash of the card the sweep would render for this work stream now. */
+async function currentCardHash(input: {
+  harnessStatus: string;
+  anonymous?: boolean;
+}): Promise<string> {
+  return workstreamUnfurlCardHash(workstreamUnfurlBlocks(
+    input.anonymous
+      ? null
+      : {
+          title: "Quarterly planning",
+          harnessStatus: input.harnessStatus,
+          lastActivityAt: "2026-08-10T12:00:00.000Z",
+          automationName: null,
+        },
+    url,
+  ));
+}
+
 async function seed(input: {
   harnessStatus: string;
   renderedStatus: string;
   sharedAt?: string;
   renderedAnonymous?: number;
   audienceCheckedAt?: string;
+  /** Omit for a row recorded before hashing shipped, which forces one rewrite. */
+  renderedHash?: string | null;
 }): Promise<DatabaseSync> {
   const database = migratedDatabase();
   const encrypted = await encryptString(JSON.stringify({
@@ -372,8 +504,9 @@ async function seed(input: {
   database.prepare(
     `INSERT INTO slack_unfurled_links
      (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-      rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
-     VALUES (?, 'CGENERAL', '1700000000.000000', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      rendered_status, rendered_anonymous, rendered_hash, audience_checked_at,
+      shared_at, refreshed_at)
+     VALUES (?, 'CGENERAL', '1700000000.000000', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     connectionId,
     url,
@@ -381,6 +514,12 @@ async function seed(input: {
     workstreamId,
     input.renderedStatus,
     input.renderedAnonymous ?? 0,
+    input.renderedHash === undefined
+      ? await currentCardHash({
+          harnessStatus: input.renderedStatus,
+          anonymous: input.renderedAnonymous === 1,
+        })
+      : input.renderedHash,
     input.audienceCheckedAt ?? nowish(),
     input.sharedAt ?? nowish(),
     input.sharedAt ?? nowish(),
