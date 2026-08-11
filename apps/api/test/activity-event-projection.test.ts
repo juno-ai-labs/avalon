@@ -20,6 +20,11 @@ const CONNECTION = "00000000-0000-7000-8000-000000000004";
 const databases: DatabaseSync[] = [];
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  // Restored here rather than at the end of the test that installs it: a
+  // failing assertion would skip an inline restore, and `vi.spyOn` on an
+  // already-spied method returns the same spy, so the next test would inherit
+  // this one's call history.
+  vi.restoreAllMocks();
 });
 
 function envFor(database: DatabaseSync): Env {
@@ -222,11 +227,10 @@ describe("deciding what a digest may read back", () => {
     await projectActivityEvent(env, activity());
 
     expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(
-      "Connector registry unavailable while classifying activity for digests",
-      expect.objectContaining({ connector_type: "slack" }),
-    );
-    warn.mockRestore();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      event: "connector_registry_unavailable_for_digestibility",
+      connector_type: "slack",
+    }));
   });
 
   it("stays quiet about a connector this region simply does not register", async () => {
@@ -238,7 +242,6 @@ describe("deciding what a digest may read back", () => {
     // Expected, and withholding is the whole point of failing closed.
     expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
     expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
   });
 
   it("withholds an event type no registered connector declares", async () => {
