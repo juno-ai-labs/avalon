@@ -442,6 +442,19 @@ governs Workers Logs only, and traces stay off until the block also carries
 if that changes, lower the traces sampling rate rather than the logs one, which
 the saved views above depend on.
 
+**Cloudflare's own capture is wider than ours, and the difference is
+credentials.** The application logs `pathname` only and redacts by key, but the
+platform records the whole request independently of that: the invocation log
+carries `$workers.event.request.url`, the Logpush `Event` field carries the same
+request object into R2 for 90 days, and a trace span adds `url.full` and
+`url.query`. So a connector OAuth callback's `?code=`/`?state=` and a WebSocket
+`?ticket=` reach all three, and no redaction in this repository can reach them —
+they arrive on the request rather than through `logEvent`. Both are short-lived
+and single-use, but treat the observability stores and the two R2 observability
+buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
+no wider dashboard access than a responder needs. Moving those two secrets off
+the query string is the only fix that removes them from the capture.
+
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. Use `pnpm cloudflare:observability:check` for a read-only release check.
 
 Connector polls have a 20-second adapter cancellation deadline inside a 25-second Workflow step. The step uses three exponentially backed-off retries. A terminal timeout or provider failure moves the connection into a deterministic degraded/error state and emits only structured, redacted metadata; it must never leave the workflow waiting indefinitely.

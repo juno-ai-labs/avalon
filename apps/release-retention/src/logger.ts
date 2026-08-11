@@ -8,10 +8,15 @@
  * carry both — serializing it collapses the fields into one opaque string, and
  * omitting `message` lists the row blank.
  */
+// `message` is the one reserved key: it becomes the row summary rather than an
+// ordinary field, so it is typed as the string it has to be. The runtime falls
+// back to the event name, which cannot carry a structured value.
+export type LogFields = Record<string, unknown> & { message?: string };
+
 export function logEvent(
   level: "info" | "warn" | "error",
   event: string,
-  fields: Record<string, unknown> = {},
+  fields: LogFields = {},
 ): void {
   const { message: provided, ...rest } = fields;
   const entry = {
