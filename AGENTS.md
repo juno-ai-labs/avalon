@@ -105,6 +105,19 @@ live in dated folders under `docs/PRDs/` and are not registered, per
 [`docs/prds.md`](docs/prds.md). The root [`README.md`](README.md) links only to
 that index and lists no documents of its own; do not add a second list there.
 
+**Every architecture or large module you create or substantially change gets its
+own document in `docs/`, written to the shape in
+[`docs/module-documents.md`](docs/module-documents.md)** — read it before writing
+or editing one. It defines the threshold for what needs a document, the required
+sections, and the one thing that is non-negotiable: each such document ends with
+a **running changelog**, newest entry first, appended **in the same change as the
+code**. An entry records what changed *and why it changed* — the pressure that
+forced it, the alternative that was rejected, and what a future change has to
+respect. The code says what the module does and the diff says what moved; only
+that section says why, and it is written for whoever changes this module a year
+from now without you to ask. "Refactor" and "cleanup" are not a why. Never invent
+one you do not know — say the earlier reasoning was not recorded.
+
 ## Pull requests
 
 **Before opening a pull request, read
