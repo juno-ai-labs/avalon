@@ -3,8 +3,6 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_PINNED_WORKSTREAMS } from "@avalon/contracts";
-
 import type { Env } from "../src/env";
 import { WorkstreamService } from "../src/services/workstream-service";
 
@@ -185,13 +183,16 @@ describe("per-user work-stream pinning", () => {
     expect(other.items.map((item) => item.id)).toEqual([newest, middle, oldest]);
   });
 
-  it("counts the limit against pins that can still be seen, and refuses past it", async () => {
+  // Nothing caps how many a person may pin, and the arrangement is
+  // all-or-nothing: any bound would refuse a whole drag rather than truncate
+  // one, leaving a list too long to reorder at all.
+  it("pins and rearranges a list of any size", async () => {
     const { database, env } = fixture();
     const workstreams = service(env, USER_ONE_ID);
     const extraId = (index: number): string => `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
-    const extras = Array.from({ length: MAX_PINNED_WORKSTREAMS }, (_, index) => extraId(index));
+    const extras = Array.from({ length: 120 }, (_, index) => extraId(index));
     for (const [index, id] of extras.entries()) {
-      const at = `2026-04-01T00:00:${String(index).padStart(2, "0")}.000Z`;
+      const at = `2026-04-01T00:00:${String(index % 60).padStart(2, "0")}.000Z`;
       database.exec(`
         INSERT INTO workstreams
           (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
@@ -202,26 +203,29 @@ describe("per-user work-stream pinning", () => {
       `);
       await workstreams.pin(id);
     }
-    // A full list refuses the next one rather than quietly dropping it.
-    await expect(workstreams.pin(WORKSTREAM_IDS[0]))
-      .rejects.toMatchObject({ status: 422, code: "pin_limit_reached" });
+    expect((await workstreams.pin(WORKSTREAM_IDS[0])).items).toHaveLength(extras.length + 1);
 
-    // Archiving takes a row out of every pinned read, so the pin behind it
-    // shows nothing and offers no menu. Counting it would spend a slot its
-    // owner has no way to free, and 50 archived pins would wedge the feature
-    // shut behind an empty section.
+    const reversed = [WORKSTREAM_IDS[0], ...extras].reverse();
+    expect((await workstreams.reorderPins(reversed)).items.map((item) => item.id)).toEqual(reversed);
+  });
+
+  it("keeps a pin whose work stream went out of sight, and gives it its place back", async () => {
+    const { database, env } = fixture();
+    const [first, second] = WORKSTREAM_IDS;
+    const workstreams = service(env, USER_ONE_ID);
+    await workstreams.pin(first);
+    await workstreams.pin(second);
+
+    // Archiving takes the row out of every pinned read, so the pin behind it
+    // contributes nothing while it lasts.
     database.prepare("UPDATE workstreams SET archived_at = ? WHERE id = ?")
-      .run("2026-05-01T00:00:00.000Z", extraId(0));
-    const pinned = await workstreams.pin(WORKSTREAM_IDS[0]);
-    expect(pinned.items).toHaveLength(MAX_PINNED_WORKSTREAMS);
-    expect(pinned.items.at(-1)?.id).toBe(WORKSTREAM_IDS[0]);
+      .run("2026-05-01T00:00:00.000Z", first);
+    expect((await workstreams.reorderPins([])).items.map((item) => item.id)).toEqual([second]);
 
-    // The dead pin survived, so the work stream coming back brings its place
-    // back with it rather than arriving unpinned.
-    database.prepare("UPDATE workstreams SET archived_at = NULL WHERE id = ?").run(extraId(0));
-    const restored = await workstreams.reorderPins([]);
-    expect(restored.items).toHaveLength(MAX_PINNED_WORKSTREAMS + 1);
-    expect(restored.items[0]?.id).toBe(extraId(0));
+    // The pin survived, so the work stream coming back brings its place back
+    // with it rather than arriving unpinned at the end.
+    database.prepare("UPDATE workstreams SET archived_at = NULL WHERE id = ?").run(first);
+    expect((await workstreams.reorderPins([])).items.map((item) => item.id)).toEqual([first, second]);
   });
 
   it("gives a pin its own position even when the run has a hole in it", async () => {

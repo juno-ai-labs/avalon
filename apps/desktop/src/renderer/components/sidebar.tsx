@@ -65,6 +65,9 @@ type RecentSidebarItem =
 /** How close the pointer comes to the navigation's edge before its pill shows. */
 const EDGE_REVEAL_DISTANCE = 20;
 
+/** The one element carrying the keyboard-reorder instruction for the section. */
+const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+
 const onboardingItems = [
   {
     id: 'connect-tools',
@@ -365,8 +368,9 @@ function WorkstreamRow({
             </span>
             {/* The manual order is the whole point of the section, and a
                 pointer-only affordance leaves it unreadable to anyone not
-                looking at it. Announced on the row rather than as a section
-                hint so the position travels with the row that has focus. */}
+                looking at it. The position — and only the position — rides on
+                the row, because it is the part that differs per row; how to
+                change it is said once, on the section. */}
             {drag && <span className="sr-only">{drag.position}</span>}
             {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
           </NavLink>
@@ -517,7 +521,12 @@ export function orderPinnedWorkstreams(
 ): WorkstreamSummary[] {
   const pinned = workstreams
     .filter((workstream) => workstream.pinPosition !== null)
-    .sort((left, right) => (left.pinPosition ?? 0) - (right.pinPosition ?? 0));
+    // The id breaks a tie the way both server readers do. Positions are unique
+    // today, so this cannot fire — it is here because "readers of this list
+    // agree on the order" is stated as an invariant, and a third reader that
+    // fell back to arrival order would be the one place it was not true.
+    .sort((left, right) =>
+      (left.pinPosition ?? 0) - (right.pinPosition ?? 0) || left.id.localeCompare(right.id));
   if (dragOrder === null) return pinned;
   const byId = new Map(pinned.map((workstream) => [workstream.id, workstream]));
   const dragged = dragOrder.flatMap((id) => byId.get(id) ?? []);
@@ -750,7 +759,7 @@ export function Sidebar({
 
   const pinnedRowDrag = (workstream: WorkstreamSummary, index: number): PinnedRowDrag => ({
     dragging: draggingWorkstreamId.current === workstream.id && dragOrder !== null,
-    position: `Pinned, ${index + 1} of ${pinnedWorkstreams.length}. Hold Alt and press the up or down arrow to move it.`,
+    position: `Pinned, ${index + 1} of ${pinnedWorkstreams.length}.`,
     onDragStart: (target) => {
       draggingWorkstreamId.current = target.id;
       setDragOrder(pinnedWorkstreams.map((pinned) => pinned.id));
@@ -899,21 +908,33 @@ export function Sidebar({
               standing invitation to a feature the reader has not used, sitting
               above the work they came here for. */}
           {pinnedWorkstreams.length > 0 && (
-            <section className="sidebar-section pinned-section" aria-labelledby="pinned-heading">
+            // The whole section is the drop target, heading included. A release
+            // anywhere a reader would call "inside the list they are arranging"
+            // has to count as a drop: `dragend` reads a release nothing accepted
+            // as a cancellation, so a gap between two rows — or the strip of
+            // heading a few pixels above the first one — would silently throw
+            // the arrangement away.
+            <section
+              aria-describedby={PINNED_DRAG_HINT_ID}
+              aria-labelledby="pinned-heading"
+              className="sidebar-section pinned-section"
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(event) => event.preventDefault()}
+            >
               <div className="sidebar-section-heading">
                 <h2 id="pinned-heading">Pinned</h2>
               </div>
-              {/* The list is a drop target in its own right, so a release that
-                  lands in the gap between two rows still counts as a drop on
-                  the section rather than reading as a drag backed out of. */}
-              <div
-                className="sidebar-list"
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = 'move';
-                }}
-                onDrop={(event) => event.preventDefault()}
-              >
+              {/* Said once for the section rather than repeated on every row:
+                  as a per-row description it lands inside each link's
+                  accessible name, so somebody arrowing through the list hears
+                  the whole instruction again before every title. */}
+              <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
+                Hold Alt and press the up or down arrow to move a pinned work stream.
+              </p>
+              <div className="sidebar-list">
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     debugEnabled={debugEnabled}

@@ -1,11 +1,6 @@
 import { buildMessageAttachmentStatements, buildParticipantUpsertStatement, createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
-import {
-  HarnessFailureCodeSchema,
-  MAX_PINNED_WORKSTREAMS,
-  WorkstreamDetailSchema,
-  workstreamCanonicalUrl,
-} from "@avalon/contracts";
+import { HarnessFailureCodeSchema, WorkstreamDetailSchema, workstreamCanonicalUrl } from "@avalon/contracts";
 import type {
   AnswerElicitationRequestSchema,
   Connection,
@@ -600,9 +595,9 @@ export class WorkstreamService {
     // reader deliberately put it. They are appended after the paged rows and
     // are excluded from the query above, so each work stream is returned
     // exactly once across the whole pagination. The first page can therefore
-    // hold more than `limit` items — up to `MAX_PINNED_WORKSTREAMS` more —
-    // which is why `nextCursor` comes from the paged rows rather than the last
-    // item returned.
+    // hold more than `limit` items — one more per pin, and nothing caps how
+    // many a person has — which is why `nextCursor` comes from the paged rows
+    // rather than from the last item returned.
     if (!before) rows.push(...await this.loadPinnedWorkstreamRows(includeSystem));
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
@@ -1107,19 +1102,18 @@ export class WorkstreamService {
    * position Avalon can pick without overruling that arrangement is the one
    * that disturbs none of it. Pinning something already pinned changes nothing,
    * so a second window acting on a stale menu cannot move a row.
+   *
+   * There is no limit on how many a person may pin. A cap here was tried and
+   * removed: counting stored rows let pins whose work streams had gone out of
+   * sight spend slots nobody could free, and counting only the visible ones
+   * meant the list could legitimately grow past the number the reorder request
+   * would accept, which left it unreorderable. Both failures came from the cap
+   * rather than from the size of anyone's list.
    */
   async pin(id: string) {
     // Only a work stream this person may read may be pinned. Everything after
     // this point is the viewer's own row, and is not gated again.
     await this.requireWorkstream(id);
-    // Counted against what the section can actually show, not against every
-    // stored row. A pin whose work stream has been archived or narrowed out of
-    // this person's sight renders nothing and offers no menu, so counting it
-    // would spend a slot the reader has no way to free.
-    const visible = await this.loadPinnedWorkstreams();
-    if (!visible.some((pinned) => pinned.id === id) && visible.length >= MAX_PINNED_WORKSTREAMS) {
-      throw new ApiError(422, "pin_limit_reached", `Only ${MAX_PINNED_WORKSTREAMS} work streams can be pinned`);
-    }
     const at = nowIso();
     // The position is chosen inside the statement rather than read out first
     // and bound back in. A read-then-write hands the same number to two pins
@@ -1219,9 +1213,8 @@ export class WorkstreamService {
    * Filtered by the same visibility rule every other read applies, so a pin
    * left behind by a work stream that has been archived, or made private
    * without this person in it, contributes a row to nothing. The pin itself
-   * survives, because the work stream may come back and its place with it —
-   * which is also why such a pin does not count against
-   * `MAX_PINNED_WORKSTREAMS`, and why `unpin` refuses to check visibility.
+   * survives, because the work stream may come back and its place with it,
+   * which is also why `unpin` refuses to check visibility.
    */
   private async loadPinnedWorkstreams(includeSystem = true) {
     return (await this.loadPinnedWorkstreamRows(includeSystem)).map(toWorkstream);

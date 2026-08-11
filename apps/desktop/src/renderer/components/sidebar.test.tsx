@@ -1276,6 +1276,43 @@ describe('pinned work streams', () => {
     });
   });
 
+  // A release over the heading is a release inside the list the reader is
+  // arranging. Leaving it uncovered would read as a cancellation and throw the
+  // arrangement away a few pixels above the first row.
+  it('accepts a drop anywhere in the section, heading included', () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    const heading = screen.getByRole('heading', { name: 'Pinned' });
+    const transfer = dataTransfer('none');
+    fireEvent.dragOver(heading, { dataTransfer: transfer });
+
+    // The section handled it, so a release here reports a move rather than the
+    // `none` that `dragend` reads as a drag backed out of.
+    expect(transfer.dropEffect).toBe('move');
+  });
+
+  it('says how to reorder once for the section, not on every row', () => {
+    renderWith([
+      pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+      pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+    ]);
+
+    // The instruction is one element the section points at. On the rows it
+    // would land inside each link's accessible name and be read out again
+    // before every title.
+    expect(screen.getAllByText(/Hold Alt and press the up or down arrow/u)).toHaveLength(1);
+    expect(screen.getByRole('region', { name: 'Pinned' }))
+      .toHaveAccessibleDescription(/Hold Alt and press the up or down arrow/u);
+    expect(screen.getByRole('link', { name: /Alpha/u })).toHaveAccessibleName(/Pinned, 1 of 2\.$/u);
+  });
+
   it('leaves a recent row undraggable, since its order is activity and not a choice', () => {
     renderWith([workstream('ws-recent', 'Quarterly planning', 'completed')]);
 
@@ -1314,7 +1351,7 @@ describe('pinned work streams', () => {
       [workstream('ws-recent', 'Quarterly planning', 'completed')],
       {
         onPinWorkstream: vi.fn(async () => {
-          throw new Error('Only 50 work streams can be pinned.');
+          throw new Error('The work stream could not be reached.');
         }),
       },
     );
@@ -1323,6 +1360,6 @@ describe('pinned work streams', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Work stream could not be pinned' });
-    expect(within(dialog).getByText('Only 50 work streams can be pinned.')).toBeVisible();
+    expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
   });
 });
