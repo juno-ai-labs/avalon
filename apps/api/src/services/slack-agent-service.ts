@@ -31,6 +31,7 @@ import { newId, nowIso } from "@avalon/db";
 import {
   SLACK_UNFURL_MAX_LINKS,
   TERMINAL_UNFURL_REASONS,
+  workstreamUnfurlCardHash,
   WORKSTREAM_UNFURL_COLUMNS,
   WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
@@ -2252,14 +2253,18 @@ export class SlackAgentService {
     const summaries = externallyShared !== false
       ? new Map<string, WorkstreamUnfurlSummary>()
       : await this.workstreamUnfurlSummaries(connection.workspace_id, [...new Set(linkedWorkstreams.values())]);
+    // Keep the rendered blocks: recording hashes exactly what was posted, so
+    // the sweep compares against the real attachment rather than a re-derivation
+    // that could quietly diverge from it.
+    const rendered = new Map<string, Record<string, unknown>[]>();
     const unfurls: Record<string, unknown> = {};
     for (const [url, workstreamId] of linkedWorkstreams) {
-      unfurls[url] = {
-        blocks: workstreamUnfurlBlocks(
-          summaries.get(workstreamId) ?? null,
-          workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId),
-        ),
-      };
+      const blocks = workstreamUnfurlBlocks(
+        summaries.get(workstreamId) ?? null,
+        workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId),
+      );
+      rendered.set(url, blocks);
+      unfurls[url] = { blocks };
     }
     try {
       await slackApi(token, "chat.unfurl", { channel, ts, unfurls }, AbortSignal.timeout(5_000));
@@ -2277,7 +2282,7 @@ export class SlackAgentService {
       });
       return;
     }
-    await this.recordUnfurledLinks(connection, channel, ts, linkedWorkstreams, summaries);
+    await this.recordUnfurledLinks(connection, channel, ts, linkedWorkstreams, summaries, rendered);
   }
 
   /**
@@ -2300,17 +2305,24 @@ export class SlackAgentService {
     ts: string,
     linkedWorkstreams: Map<string, string>,
     summaries: Map<string, WorkstreamUnfurlSummary>,
+    rendered: Map<string, Record<string, unknown>[]>,
   ): Promise<void> {
     const at = nowIso();
-    const statements = recordableUnfurlLinks(linkedWorkstreams, summaries)
-      .map(({ url, workstreamId, summary }) => this.env.DB.prepare(
+    const recordable = recordableUnfurlLinks(linkedWorkstreams, summaries);
+    const hashes = await Promise.all(
+      recordable.map(({ url }) => workstreamUnfurlCardHash(rendered.get(url) ?? [])),
+    );
+    const statements = recordable
+      .map(({ url, workstreamId, summary }, index) => this.env.DB.prepare(
         `INSERT INTO slack_unfurled_links
          (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-          rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8, ?8)
+          rendered_status, rendered_anonymous, rendered_hash, audience_checked_at,
+          shared_at, refreshed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?9, ?8, ?8, ?8)
          ON CONFLICT(connection_id, slack_channel_id, slack_message_ts, url)
          DO UPDATE SET rendered_status = excluded.rendered_status,
                        rendered_anonymous = 0,
+                       rendered_hash = excluded.rendered_hash,
                        audience_checked_at = excluded.audience_checked_at,
                        refreshed_at = excluded.refreshed_at`,
       ).bind(
@@ -2322,6 +2334,7 @@ export class SlackAgentService {
         workstreamId,
         summary.harnessStatus,
         at,
+        hashes[index]!,
       ));
     if (statements.length) await this.env.DB.batch(statements);
   }
