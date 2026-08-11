@@ -34,7 +34,7 @@ import { desktopBridge } from '../lib/platform';
 import { createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
-import { useUiStore } from '../lib/ui-store';
+import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
@@ -43,7 +43,7 @@ import { type AttachmentPreview, AttachmentLightbox } from '../components/attach
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
-import { HyperSightPanel, HyperSightResizeHandle } from '../components/hypersight-panel';
+import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
   if (!session?.workspace) return undefined;
@@ -234,6 +234,7 @@ export function WorkstreamHeader({
   hypersightOpen,
   hypersightPreferencePending,
   onAddParticipant,
+  onOpenRail,
   onToggleHyperSight,
 }: {
   workstream: WorkstreamDetail;
@@ -241,10 +242,21 @@ export function WorkstreamHeader({
   hypersightOpen: boolean;
   hypersightPreferencePending: boolean;
   onAddParticipant: () => void;
+  onOpenRail: (variant: RailVariant) => void;
   onToggleHyperSight: () => void;
 }): React.JSX.Element {
-  const openRail = useUiStore((state) => state.openRail);
+  const railOpen = useUiStore((state) => state.railOpen);
+  const railVariant = useUiStore((state) => state.railVariant);
+  const closeRail = useUiStore((state) => state.closeRail);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
+  // The right sidebar holds one panel at a time, so every control that opens it
+  // reads as pressed while its own panel is the one showing, and closes it
+  // again from that state.
+  const showing = (variant: RailVariant): boolean => railOpen && railVariant === variant;
+  const toggleRail = (variant: RailVariant): void => {
+    if (showing(variant)) closeRail();
+    else onOpenRail(variant);
+  };
   const copyLink = (): void => {
     void desktopBridge().copyText(`avalon://workstreams/${workstream.id}`);
   };
@@ -271,7 +283,7 @@ export function WorkstreamHeader({
       <div className="workstream-header-actions window-no-drag">
         <SocketStatusIndicator state={socketState} />
         <IconButton
-          className={clsx('hypersight-toggle', hypersightOpen && 'is-active')}
+          className={clsx('panel-toggle', 'hypersight-toggle', hypersightOpen && 'is-active')}
           aria-pressed={hypersightOpen}
           disabled={hypersightPreferencePending}
           label={hypersightOpen ? 'Hide HyperSight' : 'Show HyperSight'}
@@ -284,17 +296,29 @@ export function WorkstreamHeader({
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>
-        <IconButton className="header-background-tasks" label="Background tasks" onClick={() => openRail('background')}>
+        <IconButton
+          aria-pressed={showing('background')}
+          className={clsx('panel-toggle', 'header-background-tasks', showing('background') && 'is-active')}
+          label={showing('background') ? 'Hide background tasks' : 'Background tasks'}
+          onClick={() => toggleRail('background')}
+        >
           <Activity size={15} />
           {runningTasks > 0 && <span className="icon-count">{runningTasks}</span>}
         </IconButton>
-        <IconButton label="Work-stream context" onClick={() => openRail('context')}><PanelRight size={15} /></IconButton>
+        <IconButton
+          aria-pressed={showing('context')}
+          className={clsx('panel-toggle', showing('context') && 'is-active')}
+          label={showing('context') ? 'Hide work-stream context' : 'Work-stream context'}
+          onClick={() => toggleRail('context')}
+        >
+          <PanelRight size={15} />
+        </IconButton>
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild><IconButton label="More work-stream actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
               {workstream.origin === 'automation' && (
-                <DropdownMenu.Item className="menu-item" onSelect={() => openRail('runs')}>Automation runs</DropdownMenu.Item>
+                <DropdownMenu.Item className="menu-item" onSelect={() => onOpenRail('runs')}>Automation runs</DropdownMenu.Item>
               )}
               <DropdownMenu.Item className="menu-item" onSelect={copyLink}><Copy size={14} /> Copy work-stream link</DropdownMenu.Item>
               {workstream.emailAddress && (
@@ -417,10 +441,12 @@ export function WorkstreamScreen(): React.JSX.Element {
   const { api, session } = useAppSession();
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
+  const openRail = useUiStore((state) => state.openRail);
+  const setHyperSightOpen = useUiStore((state) => state.setHyperSightOpen);
+  const setRailScope = useUiStore((state) => state.setRailScope);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
-  const [hypersightHeight, setHyperSightHeight] = useState(280);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
@@ -446,6 +472,13 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
 
   useEffect(() => () => closeRail(), [closeRail, id]);
+
+  // Each work stream keeps its own width for each panel, so the sidebar opens
+  // at the width this stream was last left at rather than the last one visited.
+  useEffect(() => {
+    setRailScope(id);
+    return () => setRailScope(null);
+  }, [id, setRailScope]);
 
   useEffect(() => {
     activeWorkstreamIdRef.current = id;
@@ -697,6 +730,29 @@ export function WorkstreamScreen(): React.JSX.Element {
       queryClient.setQueryData(['hypersight-preference', id], preference);
     },
   });
+  const { mutate: persistHyperSightPreference } = updateHyperSightPreference;
+
+  // HyperSight and the inspector rail share the right sidebar and are never
+  // open together. HyperSight's visibility is a stored personal preference
+  // rather than window state, so yielding the sidebar to the rail is written
+  // back the same way the toggle is: the next visit opens where this one left
+  // off.
+  const setHyperSightVisible = useCallback((visible: boolean): void => {
+    if (visible) closeRail();
+    persistHyperSightPreference(visible);
+  }, [closeRail, persistHyperSightPreference]);
+
+  const openRailVariant = useCallback((variant: RailVariant): void => {
+    openRail(variant);
+    if (hypersightOpen) persistHyperSightPreference(false);
+  }, [hypersightOpen, openRail, persistHyperSightPreference]);
+
+  // The shell lays the main pane out against whichever panel holds the right
+  // sidebar, and only this screen knows whether HyperSight has it.
+  useEffect(() => {
+    setHyperSightOpen(hypersightOpen);
+  }, [hypersightOpen, setHyperSightOpen]);
+  useEffect(() => () => setHyperSightOpen(false), [setHyperSightOpen]);
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
@@ -1044,17 +1100,21 @@ export function WorkstreamScreen(): React.JSX.Element {
   };
 
   return (
-    <div className={clsx('workstream-screen', hypersightOpen && 'has-hypersight')}>
+    <div className="workstream-screen">
       <WorkstreamHeader
         hypersightOpen={hypersightOpen}
         hypersightPreferencePending={hypersightPreference.isPending || updateHyperSightPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
-        onToggleHyperSight={() => updateHyperSightPreference.mutate(!hypersightOpen)}
+        onOpenRail={openRailVariant}
+        onToggleHyperSight={() => setHyperSightVisible(!hypersightOpen)}
         socketState={socketState}
         workstream={displayedDetail}
       />
       {hypersightOpen ? (
-        <div className="hypersight-shell" style={{ height: `${hypersightHeight}px` }}>
+        <HyperSightRail
+          blockCount={hypersight.data?.blocks.length ?? 0}
+          onClose={() => setHyperSightVisible(false)}
+        >
           {hypersight.data ? (
             <HyperSightPanel
               error={updateHyperSight.error?.message ?? hypersight.error?.message}
@@ -1072,8 +1132,7 @@ export function WorkstreamScreen(): React.JSX.Element {
               <LoadingState label="Opening HyperSight…" />
             </div>
           )}
-          <HyperSightResizeHandle onResize={setHyperSightHeight} />
-        </div>
+        </HyperSightRail>
       ) : null}
       <div
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}

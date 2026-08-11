@@ -14,6 +14,9 @@ interface UiState {
   railWidth: number;
   railExpanded: boolean;
   inspector: RailInspector | null;
+  hypersightOpen: boolean;
+  hypersightWidth: number;
+  railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   openRail: (variant?: RailVariant) => void;
@@ -22,17 +25,59 @@ interface UiState {
   setRailWidth: (width: number) => void;
   toggleRailExpanded: () => void;
   inspect: (inspector: RailInspector | null) => void;
+  // HyperSight and the inspector rail share the right sidebar slot, and only
+  // one of them is ever open. Which one is open is a personal, per-work-stream
+  // preference the API owns, so the work-stream screen mirrors it here for the
+  // shell to lay out against rather than deciding it.
+  setHyperSightOpen: (open: boolean) => void;
+  setHyperSightWidth: (width: number) => void;
+  // Each panel keeps its own width per work stream: a wide HyperSight in one
+  // stream must not narrow the inspector in another. Screens outside a work
+  // stream pass null and share one bucket.
+  setRailScope: (scope: string | null) => void;
 }
 
-const MIN_RAIL_WIDTH = 320;
-const MAX_RAIL_WIDTH = 560;
+export const MIN_RAIL_WIDTH = 320;
+export const MAX_RAIL_WIDTH = 560;
+export const DEFAULT_RAIL_WIDTH = 360;
 export const MIN_SIDEBAR_WIDTH = 260;
 export const MAX_SIDEBAR_WIDTH = 480;
 export const DEFAULT_SIDEBAR_WIDTH = 300;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'avalon.sidebar-width';
+const RAIL_WIDTH_STORAGE_PREFIX = 'avalon.rail-width';
+const HYPERSIGHT_WIDTH_STORAGE_PREFIX = 'avalon.hypersight-width';
 
 function clampSidebarWidth(width: number): number {
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width));
+}
+
+function clampRailWidth(width: number): number {
+  return Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, width));
+}
+
+function railWidthKey(prefix: string, scope: string | null): string {
+  return `${prefix}:${scope ?? 'default'}`;
+}
+
+function loadRailWidth(prefix: string, scope: string | null): number {
+  if (typeof window === 'undefined') return DEFAULT_RAIL_WIDTH;
+
+  try {
+    const storedWidth = Number.parseFloat(window.localStorage.getItem(railWidthKey(prefix, scope)) ?? '');
+    return Number.isFinite(storedWidth) ? clampRailWidth(storedWidth) : DEFAULT_RAIL_WIDTH;
+  } catch {
+    return DEFAULT_RAIL_WIDTH;
+  }
+}
+
+function saveRailWidth(prefix: string, scope: string | null, width: number): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(railWidthKey(prefix, scope), String(width));
+  } catch {
+    // Local persistence is best-effort; resizing should still work when storage is unavailable.
+  }
 }
 
 function loadSidebarWidth(): number {
@@ -56,14 +101,17 @@ function saveSidebarWidth(width: number): void {
   }
 }
 
-export const useUiStore = create<UiState>((set) => ({
+export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sidebarWidth: loadSidebarWidth(),
   railOpen: false,
   railVariant: 'context',
-  railWidth: 360,
+  railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
   railExpanded: false,
   inspector: null,
+  hypersightOpen: false,
+  hypersightWidth: loadRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, null),
+  railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarWidth: (width) => {
     const sidebarWidth = clampSidebarWidth(width);
@@ -73,8 +121,22 @@ export const useUiStore = create<UiState>((set) => ({
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   closeRail: () => set({ railOpen: false, railExpanded: false, inspector: null }),
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
-  setRailWidth: (railWidth) =>
-    set({ railWidth: Math.max(MIN_RAIL_WIDTH, Math.min(MAX_RAIL_WIDTH, railWidth)) }),
+  setRailWidth: (width) => {
+    const railWidth = clampRailWidth(width);
+    saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
+    set({ railWidth });
+  },
   toggleRailExpanded: () => set((state) => ({ railExpanded: !state.railExpanded })),
   inspect: (inspector) => set({ inspector }),
+  setHyperSightOpen: (hypersightOpen) => set({ hypersightOpen }),
+  setHyperSightWidth: (width) => {
+    const hypersightWidth = clampRailWidth(width);
+    saveRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, get().railScope, hypersightWidth);
+    set({ hypersightWidth });
+  },
+  setRailScope: (railScope) => set({
+    railScope,
+    railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),
+    hypersightWidth: loadRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, railScope),
+  }),
 }));
