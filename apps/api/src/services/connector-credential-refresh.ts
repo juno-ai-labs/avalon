@@ -9,6 +9,9 @@ import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 
+/** Waits before a rotation gives up rather than spinning to the caller's deadline. */
+const ROTATION_WAIT_ATTEMPTS = 8;
+
 const CredentialRowSchema = z.object({
   encrypted_credentials: z.string().min(1),
   credential_iv: z.string().min(1),
@@ -123,6 +126,7 @@ export async function rotateConnectorCredentials(
   if (!adapter.refreshCredentials) {
     throw new ConnectorError("unauthorized", "This connector cannot rotate its credentials");
   }
+  let attempt = 0;
   while (true) {
     signal.throwIfAborted();
     const leaseId = crypto.randomUUID();
@@ -143,7 +147,17 @@ export async function rotateConnectorCredentials(
     if (!claimed) {
       const current = await loadCredentials(env, connection);
       if (!sameCredentials(current, refused)) return current;
-      await abortableDelay(100, signal);
+      // Bounded and backed off. A waiter polling flat out re-reads D1 ~300
+      // times under the default tool deadline, and a lease a crashed sibling
+      // left behind pushes that to its two-minute expiry with the waiter
+      // spinning throughout. This path is reached on rejection, where several
+      // in-flight calls are likelier to pile onto one connection than they are
+      // on the expiry route.
+      attempt += 1;
+      if (attempt > ROTATION_WAIT_ATTEMPTS) {
+        throw new ConnectorError("provider_error", "Connector credentials are still being rotated by another request");
+      }
+      await abortableDelay(Math.min(100 * 2 ** (attempt - 1), 2_000), signal);
       continue;
     }
 

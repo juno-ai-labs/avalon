@@ -1,6 +1,6 @@
 import {
   ConnectorError,
-  type AuthorizedConnectorConnection,
+  connectorCredentialRotation,
   type ConnectorConnectionContext,
 } from "./types";
 
@@ -43,7 +43,11 @@ export async function withProviderReauthorization<T>(
   },
   call: () => Promise<T>,
 ): Promise<T> {
-  const refused = connection.credentials;
+  // A copy, not the live reference: an adapter that mutates credentials in
+  // place before failing would otherwise leave this pointing at the mutated
+  // object, and the host's rotation would read that difference as a sibling
+  // having already rotated and skip the refresh entirely.
+  const refused = { ...connection.credentials };
   try {
     return await call();
   } catch (error) {
@@ -51,7 +55,7 @@ export async function withProviderReauthorization<T>(
     if (input.canRefresh && !input.canRefresh(connection)) throw error;
     if (isAbortError(error)) throw error;
     input.signal.throwIfAborted();
-    const rotate = (connection as Partial<AuthorizedConnectorConnection>).rotateCredentials;
+    const rotate = connectorCredentialRotation(connection);
     connection.credentials = rotate
       ? await rotate(refused, input.signal)
       : await input.refresh(connection, input.signal);
