@@ -118,6 +118,12 @@ export interface WorkstreamSummary {
    * this decides whether it is listed, that decides who may read it.
    */
   systemKind?: 'digest';
+  /**
+   * Where this work stream sits in *this viewer's* pinned list, or `null` when
+   * they have not pinned it. Per-person like the read-state fields above: the
+   * same work stream is pinned for one member and not for another.
+   */
+  pinPosition: number | null;
 }
 
 export interface Participant extends WorkspaceMember {

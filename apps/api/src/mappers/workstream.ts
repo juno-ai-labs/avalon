@@ -12,12 +12,27 @@ export const WORKSTREAM_VIEWER_COLUMNS_SQL = `t.name AS origin_label,
   rs.user_id AS viewer_read_state_user_id,
   rs.read_through_sequence_number AS viewer_read_through_sequence_number,
   rs.manual_unread_from_sequence_number AS viewer_manual_unread_from_sequence_number,
-  rs.manual_unread_generation AS viewer_manual_unread_generation`;
+  rs.manual_unread_generation AS viewer_manual_unread_generation,
+  pin.position AS viewer_pin_position`;
 
-/** The joins `WORKSTREAM_VIEWER_COLUMNS_SQL` reads from. Binds the viewer's id. */
+/**
+ * The joins `WORKSTREAM_VIEWER_COLUMNS_SQL` reads from.
+ *
+ * Binds the viewer's id **twice**, once per per-viewer join, in the order the
+ * joins appear. Use {@link workstreamViewerBindings} rather than writing them
+ * out: a call site that binds one id where two are consumed shifts every
+ * binding after it, which SQLite reports as a type error somewhere unrelated
+ * rather than as the missing parameter it is.
+ */
 export const WORKSTREAM_VIEWER_JOINS_SQL = `LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
   LEFT JOIN automation_templates t ON t.id = s.template_id
-  LEFT JOIN workstream_read_states rs ON rs.workstream_id = w.id AND rs.user_id = ?`;
+  LEFT JOIN workstream_read_states rs ON rs.workstream_id = w.id AND rs.user_id = ?
+  LEFT JOIN workstream_pins pin ON pin.workstream_id = w.id AND pin.user_id = ?`;
+
+/** The bindings {@link WORKSTREAM_VIEWER_JOINS_SQL} consumes, in order. */
+export function workstreamViewerBindings(userId: string): [string, string] {
+  return [userId, userId];
+}
 
 const rowText = z.string();
 /**
@@ -76,6 +91,9 @@ export const WorkstreamRowSchema = z.object({
   viewer_read_through_sequence_number: rowCount.nullish(),
   viewer_manual_unread_from_sequence_number: rowCount.nullish(),
   viewer_manual_unread_generation: rowCount.nullish(),
+  // Joined from `workstream_pins`, so absent rather than null when this viewer
+  // has not pinned the work stream.
+  viewer_pin_position: rowCount.nullish(),
 });
 
 /**
@@ -141,5 +159,6 @@ export function toWorkstream(input: Record<string, unknown>): Workstream {
     archivedAt: row.archived_at ?? null,
     scope: row.scope,
     systemKind: row.system_kind ?? null,
+    pinPosition: row.viewer_pin_position ?? null,
   };
 }

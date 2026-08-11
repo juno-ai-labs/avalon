@@ -190,7 +190,10 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       displayName: "X",
       supportedScopes: ["workspace"],
       oauthRequired: false,
-      activityTriggers: defineConnectorActivityTriggers("X", []),
+      // X is read-only through a shared account and ingests no activity at all,
+      // so both lists are empty rather than one being omitted — a connector
+      // that later starts emitting activity states which kind it is then.
+      activityTriggers: defineConnectorActivityTriggers("X", { digestible: [], operational: [] }),
       resourceTypes: [],
       tools: xTools,
       supportsWatches: false,
@@ -250,14 +253,20 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       throw new ConnectorError("unsupported_capability", `Unsupported X tool: ${name}`);
     },
 
-    async healthCheck() {
+    async healthCheck(_connection, callerSignal) {
+      // Reachability and authentication only. This deliberately does not read
+      // the account's balance: TwitterAPI.io bills against more than one — its
+      // dashboard shows recharge and bonus credits separately, both spendable —
+      // and its published schema for this endpoint documents only
+      // `recharge_credits`. Reading that one field reported an account holding
+      // ~10k usable bonus credits as having none, which took the connector out
+      // of every run. Whether a call can be paid for is the provider's
+      // judgement to make, per call, and it makes it: a tool that cannot be
+      // funded fails with the provider's own error, which is both accurate and
+      // current in a way a balance sampled here could never be.
       try {
-        const payload = await request("/oapi/my/info", {}, AbortSignal.timeout(15_000));
-        return typeof payload.recharge_credits !== "number"
-          ? { ok: false, message: "TwitterAPI.io did not return account information" }
-          : payload.recharge_credits > 0
-            ? { ok: true, message: "TwitterAPI.io access is healthy" }
-            : { ok: false, message: "TwitterAPI.io has no remaining credits" };
+        await request("/oapi/my/info", {}, callerSignal ?? AbortSignal.timeout(15_000));
+        return { ok: true, message: "TwitterAPI.io access is healthy" };
       } catch (error) {
         if (!(error instanceof ConnectorError)) throw error;
         if (isRecord(error.details) && Number(error.details.status) === 429) throw error;

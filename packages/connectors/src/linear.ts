@@ -4,15 +4,18 @@ import {
   base64,
   booleanValue,
   isRecord,
+  isRevokedGrantError,
   jsonHeaders,
   numberValue,
   providerJson,
   readResponseBytes,
   recordValue,
+  refreshExpiringCredentials,
   sha256Hex,
   stringValue,
   truncateText,
   verifyHmacSha256,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -373,28 +376,53 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       },
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("Linear", [
-        "linear.issue.create", "linear.issue.update", "linear.issue.remove",
-        "linear.comment.create", "linear.comment.update", "linear.comment.remove",
-        "linear.attachment.create", "linear.attachment.update", "linear.attachment.remove",
-        "linear.issue_label.create", "linear.issue_label.update", "linear.issue_label.remove",
-        "linear.reaction.create", "linear.reaction.remove",
-        "linear.project.create", "linear.project.update", "linear.project.remove",
-        "linear.project_update.create", "linear.project_update.update", "linear.project_update.remove",
-        "linear.project_label.create", "linear.project_label.update", "linear.project_label.remove",
-        "linear.cycle.create", "linear.cycle.update", "linear.cycle.remove",
-        "linear.document.create", "linear.document.update", "linear.document.remove",
-        "linear.user.create", "linear.user.update", "linear.user.remove",
-        "linear.initiative.create", "linear.initiative.update", "linear.initiative.remove",
-        "linear.initiative_update.create", "linear.initiative_update.update", "linear.initiative_update.remove",
-        "linear.customer.create", "linear.customer.update", "linear.customer.remove",
-        "linear.customer_need.create", "linear.customer_need.update", "linear.customer_need.remove",
-        "linear.release.create", "linear.release.update", "linear.release.remove",
-        "linear.release_note.create", "linear.release_note.update", "linear.release_note.remove",
-        "linear.oauth_app.revoked", "linear.oauth_authorization.revoked",
-        "linear.permission_change.team_access_changed", "linear.app_user_notification.create",
-        "linear.agent_session_event.created", "linear.agent_session_event.prompted",
-      ], {}, [
+      // Linear's `update` events are where the judgement is. An issue moving
+      // state is the substance of a Linear workspace and belongs in a digest; a
+      // document or comment being edited is the same thing said again a minute
+      // later, and a cycle updating is a progress counter. Anything that exists
+      // to keep two systems in step — attachments, label definitions, the user
+      // directory, agent sessions — never reaches a person.
+      activityTriggers: defineConnectorActivityTriggers("Linear", {
+        digestible: [
+          "linear.issue.create", "linear.issue.update", "linear.issue.remove",
+          "linear.comment.create",
+          "linear.project.create", "linear.project.update", "linear.project.remove",
+          "linear.project_update.create",
+          "linear.cycle.create",
+          "linear.document.create",
+          "linear.initiative.create", "linear.initiative.update", "linear.initiative.remove",
+          "linear.initiative_update.create",
+          "linear.customer_need.create",
+          "linear.release.create",
+          "linear.release_note.create",
+          // Linear's own decision that this person needed telling — an
+          // assignment, a mention, a review request.
+          "linear.app_user_notification.create",
+        ],
+        operational: [
+          "linear.comment.update", "linear.comment.remove",
+          "linear.attachment.create", "linear.attachment.update", "linear.attachment.remove",
+          "linear.issue_label.create", "linear.issue_label.update", "linear.issue_label.remove",
+          "linear.reaction.create", "linear.reaction.remove",
+          "linear.project_update.update", "linear.project_update.remove",
+          "linear.project_label.create", "linear.project_label.update", "linear.project_label.remove",
+          "linear.cycle.update", "linear.cycle.remove",
+          "linear.document.update", "linear.document.remove",
+          "linear.user.create", "linear.user.update", "linear.user.remove",
+          "linear.initiative_update.update", "linear.initiative_update.remove",
+          "linear.customer.create", "linear.customer.update", "linear.customer.remove",
+          "linear.customer_need.update", "linear.customer_need.remove",
+          "linear.release.update", "linear.release.remove",
+          "linear.release_note.update", "linear.release_note.remove",
+          // Authorization and access changes are surfaced on the connection
+          // itself, where they can be acted on, rather than in a summary.
+          "linear.oauth_app.revoked", "linear.oauth_authorization.revoked",
+          "linear.permission_change.team_access_changed",
+          // Avalon's own agent working. A digest must never narrate the
+          // machinery that writes it.
+          "linear.agent_session_event.created", "linear.agent_session_event.prompted",
+        ],
+      }, {}, [
         { key: "deliveryId", label: "Delivery ID", description: "Unique Linear webhook delivery identifier.", valueType: "string" },
         { key: "webhookId", label: "Webhook ID", description: "Linear webhook subscription identifier.", valueType: "string" },
         { key: "organizationId", label: "Organization", description: "Linear organization identifier.", valueType: "string" },
@@ -753,10 +781,11 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       throw new ConnectorError("unsupported_capability", `Unsupported Linear tool: ${name}`);
     },
 
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Linear OAuth is configured" };
       assertLinearConnection(connection);
-      const data = await graphql(connection, AbortSignal.timeout(15_000), "query AvalonLinearHealth { viewer { id } }");
+      const signal = callerSignal ?? AbortSignal.timeout(15_000);
+      const data = await graphql(connection, signal, "query AvalonLinearHealth { viewer { id } }");
       const viewer = recordValue(data, "viewer");
       return viewer?.id ? { ok: true, message: "Linear authorization is healthy" } : { ok: false, message: "Linear did not return an authorized identity" };
     },
@@ -1255,17 +1284,25 @@ async function withLinearAccess<T>(
 ): Promise<T> {
   const expiration = stringValue(connection.credentials, "expiresAt");
   if (expiration && Date.parse(expiration) <= now() + 60_000) {
-    connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
+    connection.credentials = await refreshExpiringCredentials(
+      connection,
+      (candidate, refreshSignal) => refreshLinearCredentials(config, fetcher, now(), candidate, refreshSignal),
+      signal,
+    );
   }
-  let token = credentialString(connection, "accessToken");
-  try {
-    return await operation(token);
-  } catch (error) {
-    if (!isProviderUnauthorized(error)) throw error;
-    connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
-    token = credentialString(connection, "accessToken");
-    return operation(token);
-  }
+  // Through the shared helper rather than a private retry: it prefers the
+  // host's lease-serialized rotation, so two calls refused at once cannot each
+  // redeem the same rotating refresh token.
+  return withProviderReauthorization(
+    connection,
+    {
+      refresh: (candidate, refreshSignal) =>
+        refreshLinearCredentials(config, fetcher, now(), candidate, refreshSignal),
+      isRejection: isProviderUnauthorized,
+      signal,
+    },
+    () => operation(credentialString(connection, "accessToken")),
+  );
 }
 
 async function linearGraphql(
@@ -1489,11 +1526,9 @@ function isProviderUnauthorized(error: unknown): boolean {
   return error instanceof ConnectorError && error.code === "unauthorized" && isRecord(error.details) && error.details.status === 401;
 }
 
-function isRefreshRejected(error: unknown): error is ConnectorError {
-  return error instanceof ConnectorError
-    && isRecord(error.details)
-    && [400, 401, 403].includes(Number(error.details.status));
-}
+// Classified by the provider's own error code rather than by status: a token
+// endpoint answers both a dead grant and our own malformed request with 400.
+const isRefreshRejected = isRevokedGrantError;
 
 function requiredRecord(record: Record<string, unknown>, key: string, message: string): Record<string, unknown> {
   const value = recordValue(record, key);

@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   base64,
   isRecord,
+  isRevokedGrantError,
   jsonHeaders,
   numberValue,
   providerJson,
@@ -12,6 +13,7 @@ import {
   stringValue,
   truncateText,
   verifyHmacSha256,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -305,15 +307,14 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
     signal: AbortSignal,
     operation: (token: string) => Promise<T>,
   ): Promise<T> => {
-    let token = credentialString(connection, "accessToken");
-    try {
-      return await operation(token);
-    } catch (error) {
-      if (!isProviderUnauthorized(error)) throw error;
-      connection.credentials = await refresh(connection, signal);
-      token = credentialString(connection, "accessToken");
-      return operation(token);
-    }
+    // Through the shared helper rather than a private retry: it prefers the
+    // host's lease-serialized rotation, so two calls refused at once cannot
+    // each redeem the same rotating refresh token.
+    return withProviderReauthorization(
+      connection,
+      { refresh, isRejection: isProviderUnauthorized, signal },
+      () => operation(credentialString(connection, "accessToken")),
+    );
   };
 
   const request = async (
@@ -418,18 +419,31 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       displayName: "Notion",
       supportedScopes: ["personal"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("Notion", [
-        "notion.page.content_updated", "notion.page.created", "notion.page.deleted",
-        "notion.page.locked", "notion.page.moved", "notion.page.properties_updated",
-        "notion.page.transcription_block.transcript_deleted", "notion.page.undeleted", "notion.page.unlocked",
-        "notion.database.content_updated", "notion.database.created", "notion.database.deleted",
-        "notion.database.moved", "notion.database.schema_updated", "notion.database.undeleted",
-        "notion.data_source.content_updated", "notion.data_source.created", "notion.data_source.deleted",
-        "notion.data_source.moved", "notion.data_source.schema_updated", "notion.data_source.undeleted",
-        "notion.comment.created", "notion.comment.deleted", "notion.comment.updated",
-        "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
-        "notion.view.created", "notion.view.deleted", "notion.view.updated",
-      ], {}, [
+      // A page appearing or a comment arriving is somebody writing something.
+      // Notion fires `content_updated` on every save, so a page being written
+      // over an afternoon is one piece of news and dozens of events; the digest
+      // hears about its creation and its comments. Schema, view, lock, move and
+      // upload events are how the workspace is arranged rather than what was
+      // said in it.
+      activityTriggers: defineConnectorActivityTriggers("Notion", {
+        digestible: [
+          "notion.page.created", "notion.page.deleted",
+          "notion.database.created",
+          "notion.comment.created",
+        ],
+        operational: [
+          "notion.page.content_updated",
+          "notion.page.locked", "notion.page.moved", "notion.page.properties_updated",
+          "notion.page.transcription_block.transcript_deleted", "notion.page.undeleted", "notion.page.unlocked",
+          "notion.database.content_updated", "notion.database.deleted",
+          "notion.database.moved", "notion.database.schema_updated", "notion.database.undeleted",
+          "notion.data_source.content_updated", "notion.data_source.created", "notion.data_source.deleted",
+          "notion.data_source.moved", "notion.data_source.schema_updated", "notion.data_source.undeleted",
+          "notion.comment.deleted", "notion.comment.updated",
+          "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
+          "notion.view.created", "notion.view.deleted", "notion.view.updated",
+        ],
+      }, {}, [
         { key: "subscriptionId", label: "Subscription", description: "Notion webhook subscription identifier.", valueType: "string" },
         { key: "integrationId", label: "Integration", description: "Notion integration identifier.", valueType: "string" },
         { key: "notionWorkspaceId", label: "Workspace", description: "Notion workspace identifier.", valueType: "string" },
@@ -653,7 +667,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       throw new ConnectorError("unsupported_capability", `Unsupported Notion tool: ${name}`);
     },
 
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Notion OAuth is configured" };
       assertPersonalConnection(connection);
       const token = credentialString(connection, "accessToken");
@@ -666,7 +680,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
           "notion-version": notionVersion,
         },
         body: JSON.stringify({ token }),
-        signal: AbortSignal.timeout(15_000),
+        signal: callerSignal ?? AbortSignal.timeout(15_000),
       }, 128_000);
       if (payload.active !== true) {
         throw new ConnectorError("unauthorized", "Notion authorization is inactive and must be reconnected", {
@@ -935,11 +949,9 @@ function isProviderUnauthorized(error: unknown): boolean {
     && error.details.status === 401;
 }
 
-function isRefreshRejected(error: unknown): error is ConnectorError {
-  return error instanceof ConnectorError
-    && isRecord(error.details)
-    && [400, 401, 403].includes(Number(error.details.status));
-}
+// Classified by the provider's own error code rather than by status: a token
+// endpoint answers both a dead grant and our own malformed request with 400.
+const isRefreshRejected = isRevokedGrantError;
 
 function requiredString(record: Record<string, unknown>, key: string, message: string): string {
   const value = stringValue(record, key);

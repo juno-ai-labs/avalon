@@ -2,6 +2,7 @@ import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition }
 import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
+  isProviderCredentialRejection,
   isRecord,
   jsonHeaders,
   providerJson,
@@ -9,6 +10,7 @@ import {
   readResponseBytes,
   sha256Hex,
   stringValue,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -17,6 +19,7 @@ import {
   ConnectorError,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  type ConnectorActivityTypePartition,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
   type ConnectorToolContext,
@@ -213,19 +216,42 @@ const SlackIngressEnvelopeSchema = z.object({
 
 export type SlackIngressEnvelope = z.infer<typeof SlackIngressEnvelopeSchema>;
 
+/**
+ * Slack's activity types, split by whether a person should hear about one in
+ * their digest.
+ *
+ * Digestible is what somebody said and what was addressed to this reader.
+ * Reactions, joins and leaves are how a channel breathes rather than what
+ * happened in it, and an edit or a deletion revises something the reader was
+ * already told about once.
+ */
+export const SlackActivityTypes = {
+  digestible: [
+    "slack.message.posted",
+    "slack.message.replied",
+    "slack.app_mention.received",
+    "slack.direct_message.received",
+    "slack.file.shared",
+  ],
+  operational: [
+    "slack.message.edited",
+    "slack.message.deleted",
+    "slack.reaction.added",
+    "slack.reaction.removed",
+    "slack.channel.created",
+    "slack.member.joined_channel",
+    "slack.member.left_channel",
+  ],
+} as const satisfies ConnectorActivityTypePartition;
+
+/**
+ * Every Slack activity type, derived from the partition rather than listed
+ * beside it: a second list is a second place to forget an event type, and the
+ * one that gets forgotten is always the digest side.
+ */
 export const SlackActivityEventTypes = [
-  "slack.message.posted",
-  "slack.message.replied",
-  "slack.message.edited",
-  "slack.message.deleted",
-  "slack.app_mention.received",
-  "slack.direct_message.received",
-  "slack.reaction.added",
-  "slack.reaction.removed",
-  "slack.file.shared",
-  "slack.channel.created",
-  "slack.member.joined_channel",
-  "slack.member.left_channel",
+  ...SlackActivityTypes.digestible,
+  ...SlackActivityTypes.operational,
 ] as const;
 
 export function slackActivityEventType(envelope: SlackIngressEnvelope): string | null {
@@ -1788,7 +1814,37 @@ function slackProviderErrorName(error: unknown): string | null {
 export function createSlackConnector(config: SlackConnectorConfig): ConnectorAdapter {
   const fetcher = config.fetch ?? fetch;
   const now = config.now ?? Date.now;
-  return {
+  /**
+   * Slack reports a token it will not accept as HTTP 200 with an error code,
+   * which `slackApiResponse` raises as `unauthorized`. Rotation is opt-in, so
+   * only a connection actually holding a refresh token can recover; the rest
+   * surface the rejection unchanged.
+   */
+  const reauthorizing = <T>(
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+    call: () => Promise<T>,
+  ): Promise<T> => withProviderReauthorization(
+    connection,
+    {
+      refresh: (candidate, refreshSignal) => adapter.refreshCredentials!(candidate, refreshSignal),
+      // Slack refuses a credential in two dialects: the Web API answers HTTP
+      // 200 with an error code, and the personal MCP transport answers HTTP
+      // 401. Both mean the token may merely be stale. `token_revoked`,
+      // `account_inactive`, and `invalid_refresh_token` are settled answers, a
+      // 403 is a policy denial, and Slack's own pre-flight errors carry no
+      // provider details at all — spending a single-use refresh token on any of
+      // those would buy a retry that fails identically.
+      isRejection: (error) => isProviderCredentialRejection(
+        error,
+        (details) => details.error === "token_expired" || details.status === 401,
+      ),
+      canRefresh: (candidate) => Boolean(stringValue(candidate.credentials, "refreshToken")),
+      signal,
+    },
+    call,
+  );
+  const adapter: ConnectorAdapter = {
     manifest: {
       type: "slack",
       displayName: "Slack",
@@ -1823,7 +1879,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       ],
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("Slack", SlackActivityEventTypes, {
+      activityTriggers: defineConnectorActivityTriggers("Slack", SlackActivityTypes, {
         "slack.message.posted": {
           label: "Message posted",
           description: "A human posted a new root message in a Slack channel selected by an automation.",
@@ -2040,14 +2096,40 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     async refreshCredentials(connection, signal) {
       const refreshToken = stringValue(connection.credentials, "refreshToken");
-      if (!refreshToken) throw new ConnectorError("unauthorized", "Slack authorization must be reconnected");
+      if (!refreshToken) {
+        throw new ConnectorError("unauthorized", "Slack authorization must be reconnected", {
+          reconnectRequired: true,
+          reason: "missing_refresh_token",
+        });
+      }
       const endpoint = connection.scope === "personal" ? `${SLACK_API}/oauth.v2.user.access` : `${SLACK_API}/oauth.v2.access`;
-      const response = parseSlackSuccess(await providerJson(fetcher, endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-        body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: "refresh_token", refresh_token: refreshToken }),
-        signal,
-      }, SLACK_MAX_RESPONSE_BYTES), SlackRefreshSuccessSchema, "Slack token refresh failed");
+      // Slack answers a refused refresh with HTTP 200 and `{ok: false, error}`,
+      // which `parseSlackSuccess` raises as a bare `unauthorized` carrying no
+      // verdict. The host only marks a connection `needs_reconnect` when the
+      // adapter states one, so without this a revoked grant leaves the row
+      // `healthy` forever: every run drops the plugin and nothing prompts the
+      // member. Only Slack's authorization vocabulary reaches here as
+      // `unauthorized` — `invalid_client_id` and `bad_client_secret` are
+      // Avalon's own configuration and stay `provider_error`, unmarked.
+      let response: z.infer<typeof SlackRefreshSuccessSchema>;
+      try {
+        response = parseSlackSuccess(await providerJson(fetcher, endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+          body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: "refresh_token", refresh_token: refreshToken }),
+          signal,
+        }, SLACK_MAX_RESPONSE_BYTES), SlackRefreshSuccessSchema, "Slack token refresh failed");
+      } catch (error) {
+        if (error instanceof ConnectorError && error.code === "unauthorized") {
+          // The provider's own word stays the message; only the verdict is added.
+          throw new ConnectorError("unauthorized", error.message, {
+            ...(isRecord(error.details) ? error.details : {}),
+            reconnectRequired: true,
+            reason: "refresh_rejected",
+          });
+        }
+        throw error;
+      }
       const authedUser = response.authed_user ?? {};
       const accessToken = response.access_token ?? authedUser.access_token;
       if (!accessToken) throw new ConnectorError("provider_error", "Slack token refresh did not return an access token");
@@ -2066,7 +2148,11 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
           throw new ConnectorError(
             "unauthorized",
             `Slack authorization is missing required permissions: ${missingScopes.join(", ")}`,
-            { missingScopes },
+            // A grant that no longer carries the scopes Avalon requires is
+            // fixed only by the member reauthorizing, which is what
+            // `needs_reconnect` asks for. Unmarked, the connection reports
+            // healthy while every call needing the missing scope fails.
+            { missingScopes, reconnectRequired: true, reason: "missing_scopes" },
           );
         }
       }
@@ -2103,21 +2189,35 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       const definition = slackTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) throw new ConnectorError("unsupported_capability", `The Slack connection has not granted ${definition?.capability ?? name}`);
       if (isSlackDirectTool(name)) {
-        return executeSlackDirectTool(name, rawArgs, context, fetcher);
+        return reauthorizing(
+          context.connection,
+          context.signal,
+          () => executeSlackDirectTool(name, rawArgs, context, fetcher),
+        );
       }
       if (context.connection.scope !== "personal") {
         throw new ConnectorError("unsupported_capability", `Slack workspace tool ${name} is unsupported`);
       }
       if (!isSlackMcpTool(name)) throw new ConnectorError("unsupported_capability", `Slack MCP tool ${name} is unsupported`);
       const args = SlackMcpInputSchemas[name].parse(rawArgs) as Record<string, unknown>;
-      const output = await callSlackMcp(userToken(context.connection), name, args, context.signal, fetcher);
+      const output = await reauthorizing(
+        context.connection,
+        context.signal,
+        () => callSlackMcp(userToken(context.connection), name, args, context.signal, fetcher),
+      );
       return { output, summary: `${definition.mode === "read" ? "Read from" : "Updated"} Slack with ${name}` };
     },
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: Boolean(config.clientId && config.clientSecret && config.signingSecret), message: "Slack connector configuration is available" };
+      const signal = callerSignal ?? AbortSignal.timeout(10_000);
       try {
-        const token = connection.scope === "workspace" ? botToken(connection) : userToken(connection);
-        const authentication = await slackApiResponse(token, "auth.test", {}, AbortSignal.timeout(10_000), fetcher);
+        const authentication = await reauthorizing(connection, signal, () => slackApiResponse(
+          connection.scope === "workspace" ? botToken(connection) : userToken(connection),
+          "auth.test",
+          {},
+          signal,
+          fetcher,
+        ));
         if (connection.scope === "workspace") {
           if (authentication.oauthScopes == null) {
             return {
@@ -2146,6 +2246,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       }
     },
   };
+  return adapter;
 }
 
 function botToken(connection: ConnectorConnectionContext): string {

@@ -5,6 +5,7 @@ import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
+import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
 
 // The logger only reads the observability bindings off the environment.
 const logEnv = { AVALON_REGION: "global", LOG_LEVEL: "error" } as unknown as Env;
@@ -688,6 +689,44 @@ describe("App Home task rows", () => {
     expect(rendered).toContain(`${webBase}/app/workstreams/${good}`);
     expect(rendered).toContain("Quarterly planning");
     expect(rendered).not.toContain("Unlinkable");
+  });
+
+  it("leaves drafts out of the automations it lists", () => {
+    const database = migratedSqliteDatabase();
+    const workspaceId = "00000000-0000-7000-8000-000000000001";
+    const userId = "00000000-0000-7000-8000-000000000002";
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('${userId}', 'home-subject', 'ada@example.com', 'Ada', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('${workspaceId}', 'Avalon Studio', 'avalon-studio', 'global', '${userId}', '2026-01-01', '2026-01-01');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state, latest_version_number, created_at, updated_at)
+      VALUES
+        ('00000000-0000-7000-8000-00000000000a', '${workspaceId}', '${userId}', 'Daily brief', 'Brief', 'private', 1, '2026-01-01', '2026-01-01'),
+        ('00000000-0000-7000-8000-00000000000b', '${workspaceId}', '${userId}', 'Half-written monitor', 'Monitor', 'private', 1, '2026-01-01', '2026-01-01');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json, created_by_user_id, created_at)
+      VALUES
+        ('00000000-0000-7000-8000-00000000000c', '00000000-0000-7000-8000-00000000000a', 1, 'Write the brief', '[]', '${userId}', '2026-01-01'),
+        ('00000000-0000-7000-8000-00000000000d', '00000000-0000-7000-8000-00000000000b', 1, 'Watch the page', '[]', '${userId}', '2026-01-01');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, status, created_at, updated_at)
+      VALUES
+        ('00000000-0000-7000-8000-00000000000e', '${workspaceId}', '00000000-0000-7000-8000-00000000000a', '00000000-0000-7000-8000-00000000000c',
+         'personal', '${userId}', '{"type":"user","userId":"${userId}"}', 'active', '2026-01-01', '2026-01-01'),
+        -- Written moments ago, which is exactly why it would otherwise win the
+        -- newest-first ordering and take the whole list.
+        ('00000000-0000-7000-8000-00000000000f', '${workspaceId}', '00000000-0000-7000-8000-00000000000b', '00000000-0000-7000-8000-00000000000d',
+         'personal', '${userId}', '{"type":"user","userId":"${userId}"}', 'draft', '2026-08-11', '2026-08-11');
+    `);
+
+    const rows = database.prepare(__slackAgentTesting.PERSONAL_AUTOMATIONS_FOR_HOME_SQL)
+      .all(workspaceId, userId) as Array<{ name: string }>;
+
+    expect(rows.map((row) => row.name)).toEqual(["Daily brief"]);
+    database.close();
   });
 });
 

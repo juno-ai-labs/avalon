@@ -13,6 +13,7 @@ import {
   HyperSightSchema,
   MessageSchema,
   ParticipantSchema,
+  ReorderWorkstreamPinsRequestSchema,
   ResourceSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
@@ -85,6 +86,13 @@ const ResolvedSuggestionSchema = z.object({
   resourceId: IdSchema.nullable(),
 });
 const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
+/**
+ * What every pin mutation answers with: the caller's pinned work streams, in
+ * their order. Pinning, unpinning, and reordering all return the same list
+ * rather than the row that moved, so a client applies one response the same way
+ * whichever of the three it made.
+ */
+const PinnedWorkstreamsSchema = z.object({ items: z.array(WorkstreamSchema) });
 const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
@@ -106,6 +114,18 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
     descriptionSource: body.objective ? "authored" : "derived",
   })), 201);
 });
+// Registered ahead of every `/:id` route so the literal segment is never read
+// as an id, whatever order Hono would otherwise resolve them in.
+workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) =>
+  c.json(PinnedWorkstreamsSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds))),
+);
+workstreamRoutes.put("/:id/pin", zValidator("param", idParam), async (c) =>
+  c.json(PinnedWorkstreamsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).pin(c.req.valid("param").id))),
+);
+workstreamRoutes.delete("/:id/pin", zValidator("param", idParam), async (c) =>
+  c.json(PinnedWorkstreamsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).unpin(c.req.valid("param").id))),
+);
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
   c.json(WorkstreamContextSchema.parse(
     await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id))),

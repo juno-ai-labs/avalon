@@ -60,6 +60,7 @@ noteRoutes.post(
       c.get("requestId"),
       input.mode,
       input.transcriptStatus,
+      input.refreshSeconds ?? null,
     )));
   },
 );

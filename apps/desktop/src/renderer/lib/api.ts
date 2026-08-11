@@ -2,8 +2,10 @@ import {
   ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
+  AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
@@ -33,6 +35,7 @@ import {
   type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
+  type ClientFeatureFlags,
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
@@ -214,6 +217,7 @@ export interface MentionIdentity {
 }
 
 const wireWorkstreamPageSchema = CursorPageSchema(WireWorkstreamSchema);
+const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
   newerCursor: z.string().nullable().default(null),
 });
@@ -336,6 +340,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
+    pinPosition: workstream.pinPosition,
     preview: workstream.objective,
   };
 }
@@ -966,6 +971,7 @@ export class AvalonApi {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      pinPosition: null,
     };
   }
 
@@ -1073,14 +1079,35 @@ export class AvalonApi {
     });
   }
 
+  /**
+   * The server-decided values this device is allowed to see, for the signed-in
+   * person. The main process polls the same route for Application → Developer;
+   * a renderer asks directly for a value only it acts on, rather than adding an
+   * IPC hop and a second reader of the same answer.
+   */
+  clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
+    return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
+  }
+
+  /**
+   * `refreshSeconds` is the cadence this meeting settled on. It travels with
+   * the request so the briefing is written for the schedule the client is
+   * actually keeping, rather than for whatever the flag says when the server
+   * happens to read it.
+   */
   generateNoteNotes(
     id: string,
     mode: 'live' | 'final' = 'live',
     transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
+    refreshSeconds?: number,
   ): Promise<NoteDetail> {
     return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
       method: 'POST',
-      body: { mode, transcriptStatus },
+      body: {
+        mode,
+        transcriptStatus,
+        ...(refreshSeconds === undefined ? {} : { refreshSeconds }),
+      },
       schema: WireNoteDetailSchema,
     });
   }
@@ -1128,6 +1155,45 @@ export class AvalonApi {
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
+  }
+
+  /**
+   * Pin a work stream for the signed-in person, across every device they use.
+   *
+   * All three pin calls answer with the whole pinned list in its stored order,
+   * so the caller replaces what it holds rather than reasoning about which row
+   * moved — see {@link ApiClient.reorderWorkstreamPins}.
+   */
+  async pinWorkstream(id: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT');
+  }
+
+  async unpinWorkstream(id: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'DELETE');
+  }
+
+  /**
+   * Send the pinned list's new order after a drag.
+   *
+   * The whole arrangement travels, not the row that moved: the server writes it
+   * as dense positions, and the list it sends back is the one to render. Ids
+   * that have been unpinned elsewhere are ignored rather than refused.
+   */
+  async reorderWorkstreamPins(workstreamIds: string[]): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { workstreamIds });
+  }
+
+  private async readPinnedWorkstreams(
+    path: string,
+    method: 'PUT' | 'DELETE',
+    body?: unknown,
+  ): Promise<WorkstreamSummary[]> {
+    const page = await this.request(path, {
+      method,
+      ...(body === undefined ? {} : { body }),
+      schema: wirePinnedWorkstreamsSchema,
+    });
+    return page.items.map(mapWorkstreamSummary);
   }
 
   async createWorkstream(input: {
@@ -1518,8 +1584,13 @@ export class AvalonApi {
     input: { message: string; draftId?: string; templateId?: string; attachmentIds?: string[] },
     onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
   ): Promise<AutomationDraftResponse> {
-    const draftId = input.draftId ?? crypto.randomUUID();
-    const previous = this.drafts.get(draftId) ?? { attachmentIds: [], messages: [], draft: null };
+    // The first turn has no draft to continue. Every later one names the draft
+    // subscription the API wrote, which is the automation's real id — the
+    // renderer never mints one, because a key only this process knows could not
+    // put the draft in the sidebar or bring it back after a restart.
+    const previous = input.draftId
+      ? this.drafts.get(input.draftId) ?? { attachmentIds: [], messages: [], draft: null }
+      : { attachmentIds: [], messages: [], draft: null };
     const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
     const attachmentIds = [...new Set([...previous.attachmentIds, ...(input.attachmentIds ?? [])])];
     const response = await this.execute('/automations/draft/stream', {
@@ -1529,7 +1600,7 @@ export class AvalonApi {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        draftId,
+        ...(input.draftId ? { draftId: input.draftId } : {}),
         messages,
         currentDraft: previous.draft,
         attachmentIds,
@@ -1572,11 +1643,23 @@ export class AvalonApi {
     }
     const raw = WireAutomationDraftSchema.parse(completed.draft);
     const assistantMessage = completed.assistantMessage;
+    const draftId = completed.draftId;
     this.drafts.set(draftId, {
       attachmentIds,
       messages: [...messages, { role: 'assistant', content: assistantMessage }],
       draft: raw,
     });
+    return this.automationDraftResponse(draftId, raw, assistantMessage);
+  }
+
+  /** The one place a compiled draft becomes what the builder screen renders,
+   * so a draft picked back up out of the sidebar reads exactly like the turn
+   * that produced it. */
+  private automationDraftResponse(
+    draftId: string,
+    raw: WireAutomationDraft,
+    assistantMessage: string,
+  ): AutomationDraftResponse {
     const elicitation = raw.elicitation;
     return {
       draftId,
@@ -1617,6 +1700,30 @@ export class AvalonApi {
     };
   }
 
+  /** Reopens a draft left in the sidebar. The conversation comes back from the
+   * API rather than from this process's memory, which is the whole point: the
+   * draft outlived the screen it was written on. */
+  async resumeAutomationDraft(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<{ draft: AutomationDraftResponse; messages: Array<{ role: 'user' | 'assistant'; content: string }> }> {
+    const state = await this.request(`/automations/${encodeURIComponent(id)}/draft`, {
+      schema: WireAutomationDraftStateSchema,
+      signal,
+    });
+    this.drafts.set(state.draftId, {
+      attachmentIds: state.attachmentIds,
+      messages: state.messages,
+      draft: state.draft,
+    });
+    const assistantMessage = [...state.messages].reverse()
+      .find((message) => message.role === 'assistant')?.content ?? '';
+    return {
+      draft: this.automationDraftResponse(state.draftId, state.draft, assistantMessage),
+      messages: state.messages,
+    };
+  }
+
   async createAutomation(
     draftId: string,
     defaultPluginIds: string[],
@@ -1629,6 +1736,7 @@ export class AvalonApi {
     const raw = await this.request('/automations', {
       method: 'POST',
       body: {
+        draftId,
         draft: state.draft,
         scope: options.scope === undefined
           ? state.draft.suggestedScope

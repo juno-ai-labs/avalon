@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, type CSSProperties, type PropsWithChildren } from 'react';
+import { useEffect, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
@@ -11,6 +11,21 @@ import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
+}
+
+/**
+ * Whether the screen at this route is showing the named automation, and would
+ * therefore be stranded once it stops being served.
+ *
+ * There are two such screens, not one. An automation that runs is read on its
+ * overview; a draft is read in the builder, which the sidebar reaches through a
+ * query rather than a path. Missing the second leaves the builder on a
+ * conversation the API will not serve again — and with a Create button that
+ * would insert a second automation instead of promoting this one.
+ */
+export function showsAutomation(pathname: string, search: string, automationId: string): boolean {
+  if (pathname === `/automations/${automationId}`) return true;
+  return pathname === '/automations/new' && new URLSearchParams(search).get('draft') === automationId;
 }
 
 export function openWorkstreamId(pathname: string): string | null {
@@ -52,6 +67,53 @@ export function staleHarnessStatusWorkstreamId(
   return detail.dataUpdatedAt <= summariesUpdatedAt ? activeWorkstreamId : null;
 }
 
+/**
+ * Apply a pin response — the caller's whole pinned list, in order — to the
+ * cached work-stream list.
+ *
+ * Every row is rewritten, not just the ones named: the response *is* the pinned
+ * set, so a work stream absent from it is one this person no longer has pinned,
+ * whichever window unpinned it. Patching only the named rows would leave a pin
+ * removed on another device sitting in this sidebar until the next poll, in a
+ * position the server has already given to something else.
+ */
+export function applyPinnedWorkstreams(
+  queryClient: ReturnType<typeof useQueryClient>,
+  pinned: WorkstreamSummary[],
+): void {
+  const positions = new Map(pinned.map((workstream) => [workstream.id, workstream.pinPosition]));
+  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+    current?.map((item) => {
+      const pinPosition = positions.get(item.id) ?? null;
+      return item.pinPosition === pinPosition ? item : { ...item, pinPosition };
+    }),
+  );
+}
+
+/**
+ * Apply a pin response only if a later one has not been issued behind it.
+ *
+ * The three pin mutations all rewrite the same list, and their responses can
+ * come back out of order: two quick moves, the second answered first, and the
+ * first response then describes an arrangement the server has already moved
+ * past. Written unconditionally it would put that stale order on screen — and
+ * the local drag order has been cleared by then, so nothing else is holding the
+ * newer one. Ordering by *issue* rather than arrival is what makes the last
+ * thing the reader did the last thing they see.
+ *
+ * Returns whether the response was applied, which is what the tests assert on.
+ */
+export function applyPinnedWorkstreamsIfCurrent(
+  queryClient: ReturnType<typeof useQueryClient>,
+  pinned: WorkstreamSummary[],
+  issued: number,
+  latestIssued: number,
+): boolean {
+  if (issued !== latestIssued) return false;
+  applyPinnedWorkstreams(queryClient, pinned);
+  return true;
+}
+
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
   const navigate = useNavigate();
@@ -63,6 +125,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const hypersightWidth = useUiStore((state) => state.hypersightWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  // Replacing rather than pushing, so Back cannot return to an automation that
+  // is no longer served — true of an archived draft as much as a deleted
+  // automation.
+  const leaveAutomationScreen = (automationId: string): void => {
+    if (showsAutomation(location.pathname, location.search, automationId)) {
+      void navigate('/workstreams/new', { replace: true });
+    }
+  };
+
   // HyperSight and the inspector rail are the same slot, so the main pane makes
   // room for whichever one holds it — including a panel that has lost the slot
   // and is still fading out, which is on screen and has to be laid out for.
@@ -75,6 +146,21 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     staleTime: 20_000,
   });
   const workstreams = useWorkstreamsQuery();
+  // One counter across all three pin mutations, because they all rewrite the
+  // same list and a response can only be judged stale against the others.
+  const pinRequestsIssued = useRef(0);
+  const applyPinResponse = async (request: () => Promise<WorkstreamSummary[]>): Promise<void> => {
+    pinRequestsIssued.current += 1;
+    const issued = pinRequestsIssued.current;
+    const pinned = await request();
+    if (!applyPinnedWorkstreamsIfCurrent(queryClient, pinned, issued, pinRequestsIssued.current)) return;
+    // The response is the whole pinned list and can name a work stream this
+    // device has never listed — pinned on another machine, and too quiet to sit
+    // on the page this one last fetched. Patching positions cannot conjure that
+    // row, so the list is refetched behind the patch: the patch is what moves
+    // the section immediately, the refetch is what makes it complete.
+    void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+  };
   const notes = useQuery({
     queryKey: ['notes'],
     queryFn: ({ signal }) => api!.getNotes(signal),
@@ -117,7 +203,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) return;
           await api.archiveDraftAutomation(automation.id);
           await queryClient.invalidateQueries({ queryKey: ['automations'] });
-          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+          leaveAutomationScreen(automation.id);
         }}
         onArchiveNote={async (note) => {
           if (!api) return;
@@ -180,7 +266,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             queryClient.invalidateQueries({ queryKey: ['automations'] }),
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           ]);
-          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+          // Leaving the deleted automation's route replaces it rather than
+          // pushing, so Back cannot return to it, and the detail query goes
+          // with it so nothing can render the automation from cache.
+          leaveAutomationScreen(automation.id);
+          queryClient.removeQueries({ queryKey: ['automation', automation.id] });
         }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
@@ -192,6 +282,16 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             current ? { ...current, ...updated } : current,
           );
           if (location.pathname === `/workstreams/${updated.id}`) void navigate('/workstreams/new');
+        }}
+        onPinWorkstream={async (workstream, pinned) => {
+          if (!api) return;
+          await applyPinResponse(() => pinned
+            ? api.pinWorkstream(workstream.id)
+            : api.unpinWorkstream(workstream.id));
+        }}
+        onReorderPinnedWorkstreams={async (workstreamIds) => {
+          if (!api) return;
+          await applyPinResponse(() => api.reorderWorkstreamPins(workstreamIds));
         }}
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;

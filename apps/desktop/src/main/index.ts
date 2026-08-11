@@ -1177,6 +1177,44 @@ function sendDeepLink(rawUrl: string): void {
   targetWindow.focus();
 }
 
+/**
+ * Takes the main window to one note and raises it, for the meeting window that
+ * is about to close behind it.
+ *
+ * It travels as a deep link on the channel every other navigation uses, so the
+ * renderer needs no second dispatcher — but it is sent only to the main window,
+ * unlike `sendDeepLink`. A note is a main-window destination, and the settings
+ * renderer has no business navigating because a meeting ended.
+ *
+ * Every path through this ends with a window in front of the person, because the
+ * caller closes the meeting window whether or not this could deliver. A window
+ * that is not listening yet gets the link queued for `consumePendingDeepLinks`,
+ * and is still raised — leaving the meeting window to vanish onto whatever was
+ * behind it is the exact "go find the note yourself" step this removes.
+ */
+function revealNoteInMainWindow(noteId: string): void {
+  const target = `${customProtocol}://notes/${noteId}`;
+  const raise = (window: BrowserWindow): void => {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  };
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
+    if (!pendingDeepLinks.includes(target)) pendingDeepLinks.push(target);
+    // Gone: a new window opens on the queued link and raises itself. Present but
+    // still loading — a reload, a slow cold start — is the case that would
+    // otherwise queue the link and raise nothing at all.
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (app.isReady()) void createMainWindow();
+    } else {
+      raise(mainWindow);
+    }
+    return;
+  }
+  mainWindow.webContents.send('auth:deep-link', target);
+  raise(mainWindow);
+}
+
 function emitDeepLink(rawUrl: string): void {
   try {
     const deepLink = new URL(rawUrl);
@@ -1414,10 +1452,16 @@ function registerIpc(): void {
     if (!url) throw new Error('Open this platform’s privacy settings to change recording access.');
     await shell.openExternal(url);
   });
-  ipcMain.handle('system:close-meeting-notes', (event) => {
+  ipcMain.handle('system:close-meeting-notes', (event, rawNoteId: unknown) => {
     assertTrustedIpcSender(event);
+    if (rawNoteId !== undefined && (typeof rawNoteId !== 'string' || !isUuid(rawNoteId))) {
+      throw new Error('Invalid note ID');
+    }
     const meetingWindow = [...meetingWindows].find((window) => window.webContents === event.sender);
     if (!meetingWindow) throw new Error('Only a meeting-notes window can close itself');
+    // Raise the note before the window goes, so the person is handed to it
+    // rather than left looking at whatever the meeting window was covering.
+    if (typeof rawNoteId === 'string') revealNoteInMainWindow(rawNoteId);
     forceCloseMeetingWindow(meetingWindow);
   });
 }

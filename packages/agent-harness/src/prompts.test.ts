@@ -6,6 +6,7 @@ import {
   renderAddressingMessages,
   renderAutomationCompilerMessages,
   renderSemanticTriggerMessages,
+  renderScheduledDigestBriefMessage,
   renderTriggerActivityMessage,
   renderUntrustedInboundEmailMessage,
   renderUntrustedSlackOriginMessage,
@@ -239,6 +240,13 @@ describe("prompt renderers", () => {
       metadata: { body: injection },
     });
     const emailMessage = renderUntrustedInboundEmailMessage(injection);
+    // A digest brief is Avalon's instruction wrapped around connector-derived
+    // event titles and bodies, so it carries outside content and belongs here.
+    const digestMessage = renderScheduledDigestBriefMessage({
+      brief: injection,
+      plannedFor: "2026-08-11T16:00:00.000Z",
+      eventCount: 1,
+    });
     const semanticMessages = renderSemanticTriggerMessages({
       condition: "A deployment failed.",
       activity: {
@@ -277,6 +285,8 @@ describe("prompt renderers", () => {
     expect(draftMessages[1]!.content).toContain(injection);
     expect(activityMessage).toMatchObject({ role: "user" });
     expect(emailMessage).toMatchObject({ role: "user" });
+    expect(digestMessage).toMatchObject({ role: "user" });
+    expect(digestMessage.content).toContain(injection);
     expect(semanticMessages[0]!.content).not.toContain(injection);
     expect(semanticMessages[1]).toMatchObject({ role: "user" });
     expect(semanticMessages[1]!.content).toContain(injection);
