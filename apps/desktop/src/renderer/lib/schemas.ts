@@ -1,3 +1,4 @@
+import { AutomationPluginActivitySchema } from '@avalon/contracts';
 import { z } from 'zod';
 
 const scopeSchema = z.enum(['you', 'workspace']);
@@ -91,6 +92,7 @@ export const toolEventSchema = z
     status: z.enum(['started', 'completed', 'failed', 'ambiguous']),
     durationMs: z.number().optional(),
     toolType: z.string().optional(),
+    plugin: AutomationPluginActivitySchema.optional(),
     input: z.unknown().optional(),
     output: z.unknown().optional(),
   })
@@ -233,8 +235,8 @@ export const automationDetailSchema = automationSummarySchema.extend({
     suggestedPluginId: z.string().optional(),
   })).default([]),
   deliveryTargets: z.array(z.object({
-    type: z.literal('slack_agent_dm'),
-    connectionId: z.string(),
+    type: z.enum(['slack_agent_dm', 'email']),
+    connectionId: z.string().nullable().default(null),
     displayName: z.string(),
     status: z.enum(['active', 'needs_input', 'disabled']),
   })).default([]),

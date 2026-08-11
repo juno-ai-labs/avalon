@@ -527,9 +527,15 @@ const SlackOkSchema = z.object({ ok: z.literal(true) }).passthrough();
 const SlackChannelSchema = z.object({ id: SlackIdSchema }).passthrough();
 const SlackConversationSchema = SlackChannelSchema.extend({
   name: z.string().optional(),
-  is_private: z.boolean(),
+  // Optional because Slack omits it entirely on an `im` response. Consumers
+  // must treat its absence as "not known to be public" rather than as public.
+  is_private: z.boolean().optional(),
   is_im: z.boolean().optional(),
   is_mpim: z.boolean().optional(),
+  // Slack Connect. Set on externally shared channels and on external DMs
+  // alike, so a reader in the conversation may work for another company.
+  is_ext_shared: z.boolean().optional(),
+  is_pending_ext_shared: z.boolean().optional(),
 });
 const SlackListedPublicChannelSchema = SlackChannelSchema.extend({
   name: z.string().optional(),
@@ -1798,6 +1804,14 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
         maturity: "stable",
         runtimeStatus: "operational",
         webhookResponseDeadlineMs: 3_000,
+      },
+      userDelivery: {
+        targetType: "slack_agent_dm",
+        label: "Slack DM",
+        description: "Avalon Agent DM in this Slack workspace.",
+        // The bot is installed for the whole team, so it can only address a
+        // person once that person has linked their Slack identity to Avalon.
+        requiresPersonalIdentityLink: true,
       },
       capabilities: [
         ...Object.values(SlackCapabilities)

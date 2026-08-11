@@ -128,6 +128,14 @@ export interface WorkstreamConnection {
   ownerName?: string;
   status: 'healthy' | 'reconnect_required' | 'disabled';
   capabilities?: string[];
+  /** Set when this connection can hand automation results to the signed-in user. */
+  userDelivery?: AutomationUserDelivery;
+}
+
+export interface AutomationUserDelivery {
+  targetType: AutomationDeliveryTargetType;
+  label: string;
+  description: string;
 }
 
 export interface ToolEventData {
@@ -137,7 +145,8 @@ export interface ToolEventData {
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
   durationMs?: number;
   toolType?: string;
-  plugins?: AutomationPluginActivity[];
+  /** The single plugin that owns this tool; absent for Avalon-owned tools. */
+  plugin?: AutomationPluginActivity;
   input?: unknown;
   output?: unknown;
 }
@@ -392,6 +401,23 @@ export interface WorkOpportunity {
   sourceLabel: string;
 }
 
+/** Every run always lands in Avalon; these are the extra frozen destinations. */
+export type AutomationDeliveryTargetType = 'slack_agent_dm' | 'email';
+
+export interface AutomationDeliveryChoice {
+  /** A connector-declared personal destination, with the type it declared. */
+  connection?: { id: string; targetType: AutomationDeliveryTargetType };
+  email?: boolean;
+}
+
+export interface AutomationCreateOptions {
+  /** Overrides the scope Avalon suggested for the draft. */
+  scope?: AutomationScope;
+  delivery?: AutomationDeliveryChoice;
+}
+
+export type AutomationScope = 'you' | 'workspace';
+
 export interface AutomationDetail extends AutomationSummary {
   description: string;
   versionNumber: number;
@@ -406,8 +432,8 @@ export interface AutomationDetail extends AutomationSummary {
   activitySourcePluginIds: Record<string, string>;
   activitySources: AutomationActivitySource[];
   deliveryTargets?: Array<{
-    type: 'slack_agent_dm';
-    connectionId: string;
+    type: AutomationDeliveryTargetType;
+    connectionId: string | null;
     displayName: string;
     status: 'active' | 'needs_input' | 'disabled';
   }>;

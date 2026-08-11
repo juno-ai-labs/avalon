@@ -8,6 +8,8 @@ export interface RuntimeConfig {
   isPackaged: boolean;
   platform: string;
   api: Record<AvalonRegion, string>;
+  /** Public site origin. Canonical work-stream links are minted against it. */
+  webBaseUrl: string;
   devAuthEnabled: boolean;
 }
 
