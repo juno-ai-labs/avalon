@@ -100,6 +100,13 @@ const MENU_BAR_LABEL_MAX_LENGTH = 60;
 const MENU_BAR_LABEL_WORD_BOUNDARY_FLOOR = 40;
 /** Punctuation left dangling before an ellipsis reads as a typo. */
 const TRAILING_PUNCTUATION = /[\s,;:.!?—–-]+$/u;
+/**
+ * Cuts by what a reader sees rather than by UTF-16 code unit. A title can carry
+ * an emoji, and slicing one of those in half leaves a lone surrogate that
+ * renders as `�` immediately before the ellipsis. Locale-pinned so the same
+ * label truncates the same way on every machine.
+ */
+const GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
 
 /**
  * Flattens a title or prompt to something a single menu row can hold.
@@ -110,15 +117,21 @@ const TRAILING_PUNCTUATION = /[\s,;:.!?—–-]+$/u;
  */
 export function menuBarLabel(rawLabel: string): string {
   const collapsed = rawLabel.replace(/\s+/gu, ' ').trim();
+  // A string of no more code units than the limit cannot hold more graphemes
+  // than it either, so the common case never pays for segmentation.
   if (collapsed.length <= MENU_BAR_LABEL_MAX_LENGTH) return collapsed;
-  // One character short, so the ellipsis fits inside the limit rather than
-  // pushing the row a character past it.
-  const clipped = collapsed.slice(0, MENU_BAR_LABEL_MAX_LENGTH - 1);
+  const graphemes = [...GRAPHEMES.segment(collapsed)].map((entry) => entry.segment);
+  if (graphemes.length <= MENU_BAR_LABEL_MAX_LENGTH) return collapsed;
+  // One short, so the ellipsis fits inside the limit rather than pushing the
+  // row a character past it.
+  const clipped = graphemes.slice(0, MENU_BAR_LABEL_MAX_LENGTH - 1);
+  // Counted in graphemes for the same reason the cut is: a boundary measured
+  // in code units moves as soon as anything above the basic plane appears.
   const lastBoundary = clipped.lastIndexOf(' ');
   const truncated = lastBoundary >= MENU_BAR_LABEL_WORD_BOUNDARY_FLOOR
     ? clipped.slice(0, lastBoundary)
     : clipped;
-  return `${truncated.replace(TRAILING_PUNCTUATION, '')}…`;
+  return `${truncated.join('').replace(TRAILING_PUNCTUATION, '')}…`;
 }
 
 /**

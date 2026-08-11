@@ -152,8 +152,12 @@ alongside it, which is how the path is exercised without waiting for a real
 login.
 
 Nothing distinguishes a login from a restart — both are one login event to macOS
-— and Avalon treats them the same. When the flag is set, `whenReady` skips
-`createMainWindow` entirely. `app.on('activate')` still builds a window when the
+— and Avalon treats them the same. When the flag is set **and a status item is
+actually in the menu bar**, `whenReady` skips `createMainWindow` entirely. The
+second half matters: the item is off whenever someone turned it off, and absent
+whenever creating it failed, and hiding into a menu bar item that does not exist
+leaves Avalon running with nothing on screen. `MenuBarController.present()` is
+that question, and it is deliberately not `enabled()`. `app.on('activate')` still builds a window when the
 Dock icon is clicked, and a deep link still builds one on the way to its
 destination, so the hidden state is not sticky.
 
@@ -164,9 +168,15 @@ destination, so the hidden state is not sticky.
   would show an empty menu exactly when the menu is the only surface there is.
 - **The menu is built from cache, never fetched on open.** A drop-down that
   waited on the network would hang under the pointer on a bad connection.
-- **Signing out clears the cache.** The previous account's work-stream titles are
-  workspace content; leaving them in the menu would make them readable to whoever
-  signs in next.
+- **Signing out clears the cache, including whatever is still on the wire.**
+  The previous account's work-stream titles are workspace content, and a request
+  issued before the sign-out would otherwise land afterwards and put them back.
+  Every published answer carries the `generation` it was fetched under and is
+  dropped if that is no longer current. Anything that adds a new way to publish
+  has to carry the same check.
+- **A launch opens no window only when there is a status item to hide into.**
+  Otherwise Avalon starts invisible with no menu bar presence, reachable only by
+  hunting for it in the Dock.
 - **The `Template` filename suffix and `@2x` sibling are load-bearing.** Losing
   the suffix gives a black square on a dark menu bar; losing the `@2x` file gives
   a blurred mark on every Retina Mac. Neither fails a build, so
@@ -223,9 +233,16 @@ the link there first, not a second navigation channel here.
 | More than five pins | The top five of the arrangement are shown. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
 | macOS 13 or older | Both headers fall back to disabled rows. Everything else is unchanged. |
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
+| Sign-out, or a suggestion started, while a refresh is in flight | The generation moves, so that answer is discarded on arrival and a caller asking again gets a new request rather than the superseded one. |
+| The login item registers but the marker fails to write | The registration is reported as it stands, not as off. The marker is retried on the next launch. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
 | The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
 | Not macOS | No status item; `menuBarAvailable` is false and Settings omits the toggle. The preference is still stored, so the same profile on a Mac gets the choice rather than the default. |
+
+`menuBarLabel` counts and cuts in **graphemes**, via `Intl.Segmenter` — a title
+can carry an emoji, and a cut by UTF-16 code unit leaves a lone surrogate
+rendering as `�` in front of the ellipsis. The segmentation is skipped when the
+code-unit length already fits, so the ordinary label never pays for it.
 
 The empty-state copy is exempt from `menuBarLabel`'s 60-character limit. That
 limit stops one model-written title stretching the menu; the fixed copy is ours,
@@ -333,6 +350,44 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 `sendDeepLink` and `activate` already do.
 
 **Not done:** a submenu for older work streams.
+
+### 2026-08-11 — Five defects found in review of the original build
+
+**What changed:** (1) Cached content now carries a generation, bumped on
+sign-out and on starting a suggestion; an answer that arrives under a stale one
+is discarded, and `refresh()` no longer hands back an in-flight request issued
+under it. (2) A login launch opens a window unless a status item is actually
+present, which `MenuBarController.present()` now answers. (3)
+`LaunchAtLoginController.initialize` reads the login item back in a `finally`.
+(4) `menuBarLabel` cuts in graphemes rather than UTF-16 code units.
+
+**Why:** each was a real failure, none reachable from the tests as written.
+Sign-out emptied the cache but not the request already on the wire, so the
+previous account's work-stream titles came back into the menu moments later —
+the exact leak the method existed to prevent. A login launch checked the
+*preference*, so with the menu bar item turned off Avalon started with no window
+and no item at all. Coalescing returned any in-flight request, so the refresh
+after starting a suggestion could republish the suggestion that had just been
+consumed, and the next click on it would be refused by the version check with
+nothing on screen explaining it. If registering the login item succeeded but
+writing its marker failed, `initialize` threw before reading the state back and
+Settings then offered to turn on something macOS already held on. And a title
+with an emoji could be cut through a surrogate pair, rendering `�`.
+
+**Considered and rejected:** for the first three, a mutex around the whole store.
+It serializes reads that have no reason to wait on each other and still would not
+answer the real question, which is not "is something running" but "is what came
+back still about the world it was asked about" — a generation answers that
+directly. For the last, trimming a trailing lone surrogate after slicing: it
+fixes the rendering and still cuts inside a grapheme cluster, so a flag or a
+skin-toned emoji loses its modifier instead.
+
+**Consequences:** `generation` is now the discipline for anything that publishes
+into the cache — a new writer that skips the check reintroduces the leak, and a
+new invalidation point that does not bump it reintroduces the stale republish.
+`present()` and `enabled()` are different questions and must not be conflated.
+`menuBarLabel` constructs one module-level `Intl.Segmenter`; a per-call one would
+be a real cost on a menu that rebuilds on every content change.
 
 ### 2026-08-11 — Every group renders, and an empty one says how it fills
 

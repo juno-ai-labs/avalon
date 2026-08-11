@@ -135,6 +135,29 @@ describe('menu bar controller', () => {
     expect(() => subject.controller.refresh()).not.toThrow();
   });
 
+  it('separates the preference from whether an item is actually in the menu bar', async () => {
+    // A launch that opens no window asks `present`, not `enabled`: hiding into
+    // a menu bar item that does not exist leaves nothing on screen at all.
+    const failed = harness({ createTrayFails: true });
+    await failed.controller.initialize();
+    expect(failed.controller.enabled()).toBe(true);
+    expect(failed.controller.present()).toBe(false);
+
+    const off = harness({ stored: { menuBarEnabled: false } });
+    await off.controller.initialize();
+    expect(off.controller.present()).toBe(false);
+
+    const unsupported = harness({ supported: false });
+    await unsupported.controller.initialize();
+    expect(unsupported.controller.present()).toBe(false);
+
+    const subject = harness();
+    await subject.controller.initialize();
+    expect(subject.controller.present()).toBe(true);
+    await subject.controller.set(false);
+    expect(subject.controller.present()).toBe(false);
+  });
+
   it('rebuilds the drop-down from whatever is currently cached', async () => {
     const subject = harness({
       content: {
