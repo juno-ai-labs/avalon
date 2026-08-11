@@ -7,6 +7,7 @@ import { authRoutes } from "./routes/auth";
 import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
 import { digestRoutes } from "./routes/digest";
+import { featureFlagRoutes } from "./routes/feature-flags";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { noteRoutes } from "./routes/notes";
@@ -97,6 +98,7 @@ export function createApp(): Hono<HonoAppEnv> {
   const identityApi = new Hono<HonoAppEnv>();
   identityApi.use("*", requireIdentityAuth);
   identityApi.route("/onboarding", onboardingRoutes);
+  identityApi.route("/feature-flags", featureFlagRoutes);
   app.route("/", identityApi);
 
   const protectedApi = new Hono<HonoAppEnv>();

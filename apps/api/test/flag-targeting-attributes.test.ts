@@ -156,6 +156,30 @@ describe("flag targeting attributes", () => {
     ).resolves.toMatchObject({ userRole: "admin" });
   });
 
+  it("carries the platform identity a per-person rollout must bucket on", async () => {
+    const env = envWith(sqliteD1(database));
+    database
+      .prepare("UPDATE users SET platform_user_id = ? WHERE id = ?")
+      .run("platform-member", MEMBER_ID);
+    clearFlagTargetingAttributeCache();
+
+    // `userId` is this region's row; the platform id is the same person in both,
+    // so it is the one a percentage rollout may bucket on without splitting them.
+    await expect(
+      loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID, userId: MEMBER_ID }),
+    ).resolves.toMatchObject({ userPlatformId: "platform-member" });
+  });
+
+  it("omits the platform identity for an account predating the control plane", async () => {
+    const env = envWith(sqliteD1(database));
+
+    // Substituting the regional id would bucket that person differently in each
+    // region. An absent attribute matches nothing, which sits them out instead.
+    await expect(
+      loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID }),
+    ).resolves.not.toHaveProperty("userPlatformId");
+  });
+
   it("says who created a work stream and how, which is all a run-time evaluation knows", async () => {
     const env = envWith(sqliteD1(database));
 

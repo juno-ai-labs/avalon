@@ -1,20 +1,32 @@
 # Feature flags
 
 Avalon evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
-through the `FLAGS` binding on both regional Workers. Today the binding owns one
-thing: which OpenRouter model each agent runs on. Read this document before
-adding a flag, changing an agent's models, or changing what happens when a flag
-cannot be evaluated. One thing overrides a flag rather than being one — a work
-stream pinned to a single model — and it has [its own
+through the `FLAGS` binding on both regional Workers. The binding owns two
+things: which OpenRouter model each agent runs on, and which client-visible
+features the desktop is allowed to offer. Read this document before adding a
+flag, changing an agent's models, or changing what happens when a flag cannot be
+evaluated. One thing overrides a flag rather than being one — a work stream
+pinned to a single model — and it has [its own
 section](#a-work-streams-own-model) below.
 
-`apps/api/src/services/agent-model-flags.ts` is the only module that reads the
-binding. Nothing else calls `env.FLAGS` directly, and it is also where the pin
-above is read and applied, so every answer to "which model does this run use"
-comes from one file.
-`apps/api/src/services/flag-targeting-attributes.ts` is its companion: it turns
-the ids a caller happens to hold into the attributes a targeting rule matches
-on, and it is where the line between a fact and a person's data is drawn.
+Two modules read the binding, one per kind, and nothing else calls `env.FLAGS`
+directly:
+
+| Module | Owns | Fails |
+| --- | --- | --- |
+| `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
+| `apps/api/src/services/client-feature-flags.ts` | The flags the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
+
+That difference in failure direction is the reason they are separate modules
+rather than one resolver with a parameter. A client flag that fell back the way
+a model flag does would ship an unreleased feature on the first Flagship outage.
+Because the pin lives with the model flags, every answer to "which model does
+this run use" still comes from one file.
+
+`apps/api/src/services/flag-targeting-attributes.ts` is the companion both of
+them evaluate through: it turns the ids a caller happens to hold into the
+attributes a targeting rule matches on, and it is where the line between a fact
+and a person's data is drawn.
 
 ## Why a flag rather than a Worker variable
 
@@ -196,6 +208,7 @@ did. Each id the caller passes brings its facts with it:
 | `workspaceOwnerEmailDomain` | string | Email domain of the user who created the workspace | `workspaceId` |
 | `userEmailDomain` | string | Email domain of the user the evaluation is for | `userId` |
 | `userRole` | string | `owner`, `admin`, or `member` **in the workspace being evaluated** | `userId` + `workspaceId` |
+| `userPlatformId` | string | The person, stable across regions. **Bucket a per-person rollout by this, not by `userId`** | `userId` |
 | `workstreamOrigin` | string | `ad_hoc` or `automation` | `workstreamId` |
 | `workstreamScope` | string | `personal` or `workspace` — who may read it | `workstreamId` |
 | `workstreamCreatedByUserId` | string | Who created it; absent when an automation did | `workstreamId` |
@@ -206,7 +219,18 @@ did. Each id the caller passes brings its facts with it:
 An attribute whose fact is unknown is **omitted rather than sent empty**, so a
 rule can never match a placeholder. The consequence worth knowing: a rule on an
 attribute that was not sent silently never matches, which is why
-`agent_model_flag_resolved` logs the attribute *names* that were sent.
+`agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
+that were sent.
+
+`userPlatformId` is the one to reach for when a rollout is per *person* rather
+than per workspace. `userId` names a regional `users` row, and one person with
+workspaces in both regions has one in each — bucketing on it would place them in
+a different bucket per region and hand them a half-rolled-out feature on one of
+them. The platform id is established once by the Global control plane and is
+immutable in both regions ([`REGIONALIZATION.md`](REGIONALIZATION.md)). It is
+absent only for an account predating that control plane, and an absent attribute
+does not match, so such an account sits out the rollout rather than landing in
+the wrong half of it.
 
 `workspaceOwnerEmailDomain` exists because it is the only domain most
 evaluations can have. A work-stream run, a subagent, HyperSight, and the
@@ -301,6 +325,88 @@ to use, resolved from the same flag at schedule time — a flag changed between
 scheduling and execution makes that column an expectation rather than a
 guarantee. The inference ledger records what each attempt actually used.
 
+## Client-visible flags
+
+A client flag decides what the desktop is allowed to *offer*. There is one
+today:
+
+| Flag key | Type | Default | Decides |
+| --- | --- | --- | --- |
+| `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
+
+`GET /feature-flags` serves them all as one object — `{ "developerSettings":
+false }` — resolved for the signed-in person. It answers under *identity* auth
+rather than workspace auth: eligibility belongs to the account, and a device
+that has not chosen an organization yet still has to be told the feature is off
+rather than read a 403 as an outage.
+
+The Developer section is for Juno staff, and **that is a Flagship targeting
+rule, not a condition in the Worker** — see [the rule the flag is provisioned
+with](#provisioning). `client-feature-flags.ts` contains no cohort of its own:
+it describes the person, evaluates the flag, and serves the answer. Changing who
+gets the section is a flag change with a changelog entry, not a deploy, and the
+console shows the whole truth about who is in.
+
+### What a client flag's rules match on
+
+The same [identity](#identity) and [attributes](#attributes) an agent
+evaluation sends, from the same loader, with identity spread over the top so
+nothing read from D1 can redefine an id a rollout buckets on. There is no second
+vocabulary: a rule written for a client flag reads like every other rule, and
+the boundary in [what may become an attribute](#what-may-become-an-attribute)
+applies unchanged — the staff scope is `userEmailDomain`, never an address.
+
+The one difference is which attributes are *reachable at all*. A client flag
+always knows a `userId`, because there is a person asking rather than a
+workspace running something, so the `user*` attributes are the ones to write a
+rule against here — where most agent evaluations cannot use them. That is a
+statement about which rules are worth writing, not a guarantee that a given
+attribute was sent: the usual omissions still apply below, so a rule on
+`userEmailDomain` is a rule the client flags can express, not one that always
+matches. `workstreamId` is never known here, so no `workstream*` attribute ever
+appears. `workspaceId` is present only once an organization has been chosen.
+
+Everything that is not an explicit `true` resolves to off: no binding, a binding
+that throws, a flag that does not resolve, a non-boolean value.
+`resolveClientFeatureFlags` never throws, so a Flagship outage cannot fail the
+poll; it just leaves the answer off. Attribute loading fails the same way — an
+unreadable account yields no `user*` attributes rather than an error, so a
+cohort rule stops matching instead of the request failing.
+
+A resolution logs `client_flag_resolved` at `debug` with the served `variant`,
+the `reason`, and the attribute *names* that were sent. The variant and reason
+tell a rule that excluded someone from one that never fired; the names tell you
+whether the fact the rule is written against was even available. Neither carries
+a value.
+
+### The desktop half
+
+`DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` in
+`apps/desktop/src/main/developer-settings-flag.ts` — one minute — is how long a
+flag change takes to reach a running app. The poll lives in the **main
+process**, not a renderer, because that is where `application-settings.json` and
+the session are, and because both windows then read one answer instead of each
+deciding for itself. It is a poll rather than a socket: the only realtime
+channel Avalon has is the per-work-stream room, which a device without a work
+stream open is not connected to, and a flag change is not worth a second
+channel. A sign-in re-asks immediately rather than waiting out the interval; a
+sign-out closes the section on the way past.
+
+The effective preference the renderer sees is the stored **Debug enabled**
+choice *and* the flag, computed once in `desktopApplicationSettings()`:
+
+- A `application-settings.json` that says `debugEnabled: true` grants nothing
+  while the flag is off. The stored bit is left alone rather than rewritten, so
+  the choice is still there when the flag comes back.
+- The Settings pane hides the whole section rather than disabling its toggle. A
+  section the account is not in the cohort for is not a control that happens to
+  be unavailable.
+- A poll that cannot reach the service leaves the last answer standing.
+  Revoking the section on a dropped connection would flicker it, and it crosses
+  no trust boundary — it reveals debugging affordances the renderer already
+  holds, per [`SECURITY.md`](SECURITY.md). Only an answer, a sign-out, or a
+  shutdown turns it off.
+
 ## Provisioning
 
 Both regional Workers bind the **one** `avalon-api` Flagship app
@@ -367,6 +473,52 @@ pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type 
 Repeat for every key in the table above. An agent whose flag does not exist
 keeps running on its Worker variables, so the flags may be created one at a
 time.
+
+Then the client flags, seeded **off**, which is what an absent flag already
+resolves to:
+
+```bash
+pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type boolean \
+  -V off=false -V on=true \
+  --default off \
+  -d "Application → Developer in the desktop client. Staff-scoped by the rule below" \
+  --rule "serve=on; when=userEmailDomain equals juno-labs.com"
+```
+
+**The staff scope is that `--rule`, and it is the only thing holding it.**
+Nothing in the Worker narrows the flag, so a `developer-settings` served with no
+rule reaches every account it is evaluated for. `create` takes rules, so give it
+one there rather than adding it afterwards with `update --add-rule`: a flag that
+exists for even a minute without its rule is a flag that is live and unscoped
+for that minute.
+
+Leave the default variation at `off` rather than promoting `on` with the rule
+attached: the default is what an account the rule does not match falls through
+to, so `set … -V on` would hand the section to everyone regardless of the rule.
+
+To stage it among staff, roll out within that rule and bucket by
+`userPlatformId` — not `userId`, which would bucket a person with workspaces in
+both regions twice. There is no workspace worth keeping consistent here, because
+the section describes one person's device:
+
+```bash
+pnpm exec wrangler flagship flags rollout <APP_ID> developer-settings \
+  --to on --from off --percentage 50 --by userPlatformId
+```
+
+To hand it to one person outside a cohort — a contractor, a support session —
+target them by their platform id rather than by address, which is not an
+attribute and never will be ([what may become an
+attribute](#what-may-become-an-attribute)):
+
+```bash
+pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
+  --add-rule "serve=on; when=userPlatformId equals <platform-user-id>"
+```
+
+Withdrawing the section from everyone is `set … -V off`, which overrides every
+rule, and `wrangler flagship flags changelog <APP_ID> developer-settings` is the
+audit trail for who had it when.
 
 ## Changing an agent's models
 
@@ -443,14 +595,24 @@ To exercise a real flag locally you need Cloudflare credentials and
 
 ## Adding a flag
 
-1. Add the key and its typed value to `agent-model-flags.ts`, or to a new
-   module alongside it if the flag is not about model routing. Keep `env.FLAGS`
-   out of call sites.
+1. Add the key and its typed value to `agent-model-flags.ts` if it is about
+   model routing, to `client-feature-flags.ts` if a client reads it, or to a new
+   module alongside them otherwise. Keep `env.FLAGS` out of call sites.
 2. Give it a default that reproduces today's behavior, and hand that same
-   default to Flagship so an absent flag and an unreachable Flagship agree.
-3. Parse the served value with zod and reject it whole on failure.
-4. Add the flag to the table above and create it in the `avalon-api` app. There
-   is one app for both regions, so it is created once.
+   default to Flagship so an absent flag and an unreachable Flagship agree. For
+   a client flag that means `false`: a feature nobody has been given yet is the
+   behavior an outage has to reproduce.
+3. Parse the served value with zod and reject it whole on failure. A boolean
+   flag is the degenerate case — anything that is not `true` is off.
+4. **Write who gets it as a targeting rule, never as a condition in the
+   resolver.** A cohort in code is invisible from the console, needs a deploy to
+   change, and overrides the flag it is supposed to implement. If a rule cannot
+   express the cohort, add the missing *attribute* below — that is the fix, not
+   an `if`.
+5. Add the flag to the table above and create it in the `avalon-api` app,
+   together with the rules that scope it. There is one app for both regions, so
+   it is created once — and a flag created without its rule is live and
+   unscoped until the rule lands.
 
 ## Adding an attribute
 
