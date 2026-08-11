@@ -1,6 +1,7 @@
-import type {
-  GenerateMeetingNotesRequest,
-  MeetingNotesResponse,
+import {
+  CONTROL_TOWER_REFRESH_SECONDS,
+  type GenerateMeetingNotesRequest,
+  type MeetingNotesResponse,
 } from "@avalon/contracts";
 import {
   memberSafeHarnessFailureMessage,
@@ -12,6 +13,7 @@ import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { resolveAgentModelRouting } from "./agent-model-flags";
+import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
 
 type HarnessRunner = (input: RunHarnessInput) => ReturnType<typeof runHarness>;
 
@@ -21,9 +23,9 @@ PRIMARY GOAL
 Return a complete replacement briefing that lets the attendee understand the conversation and respond intelligently after about 30 seconds of reading. The full transcript is context; the recent window is the emphasis.
 
 SPEED IS THE HARD PART
-You run again a minute from now, so a briefing that arrives late describes a meeting that has already moved on. Aim to be finished in 10 seconds or less.
+The request states how soon you run again. A briefing that arrives late describes a meeting that has already moved on, so aim to be finished in 10 seconds or less however long that gap is.
 - Write in one pass, section by section, straight from the transcript. Do not plan, outline, weigh alternatives, or revise what you have written.
-- Almost everything you need is the previous briefing plus one new minute of talk. Where the transcript still supports a line you wrote last time, reuse that line nearly verbatim and spend your effort only on what changed.
+- Almost everything you need is the previous briefing plus the talk since it. Where the transcript still supports a line you wrote last time, reuse that line nearly verbatim and spend your effort only on what changed.
 - Shorter is the safer mistake. A bullet you have to argue yourself into is a bullet to drop, and a section with nothing sharp in it is a section to omit. Current and thin beats complete and stale.
 
 SOURCE AND SAFETY
@@ -157,7 +159,10 @@ const FINAL_SUMMARY_EXAMPLE_MESSAGES: RunHarnessInput["messages"] = [
   },
 ];
 
-function actualRequest(input: GenerateMeetingNotesRequest): RunHarnessInput["messages"][number] {
+function actualRequest(
+  input: GenerateMeetingNotesRequest,
+  refreshSeconds: number,
+): RunHarnessInput["messages"][number] {
   if (input.mode === "final") {
     return {
       role: "user",
@@ -190,6 +195,11 @@ function actualRequest(input: GenerateMeetingNotesRequest): RunHarnessInput["mes
         : "There are no user-written notes.",
       `Complete ordered transcript (source of truth):\n<full_transcript>\n${input.transcript.trim()}\n</full_transcript>`,
       `Most recent 10-minute window (focus):\n<recent_transcript>\n${input.recentTranscript.trim() || input.transcript.trim()}\n</recent_transcript>`,
+      // The cadence is served by a flag, so it belongs here rather than in the
+      // system prompt: run data stays out of the cached prefix, and a prompt
+      // that named a fixed interval in prose would go quietly wrong the first
+      // time the flag moved.
+      `You refresh every ${refreshSeconds} seconds, so the next briefing replaces this one about ${refreshSeconds} seconds from now.`,
       "Produce the current Control Tower briefing.",
     ].join("\n\n"),
   };
@@ -209,10 +219,21 @@ export class MeetingNotesService {
       requestId,
       source: "meeting_notes",
     });
-    const routing = await resolveAgentModelRouting(this.env, "meeting_notes", {
-      workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-    });
+    // The cadence the client is keeping, so the briefing can be written for it.
+    // Resolved for the same person the client's own poll resolves it for, and
+    // only for a live pass: a final summary has no next run to describe.
+    const [routing, refreshSeconds] = await Promise.all([
+      resolveAgentModelRouting(this.env, "meeting_notes", {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+      }),
+      final
+        ? Promise.resolve(CONTROL_TOWER_REFRESH_SECONDS.default)
+        : resolveControlTowerRefreshSeconds(this.env, {
+            userId: this.auth.userId,
+            workspaceId: this.auth.workspaceId,
+          }),
+    ]);
     const outcome = await this.runner({
       config: {
         apiKey: this.env.OPENROUTER_API_KEY,
@@ -239,7 +260,7 @@ export class MeetingNotesService {
       systemPrompt: final ? FINAL_MEETING_SUMMARY_SYSTEM_PROMPT : CONTROL_TOWER_SYSTEM_PROMPT,
       messages: [
         ...(final ? FINAL_SUMMARY_EXAMPLE_MESSAGES : CONTROL_TOWER_EXAMPLE_MESSAGES),
-        actualRequest(input),
+        actualRequest(input, refreshSeconds),
       ],
       pluginDiscovery: false,
       corePlugins: [],

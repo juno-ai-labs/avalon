@@ -14,7 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { UpdateNoteRequest } from '@avalon/contracts';
+import { CONTROL_TOWER_REFRESH_SECONDS, type UpdateNoteRequest } from '@avalon/contracts';
 import type {
   DesktopMediaPermissionStatus,
   DesktopMeetingAudioPermissions,
@@ -26,12 +26,20 @@ import { desktopBridge } from '../lib/platform';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
-// Control Tower is only useful while the conversation it describes is still
-// happening, so the transcript is committed and the briefing rewritten once a
-// minute. The two constants are one cadence: the commit is what makes the last
-// minute of speech visible to the refresh that follows it.
-export const MEETING_TRANSCRIPTION_SEGMENT_MS = 60 * 1_000;
-export const MEETING_NOTES_INTERVAL_MS = 60 * 1_000;
+/**
+ * The cadence this screen keeps when the service has not told it one.
+ *
+ * Control Tower is only useful while the conversation it describes is still
+ * happening, so one timer commits the transcript segment and asks for the next
+ * briefing — in that order, because the commit is what makes the last minute of
+ * speech visible to the refresh that follows it. One constant rather than two:
+ * a separate notes interval would be a second cadence for a loop that has one.
+ *
+ * The real cadence is served by the `control-tower-refresh-seconds` flag and
+ * read below; this is the fallback for a device that could not ask, and it
+ * matches the flag's checked-in default so both answers agree.
+ */
+export const DEFAULT_MEETING_NOTES_INTERVAL_MS = CONTROL_TOWER_REFRESH_SECONDS.default * 1_000;
 const NOTE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function noteIdFromSearch(search: string, createId: () => string = () => crypto.randomUUID()): string {
@@ -119,6 +127,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [notesError, setNotesError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [now, setNow] = useState(Date.now());
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState(DEFAULT_MEETING_NOTES_INTERVAL_MS);
   const noteRef = useRef<NoteDetail | null>(null);
   const segmentsRef = useRef<NoteTranscriptSegment[]>([]);
   const segmentRef = useRef('');
@@ -204,6 +213,21 @@ export function MeetingNotesScreen(): React.JSX.Element {
     });
     return () => { active = false; };
   }, [api, hydrateNote, initialTitle, noteId]);
+
+  useEffect(() => {
+    if (!api) return undefined;
+    const controller = new AbortController();
+    // Asked once, when the screen opens, rather than polled: this window exists
+    // for one meeting, and a cadence that changed underneath a recording would
+    // move the transcript's own segment boundaries mid-conversation. A device
+    // that cannot ask, or an older service that does not answer, keeps the
+    // checked-in default — the same value the flag is provisioned with — so a
+    // Flagship outage cannot stop a meeting from being summarized.
+    void api.clientFeatureFlags(controller.signal).then((flags) => {
+      setRefreshIntervalMs(flags.controlTowerRefreshSeconds * 1_000);
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [api]);
 
   useEffect(() => {
     const current = noteRef.current;
@@ -362,9 +386,12 @@ export function MeetingNotesScreen(): React.JSX.Element {
           segmentBoundaryOffsetRef.current = null;
         }
       });
-    }, MEETING_TRANSCRIPTION_SEGMENT_MS);
+    }, refreshIntervalMs);
     return () => window.clearTimeout(timer);
-  }, [commitSegment, currentRecordedMs, dictation.commit, dictation.state, generateNotes]);
+    // The timer re-arms because `dictation.state` leaves `listening` for the
+    // commit and returns; a served cadence arriving mid-meeting re-arms it the
+    // same way, at the new interval.
+  }, [commitSegment, currentRecordedMs, dictation.commit, dictation.state, generateNotes, refreshIntervalMs]);
 
   const startRecording = useCallback(async (): Promise<void> => {
     if (!api || !noteRef.current || readOnly || recordingIntentRef.current || finalizationInFlightRef.current) return;
@@ -509,6 +536,13 @@ export function MeetingNotesScreen(): React.JSX.Element {
 
   const stopRecording = async (): Promise<void> => {
     await finalizeRecording();
+    // The meeting is over and the note is the artifact, so the window's job is
+    // done: it closes and hands the main window to the note it just produced.
+    // Only on a clean finalization — `finalizeRecording` rejects when the note
+    // could not be marked complete, and closing then would take the visible
+    // error with it. The native close path stays as it was: it closes
+    // regardless, because a window that will not shut also blocks app quit.
+    await desktopBridge().closeMeetingNotes(noteId).catch(() => undefined);
   };
 
   const pauseRecording = async (): Promise<void> => {

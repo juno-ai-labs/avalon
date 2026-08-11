@@ -92,7 +92,7 @@ const bridge: AvalonDesktopBridge = {
   openExternal: (url) => ipcRenderer.invoke('system:open-external', url) as Promise<void>,
   openSettings: (section) => ipcRenderer.invoke('system:open-settings', section) as Promise<void>,
   openMeetingNotes: (noteId) => ipcRenderer.invoke('system:open-meeting-notes', noteId) as Promise<void>,
-  closeMeetingNotes: () => ipcRenderer.invoke('system:close-meeting-notes') as Promise<void>,
+  closeMeetingNotes: (noteId) => ipcRenderer.invoke('system:close-meeting-notes', noteId) as Promise<void>,
   getMeetingAudioPermissions: () =>
     ipcRenderer.invoke('meeting-audio:get-permissions') as Promise<DesktopMeetingAudioPermissions>,
   prepareMeetingAudioPermissions: () =>

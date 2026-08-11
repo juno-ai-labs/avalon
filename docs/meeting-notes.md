@@ -3,10 +3,11 @@
 A meeting note is a recording, its transcript, the attendee's own writing, and a
 model-written briefing that is rewritten while the meeting is still happening.
 The briefing is **Control Tower**: a complete replacement summary of the
-conversation so far, regenerated once a minute so someone who was multitasking,
-stepped away, or was just asked a question can re-enter the conversation in about
-thirty seconds of reading. When recording ends, a second, different pass replaces
-the live briefing with a durable whole-meeting summary.
+conversation so far, regenerated on a served cadence — once a minute by default —
+so someone who was multitasking, stepped away, or was just asked a question can
+re-enter the conversation in about thirty seconds of reading. When recording
+ends, a second, different pass replaces the live briefing with a durable
+whole-meeting summary.
 
 Read this before changing the recording cadence, either prompt, the transcript
 segment protocol, or the note resource that the rest of Avalon reads. The
@@ -18,24 +19,43 @@ at the transcript text the client already holds.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/screens/meeting-notes.tsx` | The recording screen and the only clock in the system: `MEETING_TRANSCRIPTION_SEGMENT_MS` and `MEETING_NOTES_INTERVAL_MS` are the one place the cadence is set. Commits each segment, requests each refresh, and drives finalization. |
+| `apps/desktop/src/renderer/screens/meeting-notes.tsx` | The recording screen and the only clock in the system. Reads the served cadence when it opens, commits each segment, requests each refresh, and drives finalization. `DEFAULT_MEETING_NOTES_INTERVAL_MS` is the fallback for a device that could not ask. |
 | `apps/desktop/src/renderer/lib/use-realtime-dictation.ts` | Audio capture and the provider socket. `commit()` closes a segment without ending the session; `stop()` ends it and returns the last buffered text. |
 | `apps/api/src/routes/notes.ts` | `POST /notes/:id/segments` appends a segment; `POST /notes/:id/generate` runs a `live` or `final` pass. |
 | `apps/api/src/services/note-service.ts` | Segment sequencing, the transcript windows handed to the model, the compare-and-set that lands a briefing, and materialization of the note resource. |
 | `apps/api/src/services/meeting-notes-service.ts` | Both system prompts, both example sets, and the harness configuration each pass runs under. `CONTROL_TOWER_SYSTEM_PROMPT` is the live briefing; `FINAL_MEETING_SUMMARY_SYSTEM_PROMPT` is the end-of-meeting one. |
-| `packages/contracts/src/index.ts` | `GenerateNoteNotesRequest`, `NoteDetail`, `NoteTranscriptSegment`, and the `recentTranscript` bound. |
+| `apps/api/src/services/control-tower-flags.ts` | The one resolver for the refresh cadence, read by both the client's `GET /feature-flags` answer and the live prompt. Clamps and logs what Flagship serves. |
+| `packages/contracts/src/index.ts` | `CONTROL_TOWER_REFRESH_SECONDS` — the cadence default and its bounds, defined once for every reader — plus `GenerateNoteNotesRequest`, `NoteDetail`, `NoteTranscriptSegment`, and the `recentTranscript` bound. |
 
 ## How it works
 
-### The one-minute loop
+### The refresh loop
 
-While dictation is listening, the recording screen sets a single timer for
-`MEETING_TRANSCRIPTION_SEGMENT_MS`. When it fires it commits the audio buffer,
-appends the finalized text as a transcript segment, and only then asks for a
-`live` refresh. The two constants are one cadence rather than two knobs: the
-commit is what makes the last minute of speech visible to the refresh that
-follows it, so a refresh scheduled independently of a commit would summarize a
-transcript that stops a full cadence short.
+While dictation is listening, the recording screen sets a single timer for the
+cadence it was served. When it fires it commits the audio buffer, appends the
+finalized text as a transcript segment, and only then asks for a `live` refresh.
+One timer rather than two: the commit is what makes the last minute of speech
+visible to the refresh that follows it, so a refresh scheduled independently of a
+commit would summarize a transcript that stops a full cadence short. The timer
+re-arms because the commit takes dictation out of `listening` and back.
+
+### Where the cadence comes from
+
+The cadence is the `control-tower-refresh-seconds` flag, served from Flagship and
+resolved by `control-tower-flags.ts` ([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)).
+The meeting screen asks `GET /feature-flags` once when it opens — a meeting
+window exists for one meeting, and a cadence that moved underneath a recording
+would move the transcript's own segment boundaries mid-conversation. The
+meeting-notes generator resolves the same flag for the same person and states the
+number in the live request, so the prompt's instruction to reuse what it wrote
+last time is calibrated to the gap the client is actually keeping.
+
+Three readers therefore have to agree, and they do because the default and its
+bounds are declared once as `CONTROL_TOWER_REFRESH_SECONDS` in
+`@avalon/contracts`: the desktop's fallback, the response schema, and the clamp
+the resolver applies. A device that cannot reach the service, an older service
+that does not know the field, and an unreachable Flagship all land on the same
+sixty seconds.
 
 Segments are sequenced by the server. `appendSegment` allocates
 `next_segment_sequence` with a single `UPDATE … RETURNING`, so two windows
@@ -61,13 +81,36 @@ and the final pass at medium; the model is chosen by the
 ### Why the live prompt reads the way it does
 
 `CONTROL_TOWER_SYSTEM_PROMPT` is written for latency as much as for content. It
-tells the model its refresh cadence, gives it an explicit ten-second target,
-tells it to write in one pass without planning or revising, tells it to reuse
-still-true lines from the previous briefing nearly verbatim, and tells it that
-dropping a marginal bullet is the safer error. Those are instructions, not
-limits — nothing in the code enforces a deadline shorter than the harness wall
-clock, and the model is trusted to trade completeness for currency because a
-briefing that lands after the conversation moved on has no value to trade away.
+gives the model an explicit ten-second target, tells it to write in one pass
+without planning or revising, tells it to reuse still-true lines from the
+previous briefing nearly verbatim, and tells it that dropping a marginal bullet
+is the safer error. Those are instructions, not limits — nothing in the code
+enforces a deadline shorter than the harness wall clock, and the model is trusted
+to trade completeness for currency because a briefing that lands after the
+conversation moved on has no value to trade away.
+
+The cadence itself is *not* in the system prompt. It is served by a flag, so it
+goes in the request beside the transcript: run data stays out of the cached
+prefix, and prose naming a fixed interval would have gone quietly wrong the first
+time the flag moved.
+
+### Ending a meeting
+
+**End** stops capture, commits whatever the provider finalizes, runs the `final`
+pass, and marks the note complete — in that order, because a summary written
+before the last segment lands is a summary missing the end of the meeting. Then
+the window closes and the main window is taken to the note, raised, through the
+same deep-link channel every other navigation uses (`avalon://notes/<id>`, sent
+by the main process only to the main window). The meeting window exists for the
+recording; once there is no recording, the note is what the person wants to be
+looking at.
+
+Two paths do not end that way. If the note could not be marked complete the
+window stays open, because closing would take the only report of the failure with
+it. And a **native window close** — the traffic-light button, or app quit —
+finalizes and then closes regardless of whether that succeeded, since a window
+that refuses to shut also blocks quit; it does not navigate, because closing a
+window is not a request to be taken somewhere.
 
 ### Landing a briefing
 
@@ -79,8 +122,11 @@ loses this race re-reads the transcript and retries once, because a whole-meetin
 summary must not be lost to a live refresh that happened to finish later.
 
 Every write materializes the note resource: a human-readable `note.md` and a
-timestamped `note-model.md` in R2, plus the `resources` row that agents and work
-streams read. That is the only view of a note anything outside this module has.
+`note-model.md` whose transcript carries segment timestamps, both in R2, plus the
+`resources` row that agents and work streams read. That is the only view of a
+note anything outside this module has. Each key is fixed per note and every write
+overwrites it, so the objects are the current note rather than a history of
+briefings.
 
 ## Invariants
 
@@ -107,6 +153,9 @@ streams read. That is the only view of a note anything outside this module has.
 This module owns the recording screen, the transcript segment protocol, both
 prompts, and the note resource it materializes. It exposes notes to the rest of
 Avalon only as that resource — nothing else reads `note_transcript_segments`.
+Its one outward gesture is the `avalon://notes/<id>` deep link it asks the main
+process to deliver when a meeting ends; the main window's router owns what
+happens next.
 
 It does not own audio capture, the realtime bridge, or the provider credentials
 behind it; it does not own model selection, which is a flag; and it does not own
@@ -117,7 +166,7 @@ what happens when a note's scope changes, which is
 
 | Limit | Value | Where |
 | --- | --- | --- |
-| Segment commit and refresh cadence | 60s | `meeting-notes.tsx` |
+| Segment commit and refresh cadence | 60s by default, 15–600s as served | `control-tower-refresh-seconds`, bounded by `CONTROL_TOWER_REFRESH_SECONDS` |
 | Recent focus window | 10 min | `RECENT_TRANSCRIPT_WINDOW_MS` |
 | Complete transcript context | 400,000 chars, middle elided | `MAX_TRANSCRIPT_CONTEXT_CHARACTERS` |
 | Recent window context | 100,000 chars | `MAX_RECENT_TRANSCRIPT_CHARACTERS` |
@@ -127,13 +176,20 @@ what happens when a note's scope changes, which is
 
 - **Inference fails or times out.** The screen shows "Avalon could not update
   Control Tower" and keeps the previous briefing. Nothing is retried at the same
-  model; the next minute's refresh is the retry.
-- **A segment save fails.** The transcript is marked partial, the save error stays
-  visible, and generation still proceeds over the segments that did reach the
-  server — a lost minute must not cost the whole summary.
+  model; the next refresh is the retry.
+- **The cadence cannot be fetched, or Flagship is unreachable.** Both ends fall
+  back to `CONTROL_TOWER_REFRESH_SECONDS.default`, so the loop runs unchanged; a
+  cadence outside the bounds is clamped and logged rather than served.
+- **A segment save fails during a refresh.** That minute's commit rejects and its
+  refresh is skipped, leaving the segment's audio unrepresented until the next
+  one; the next cadence tick starts a fresh segment from the boundary that failed.
+  On **finalization** the rule is the opposite and deliberate: a failed final
+  commit marks the transcript partial and the summary still runs over whatever
+  reached the server, because there is no next tick to recover in.
 - **The transcript outgrows the context bound.** Its middle is elided with a
-  visible marker and `transcriptStatus` becomes `partial`, which both prompts
-  treat as a reason to caveat rather than to guess.
+  visible marker and `transcriptStatus` becomes `partial`. Only the final pass is
+  told that — a live briefing is a working note that is replaced in seconds and
+  says nothing about coverage, while the durable summary carries the caveat.
 - **A refresh overruns its own cadence.** Refreshes are serialized on
   `generationTailRef`, so a slow pass delays the next one rather than racing it;
   the compare-and-set catches anything that still overlaps across windows.
@@ -153,13 +209,19 @@ workspace note is an explicit, notified transition rather than a silent widening
   — prompt selection, the shape of each request, and the safe error on failure.
 - `pnpm --filter @avalon/api exec vitest run test/note-service.test.ts` — segment
   sequencing, the recent-window slice, and the final-summary race retry.
+- `pnpm --filter @avalon/api exec vitest run test/client-feature-flags.test.ts` —
+  the served cadence, its clamp, and the fallback shared with every other reader.
 - `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/meeting-notes.test.tsx`
-  — the cadence constants, elapsed-time accounting across segment boundaries, and
-  the finalization order (append, then generate, then mark complete).
+  — that a served cadence actually drives the timer, elapsed-time accounting
+  across segment boundaries, and the finalization order (append, then generate,
+  then mark complete).
 
-The desktop suite asserts the cadence constants by value, so changing the cadence
-is a deliberate two-file edit rather than a silent one. No test drives the
-one-minute timer itself; a change to the timer's effect needs fake timers added.
+Two traps in the desktop suite. The dictation hook is mocked, so the segment
+timer only arms when the mocked `state` transitions into `listening` — a test
+that renders with it already `listening` arms nothing, which is why the cadence
+test rerenders to make the transition happen. And the fallback is asserted
+against `CONTROL_TOWER_REFRESH_SECONDS` rather than a literal, so a default
+changed in the contract cannot leave the client on the old one.
 
 ## Open questions
 
@@ -171,12 +233,15 @@ only answers `POST /notes/:id/generate` when it is asked. That is the cheapest
 thing that works, and at a five-minute cadence it was defensible. At sixty
 seconds it is the design's weakest point, for three reasons:
 
-- **Cadence is client-controlled, so spend is client-controlled.** Every `live`
-  request that carries a new segment is an inference. The only brake is the
+- **Cadence is *served* but not *enforced*.** The number now comes from a flag
+  the server owns, so the fleet's schedule is a console change rather than a
+  release — but the client is still what keeps it. Every `live` request carrying
+  a new segment is an inference, and the only brake is the
   `notes_through_sequence` check, which a client can defeat simply by committing
   a segment before each request. An old build, a modified build, or a bug in the
-  timer can refresh far faster than once a minute, and nothing on the server says
-  no.
+  timer can refresh far faster than the served cadence, and nothing on the server
+  says no. Serving the number is the smaller half of this; the larger half is
+  below.
 - **The server cannot tell a finished meeting from a quiet client.** A note stays
   `recording` until a client says otherwise, and no briefing is ever produced for
   a meeting whose client crashed, slept, or lost the network mid-recording.
@@ -225,11 +290,89 @@ Part 2 adds a Durable Object class to the runtime, which is a migration and an
 [`ARCHITECTURE.md`](ARCHITECTURE.md) entry. Both parts have to land before part 3
 is anything but a second scheduler racing the client's.
 
-Until then, the client-owned cadence is a known and accepted gap, and the
+Until then, the client-*kept* cadence is a known and accepted gap, and the
 compare-and-set in `generateAttempt` is the only thing standing between two
-enthusiastic clients and a corrupted briefing.
+enthusiastic clients and a corrupted briefing. Note that part 3 is what turns the
+served cadence into an enforced one: the flag already exists and the server
+already reads it, so that step is a scheduler and a budget rather than a new
+knob.
 
 ## Changelog
+
+### 2026-08-11 — Ending a meeting closes its window and opens the note
+
+**What changed:** **End** now closes the meeting window once finalization
+succeeds and takes the main window to that note, raised, via an
+`avalon://notes/<id>` deep link the main process sends only to the main window.
+`closeMeetingNotes` carries an optional note id for it, validated as a uuid in
+the main process like every other IPC argument. A failed finalization leaves the
+window open; the native close path is unchanged.
+
+**Why:** The window used to sit there after End showing a finished summary, which
+left the person to close it and find the note themselves — two steps to reach the
+thing they had just made, in a window that no longer had a job. The note is where
+the summary lives permanently, and it is the surface with the sharing, archiving,
+and transcript controls the meeting window deliberately lacks.
+
+**Considered and rejected:** Having the meeting window navigate itself and stay
+open. It is a separate 1120×820 window opened for a recording; keeping it around
+as a second note viewer means two windows can show one note and disagree. Also
+rejected: adding an IPC channel for "navigate the main window". The deep-link
+channel already carries exactly this and the renderer already has a dispatcher
+for it — a second mechanism would be a second place to keep in step. It is sent
+only to the main window rather than through `sendDeepLink`, because the settings
+renderer has no business navigating because a meeting ended.
+
+**Consequences:** The link is internal: `emitDeepLink` does not accept
+`avalon://notes/...` from the operating system, so a note cannot be opened by
+anything outside the app, and widening that is a deliberate decision about an
+unauthenticated entry point rather than a formality. Any future caller of
+`closeMeetingNotes` has to decide whether it is handing the person onward or just
+closing a window; passing the id always would make every close a navigation,
+including the ones that are really an app quit.
+
+### 2026-08-11 — The refresh cadence is served from Flagship rather than compiled in
+
+**What changed:** `control-tower-refresh-seconds` is now a Flagship flag,
+resolved by `control-tower-flags.ts` and read by both ends: the meeting screen
+asks `GET /feature-flags` when it opens and sets its timer from the answer, and
+the meeting-notes generator resolves the same flag for the same person and states
+the number in the live request. The prompt no longer names a fixed interval. The
+desktop's two cadence constants became one fallback,
+`DEFAULT_MEETING_NOTES_INTERVAL_MS`, whose value comes from the same
+`CONTROL_TOWER_REFRESH_SECONDS` declaration the server clamps against.
+
+**Why:** The cadence set by the entry above is the single most consequential
+number in this module — it multiplies inference spend, transcript row count, and
+how current the product feels — and it was reachable only by shipping a desktop
+build. That is the wrong instrument for a number that wants tuning against real
+meetings and real cost, and worse, the client is what keeps the schedule, so a
+number in the client is a number the server cannot revise for a fleet that has
+already installed it. The prompt made it sharper still: it tells the model to
+reuse what it wrote last time *because* it runs again shortly, so a cadence the
+prompt describes differently from the one the client keeps is a briefing written
+for a schedule nobody is on.
+
+**Considered and rejected:** Reading it through the main-process poll that serves
+Application → Developer. That poll exists so both windows read one answer and so
+`application-settings.json` has an owner; a cadence is neither, and re-reading it
+every minute would move a recording's own segment boundaries mid-meeting. Asking
+once, in the renderer that acts on it, gives a meeting one cadence for its whole
+length. Also rejected: interpolating the cadence into the system prompt, which is
+a module constant the harness re-renders every turn — run data belongs in the
+request, and a prefix that varies per call is a cache that stops working.
+
+**Consequences:** Three readers now have to agree on one number, and they do only
+because the default and its bounds are declared once in `@avalon/contracts`;
+adding a fourth reader means reading that declaration, not copying 60. The
+resolver clamps to 15–600 seconds before serving, so a flag typed in
+milliseconds costs a warning rather than a meeting's worth of inference — but
+nothing enforces the served cadence at the point of spend, because the client
+still keeps the clock. That is now the whole remaining gap, and
+[Open questions](#should-generation-move-to-the-server) is where the rest of it
+lives. Provisioning is one flag with no rules, seeded at the default: until it
+exists in the `avalon-api` app, every reader falls through to sixty seconds,
+which is exactly the behavior this entry replaced.
 
 ### 2026-08-11 — Control Tower refreshes every minute, and its prompt is written for a ten-second run
 
