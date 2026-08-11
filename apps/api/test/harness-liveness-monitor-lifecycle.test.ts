@@ -25,6 +25,30 @@ function expectOrdered(source: string, markers: readonly string[]): void {
   }
 }
 
+describe("skills offered to a run", () => {
+  it("offers the built-in library to a work stream and withholds it from the surfaces that cannot use it", () => {
+    const root = section(
+      "export async function runWorkstreamHarness(",
+      "function inlineChildOutcomeAsToolResult(",
+    );
+    // Offered, never activated — the catalog line is all a run sees until it
+    // loads one, and loading grants no authority.
+    expect(root).toContain("skills: [...BUILT_IN_SKILLS]");
+    // HyperSight renders one block of Markdown, cannot pause for input, and
+    // does not write, so every shipped skill is a procedure for something it is
+    // not there to do.
+    expect(root).toContain("hyperSightRun ? {} : { skills:");
+
+    const inlineChild = section(
+      "function createInlineChildAgentTool(",
+      "async function recordOpenRouterInferenceAttempt(",
+    );
+    // A child is read-only with its writes removed and its own tight ceilings;
+    // an outbound-write playbook would be weight it cannot spend.
+    expect(inlineChild).not.toContain("skills:");
+  });
+});
+
 describe("harness liveness-monitor lifetime", () => {
   it("starts the root monitor only after fallible pre-inference setup", () => {
     const root = section(
