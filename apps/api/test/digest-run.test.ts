@@ -388,13 +388,20 @@ describe("the brief a digest run is triggered with", () => {
     expect(brief).toContain("`## Needs you` covering the 1 item");
   });
 
-  it("tells the run to summarize only what is new", () => {
+  it("points the run at the window rather than at what an earlier digest sent", () => {
     const brief = renderDigestBrief(schedule, [event()]);
 
-    expect(brief).toContain("Summarize only what is new");
+    expect(brief).toContain("Write this digest from the source material below and nothing else");
     expect(brief).toContain("Ada");
     expect(brief).toContain("Europe/London");
     expect(brief).toContain("(1 item)");
+    // The rule must not depend on the transcript's delivery notes. Those are
+    // `system` rows and the protocol projector drops them, so from the second
+    // occurrence onward every earlier digest would read as never delivered and
+    // be restated. `cursor_from` already makes the windows non-overlapping,
+    // and a failed delivery's events come back in this brief rather than only
+    // in the older summary.
+    expect(brief).not.toContain("delivered");
   });
 
   it("hands the run the real link so the digest can point rather than describe", () => {

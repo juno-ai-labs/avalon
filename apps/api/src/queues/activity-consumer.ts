@@ -2,7 +2,7 @@ import {
   renderActivityRoutingMessages,
   renderSemanticTriggerMessages,
 } from "@avalon/agent-harness";
-import { connectorRetryAfterMs } from "@avalon/connectors";
+import { ConnectorError, connectorRetryAfterMs } from "@avalon/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
@@ -401,7 +401,23 @@ function activityIsDigestible(env: Env, activity: ActivityRow): boolean {
       .get(activity.connector_type)
       .manifest.digestibleActivityTypes
       .includes(activity.event_type);
-  } catch {
+  } catch (error) {
+    // Two very different things reach here, and only one of them is ordinary.
+    //
+    // `unsupported_capability` is a connector this region does not register —
+    // expected, and withholding is the whole point of failing closed. Anything
+    // else means the registry could not be built at all: one malformed
+    // credential fails every adapter, which would withhold *every* connector's
+    // activity region-wide, settle every digest as empty, and advance every
+    // cursor over the discarded windows. That is indistinguishable from a quiet
+    // week unless it says so, so it is logged rather than swallowed.
+    if (!(error instanceof ConnectorError) || error.code !== "unsupported_capability") {
+      console.warn("Connector registry unavailable while classifying activity for digests", {
+        workspace_id: activity.workspace_id,
+        connector_type: activity.connector_type,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
     return false;
   }
 }
