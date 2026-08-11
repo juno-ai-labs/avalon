@@ -1184,21 +1184,35 @@ function sendDeepLink(rawUrl: string): void {
  * It travels as a deep link on the channel every other navigation uses, so the
  * renderer needs no second dispatcher — but it is sent only to the main window,
  * unlike `sendDeepLink`. A note is a main-window destination, and the settings
- * renderer has no business navigating because a meeting ended. A main window
- * that is gone or not yet listening leaves the link queued, which is how the
- * cold-start path already works.
+ * renderer has no business navigating because a meeting ended.
+ *
+ * Every path through this ends with a window in front of the person, because the
+ * caller closes the meeting window whether or not this could deliver. A window
+ * that is not listening yet gets the link queued for `consumePendingDeepLinks`,
+ * and is still raised — leaving the meeting window to vanish onto whatever was
+ * behind it is the exact "go find the note yourself" step this removes.
  */
 function revealNoteInMainWindow(noteId: string): void {
   const target = `${customProtocol}://notes/${noteId}`;
+  const raise = (window: BrowserWindow): void => {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  };
   if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
     if (!pendingDeepLinks.includes(target)) pendingDeepLinks.push(target);
-    if ((!mainWindow || mainWindow.isDestroyed()) && app.isReady()) void createMainWindow();
+    // Gone: a new window opens on the queued link and raises itself. Present but
+    // still loading — a reload, a slow cold start — is the case that would
+    // otherwise queue the link and raise nothing at all.
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      if (app.isReady()) void createMainWindow();
+    } else {
+      raise(mainWindow);
+    }
     return;
   }
   mainWindow.webContents.send('auth:deep-link', target);
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  raise(mainWindow);
 }
 
 function emitDeepLink(rawUrl: string): void {

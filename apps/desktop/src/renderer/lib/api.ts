@@ -1087,14 +1087,25 @@ export class AvalonApi {
     return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
   }
 
+  /**
+   * `refreshSeconds` is the cadence this meeting settled on. It travels with
+   * the request so the briefing is written for the schedule the client is
+   * actually keeping, rather than for whatever the flag says when the server
+   * happens to read it.
+   */
   generateNoteNotes(
     id: string,
     mode: 'live' | 'final' = 'live',
     transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
+    refreshSeconds?: number,
   ): Promise<NoteDetail> {
     return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
       method: 'POST',
-      body: { mode, transcriptStatus },
+      body: {
+        mode,
+        transcriptStatus,
+        ...(refreshSeconds === undefined ? {} : { refreshSeconds }),
+      },
       schema: WireNoteDetailSchema,
     });
   }

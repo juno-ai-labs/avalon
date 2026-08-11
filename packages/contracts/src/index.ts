@@ -405,6 +405,18 @@ export const AppendNoteTranscriptSegmentRequestSchema = z.object({
 export const GenerateNoteNotesRequestSchema = z.object({
   mode: z.enum(["live", "final"]).default("live"),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /**
+   * The refresh cadence the client is actually keeping, in seconds, so the live
+   * briefing can be written for it. The client asks for the served cadence once
+   * per meeting and holds it; the server would otherwise re-resolve the flag on
+   * every pass and describe a schedule nobody is on for the rest of any meeting
+   * the flag moved under. Omitted by a client that does not know it, which
+   * leaves the server resolving the flag as before.
+   */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .optional(),
 }).strict();
 
 // Every run is always delivered to its Avalon work stream. These are the
@@ -1309,6 +1321,12 @@ export const GenerateMeetingNotesRequestSchema = z.object({
   startedAt: TimestampSchema.nullable().default(null),
   endedAt: TimestampSchema.nullable().default(null),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /** The cadence the client is keeping; null means resolve the flag instead. */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .nullable()
+    .default(null),
 }).strict();
 
 export const MeetingNotesResponseSchema = z.object({

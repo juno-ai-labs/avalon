@@ -220,20 +220,28 @@ export class MeetingNotesService {
       source: "meeting_notes",
     });
     // The cadence the client is keeping, so the briefing can be written for it.
-    // Resolved for the same person the client's own poll resolves it for, and
-    // only for a live pass: a final summary has no next run to describe.
-    const [routing, refreshSeconds] = await Promise.all([
+    // The client snapshots the served cadence once per meeting and sends it, and
+    // that is the number the prompt must describe: re-resolving the flag here
+    // would tell the model a schedule nobody is on for the rest of any meeting
+    // the flag moved under. Resolving it is the fallback for a client that did
+    // not say — and it is skipped for a final pass, which has no next run.
+    const [routing, servedRefreshSeconds] = await Promise.all([
       resolveAgentModelRouting(this.env, "meeting_notes", {
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
       }),
-      final
+      final || input.refreshSeconds !== null
         ? Promise.resolve(CONTROL_TOWER_REFRESH_SECONDS.default)
         : resolveControlTowerRefreshSeconds(this.env, {
             userId: this.auth.userId,
             workspaceId: this.auth.workspaceId,
           }),
     ]);
+    // The schema bounds what a client may claim, so this cannot be used to ask
+    // for a cadence the flag would not serve. It only phrases one sentence of
+    // the prompt; what a meeting actually spends is bounded by how often the
+    // client asks, which it already controls.
+    const refreshSeconds = input.refreshSeconds ?? servedRefreshSeconds;
     const outcome = await this.runner({
       config: {
         apiKey: this.env.OPENROUTER_API_KEY,

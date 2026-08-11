@@ -96,12 +96,20 @@ describe("boundary contracts", () => {
       startedAt: null,
       endedAt: null,
       transcriptStatus: "partial",
+      refreshSeconds: null,
     });
     expect(GenerateNoteNotesRequestSchema.parse({})).toEqual({ mode: "live", transcriptStatus: "partial" });
     expect(GenerateNoteNotesRequestSchema.parse({ mode: "final", transcriptStatus: "complete" })).toEqual({
       mode: "final",
       transcriptStatus: "complete",
     });
+    // The cadence a client may claim is bounded by what the flag itself could
+    // serve, so a request cannot ask the prompt to describe a schedule the
+    // service would never hand out.
+    expect(GenerateNoteNotesRequestSchema.parse({ refreshSeconds: 15 }).refreshSeconds).toBe(15);
+    expect(GenerateNoteNotesRequestSchema.safeParse({ refreshSeconds: 5 }).success).toBe(false);
+    expect(GenerateNoteNotesRequestSchema.safeParse({ refreshSeconds: 60_000 }).success).toBe(false);
+    expect(GenerateNoteNotesRequestSchema.safeParse({ refreshSeconds: 60.5 }).success).toBe(false);
     expect(GenerateMeetingNotesRequestSchema.safeParse({ transcript: "   " }).success).toBe(false);
     expect(GenerateMeetingNotesRequestSchema.safeParse({
       transcript: "valid",

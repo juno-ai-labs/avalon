@@ -25,11 +25,13 @@ that failed closed would leave a recording meeting with no briefing at all,
 which is not a safe reading of an outage. Because the pin lives with the model
 flags, every answer to "which model does this run use" still comes from one file.
 
-The cadence is the one flag with two readers that must agree: the desktop reads
-it through `GET /feature-flags` to set the timer that commits a transcript
-segment and asks for the next briefing, and the meeting-notes generator reads it
-to tell the model how soon it runs again. Both go through the same module for
-that reason — see [`meeting-notes.md`](meeting-notes.md).
+The cadence is the one flag whose value has to be the *same* value in two places.
+The desktop reads it through `GET /feature-flags` and snapshots it for the length
+of one meeting; that snapshot then travels with each generate request, so the
+prompt describes the schedule the client is actually keeping. The resolver is
+consulted server-side only when a request carries no cadence. A flag change
+therefore reaches a meeting at its next recording rather than mid-way through one
+— see [`meeting-notes.md`](meeting-notes.md).
 
 `apps/api/src/services/flag-targeting-attributes.ts` is the companion both of
 them evaluate through: it turns the ids a caller happens to hold into the
@@ -276,6 +278,11 @@ carve-out.
 - Facts are cached in the isolate for five minutes, keyed by subject. A
   membership or a slug moves on a human timescale, so the staleness is free and
   a hot agent path does not pay for a read per run.
+- **Evaluations that describe the same subject at the same moment share one
+  read.** The cache is written when a read resolves, so concurrent resolvers
+  would otherwise all miss and all read — and a single request now resolves
+  several flags at once. The pending read is dropped as soon as it settles, so
+  it de-duplicates rather than adding a second cache with its own staleness.
 - A **miss is not cached.** The automation paths resolve a model for a work
   stream id one statement before they insert the row, so remembering "no such
   work stream" would leave those work streams unattributed through their first

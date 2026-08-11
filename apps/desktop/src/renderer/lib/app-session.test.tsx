@@ -677,7 +677,7 @@ describe('single-platform desktop identity routing', () => {
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
-  it('refuses a note link that names no readable note', async () => {
+  it('tells a signed-in person a note link is unreadable rather than telling them to sign in', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,
       workspace: {
@@ -692,6 +692,20 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink('avalon://notes/not-a-note');
+
+    // Signing in again does nothing about a link that names no note, so saying
+    // so would send someone to a remedy that cannot work.
+    await waitFor(() => expect(screen.getByTestId('deep-link-error'))
+      .toHaveTextContent('Avalon could not open that note link.'));
+    expect(window.location.hash).toBe(before);
+  });
+
+  it('asks a signed-out person to sign in before opening a note', async () => {
+    renderProvider();
+    expect(await screen.findByText('global:signed-out')).toBeVisible();
+    const before = window.location.hash;
+
+    await dispatchDeepLink('avalon://notes/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30');
 
     await waitFor(() => expect(screen.getByTestId('deep-link-error'))
       .toHaveTextContent('Sign in before opening this note.'));
