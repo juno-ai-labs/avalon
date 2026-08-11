@@ -856,6 +856,11 @@ const automationDraftSubmissionJsonSchema = {
       }
     },
     suggestedScope: { type: "string", enum: ["personal", "workspace"] },
+    suggestedDelivery: {
+      type: "string",
+      enum: ["avalon_only", "email", "slack_agent_dm"],
+      description: "Where the person said the result should go. Use avalon_only unless they chose an Avalon email or Slack direct message."
+    },
     ready: {
       type: "boolean",
       description: "True only when no blocking human input remains; false means request_elicitation must be called after this draft is submitted."
@@ -872,6 +877,7 @@ const automationDraftSubmissionJsonSchema = {
     "recommendedPlugins",
     "memoryTables",
     "suggestedScope",
+    "suggestedDelivery",
     "ready"
   ]
 };
@@ -1674,9 +1680,19 @@ function normalizeAutomationDraft(
 ): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
-  // Workspace is the default, so an omitted or unrecognized scope becomes workspace.
-  // A member who cannot create one is coerced back rather than failing at acceptance.
-  const scope = draft.suggestedScope === "personal" || !workspaceScopeAllowed ? "personal" : "workspace";
+  const delivery = draft.suggestedDelivery === "email" || draft.suggestedDelivery === "slack_agent_dm"
+    ? draft.suggestedDelivery
+    : "avalon_only";
+  // Workspace is the policy default and the prompt asks for it, but only an
+  // explicit "workspace" widens the draft here: an omitted or unrecognized value
+  // means the model did not comply, and guessing wide costs the person a 422
+  // from validateConnectorSelections over a scope they never mentioned.
+  // A member who cannot create one is narrowed rather than failing at
+  // acceptance, and a destination beyond the work stream is frozen against one
+  // person, so choosing one settles the scope.
+  const scope = draft.suggestedScope === "workspace" && workspaceScopeAllowed && delivery === "avalon_only"
+    ? "workspace"
+    : "personal";
   const defaultTimezone = defaultTimezones?.[scope];
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger, defaultTimezone))
@@ -1685,6 +1701,7 @@ function normalizeAutomationDraft(
   return {
     ...draft,
     suggestedScope: scope,
+    suggestedDelivery: delivery,
     triggers,
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),

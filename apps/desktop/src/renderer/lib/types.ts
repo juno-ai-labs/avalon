@@ -463,6 +463,8 @@ export interface AutomationDraftSummary {
   scope: Scope;
   triggerSummary: string;
   capabilities: string[];
+  /** The destination the person chose; seeds the Deliver results controls. */
+  suggestedDelivery: 'avalon_only' | 'email' | 'slack_agent_dm';
   requiresSlackDelivery: boolean;
 }
 

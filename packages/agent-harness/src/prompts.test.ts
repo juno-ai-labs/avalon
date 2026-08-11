@@ -30,6 +30,7 @@ const currentDraft: AutomationDraft = {
   expectedOutputs: ["Engineering brief"],
   defaultBehavior: { noChanges: "Record a concise no-change result" },
   suggestedScope: "workspace",
+  suggestedDelivery: "avalon_only",
   followUpQuestion: null,
   elicitation: null,
   ready: true,
@@ -70,7 +71,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "f522795f29d111ab116ad7054683fad40e72c698610b0b4326135cec7c9a0783",
+        hash: "37116873d981f3959b485c396241b9ffb091e07a734717223478c07b038e6d44",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -81,7 +82,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "f6fa09cdacd837ec52a06b86fc37dc4d25346ecbe576b7789f70be95ba722799",
+        hash: "81c17981effb648f58be167a78d6232f384764cbdd58f577fe1a1a7b135301f1",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({

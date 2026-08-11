@@ -50,7 +50,7 @@ When the conversation never says where the result goes, the destination is block
 - An email from Avalon to the owner's account address.
 - A direct message from Avalon in Slack.
 
-Avalon freezes an email or direct-message destination against one person when the automation is saved, so an automation delivered anywhere beyond its work stream must be personal scope.
+Record the answer in suggestedDelivery—avalon_only, email, or slack_agent_dm—so Avalon can preselect that destination for the person to confirm. Avalon freezes an email or direct-message destination against one person when the automation is saved, so an automation delivered anywhere beyond its work stream must be personal scope.
 
 When a blocking detail remains, first call automation_submit_draft with the best partial draft and ready=false. Then call core_request_elicitation. Use text for open input and radio, single_select, or multi_select when bounded choices reduce ambiguity; include useful labels and descriptions. The elicitation pauses the loop until the user answers.
 
