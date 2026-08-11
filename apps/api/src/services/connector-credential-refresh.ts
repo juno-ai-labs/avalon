@@ -96,12 +96,26 @@ export async function ensureFreshConnectorCredentials(
       return;
     } catch (error) {
       await releaseLease(env.DB, connection, leaseId);
-      if (error instanceof ConnectorError && error.code === "unauthorized") {
-        await markNeedsReconnect(env.DB, connection);
-      }
+      // Only a refusal that says so. `unauthorized` alone is what a token
+      // endpoint yields for `invalid_client` or a malformed request of ours —
+      // Avalon's configuration being wrong, which no member can fix by
+      // reconnecting an account that still works. Adapters mark a genuinely
+      // dead grant with `reconnectRequired`, matching what the credential door
+      // already required.
+      if (isReconnectRequired(error)) await markNeedsReconnect(env.DB, connection);
       throw error;
     }
   }
+}
+
+/** Whether the provider said the grant itself is gone, not merely that a call failed. */
+function isReconnectRequired(error: unknown): boolean {
+  return error instanceof ConnectorError
+    && error.code === "unauthorized"
+    && typeof error.details === "object"
+    && error.details !== null
+    && "reconnectRequired" in error.details
+    && error.details.reconnectRequired === true;
 }
 
 /**
@@ -194,9 +208,7 @@ export async function rotateConnectorCredentials(
       return refreshed;
     } catch (error) {
       await releaseLease(env.DB, connection, leaseId);
-      if (error instanceof ConnectorError && error.code === "unauthorized") {
-        await markNeedsReconnect(env.DB, connection);
-      }
+      if (isReconnectRequired(error)) await markNeedsReconnect(env.DB, connection);
       throw error;
     }
   }

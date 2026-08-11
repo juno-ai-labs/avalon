@@ -22,6 +22,7 @@ import {
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
   type ConnectorAdapter,
+  type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type ConnectorToolContext,
   type ConnectorToolResult,
@@ -554,9 +555,16 @@ export async function refreshGitHubUserCredentials(
 }
 
 /** Check repository visibility using the personal user token, refreshing it when necessary. */
+/**
+ * Takes an authorized connection so this cannot be reached outside the
+ * credential door. It refreshes a near-expiry token, and a caller holding a
+ * plain context registers no serialized rotation — so concurrent webhook
+ * deliveries for one connection would each privately redeem the same
+ * single-use refresh token.
+ */
 export async function canGitHubPersonalConnectionAccessRepository(
   config: GitHubConnectorConfig,
-  connection: ConnectorConnectionContext,
+  connection: AuthorizedConnectorConnection,
   repositoryFullName: string,
   signal: AbortSignal = AbortSignal.timeout(15_000),
 ): Promise<boolean> {

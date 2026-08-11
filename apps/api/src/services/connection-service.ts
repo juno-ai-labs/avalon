@@ -1,5 +1,10 @@
 import {
   ConnectorError,
+  GoogleCapabilityScopes,
+  GranolaCapabilities,
+  LinearCapabilityScopes,
+  SlackCapabilityScopes,
+  SlackWorkspaceCapabilities,
   assertGitHubCapabilitiesGranted,
   connectorCapabilitySupportsScope,
   createGranolaWebhookEndpoint,
@@ -7,14 +12,11 @@ import {
   deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
-  GoogleCapabilityScopes,
-  GranolaCapabilities,
-  LinearCapabilityScopes,
-  SlackCapabilityScopes,
-  SlackWorkspaceCapabilities,
+  type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
+  type ResolvedConnectorAdapter,
   type VerifiedGranolaWebhook,
 } from "@avalon/connectors";
 import type {
@@ -111,6 +113,36 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   },
   slack: SlackCapabilityScopes,
 };
+
+/**
+ * Runs an adapter's repair before its health check, and reports what happened.
+ *
+ * A repair never fails the test: the health check is the answer being asked
+ * for, and a connection that could not be repaired still has a state worth
+ * reporting. But the outcome is returned rather than only logged — a connection
+ * whose delivery is still broken must not read the same as one just fixed.
+ */
+async function attemptConnectorRepair(
+  env: Env,
+  adapter: { repair?: ResolvedConnectorAdapter["repair"] },
+  connection: AuthorizedConnectorConnection,
+  identity: { connectionId: string; connectorType: string },
+): Promise<string | null> {
+  if (!adapter.repair) return null;
+  try {
+    const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
+    return repair.repaired ? repair.message ?? "Repaired the connection" : null;
+  } catch (error) {
+    logWarn(env, "connector_repair_failed", {
+      connection_id: identity.connectionId,
+      connector_type: identity.connectorType,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return error instanceof Error
+      ? `A repair was attempted and failed: ${error.message}`
+      : "A repair was attempted and failed";
+  }
+}
 
 export class ConnectionService {
   constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
@@ -1026,25 +1058,10 @@ export class ConnectionService {
           // in the health check, which reauthorization runs on every plugin
           // activation. A repair that fails must not fail the test: the check
           // below is still the answer being asked for.
-          if (adapter.repair) {
-            try {
-              const repair = await adapter.repair(authorized, AbortSignal.timeout(10_000));
-              if (repair.repaired) repairOutcome = repair.message ?? "Repaired the connection";
-            } catch (repairError) {
-              // The check below is still the answer being asked for, so a failed
-              // repair does not fail the test — but it is reported rather than
-              // only logged, or a connection whose delivery stays broken looks
-              // no different from one that was fixed.
-              repairOutcome = repairError instanceof Error
-                ? `A repair was attempted and failed: ${repairError.message}`
-                : "A repair was attempted and failed";
-              logWarn(this.env, "connector_repair_failed", {
-                connection_id: connection.id,
-                connector_type: connection.connector_type,
-                reason: repairError instanceof Error ? repairError.message : String(repairError),
-              });
-            }
-          }
+          repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, {
+            connectionId: String(connection.id),
+            connectorType: String(connection.connector_type),
+          });
           return adapter.healthCheck(authorized, AbortSignal.timeout(10_000));
         },
       );
@@ -2501,6 +2518,7 @@ function assertLinearNativeAgentCapabilityEnabled(
 }
 
 export const __connectionServiceTesting = {
+  attemptConnectorRepair,
   reconcileGoogleAccount,
   googleConnectionDisplayName,
   googleProviderScopesForCapabilities,
