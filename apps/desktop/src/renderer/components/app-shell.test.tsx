@@ -32,6 +32,12 @@ describe('openWorkstreamId', () => {
     expect(openWorkstreamId(`/workstreams/${workstreamId}`)).toBe(workstreamId);
   });
 
+  it('decodes an escaped segment, and survives a malformed one', () => {
+    expect(openWorkstreamId('/workstreams/a%20b')).toBe('a b');
+    expect(() => openWorkstreamId('/workstreams/%')).not.toThrow();
+    expect(openWorkstreamId('/workstreams/%')).toBe('%');
+  });
+
   it('has none for the composer, other screens, or a nested route', () => {
     expect(openWorkstreamId('/workstreams/new')).toBeNull();
     expect(openWorkstreamId('/automations/abc')).toBeNull();
