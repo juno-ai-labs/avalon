@@ -388,6 +388,23 @@ Cloudflare can terminate long-lived connections during network deployments, so r
 
 ## Observability views and retention
 
+### Log shape
+
+Every diagnostic goes through `logEvent`/`logStructuredEvent`, which passes a
+single object to one `console` call. Workers Logs indexes that object's
+properties as queryable fields and renders its `message` property as the row
+summary in the log list, so an entry needs both:
+
+- **Never `JSON.stringify` an entry.** A serialized entry arrives as one opaque
+  string, and no saved view above can filter it.
+- **Never log a bare object either.** Without `message`, the row lists as a
+  blank line and has to be expanded before it identifies itself. The logger
+  derives one from `event` plus whichever of `method`, `path`, `status`, `code`,
+  and `duration_ms` the entry carries — `http_request GET /notes 200 96ms` — and
+  a caller may pass its own `message` instead.
+- Keep the summary a restatement of indexed fields. Filter on the fields, not on
+  message text; anything only the message says is unqueryable.
+
 Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:observability` idempotently creates these account-level saved views in Workers & Pages → Observability → Query Builder; each view is scoped to both regional API service names:
 
 | View | Filters |
