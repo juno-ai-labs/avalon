@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { declaredUserDeliveryTargetType, resolveUserDelivery } from "../src/services/user-delivery";
+import {
+  declaredUserDeliveryTargetType,
+  resolveFrozenDeliveryIdentity,
+  resolveUserDelivery,
+} from "../src/services/user-delivery";
 
 function environment(linkedConnectionIds: string[] = []): { env: Env; prepare: ReturnType<typeof vi.fn> } {
   const prepare = vi.fn(() => ({
@@ -71,4 +75,89 @@ describe("connector-declared user delivery", () => {
     expect(resolved.size).toBe(0);
     expect(prepare).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["personal", "personal"],
+    ["workspace", "workspace"],
+  ])("freezes a linked %s connection without consulting its scope", async (_label, scope) => {
+    // The save path must accept exactly what the create screen offered. A rule
+    // about connection scope in one and not the other is how a connector that
+    // needs no identity link gets offered and then rejected.
+    const { env } = routedEnvironment({ scope, linked: true });
+
+    await expect(resolveFrozenDeliveryIdentity(env, {
+      ...identity,
+      connectionId: "connection-slack",
+      targetType: "slack_agent_dm",
+    })).resolves.toEqual({
+      connectionId: "connection-slack",
+      providerTenantId: "T123",
+      providerUserId: "U123",
+    });
+  });
+
+  it("refuses a destination the read path would not have offered", async () => {
+    const unlinked = routedEnvironment({ scope: "workspace", linked: false });
+    await expect(resolveFrozenDeliveryIdentity(unlinked.env, {
+      ...identity,
+      connectionId: "connection-slack",
+      targetType: "slack_agent_dm",
+    })).resolves.toBeNull();
+
+    const unhealthy = routedEnvironment({ scope: "workspace", linked: true, status: "needs_reconnect" });
+    await expect(resolveFrozenDeliveryIdentity(unhealthy.env, {
+      ...identity,
+      connectionId: "connection-slack",
+      targetType: "slack_agent_dm",
+    })).resolves.toBeNull();
+  });
+
+  it("refuses a target type the chosen connector does not declare", async () => {
+    const { env } = routedEnvironment({ scope: "workspace", linked: true, connectorType: "github" });
+
+    await expect(resolveFrozenDeliveryIdentity(env, {
+      ...identity,
+      connectionId: "connection-slack",
+      targetType: "slack_agent_dm",
+    })).resolves.toBeNull();
+  });
 });
+
+/** A D1 stub that answers by statement shape rather than by call order. */
+function routedEnvironment(input: {
+  scope: string;
+  linked: boolean;
+  status?: string;
+  connectorType?: string;
+}): { env: Env } {
+  const prepare = vi.fn((statement: string) => ({
+    bind: (...bindings: unknown[]) => ({
+      first: async () => statement.includes("FROM connector_connections cc")
+        ? input.linked
+          ? { id: "connection-slack", provider_account_id: "T123", slack_user_id: "U123" }
+          : null
+        : {
+            id: "connection-slack",
+            connector_type: input.connectorType ?? "slack",
+            scope: input.scope,
+            status: input.status ?? "healthy",
+          },
+      all: async () => ({
+        results: input.linked && String(bindings[0]) === identity.workspaceId
+          ? [{ connection_id: "connection-slack" }]
+          : [],
+      }),
+    }),
+  }));
+  return {
+    env: {
+      APP_ENV: "test",
+      AVALON_REGION: "global",
+      DB: { prepare },
+      PUBLIC_API_BASE_URL: "https://api.example.com",
+      SLACK_CLIENT_ID: "slack-client",
+      SLACK_CLIENT_SECRET: "slack-secret",
+      SLACK_SIGNING_SECRET: "slack-signing",
+    } as unknown as Env,
+  };
+}
