@@ -17,7 +17,7 @@ const idParam = z.object({ id: IdSchema });
 export const workOpportunityRoutes = new Hono<HonoAppEnv>();
 
 workOpportunityRoutes.get("/", zValidator("query", listQuery), async (c) =>
-  c.json(await new WorkOpportunityService(c.env, getAuth(c)).list(c.req.valid("query").limit)),
+  c.json(await new WorkOpportunityService(c.env, getAuth(c), requestDeferral(c)).list(c.req.valid("query").limit)),
 );
 
 workOpportunityRoutes.post(

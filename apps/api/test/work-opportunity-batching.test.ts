@@ -499,7 +499,7 @@ describe("suggested-work aggregation", () => {
     )).rejects.toMatchObject({ code: "stale_work_opportunity", status: 409 });
   });
 
-  it("debounces impression-driven ranking invalidation for one hour", async () => {
+  it("debounces impression-driven ranking requests for one hour", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-10T12:00:00.000Z"));
     const database = migratedDatabase();
@@ -526,16 +526,18 @@ describe("suggested-work aggregation", () => {
       role: "owner",
     });
 
+    // Impressions are the one input that asks for a re-rank without the
+    // candidates having changed, so within the hour they must ask for nothing.
     await service.recordImpressions([opportunityId]);
     expect(database.prepare(
-      "SELECT status FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
-    ).get(workspaceId, userOne)).toEqual({ status: "ready" });
+      "SELECT due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
+    ).get(workspaceId, userOne)).toEqual({ due_at: null });
 
     vi.setSystemTime(new Date("2026-08-10T13:00:01.000Z"));
     await service.recordImpressions([opportunityId]);
     expect(database.prepare(
-      "SELECT status FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
-    ).get(workspaceId, userOne)).toEqual({ status: "stale" });
+      "SELECT due_at FROM suggested_work_sets WHERE workspace_id = ? AND user_id = ?",
+    ).get(workspaceId, userOne)).toEqual({ due_at: "2026-08-10T13:00:01.000Z" });
     expect(database.prepare(
       "SELECT impression_count FROM work_opportunity_user_states WHERE opportunity_id = ? AND user_id = ?",
     ).get(opportunityId, userOne)).toEqual({ impression_count: 2 });
