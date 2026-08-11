@@ -69,16 +69,21 @@ export function workstreamUnfurlSummary(row: Record<string, unknown>): Workstrea
  * state renders as no badge at all, leaving the title and timestamp to speak.
  */
 /**
+ * Only a work stream someone can act on wears a badge: one that is working, one
+ * that is waiting on a person, and one that stopped because it broke.
+ * `completed`, `scheduled`, and `idle` render none — "Completed" tells a reader
+ * nothing to do, and because a card is rewritten only when its badge changes, a
+ * settled work stream would carry that label for as long as the message lives.
+ *
  * The emoji leads the title so the state is legible before the text is read,
  * and the word follows in the detail line so the emoji is never the only
- * carrier of meaning. Both come from this one table so they cannot drift apart.
- *
- * The emoji match App Home's existing task rows, so a member sees the same
- * marks in both places.
+ * carrier of meaning. Both come from this one table so they cannot drift apart,
+ * and the running and needs-input marks match App Home's task rows.
  */
 const SLACK_UNFURL_STATUS_BADGES: Record<string, { emoji: string; label: string }> = {
   needs_input: { emoji: ":warning:", label: "Needs input" },
   running: { emoji: ":large_green_circle:", label: "Running" },
+  failed: { emoji: ":red_circle:", label: "Failed" },
 };
 
 export function unfurlStatusBadge(harnessStatus: string): { emoji: string; label: string } | null {

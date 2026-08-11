@@ -41,18 +41,21 @@ workspace permissions after the handoff.
 ## What the Slack unfurl shows
 
 The card carries the work stream's **title, last activity, and automation
-origin**, plus a **status badge only while it is `running` or `needs_input`** —
-enough to know whether the link is worth opening and whether the agent is
-blocked.
+origin**, plus a **status badge only while it is `running`, `needs_input`, or
+`failed`** — enough to know whether the link is worth opening and whether the
+agent is blocked.
 
-Every other state renders no badge. "Completed" is not something a reader can
-act on, and because a card is only rewritten when its badge changes, a settled
-work stream would carry that label indefinitely. The badge is an emoji leading
-the title, with the word repeated in the detail line so the emoji is never the
-only carrier of meaning; both come from one table in `slack-workstream-card.ts`
-so they cannot drift apart, and they match App Home's task rows. It carries no work-stream *contents*: no objective,
-no messages, no resources, no artifacts. Those still need the reader to open
-Avalon and pass its own authorization.
+`completed`, `scheduled`, and `idle` render no badge. "Completed" is not
+something a reader can act on, and because a card is only rewritten when its
+badge changes, a settled work stream would carry that label indefinitely. The
+badge is an emoji leading the title, with the word repeated in the detail line
+so the emoji is never the only carrier of meaning; both come from one table in
+`slack-workstream-card.ts` so they cannot drift apart, and the running and
+needs-input marks match App Home's task rows.
+
+The card carries no work-stream *contents*: no objective, no messages, no
+resources, no artifacts. Those still need the reader to open Avalon and pass its
+own authorization.
 
 A Slack unfurl is one card per link per message, identical for everyone who can
 read the channel — `user_auth_required` gates the *sharer*, not the audience, so
