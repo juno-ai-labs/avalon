@@ -1129,7 +1129,7 @@ async function loadAutomationCreatorPluginCatalog(
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, wirePrefix, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
-      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     catalog.push({
@@ -3748,7 +3748,7 @@ async function loadHarnessTools(
     const presentation = connectorPluginPresentation(String(row.connector_type), grantedScopes, shortWireName, {
       displayName: adapter.manifest.displayName,
       description: adapter.agentPlugin.description,
-      searchAliases: [adapter.manifest.type, adapter.agentPlugin.wireNamePrefix],
+      searchAliases: connectorSearchAliases(adapter),
       systemMessage: adapter.agentPlugin.systemMessage,
     });
     const frozen: FrozenConnectorPlugin = {
@@ -3905,6 +3905,44 @@ function googleFilesWorkedExamples(wirePrefix: string, granted: ReadonlySet<stri
   return examples.length ? `Worked examples:\n${examples.map((example) => `- ${example}`).join("\n")}` : "";
 }
 
+/**
+ * What a request has to say to find a connector in the plugin catalog.
+ *
+ * The provider type and wire prefix were once the whole list, which made every
+ * connector reachable only by its own product name: "file a ticket" matched no
+ * plugin, and a run whose visible tool list held no connector tools reads that
+ * as the capability being absent. A connector declares the vocabulary of the
+ * work it does; the brand is added here so a descriptor never has to repeat it.
+ */
+function connectorSearchAliases(adapter: { manifest: { type: string }; agentPlugin: { wireNamePrefix: string; searchAliases?: readonly string[] } }): string[] {
+  return [...new Set([
+    adapter.manifest.type,
+    adapter.agentPlugin.wireNamePrefix,
+    ...(adapter.agentPlugin.searchAliases ?? []),
+  ])];
+}
+
+/**
+ * A rebuilt presentation's aliases: the brand identifiers every plugin is
+ * addressable by, plus the vocabulary this credential's scopes actually earn.
+ *
+ * A branch that returned a bare literal dropped the provider type and wire
+ * prefix the host adds for every other connector. What it deliberately does
+ * *not* inherit is the descriptor's own alias list: for Google that list is the
+ * union of every product, and matching "spreadsheet" on a mail-only credential
+ * would send a run to load a plugin that cannot help it. Google's presentation
+ * is capability-gated by design, so its aliases are too — the descriptor's list
+ * is the floor for a credential holding no recognized scope, and a new
+ * capability's vocabulary belongs in the branch that grants it.
+ */
+function catalogAliases(
+  connectorType: string,
+  wirePrefix: string,
+  scoped: readonly string[],
+): string[] {
+  return [...new Set([connectorType, wirePrefix, ...scoped])];
+}
+
 function connectorPluginPresentation(
   connectorType: string,
   grantedScopes: readonly string[],
@@ -3957,7 +3995,7 @@ function connectorPluginPresentation(
     return {
       displayName: "Google Mail + Calendar",
       description: `Work with ${capabilities.join(" and ")}, limited to this credential's granted tools. Load this plugin for email, inbox, mail, meeting, schedule, or calendar requests.`,
-      searchAliases: ["google", "gmail", "mail", "email", "inbox", "calendar", "gcal", "meetings", "schedule"],
+      searchAliases: catalogAliases(connectorType, wirePrefix, ["gmail", "mail", "email", "inbox", "calendar", "gcal", "meetings", "schedule"]),
       systemMessage: [
         [
           "Use only the Google Mail and Calendar tools exposed by this credential plugin.",
@@ -3980,7 +4018,7 @@ function connectorPluginPresentation(
     return {
       displayName: "Google Drive + Docs + Sheets",
       description: `Work with ${capabilities.join(", ")}, limited to this credential's granted tools. Load this plugin for file, document, spreadsheet, Drive, Docs, or Sheets requests.`,
-      searchAliases: ["google", "drive", "files", "documents", "docs", "spreadsheets", "sheets"],
+      searchAliases: catalogAliases(connectorType, wirePrefix, ["drive", "files", "documents", "docs", "spreadsheets", "sheets"]),
       systemMessage: [
         [
           "Use only the Google Drive, Docs, and Sheets tools exposed by this credential plugin.",
@@ -3996,17 +4034,45 @@ function connectorPluginPresentation(
   // Both halves at once. This branch used to hand back the connector's static
   // fallback message, so the one credential shape that can do everything was
   // also the only one told nothing about how.
+  // The load-me sentence has to be rebuilt here rather than inherited from the
+  // fallback, because this branch names a different set of work than the
+  // descriptor does — and the credential that can do everything was the one
+  // shape not being told when it applies.
+  // Nothing recognized to gate on, so there is nothing this function knows that
+  // the descriptor does not. Composing anyway produced "Work with , limited to
+  // …" and an alias list of just "google" — a credential findable only by
+  // brand, which is the state this whole change exists to remove.
+  if (!hasCommunication && !hasFiles) return fallback;
+
+  const combinedCapabilities = [
+    ...(hasMail ? ["authorized Gmail messages, threads, drafts, and sending"] : []),
+    ...(hasCalendar ? ["authorized Google calendars and events"] : []),
+    ...(hasDrive ? ["authorized Google Drive files"] : []),
+    ...(hasDocs ? ["Google Docs"] : []),
+    ...(hasSheets ? ["Google Sheets"] : []),
+  ];
+  const combinedRequests = [
+    ...(hasMail ? ["email", "inbox", "mail"] : []),
+    ...(hasCalendar ? ["meeting", "schedule", "calendar"] : []),
+    ...(hasDrive ? ["file", "Drive"] : []),
+    ...(hasDocs ? ["document", "Docs"] : []),
+    ...(hasSheets ? ["spreadsheet", "Sheets"] : []),
+  ];
   return {
     displayName: "Google Workspace",
-    description: `${fallback.description} Capabilities are limited to this credential's granted tools.`,
-    searchAliases: [
-      "google",
+    // Composed here rather than appended to the descriptor's line, which
+    // carries its own load-me sentence for the no-recognized-scopes floor and
+    // would otherwise be repeated back with a second, differently worded one.
+    description: `Work with ${combinedCapabilities.join(", ")}, limited to this credential's granted tools.${
+      combinedRequests.length ? ` Load this plugin for ${combinedRequests.join(", ")} requests.` : ""
+    }`,
+    searchAliases: catalogAliases(connectorType, wirePrefix, [
       ...(hasMail ? ["gmail", "mail", "email", "inbox"] : []),
       ...(hasCalendar ? ["calendar", "gcal", "meetings", "schedule"] : []),
       ...(hasDrive ? ["drive", "files"] : []),
       ...(hasDocs ? ["documents", "docs"] : []),
       ...(hasSheets ? ["spreadsheets", "sheets"] : []),
-    ],
+    ]),
     systemMessage: [
       [
         "Use only the Google tools exposed by this credential plugin.",
@@ -6028,6 +6094,8 @@ export const __integrationTesting = {
   createAvalonTools,
   createInlineChildHarnessSurface,
   childRunLimits,
+  connectorSearchAliases,
+  connectorPluginPresentation,
   hyperSightSubmissionPlugin,
   hyperSightBlockOutcome,
   installInlineChildAgentTool,
