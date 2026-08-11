@@ -101,9 +101,21 @@ may not write through to, inserts a new automation exactly as it always did.
   automation appears alongside the draft it came from and the draft has to be
   archived by hand.
 - **A draft holds no active email route.** `list` and `get` skip address
-  reconciliation for drafts. Reserving one on read would make opening the sidebar
-  depend on the Global registry, and an active route on a `draft` row would mean
-  mail could start a run that cannot legitimately begin.
+  reconciliation for drafts, and deleting one skips it too — an automation with
+  no address has no route to close, and reserving one to disable it would
+  tombstone an address forever for an automation nobody created. Reserving on
+  read would also make opening the sidebar depend on the Global registry, and an
+  active route on a `draft` row would mean mail could start a run that cannot
+  legitimately begin.
+- **The only way out of `draft` is `create` or `archiveDraft`.** `setPaused`
+  refuses a draft for that reason: it is the one other writer of `status`, and
+  resuming through it would reach `active` without any of the scope, connector,
+  and binding validation that creation does — handing a half-written automation
+  a live address and a **Run now**.
+- **A surface that lists automations by recency excludes drafts.** A draft's
+  `updated_at` moves on every compile turn, so any query ordered by it — Slack's
+  App Home is the one today — is otherwise led by whatever is being typed right
+  now, and led away from the automations that run.
 - **The saved transcript ends with the reply on screen.** The service appends the
   assistant message it streamed. Persisting only the request's messages would
   resume every draft one turn behind what its author last read.
@@ -136,8 +148,11 @@ this module keeps the automation they were describing.
 - **The database write fails.** The turn fails with it and the person retries;
   there is no path that streams a reply for a turn that was not saved, because a
   draft resumed one turn behind is worse than a turn that visibly did not land.
-- **Archiving a draft that is open** navigates the builder away, since the API
-  will not serve its conversation again.
+- **Archiving or deleting a draft that is open** navigates the builder away,
+  since the API will not serve its conversation again. `showsAutomation` in
+  `app-shell.tsx` is the one place that answers "is this automation on screen",
+  and it has to know about the builder as well as the overview — a draft is
+  reached through a query, not a path of its own.
 - **Attachments do not come back on resumed turns.** The resource ids are
   preserved and sent on the next compile, so the compiler still sees them, but
   the transcript renders those turns without their attachment tiles — only the
@@ -160,11 +175,15 @@ this module keeps the automation they were describing.
 Run them with `pnpm --filter @avalon/api exec vitest run test/automation-draft-persistence.test.ts`
 and `pnpm --filter @avalon/desktop exec vitest run src/renderer/screens/new-automation.test.tsx`.
 
-Two traps in the renderer suite. `api.resumeAutomationDraft` is stubbed to
+Three traps in the renderer suite. `api.resumeAutomationDraft` is stubbed to
 **reject** in `beforeEach`: a resolved fixture left over from another test
 silently replaces the transcript under the test that follows it, which is how a
-green suite hid a real defect once already. And `renderScreen` mounts a location
-probe, because the screen's own URL write is otherwise invisible to a test.
+green suite hid a real defect once already. `renderScreen` mounts a location
+probe, because the screen's own URL write is otherwise invisible to a test. And
+it renders two plain links to `/automations/new`, with and without a draft in
+the query — anything about switching between drafts has to be driven through a
+navigation that does *not* remount the screen, because that is the only case
+where the screen has to clean up after itself.
 
 ## Data model
 
@@ -193,6 +212,44 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-11 — Close the paths a draft could take out of being one
+
+**What changed:** `setPaused` refuses a draft, deleting a draft no longer mints
+the address it never had, Slack's App Home excludes drafts from its
+recency-ordered list, and in the builder: the composer cache is keyed per draft,
+the saved conversation is dropped from the query cache when a turn moves it on,
+and the "this screen wrote the URL" mark moved from history state to the
+component.
+
+**Why:** Review of the change above, once `status = 'draft'` rows actually
+existed. Every one of these was code that had been correct for years while no
+draft could reach it. `POST /automations/:id/resume` was the sharpest: it is the
+only other writer of `status`, so it took a draft straight to `active` — live
+email route, runnable by mail and by hand — with none of `create`'s scope,
+connector, or binding validation. In the builder, the mark in history state was
+the same class of mistake in the other direction: a history entry outlives the
+component that stamped it, so a back gesture would land on a marked entry with
+the resume switched off and show an empty builder for a draft that has a
+conversation.
+
+**Considered and rejected:** Keying the composer cache on the draft named in the
+URL, which is the obvious reading of "one composer per draft". React Router
+commits this screen's own URL write several renders after the state beside it,
+so that key changes *during* a turn and `useDraftText` re-hydrates over the
+sentence being typed — a caught regression, not a hypothetical. The key follows
+a draft the screen was opened on or switched to, and deliberately not one it
+named itself. For the same reason the mark is only invalidated by the address
+bar naming a *different* draft, never by it naming nothing.
+
+**Consequences:** The lag between this screen's URL write and the router
+commit is now load-bearing in two places; anything reading `?draft=` as
+authoritative within a turn has to account for it. `status` has exactly two
+legitimate exits from `draft` — `create` and `archiveDraft` — and a third writer
+needs the same explicit refusal `setPaused` now carries. Any new surface listing
+automations by `updated_at` must exclude drafts or be swamped by them.
+
+Shipped in #TBD.
 
 ### 2026-08-11 — Automations being set up are drafts, and drafts are in the sidebar
 

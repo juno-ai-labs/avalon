@@ -1,7 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
 import type { Workspace } from '../lib/types';
@@ -60,7 +60,7 @@ function LocationProbe(): React.JSX.Element {
   return <span data-testid="location-search">{location.search}</span>;
 }
 
-function renderScreen(entry = '/automations/new'): void {
+function renderScreen(entry: InitialEntry = '/automations/new'): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -69,6 +69,10 @@ function renderScreen(entry = '/automations/new'): void {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[entry]}>
           <LocationProbe />
+          {/* What the sidebar offers: the same route with and without a draft
+              named in the query, so neither remounts the screen. */}
+          <Link to="/automations/new">back to nothing</Link>
+          <Link to="/automations/new?draft=draft-9">open draft 9</Link>
           <Routes>
             <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/new" />
           </Routes>
@@ -252,6 +256,102 @@ describe('New automation composer', () => {
       { message: 'https://example.com/blog', draftId: 'draft-9' },
       expect.any(Function),
     ));
+  });
+
+  it('resumes on a fresh mount whatever the history entry carries', async () => {
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    // Whether a draft still needs loading is a fact about this screen, not
+    // about the history entry it is mounted on. A mark left in history state
+    // outlives the screen that set it, so a back gesture or a restored window
+    // would land here with the load switched off and show an empty builder for
+    // a draft that has a conversation.
+    renderScreen({
+      pathname: '/automations/new',
+      search: '?draft=draft-9',
+      state: { selfNamedDraft: true, anythingElse: true },
+    });
+
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+    expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything());
+  });
+
+  it('reopens a continued draft at the turn it reached, not the one it was resumed from', async () => {
+    const resumed = {
+      draft: {
+        draftId: 'draft-9',
+        assistantMessage: 'Which blog should I monitor?',
+        question: {
+          id: 'question-9',
+          prompt: 'Which blog should I monitor?',
+          responseType: 'free_text',
+          options: [],
+          allowOther: false,
+        },
+      },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    };
+    api.resumeAutomationDraft.mockResolvedValue(resumed);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-9',
+      assistantMessage: 'How often should I check it?',
+    });
+    renderScreen('/automations/new?draft=draft-9');
+
+    await screen.findByText('Watch my blog.');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Which blog should I monitor?' }), {
+      target: { value: 'https://example.com/blog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('How often should I check it?');
+
+    // Leaving and coming back must not serve the conversation from before the
+    // answer: the draft on the server has moved on, and a cached copy of the
+    // turn it was resumed at would silently roll it back.
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+    api.resumeAutomationDraft.mockResolvedValue({
+      ...resumed,
+      messages: [
+        ...resumed.messages,
+        { role: 'user', content: 'https://example.com/blog' },
+        { role: 'assistant', content: 'How often should I check it?' },
+      ],
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
+
+    expect(await screen.findByText('https://example.com/blog')).toBeVisible();
+    expect(api.resumeAutomationDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves an unsent message with the draft it was typed in', async () => {
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    renderScreen('/automations/new?draft=draft-9');
+    await screen.findByText('Watch my blog.');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'https://example.com/blog' },
+    });
+
+    // Switching away must not carry the sentence — or the attachments staged
+    // beside it — into a conversation it was never meant for.
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+
+    const fresh = await screen.findByRole('textbox', { name: 'Describe an automation' });
+    await waitFor(() => expect(fresh).toHaveValue(''));
   });
 
   it('names the draft it just wrote in the address bar, so its sidebar row is the open one', async () => {
