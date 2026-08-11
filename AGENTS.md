@@ -29,6 +29,28 @@ Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
 dry-run builds, the desktop release invariants, and a Gitleaks scan over the full
 history.
 
+## Flaky tests
+
+**A test that fails once and passes on a rerun is a defect in the test or the
+code under it — fix it in the change that encountered it, whoever wrote it.**
+Rerunning until green, skipping it, or setting `retry` in a Vitest config hides
+a real race that will fail for someone else; none of those are an accepted
+resolution here.
+
+- Reproduce it first, in isolation and in bulk:
+  `for i in $(seq 20); do pnpm --filter @avalon/<pkg> exec vitest run <file> || break; done`,
+  and add `--sequence.shuffle` or `--no-file-parallelism` to separate an
+  order-dependent test from a genuinely racy one.
+- The causes are nearly always the same few: an assertion racing a real timer or
+  an unawaited promise, module or mock state leaking between tests, an implicit
+  dependency on test order, and wall-clock or `Date.now()` arithmetic. Fix the
+  cause — await the settled state, isolate the state, or use fake timers.
+- Confirm the fix by looping the test again, then run the full `pnpm test` once
+  more before calling the change done.
+- If the cause is genuinely outside the change, still fix it or say plainly in
+  the report and the pull request description that it is unfixed and why. Never
+  leave an intermittent failure unmentioned.
+
 ## Capturing command output
 
 For any command with non-trivial output — tests, typecheck, lint, migrations,
