@@ -162,11 +162,11 @@ describe('MeetingNotesScreen', () => {
   it('keeps transcript segments readable', () => {
     expect(appendMeetingSegment('First point.', ' Second point. ')).toBe('First point.\n\nSecond point.');
     expect(appendMeetingSegment('', ' Opening note. ')).toBe('Opening note.');
-    expect(MEETING_NOTES_INTERVAL_MS).toBe(5 * 60 * 1_000);
+    expect(MEETING_NOTES_INTERVAL_MS).toBe(60 * 1_000);
     expect(MEETING_TRANSCRIPTION_SEGMENT_MS).toBe(MEETING_NOTES_INTERVAL_MS);
   });
 
-  it('keeps elapsed time monotonic across multiple saved five-minute segments', () => {
+  it('keeps elapsed time monotonic across multiple saved one-minute segments', () => {
     const priorRecordingMs = 45_000;
     const activeStartedAtMs = 1_000_000;
     let recordedBeforeActiveMs = priorRecordingMs;
