@@ -907,9 +907,17 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           const endpoint = recordArray(endpoints, "webhook_endpoints")
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
           if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists");
-          // A disabled endpoint is a delivery problem, not an authorization
-          // one, and re-enabling it is a write. `repair` owns that; this asks
-          // the provider a question and reports the answer.
+          if (endpoint.enabled !== true) {
+            // Reported, not repaired: re-enabling is a write, and `repair`
+            // owns it. Still `ok` — the authorization is sound and every read
+            // tool works; it is delivery that has stopped, so failing the
+            // check here would take a usable connection out of every run to
+            // report a problem the connection test can fix.
+            return {
+              ok: true,
+              message: "Granola authorization is healthy, but its webhook endpoint is disabled and no notes will arrive until it is re-enabled",
+            };
+          }
         } else {
           const accountResult = await reauthorizingMcpCall(
             connection,

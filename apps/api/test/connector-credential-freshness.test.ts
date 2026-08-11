@@ -283,18 +283,29 @@ describe("refresh rejection classification", () => {
     const revoked = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_grant" });
     const ourFault = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_request" });
     const badClient = new ConnectorError("unauthorized", "bad", { status: 401, providerError: "invalid_client" });
-    const proxied = new ConnectorError("unauthorized", "blocked", { status: 403 });
+    const proxied = new ConnectorError("unauthorized", "blocked", { status: 403, providerError: "access_denied" });
 
     expect(isRevokedGrantError(revoked)).toBe(true);
     expect(isRevokedGrantError(ourFault)).toBe(false);
     expect(isRevokedGrantError(badClient)).toBe(false);
     expect(isRevokedGrantError(proxied)).toBe(false);
-    // With no code at all, only a 401 is still taken as a rejection.
+    // Notion keys its envelope `code`; reading only `error` would drop the
+    // classification and leave a dead grant reporting healthy.
+    const notionShaped = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_grant" });
+    expect(isRevokedGrantError(notionShaped)).toBe(true);
+    // With no code at all the status test stands, because the silent failure —
+    // a dead connection that never prompts anyone — is the worse mistake.
     expect(isRevokedGrantError(new ConnectorError("unauthorized", "x", { status: 401 }))).toBe(true);
+    expect(isRevokedGrantError(new ConnectorError("provider_error", "x", { status: 400 }))).toBe(true);
+    expect(isRevokedGrantError(new ConnectorError("provider_error", "x", { status: 500 }))).toBe(false);
   });
 
-  it("carries the provider's error code out of a failed request", async () => {
-    const fetcher = (async () => Response.json({ error: "invalid_grant" }, { status: 400 })) as typeof fetch;
+  it.each([
+    { label: "OAuth `error`", body: { error: "invalid_grant" } },
+    { label: "Notion's `code`", body: { object: "error", code: "invalid_grant", message: "bad" } },
+    { label: "a nested envelope", body: { error: { code: "invalid_grant" } } },
+  ])("carries the provider's error code out of a failed request: $label", async ({ body }) => {
+    const fetcher = (async () => Response.json(body, { status: 400 })) as typeof fetch;
     await expect(providerJson(fetcher, "https://provider.test/token", { method: "POST" }))
       .rejects.toMatchObject({ details: { status: 400, providerError: "invalid_grant" } });
   });
@@ -323,8 +334,10 @@ describe("provider writes", () => {
       "workspace",
     ));
 
+    // Reported, not repaired, and not failed: reads still work, so the
+    // connection stays loadable while the condition is visible.
     await expect(adapter.healthCheck(connection, AbortSignal.timeout(5_000)))
-      .resolves.toMatchObject({ ok: true });
+      .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled") });
     expect(methods.some((call) => call.startsWith("PATCH"))).toBe(false);
 
     methods.length = 0;
@@ -390,6 +403,24 @@ describe("revalidation between model turns", () => {
     expect(fetcher).not.toHaveBeenCalled();
     // Nothing was decrypted either: the credentials are not needed to answer.
     expect(statements.some((sql) => sql.includes("encrypted_credentials = ?"))).toBe(false);
+  });
+});
+
+describe("continuation revalidation respects its deadline", () => {
+  it("does not answer authorized once the run has been aborted", async () => {
+    const aborted = AbortSignal.abort();
+    await expect(__integrationTesting.reauthorizeFrozenPlugin(
+      { DB: { prepare() { throw new Error("D1 must not be read after the deadline"); } } } as never,
+      {
+        workspaceId: FROZEN.workspaceId,
+        workstreamId: "00000000-0000-7000-8000-0000000000ws",
+        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        executionPrincipal: { type: "user", userId: OWNER },
+      } as never,
+      FROZEN as never,
+      aborted,
+      "continuation",
+    )).resolves.toBe("indeterminate");
   });
 });
 

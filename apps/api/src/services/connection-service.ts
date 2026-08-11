@@ -1010,6 +1010,7 @@ export class ConnectionService {
     const adapter = this.registry().get(connection.connector_type);
     const before = JSON.stringify(context.credentials);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
+    let repairOutcome: string | null = null;
     try {
       result = await withAuthorizedConnection(
         this.env,
@@ -1027,8 +1028,16 @@ export class ConnectionService {
           // below is still the answer being asked for.
           if (adapter.repair) {
             try {
-              await adapter.repair(authorized, AbortSignal.timeout(10_000));
+              const repair = await adapter.repair(authorized, AbortSignal.timeout(10_000));
+              if (repair.repaired) repairOutcome = repair.message ?? "Repaired the connection";
             } catch (repairError) {
+              // The check below is still the answer being asked for, so a failed
+              // repair does not fail the test — but it is reported rather than
+              // only logged, or a connection whose delivery stays broken looks
+              // no different from one that was fixed.
+              repairOutcome = repairError instanceof Error
+                ? `A repair was attempted and failed: ${repairError.message}`
+                : "A repair was attempted and failed";
               logWarn(this.env, "connector_repair_failed", {
                 connection_id: connection.id,
                 connector_type: connection.connector_type,
@@ -1113,6 +1122,7 @@ export class ConnectionService {
         ).run();
       }
     }
+    if (repairOutcome) result = { ...result, message: `${result.message}. ${repairOutcome}` };
     await this.env.DB.prepare(
       `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
     ).bind(
