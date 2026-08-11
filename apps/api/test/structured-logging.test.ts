@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
-import { logStructuredEvent, summarizeEvent } from "../src/observability/logger";
+import { logError, logInfo, logStructuredEvent, logWarn, summarizeEvent } from "../src/observability/logger";
 
 const env = {
   AVALON_REGION: "global",
@@ -9,7 +9,7 @@ const env = {
   LOG_LEVEL: "info",
 } as unknown as Env;
 
-function capture(level: "info" | "warn", emit: () => void): Record<string, unknown> {
+function capture(level: "info" | "warn" | "error", emit: () => void): Record<string, unknown> {
   const spy = vi.spyOn(console, level).mockImplementation(() => undefined);
   try {
     emit();
@@ -78,6 +78,26 @@ describe("structured logging", () => {
 
     expect(entry.message).toBe("connector_oauth_callback_failed unauthorized");
     expect(entry.authorization).toBe("[REDACTED]");
+  });
+
+  it("routes each level helper to the console method Workers Logs reads it from", () => {
+    expect(capture("info", () => logInfo(env, "slack_public_channel_sync_completed", { joined: 3 })))
+      .toMatchObject({ event: "slack_public_channel_sync_completed", joined: 3, level: "info" });
+    expect(capture("warn", () => logWarn(env, "slack_thread_title_failed", { reason: "ratelimited" })))
+      .toMatchObject({ event: "slack_thread_title_failed", level: "warn", reason: "ratelimited" });
+    expect(capture("error", () => logError(env, "realtime_transcription_session_release_failed")))
+      .toMatchObject({ event: "realtime_transcription_session_release_failed", level: "error" });
+  });
+
+  it("drops an entry below the configured level", () => {
+    const quiet = { ...env, LOG_LEVEL: "error" } as unknown as Env;
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      logWarn(quiet, "slack_thread_title_failed");
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("omits fields the summary cannot read", () => {

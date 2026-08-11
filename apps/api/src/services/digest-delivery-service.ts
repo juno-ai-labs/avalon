@@ -3,6 +3,7 @@ import { nowIso } from "@avalon/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { logWarn } from "../observability/logger";
 import { digestEmailHtml, digestMarkdownToText } from "./digest-email-content";
 import { sendResendEmail, singleLine } from "./resend";
 import { SlackAgentService } from "./slack-agent-service";
@@ -125,7 +126,7 @@ export async function deliverDigest(
   }
 
   for (const failure of failures) {
-    console.warn("Digest delivery failed", {
+    logWarn(env, "digest_delivery_failed", {
       delivery_id: context.deliveryId,
       reason: failure instanceof Error ? failure.message : "unknown",
     });

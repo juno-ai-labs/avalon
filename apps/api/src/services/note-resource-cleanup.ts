@@ -1,4 +1,5 @@
 import type { Env } from "../env";
+import { logWarn } from "../observability/logger";
 
 export async function reapDeletedNoteObjects(env: Env): Promise<void> {
   const pending = await env.DB.prepare(
@@ -15,8 +16,8 @@ export async function reapDeletedNoteObjects(env: Env): Promise<void> {
         "DELETE FROM note_resource_deletion_outbox WHERE resource_id = ?",
       ).bind(resource.resource_id).run();
     } catch (error) {
-      console.warn("Deleted note object cleanup failed", {
-        resourceId: resource.resource_id,
+      logWarn(env, "note_object_cleanup_failed", {
+        resource_id: resource.resource_id,
         reason: error instanceof Error ? error.message : "unknown R2 cleanup error",
       });
     }

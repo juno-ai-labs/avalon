@@ -20,9 +20,16 @@ export function redact(value: unknown, depth = 0): unknown {
   return value;
 }
 
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+// Everything the logger reads off the environment. Callers that hold a full
+// `Env` satisfy it; the narrow shape keeps helpers callable from code that only
+// receives the observability bindings.
+export type LogEnv = Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">;
+
 export function logEvent(
   c: Context<HonoAppEnv>,
-  level: "debug" | "info" | "warn" | "error",
+  level: LogLevel,
   event: string,
   fields: Record<string, unknown> = {},
 ): void {
@@ -54,8 +61,8 @@ export function summarizeEvent(event: string, fields: Record<string, unknown> = 
 }
 
 export function logStructuredEvent(
-  env: Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">,
-  level: "debug" | "info" | "warn" | "error",
+  env: LogEnv,
+  level: LogLevel,
   event: string,
   fields: Record<string, unknown> = {},
 ): void {
@@ -77,9 +84,29 @@ export function logStructuredEvent(
   // fields, and treats `message` as the row's summary. Serializing the entry
   // first would collapse every diagnostic into that one string, making the
   // release dashboards unable to filter on fields such as `event` or `code`;
-  // omitting `message` keeps the fields but empties the log list.
+  // omitting `message` keeps the fields but empties the log list. These are the
+  // only `console` calls in the Worker, which `no-console` enforces everywhere
+  // else so no diagnostic can reach Workers Logs unindexed or unsummarized.
+  /* eslint-disable no-console */
   if (level === "error") console.error(entry);
   else if (level === "warn") console.warn(entry);
   else if (level === "debug") console.debug(entry);
   else console.info(entry);
+  /* eslint-enable no-console */
+}
+
+export function logDebug(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+  logStructuredEvent(env, "debug", event, fields);
+}
+
+export function logInfo(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+  logStructuredEvent(env, "info", event, fields);
+}
+
+export function logWarn(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+  logStructuredEvent(env, "warn", event, fields);
+}
+
+export function logError(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+  logStructuredEvent(env, "error", event, fields);
 }
