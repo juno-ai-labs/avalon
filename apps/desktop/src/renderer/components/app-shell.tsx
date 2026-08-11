@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CSSProperties, PropsWithChildren } from 'react';
+import { useEffect, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
@@ -10,6 +10,34 @@ import { Sidebar } from './sidebar';
 
 interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
+}
+
+export function openWorkstreamId(pathname: string): string | null {
+  const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
+  return id === undefined || id === 'new' ? null : decodeURIComponent(id);
+}
+
+/**
+ * Which work stream the list poll has caught holding a stale harness status, if
+ * any. The poll is the backstop for every work stream this client has no room
+ * socket to; it must not become a second opinion about the one it does. A
+ * pushed status writes the detail and the list together, so when the two
+ * disagree the side written longer ago is the stale one — and that is normally
+ * the detail, which nothing refreshes on a timer, leaving the header pulsing
+ * "Running" under a sidebar dot that has already gone yellow. Re-reading the
+ * detail rather than patching the status in place keeps its run metadata, which
+ * the elapsed-time display reads, agreeing with the status beside it.
+ */
+export function staleHarnessStatusWorkstreamId(
+  activeWorkstreamId: string | null,
+  summaries: WorkstreamSummary[] | undefined,
+  summariesUpdatedAt: number,
+  detail: { data?: WorkstreamDetail; dataUpdatedAt: number } | undefined,
+): string | null {
+  if (activeWorkstreamId === null || !summaries || !detail?.data) return null;
+  const summary = summaries.find((item) => item.id === activeWorkstreamId);
+  if (!summary || summary.harnessStatus === detail.data.harnessStatus) return null;
+  return detail.dataUpdatedAt <= summariesUpdatedAt ? activeWorkstreamId : null;
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
@@ -46,6 +74,20 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
+
+  const activeWorkstreamId = openWorkstreamId(location.pathname);
+  useEffect(() => {
+    const staleId = staleHarnessStatusWorkstreamId(
+      activeWorkstreamId,
+      workstreams.data,
+      workstreams.dataUpdatedAt,
+      activeWorkstreamId === null
+        ? undefined
+        : queryClient.getQueryState<WorkstreamDetail>(['workstream', activeWorkstreamId]),
+    );
+    if (staleId === null) return;
+    void queryClient.invalidateQueries({ queryKey: ['workstream', staleId], exact: true });
+  }, [activeWorkstreamId, queryClient, workstreams.data, workstreams.dataUpdatedAt]);
 
   const shellStyle = {
     '--rail-width': `${hypersightOpen ? hypersightWidth : railExpanded ? Math.max(520, railWidth) : railWidth}px`,
