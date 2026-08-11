@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { RELEASE_RECORD_PATH, planRelease } from './plan-release.mjs';
+import { RELEASE_RECORD_PATH, planRelease, planningCommit } from './plan-release.mjs';
 
 const RELEASED = '1111111111111111111111111111111111111111';
 
@@ -12,6 +12,20 @@ const branchPush = (overrides = {}) => ({
   releasedCommit: RELEASED,
   changedPaths: ['apps/desktop/src/main/index.ts'],
   ...overrides,
+});
+
+test('a branch push is planned from the tip, not from what triggered it', () => {
+  // The trigger commit is what broke v1.49.0: it predates the record the
+  // release ahead of this run pushed while this one waited for the queue slot,
+  // so planning from it cut a version that had already shipped.
+  assert.equal(planningCommit('trigger-sha', 'tip-sha'), 'tip-sha');
+});
+
+test('an unreadable tip falls back to the checkout rather than failing the plan', () => {
+  // Same fail-open reasoning as an unknown watermark: a plan that cannot read
+  // the tip should still cut a release, because skipping retires desktop work
+  // silently and that is the failure this planner exists to prevent.
+  assert.equal(planningCommit('trigger-sha', null), 'trigger-sha');
 });
 
 test('desktop work since the released commit releases the next minor', () => {

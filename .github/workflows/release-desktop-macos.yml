@@ -89,6 +89,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The plan is made from main's tip, not from the commit that triggered the
+      # run. This job sits inside the release queue, so by the time it runs the
+      # release ahead of it has finished and pushed its `Record Avalon <version>
+      # release config` commit — a record the trigger commit predates. Without
+      # this fetch the planner reads the older record and cuts a version that
+      # has already shipped and already carries a pushed tag.
+      - name: Fetch the tip the plan is made from
+        run: git fetch --no-tags origin main
+
       - name: Plan the release
         id: plan
         env:
@@ -163,12 +172,19 @@ jobs:
             git reset --hard origin/main
             node apps/desktop/scripts/apply-release-version.mjs "$RELEASE_VERSION"
             if git diff --quiet; then
-              # main already carries this version. Because the plan was made
-              # inside the release queue, that can only mean an earlier attempt
-              # at *this* version pushed its bump and then failed before
-              # publishing — a release that had shipped it would have advanced
-              # the record, and the plan would have chosen the next minor. So
-              # this is a resume: build the current tip under the same version.
+              # main already carries this version, which is either an earlier
+              # attempt that pushed its bump and then failed before publishing —
+              # a resume — or a release that shipped it and whose record this
+              # plan had not seen. The pushed tag is what tells them apart: it is
+              # created locally and pushed only once the release has published,
+              # so a tag on the remote means those bytes are already live. Cut
+              # that version again and the run dies at `git tag` a few steps
+              # later with nothing but `already exists` to explain itself, and
+              # would republish an existing release if it got past that.
+              if [ -n "$(git ls-remote --tags origin "refs/tags/${RELEASE_TAG}")" ]; then
+                echo "::error::${RELEASE_TAG} has already been published, so this plan was stale. Refusing to release it a second time." >&2
+                exit 1
+              fi
               echo "main already declares ${RELEASE_VERSION}; resuming a release that did not publish it"
               exit 0
             fi

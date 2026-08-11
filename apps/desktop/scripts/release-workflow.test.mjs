@@ -229,14 +229,33 @@ test('a no-op bump is treated as resuming a release, never as one already shippe
     workflow.indexOf('- name: Resolve the release commit'),
   );
 
-  // Finding main already at the planned version is only unambiguous because the
-  // plan was made inside the queue: a release that had shipped this version
-  // would have advanced the record, and the plan would have chosen the next
-  // minor. Without that ordering this branch also catches a merge that raced an
-  // in-flight release, which then dies at the tag or at publish and strands its
-  // work — the silent stranding this pipeline exists to remove.
+  // Sitting inside the queue is not on its own enough to make this branch
+  // unambiguous, and assuming it was is what broke v1.48.0 and v1.49.0: the
+  // plan job checks out the commit that triggered the run, which predates the
+  // record the release ahead of it pushes on its way out, so the planner cut a
+  // version that had already shipped and the run died at `git tag` with nothing
+  // but `already exists` to explain itself. The plan is now made from main's
+  // tip, and this branch no longer takes the queue's word for it: the pushed
+  // tag says whether those bytes are live.
   assert.match(bumpStep, /git diff --quiet/u);
   assert.match(bumpStep, /resuming a release that did not publish it/u);
+  assert.match(bumpStep, /git ls-remote --tags origin/u);
+  assert.match(bumpStep, /Refusing to release it a second time/u);
+});
+
+test('the plan is made from the tip, not from the commit that triggered the run', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const planJob = workflow.slice(workflow.indexOf('\n  plan:'), workflow.indexOf('\n  release:'));
+
+  // A run that waited in the queue was triggered long before it got the slot.
+  // Planning from that stale checkout re-cuts a shipped version; planning from
+  // the tip reads the record the release ahead of it just wrote, and matches
+  // the commit the release job goes on to build.
+  assert.match(planJob, /git fetch --no-tags origin main/u);
+  assert.ok(
+    planJob.indexOf('git fetch --no-tags origin main') < planJob.indexOf('plan-release.mjs'),
+    'The tip must be fetched before the plan reads it',
+  );
 });
 
 test('the release job can write the tag it publishes', async () => {
