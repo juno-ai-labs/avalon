@@ -673,9 +673,9 @@ describe('New automation composer', () => {
     });
     renderScreen();
 
-    // The trigger names the flag's default before anything is chosen, so the
-    // model the runs will use is readable without opening the menu.
-    const selector = await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    // Unpinned until something is chosen, and named for that rather than for a
+    // model the renderer cannot know the flag will serve.
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
     fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'GPT-5.6 Luna' }));
 

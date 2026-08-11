@@ -20,7 +20,7 @@ import type { Env } from "../env";
 import { createActivitySuggestion, publishWorkstreamRoomEvent } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
-import { scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { agentModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
@@ -58,6 +58,7 @@ interface SubscriptionRow {
   execution_principal_json: string;
   connector_bindings_json: string;
   activity_trigger_bindings_json: string;
+  model_override: string | null;
   trigger_definitions_json: string;
   template_name: string;
   template_description: string;
@@ -533,7 +534,7 @@ async function injectActivityMessage(
 async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<Set<string>> {
   const subscriptions = await env.DB.prepare(
     `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
-            s.connector_bindings_json, s.activity_trigger_bindings_json,
+            s.connector_bindings_json, s.activity_trigger_bindings_json, s.model_override,
             tv.trigger_definitions_json, t.name AS template_name,
             t.description AS template_description
        FROM automation_subscriptions s
@@ -690,7 +691,11 @@ async function startActivityAutomation(
       workspaceId: activity.workspace_id,
       workstreamId,
     });
-    const model = await scheduledWorkstreamModel(env, {
+    // The automation's pin follows the work streams its runs create. The work
+    // stream is written in the same batch as its harness run, so the pin cannot
+    // be read back from the row yet — it is the value being written beside it.
+    const modelOverride = agentModelOverride(subscription.model_override);
+    const model = modelOverride ?? await scheduledWorkstreamModel(env, {
       workspaceId: activity.workspace_id,
       workstreamId,
     });
@@ -699,8 +704,8 @@ async function startActivityAutomation(
         `INSERT INTO workstreams (
            id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id,
            automation_subscription_id, automation_run_id, planned_for, harness_status,
-           next_sequence_number, last_activity_at, created_at, updated_at, archived_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, NULL, 'running', 1, ?7, ?7, ?7, NULL)`
+           next_sequence_number, last_activity_at, created_at, updated_at, archived_at, model_override
+         ) VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', 'automation', NULL, ?6, NULL, NULL, 'running', 1, ?7, ?7, ?7, NULL, ?8)`
       ).bind(
         workstreamId,
         activity.workspace_id,
@@ -708,7 +713,8 @@ async function startActivityAutomation(
         subscription.template_description,
         emailRoute.emailAddress,
         subscription.id,
-        now
+        now,
+        modelOverride
       ),
       env.DB.prepare(
         `INSERT INTO automation_runs (

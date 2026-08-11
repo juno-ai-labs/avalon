@@ -2,7 +2,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
+import { WorkspaceScheduler } from "../src/durable-objects/workspace-scheduler";
 import { AutomationService } from "../src/services/automation-service";
+import { __testing } from "../src/queues/activity-consumer";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 vi.mock("../src/services/workstream-email-routing-service", () => ({
@@ -23,6 +25,7 @@ const WORKSPACE_ID = "00000000-0000-7000-8000-000000000001";
 const USER_ID = "00000000-0000-7000-8000-000000000002";
 const PINNED_SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000007";
 const UNPINNED_SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000008";
+const ACTIVITY_ID = "00000000-0000-7000-8000-00000000000a";
 
 const auth: AuthContext = {
   sessionId: "session-1",
@@ -61,6 +64,35 @@ function serviceFor(database: DatabaseSync): AutomationService {
   return new AutomationService(env, auth);
 }
 
+function schedulerFor(database: DatabaseSync): WorkspaceScheduler {
+  const values = new Map<string, unknown>();
+  const storage = {
+    get: async <T>(key: string) => values.get(key) as T | undefined,
+    put: async (key: string, value: unknown) => { values.set(key, value); },
+    delete: async (key: string) => values.delete(key),
+    getAlarm: async () => null,
+    setAlarm: async () => undefined,
+    deleteAlarm: async () => undefined,
+  } as unknown as DurableObjectStorage;
+  return new WorkspaceScheduler(
+    { storage } as unknown as DurableObjectState,
+    {
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      LOG_LEVEL: "error",
+      OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
+      WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
+    } as unknown as Env,
+  );
+}
+
+function runWorkstream(database: DatabaseSync, subscriptionId: string): { id: string; model_override: string | null } {
+  return database.prepare(
+    "SELECT id, model_override FROM workstreams WHERE automation_subscription_id = ? ORDER BY created_at DESC LIMIT 1",
+  ).get(subscriptionId) as { id: string; model_override: string | null };
+}
+
 describe("automation model override", () => {
   it("copies the automation's pinned model onto every run it creates", async () => {
     const database = seededDatabase();
@@ -84,6 +116,93 @@ describe("automation model override", () => {
       .toEqual({ model_override: null });
     expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
+  });
+
+  // A scheduled run is the common automation shape, and it never passes through
+  // `createRun` — the scheduler Durable Object writes the work stream itself.
+  it("carries the pin into a run the scheduler alarm creates", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      INSERT INTO schedules
+        (id, workspace_id, automation_subscription_id, schedule_type, rrule, timezone,
+         next_run_at, enabled, version, created_at, updated_at)
+      VALUES
+        ('00000000-0000-7000-8000-000000000009', '${WORKSPACE_ID}', '${PINNED_SUBSCRIPTION_ID}', 'calendar', 'FREQ=DAILY', 'America/Los_Angeles',
+         '2026-01-02T16:00:00.000Z', 1, 1, '2026-01-01', '2026-01-01');
+    `);
+    const scheduler = schedulerFor(database);
+
+    await scheduler.refresh(WORKSPACE_ID);
+    await scheduler.alarm();
+
+    const workstream = runWorkstream(database, PINNED_SUBSCRIPTION_ID);
+    expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
+    // The scheduler creates the harness run after the work stream exists, so
+    // it resolves the model from the row rather than being handed the value.
+    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
+      .toEqual({ model: "openai/gpt-5.6-terra" });
+  });
+
+  // Connector-activity runs are the third path that writes a work stream
+  // directly, in the queue consumer rather than in either of the above.
+  it("carries the pin into a run a matching connector activity creates", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      UPDATE automation_template_versions
+         SET trigger_definitions_json = '[{"type":"connector_activity","connectorType":"github","eventTypes":["github.pull_request.merged"],"deterministicFilters":{}}]'
+       WHERE id = '00000000-0000-7000-8000-000000000005';
+      -- Workspace-scoped and bound to the connection the activity arrives on:
+      -- both are what the consumer requires before a trigger is even consulted.
+      UPDATE automation_subscriptions
+         SET scope = 'workspace', owner_user_id = NULL,
+             execution_principal_json = '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}',
+             connector_bindings_json = '{"plugin_github_acme":"connection-github-acme"}'
+       WHERE id = '${PINNED_SUBSCRIPTION_ID}';
+      -- The run row references the activity, which references its connection,
+      -- so both have to be real rows rather than a hand-built activity object.
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name, model_plugin_id, status, created_at, updated_at)
+      VALUES
+        ('connection-github-acme', '${WORKSPACE_ID}', 'github', 'workspace', NULL, 'GitHub', 'plugin_github_acme', 'healthy', '2026-01-01', '2026-01-01');
+      INSERT INTO activities
+        (id, workspace_id, connection_id, connection_scope, provider, provider_event_id, event_type,
+         resource_type, provider_resource_id, occurred_at, received_at, title, dedupe_key)
+      VALUES
+        ('${ACTIVITY_ID}', '${WORKSPACE_ID}', 'connection-github-acme', 'workspace', 'github', 'event-42',
+         'github.pull_request.merged', 'github_pull_request', 'juno-ai-labs/avalon#42',
+         '2026-01-02', '2026-01-02', 'Merged #42', 'dedupe-42');
+    `);
+    const env = {
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      LOG_LEVEL: "error",
+      OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
+      WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
+    } as unknown as Env;
+
+    await __testing.runMatchingAutomations(env, {
+      id: ACTIVITY_ID,
+      workspace_id: WORKSPACE_ID,
+      workspace_region: "global",
+      connection_id: "connection-github-acme",
+      connection_scope: "workspace",
+      connector_type: "github",
+      provider: "github",
+      event_type: "github.pull_request.merged",
+      resource_type: "github_pull_request",
+      provider_resource_id: "juno-ai-labs/avalon#42",
+      title: "Merged #42",
+      summary: "",
+      text_snippet: "",
+      metadata_json: "{}",
+      visibility_json: "{}",
+    } as never);
+
+    const workstream = runWorkstream(database, PINNED_SUBSCRIPTION_ID);
+    expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
+    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(workstream.id))
+      .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 });
 
