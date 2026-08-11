@@ -548,7 +548,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
         ? NotionCapabilities.commentRead
         : NotionCapabilities.read;
       if (!connection.grantedScopes.includes(requiredCapability)) {
-        throw connectorCapabilityRefused("Notion", requiredCapability, connection.grantedScopes);
+        throw connectorCapabilityRefused("Notion", requiredCapability, notionTools, connection.grantedScopes);
       }
       if (resourceType === "notion_page") return retrievePage(connection, resourceId, signal);
       if (resourceType === "notion_data_source") {
@@ -579,7 +579,7 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
       assertPrincipalAccess(context.connection, context.principal);
       const definition = notionTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
-        throw connectorCapabilityRefused("Notion", definition?.capability ?? name, context.connection.grantedScopes);
+        throw connectorCapabilityRefused("Notion", definition?.capability ?? name, notionTools, context.connection.grantedScopes);
       }
 
       if (name === "search") {

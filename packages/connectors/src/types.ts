@@ -597,21 +597,31 @@ export type ResolvedConnectorAdapter = Omit<ConnectorAdapter, "manifest"> & {
  * cannot act on: it already asked for that tool, and a bare "not granted"
  * leaves it guessing whether to retry, rephrase, or give up. Naming what the
  * connection *does* hold turns a dead end into a one-step correction, and
- * `available` is forwarded to the model with the failure. A run cannot widen
- * its own grants, so this discloses nothing it could not already see in its own
- * tool list.
+ * `available` is forwarded to the model with the failure.
+ *
+ * `available` is the capabilities of the connector's **tools**, intersected
+ * with the grant — not the raw grant. A connection carries capabilities that
+ * back no tool at all: `slack.agent` and `slack.notifications.write` are
+ * control-plane grants with nothing model-callable behind them, and listing
+ * them would answer "what can I do instead?" with things the model cannot do,
+ * which is worse than the bare refusal it replaced. Restricted this way it also
+ * discloses nothing beyond the run's own tool list.
  */
 export function connectorCapabilityRefused(
   providerLabel: string,
   requested: string,
+  tools: readonly ToolDefinition[],
   grantedCapabilities: readonly string[],
 ): ConnectorError {
-  const available = [...grantedCapabilities].sort();
+  const granted = new Set(grantedCapabilities);
+  const available = [...new Set(
+    tools.map((tool) => tool.capability).filter((capability) => granted.has(capability)),
+  )].sort();
   return new ConnectorError(
     "unsupported_capability",
     available.length
-      ? `The ${providerLabel} connection has not granted ${requested}. It has granted: ${available.join(", ")}.`
-      : `The ${providerLabel} connection has not granted ${requested}, and holds no capabilities on this run.`,
+      ? `The ${providerLabel} connection has not granted ${requested}. Its usable capabilities on this run are: ${available.join(", ")}.`
+      : `The ${providerLabel} connection has not granted ${requested}, and has no usable tool capabilities on this run.`,
     { reason: "capability_not_granted", field: requested, available },
   );
 }

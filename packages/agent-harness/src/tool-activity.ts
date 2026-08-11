@@ -231,7 +231,13 @@ function connectorActionPath(toolName: string, pluginId: string): string {
  * connectors whose naming looked compliant.
  *
  * Last match wins so a name ending in its object keeps the more specific
- * reading: `create_comment` is "Commented in" rather than "Created in".
+ * reading: `create_comment` is "Commented in" rather than "Created in". That
+ * only reaches the singular object segments the verb map happens to carry —
+ * GitHub's `issue_comments.create` matches on `create` and reads "Created in",
+ * so the same act is worded two ways across connectors. Adding plural object
+ * keys would even that out and break something worse: `list_comments` would
+ * then match `comments` and label a read as a comment written. The
+ * inconsistency is cosmetic; mislabelling a read as a write is not.
  */
 function connectorActionKey(toolName: string, pluginId: string): string {
   const segments = connectorActionPath(toolName, pluginId).split("_").filter(Boolean);
