@@ -54,20 +54,15 @@ Configure the consent screen for the exact scopes Avalon requests:
 | Purpose or capability | Google OAuth scope |
 | --- | --- |
 | Identity | `openid`, `email`, `profile` |
-| `gmail.read` | `https://www.googleapis.com/auth/gmail.readonly` |
-| `gmail.draft` | `https://www.googleapis.com/auth/gmail.compose` |
-| `gmail.send` | `https://www.googleapis.com/auth/gmail.send` |
-| `calendar.read` | `https://www.googleapis.com/auth/calendar.events.readonly` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly` |
+| `gmail.read`, `gmail.draft`, `gmail.send` | `https://www.googleapis.com/auth/gmail.modify` |
+| `calendar.read` | `https://www.googleapis.com/auth/calendar.readonly` |
 | `calendar.write` | `https://www.googleapis.com/auth/calendar.events` |
-| `drive.read` | `https://www.googleapis.com/auth/drive.readonly` |
-| `docs.read` | `https://www.googleapis.com/auth/documents.readonly` |
-| `docs.write` | `https://www.googleapis.com/auth/documents` |
-| `sheets.read` | `https://www.googleapis.com/auth/spreadsheets.readonly` |
-| `sheets.write` | `https://www.googleapis.com/auth/spreadsheets` |
+| `drive.read`, `docs.read`, `sheets.read` | `https://www.googleapis.com/auth/drive.readonly` |
+| `docs.write`, `sheets.write` | `https://www.googleapis.com/auth/drive.file` |
 
 Settings groups those capabilities into **Google Mail + Calendar** and **Google Drive + Docs + Sheets**, but there is only one `google` provider implementation. Do not register separate OAuth clients merely to represent the two cards. Drive change-token polling supplies Drive, Docs, and Sheets change activity; Avalon does not currently configure Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or a Google webhook endpoint.
 
-When a preset contains a write capability, Avalon removes the redundant narrower scope from that authorization request: `gmail.compose` subsumes `gmail.send`, `calendar.events` subsumes `calendar.events.readonly`, `documents` subsumes `documents.readonly`, and `spreadsheets` subsumes `spreadsheets.readonly`. `calendar.calendarlist.readonly` remains so the Calendar connection can identify the user's calendars. Google granular consent is checked at callback time; Avalon refuses to mark a connection healthy when any selected capability was not actually granted.
+The capability-to-scope mapping deliberately matches the scopes approved for the production connector client. `gmail.modify` covers Avalon's Gmail reads, drafts, and sends; Avalon does not expose its additional mailbox-mutation authority. `drive.readonly` covers Drive discovery and native Docs/Sheets reads. `drive.file` covers Docs/Sheets creation and edits only for files created by Avalon or explicitly opened/shared with Avalon; arbitrary existing files discovered through Drive remain read-only. Google granular consent is checked at callback time, and Avalon refuses to mark a connection healthy when any selected capability was not actually granted.
 
 Google may classify requested user-data scopes as sensitive or restricted, and its classifications or review requirements can change. Before allowing external production users, configure the app home page, privacy policy, authorized domains, support/developer contacts, and test users; move the consent screen out of Testing; and complete Google's verification and any security assessment required for the exact requested scopes. A working callback or test-user consent is not evidence that public verification is complete. Do not publish broader scopes than the two presets request, and do not mark the Google connectors release-ready until both preset flows in `docs/E2E.md` pass.
 

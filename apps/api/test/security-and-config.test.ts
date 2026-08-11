@@ -209,7 +209,7 @@ describe("API security utilities", () => {
     )).toBe("Google Workspace · adam@example.com");
   });
 
-  it("minimizes Google provider scopes and rejects partially granted consent", () => {
+  it("deduplicates approved Google provider scopes and rejects partially granted consent", () => {
     const scopes = __connectionServiceTesting.googleProviderScopesForCapabilities([
       "gmail.read",
       "gmail.draft",
@@ -221,30 +221,48 @@ describe("API security utilities", () => {
       "sheets.read",
       "sheets.write",
     ]);
-    expect(scopes).toEqual(expect.arrayContaining([
-      "https://www.googleapis.com/auth/gmail.readonly",
-      "https://www.googleapis.com/auth/gmail.compose",
+    expect(scopes).toEqual([
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/calendar.events",
-      "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
-      "https://www.googleapis.com/auth/documents",
-      "https://www.googleapis.com/auth/spreadsheets",
-    ]));
-    expect(scopes).not.toContain("https://www.googleapis.com/auth/gmail.send");
-    expect(scopes).not.toContain("https://www.googleapis.com/auth/calendar.events.readonly");
-    expect(scopes).not.toContain("https://www.googleapis.com/auth/documents.readonly");
-    expect(scopes).not.toContain("https://www.googleapis.com/auth/spreadsheets.readonly");
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file",
+    ]);
 
     expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
       ["gmail.read", "calendar.write"],
-      { scopes: ["https://www.googleapis.com/auth/gmail.readonly"] },
+      { scopes: ["https://www.googleapis.com/auth/gmail.modify"] },
     )).toThrow(/calendar\.write/u);
     expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
-      ["gmail.draft", "gmail.send", "calendar.read", "calendar.write", "docs.read", "docs.write"],
+      ["docs.read", "docs.write", "sheets.read", "sheets.write"],
+      { scopes: ["https://www.googleapis.com/auth/drive.file"] },
+    )).toThrow(/docs\.read, sheets\.read/u);
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      ["calendar.read", "calendar.write"],
+      { scopes: ["https://www.googleapis.com/auth/calendar.events"] },
+    )).toThrow(/calendar\.read/u);
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      ["docs.read", "docs.write"],
+      { scopes: ["https://www.googleapis.com/auth/drive"] },
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      [
+        "gmail.draft",
+        "gmail.send",
+        "calendar.read",
+        "calendar.write",
+        "docs.read",
+        "docs.write",
+        "sheets.read",
+        "sheets.write",
+      ],
       {
         scopes: [
-          "https://www.googleapis.com/auth/gmail.compose",
+          "https://www.googleapis.com/auth/gmail.modify",
+          "https://www.googleapis.com/auth/calendar.readonly",
           "https://www.googleapis.com/auth/calendar.events",
-          "https://www.googleapis.com/auth/documents",
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
         ],
       },
     )).not.toThrow();

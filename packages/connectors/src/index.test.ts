@@ -571,6 +571,7 @@ describe("connectors", () => {
   });
 
   it("hydrates Google resources into bounded, provider-specific context", async () => {
+    let driveMetadataFields: string | null = null;
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
       if (url.pathname.endsWith("/threads/thread-1")) {
@@ -599,12 +600,15 @@ describe("connectors", () => {
         return new Response("Avalon text", { headers: { "content-type": "text/plain" } });
       }
       if (url.pathname.endsWith("/files/file-1")) {
+        driveMetadataFields = url.searchParams.get("fields");
         return googleJson({
           id: "file-1",
           name: "notes.txt",
           mimeType: "text/plain",
           size: "11",
-          modifiedTime: "2026-07-31T12:00:00Z"
+          modifiedTime: "2026-07-31T12:00:00Z",
+          isAppAuthorized: true,
+          capabilities: { canEdit: true }
         });
       }
       throw new Error(`Unexpected Google URL: ${url}`);
@@ -638,9 +642,12 @@ describe("connectors", () => {
     expect(drive).toMatchObject({
       resourceType: "drive_file",
       id: "file-1",
+      writableByAvalon: true,
       textContent: "Avalon text",
       contentTruncated: false
     });
+    expect(driveMetadataFields).toContain("isAppAuthorized");
+    expect(driveMetadataFields).toContain("capabilities(canEdit)");
   });
 
   it("exposes bounded scoped read tools without raw Gmail parts or PDF base64", async () => {
@@ -870,6 +877,13 @@ describe("connectors", () => {
           sheets: [{ properties: { sheetId: 10, title: "Summary", index: 0, gridProperties: { rowCount: 100, columnCount: 10 } } }]
         });
       }
+      if (url.hostname === "www.googleapis.com" && url.pathname.startsWith("/drive/v3/files/")) {
+        return googleJson({
+          id: url.pathname.split("/").at(-1),
+          isAppAuthorized: true,
+          capabilities: { canEdit: true }
+        });
+      }
       throw new Error(`Unexpected Google Workspace fetch: ${url}`);
     };
     const adapter = googleAdapter(fetcher);
@@ -891,7 +905,10 @@ describe("connectors", () => {
       title: "Decision log",
       text: "First decision\n"
     }, context);
-    expect(createdDocument.providerOperationId).toBe("doc-created");
+    expect(createdDocument).toMatchObject({
+      providerOperationId: "doc-created",
+      output: { writableByAvalon: true }
+    });
     const replaced = await adapter.executeTool("docs.replace_text", {
       documentId: "doc-1",
       find: "draft",
@@ -915,7 +932,10 @@ describe("connectors", () => {
       title: "Metrics",
       sheetTitles: ["Weekly"]
     }, context);
-    expect(createdSheet.providerOperationId).toBe("sheet-created");
+    expect(createdSheet).toMatchObject({
+      providerOperationId: "sheet-created",
+      output: { writableByAvalon: true }
+    });
     const updated = await adapter.executeTool("sheets.update_values", {
       spreadsheetId: "sheet-1",
       range: "Summary!A1:B2",
@@ -932,6 +952,104 @@ describe("connectors", () => {
     expect(requests.find((request) => request.url.pathname.endsWith(":update"))?.method).toBe("PUT");
     expect(requests.find((request) => request.url.pathname.endsWith(":append"))?.method).toBe("POST");
     expect(requests.some((request) => request.url.searchParams.get("includeTabsContent") === "true")).toBe(true);
+    expect(requests.filter((request) => request.url.pathname.startsWith("/drive/v3/files/"))).toHaveLength(3);
+  });
+
+  it("reports per-file Drive writability and blocks unauthorized Docs and Sheets writes", async () => {
+    const mutationUrls: URL[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = requestUrl(input);
+      if (url.pathname === "/drive/v3/files") {
+        return googleJson({
+          files: [
+            {
+              id: "doc-writable",
+              name: "Writable doc",
+              mimeType: "application/vnd.google-apps.document",
+              isAppAuthorized: true,
+              capabilities: { canEdit: true }
+            },
+            {
+              id: "sheet-not-authorized",
+              name: "Existing sheet",
+              mimeType: "application/vnd.google-apps.spreadsheet",
+              isAppAuthorized: false,
+              capabilities: { canEdit: true }
+            }
+          ]
+        });
+      }
+      if (url.pathname.endsWith("/files/doc-not-authorized")) {
+        return googleJson({
+          id: "doc-not-authorized",
+          isAppAuthorized: false,
+          capabilities: { canEdit: true }
+        });
+      }
+      if (url.pathname.endsWith("/files/sheet-user-read-only")) {
+        return googleJson({
+          id: "sheet-user-read-only",
+          isAppAuthorized: true,
+          capabilities: { canEdit: false }
+        });
+      }
+      if (url.pathname.endsWith("/files/doc-hidden-from-app")) {
+        return googleJson({ error: { code: 404, message: "File not found" } }, 404);
+      }
+      if ((init?.method ?? "GET") !== "GET") mutationUrls.push(url);
+      throw new Error(`Unexpected Google mutation: ${url}`);
+    };
+    const adapter = googleAdapter(fetcher);
+    const principal = { type: "user" as const, userId: TEST_USER_ID };
+    const signal = AbortSignal.timeout(1_000);
+
+    const search = await adapter.executeTool("drive.search", { query: "doc" }, {
+      connection: googleConnection(["drive.read"]),
+      principal,
+      signal
+    });
+    expect(search.output).toMatchObject({
+      files: [
+        { id: "doc-writable", isAppAuthorized: true, canEdit: true, writableByAvalon: true },
+        { id: "sheet-not-authorized", isAppAuthorized: false, canEdit: true, writableByAvalon: false }
+      ]
+    });
+
+    await expect(adapter.executeTool("docs.append_text", {
+      documentId: "doc-not-authorized",
+      text: "Do not write"
+    }, {
+      connection: googleConnection(["docs.write"]),
+      principal,
+      signal
+    })).rejects.toMatchObject({
+      code: "unsupported_capability",
+      details: { reason: "drive_file_not_writable", isAppAuthorized: false, canEdit: true }
+    });
+    await expect(adapter.executeTool("sheets.update_values", {
+      spreadsheetId: "sheet-user-read-only",
+      range: "A1",
+      values: [["Do not write"]]
+    }, {
+      connection: googleConnection(["sheets.write"]),
+      principal,
+      signal
+    })).rejects.toMatchObject({
+      code: "unsupported_capability",
+      details: { reason: "drive_file_not_writable", isAppAuthorized: true, canEdit: false }
+    });
+    await expect(adapter.executeTool("docs.append_text", {
+      documentId: "doc-hidden-from-app",
+      text: "Do not write"
+    }, {
+      connection: googleConnection(["docs.write"]),
+      principal,
+      signal
+    })).rejects.toMatchObject({
+      code: "unsupported_capability",
+      details: { reason: "drive_file_not_writable", isAppAuthorized: false, canEdit: false }
+    });
+    expect(mutationUrls).toEqual([]);
   });
 
   it("refreshes once after a Google 401 and retries with the new access token", async () => {
