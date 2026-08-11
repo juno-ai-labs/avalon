@@ -839,7 +839,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       assertPrincipalAccess(context.connection, context.principal);
       const definition = granolaTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
-        throw connectorCapabilityRefused("Granola", definition?.capability ?? name, context.connection.grantedScopes);
+        throw connectorCapabilityRefused("Granola", definition?.capability ?? name, granolaTools, context.connection.grantedScopes);
       }
       if (context.connection.scope === "workspace") {
         const apiKey = requireWorkspaceApiKey(context.connection);

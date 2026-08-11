@@ -209,7 +209,7 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       assertPrincipalAccess(context.connection, context.principal);
       const definition = xTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
-        throw connectorCapabilityRefused("X", definition?.capability ?? name, context.connection.grantedScopes);
+        throw connectorCapabilityRefused("X", definition?.capability ?? name, xTools, context.connection.grantedScopes);
       }
 
       if (name === "get_user_timeline") {

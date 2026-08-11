@@ -139,7 +139,7 @@ const linearTools: ToolDefinition[] = [
       additionalProperties: false,
       properties: {
         teamId: { type: ["string", "null"], maxLength: 200, description: "Limit the result to one team, from list_teams." },
-        first: { type: "integer", minimum: 1, maximum: 100, description: "Defaults to 50." },
+        first: { type: "integer", minimum: 1, maximum: 50, description: "Defaults to 50." },
         after: { type: ["string", "null"], maxLength: 500 },
       },
     },
@@ -242,7 +242,9 @@ const pageSchema = (maximum: number) => z.object({
 }).strict();
 const listWorkflowStatesSchema = z.object({
   teamId: idSchema.nullable().optional(),
-  first: z.number().int().min(1).max(100).default(50),
+  // 50, matching `list_teams` rather than inventing a third page ceiling for a
+  // family a model generalizes across.
+  first: z.number().int().min(1).max(50).default(50),
   after: z.string().max(500).nullable().optional(),
 }).strict();
 const createIssueSchema = z.object({
@@ -720,7 +722,7 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       assertPrincipalAccess(context.connection, context.principal);
       const definition = linearTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
-        throw connectorCapabilityRefused("Linear", definition?.capability ?? name, context.connection.grantedScopes);
+        throw connectorCapabilityRefused("Linear", definition?.capability ?? name, linearTools, context.connection.grantedScopes);
       }
 
       if (name === "search_issues") {

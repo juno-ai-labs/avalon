@@ -2194,7 +2194,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       assertPrincipalAccess(context.connection, context.principal);
       const definition = slackTools.find((candidate) => candidate.name === name);
       if (!definition || !context.connection.grantedScopes.includes(definition.capability)) {
-        throw connectorCapabilityRefused("Slack", definition?.capability ?? name, context.connection.grantedScopes);
+        throw connectorCapabilityRefused("Slack", definition?.capability ?? name, slackTools, context.connection.grantedScopes);
       }
       if (isSlackDirectTool(name)) {
         return reauthorizing(
