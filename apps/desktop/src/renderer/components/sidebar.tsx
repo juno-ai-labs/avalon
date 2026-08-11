@@ -22,6 +22,7 @@ import {
   Play,
   Plus,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
@@ -38,6 +39,8 @@ interface SidebarProps {
   notes?: NoteSummary[];
   workstreams: WorkstreamSummary[];
   loading?: boolean;
+  onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
+  onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
@@ -136,23 +139,30 @@ function CopyResourceIdItem({ id, label }: { id: string; label: string }): React
 function AutomationRow({
   automation,
   debugEnabled,
+  onArchiveDraft,
+  onDelete,
   onRunNow,
 }: {
   automation: AutomationSummary;
   debugEnabled: boolean;
+  onArchiveDraft: (automation: AutomationSummary) => void;
+  onDelete: (automation: AutomationSummary) => void;
   onRunNow: (automation: AutomationSummary) => void;
 }): React.JSX.Element {
+  const isDraft = automation.status === 'draft';
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
-          <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active')} to={`/automations/${automation.id}`}>
+          <NavLink className={({ isActive }) => clsx('sidebar-row', isActive && 'is-active', isDraft && 'is-draft')} to={`/automations/${automation.id}`}>
             <span className="sidebar-row-icon" aria-hidden="true">
               {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{automation.name}</span>
-              {automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+              {isDraft
+                ? <span className="sidebar-row-hint">Draft</span>
+                : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
             </span>
             <Badge className="scope-badge">{automation.scope === 'you' ? 'You' : 'Workspace'}</Badge>
           </NavLink>
@@ -162,7 +172,7 @@ function AutomationRow({
         <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
           <ContextMenu.Item
             className="menu-item"
-            disabled={automation.status === 'draft'}
+            disabled={isDraft}
             onSelect={() => onRunNow(automation)}
           >
             <Play aria-hidden="true" size={16} /> Run now
@@ -172,8 +182,13 @@ function AutomationRow({
           </ContextMenu.Item>
           {debugEnabled && <CopyResourceIdItem id={automation.id} label="Copy automation id" />}
           <ContextMenu.Separator className="menu-separator" />
-          <ContextMenu.Item className="menu-item menu-item-danger">
-            <Archive aria-hidden="true" size={16} /> Archive
+          {isDraft && (
+            <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchiveDraft(automation)}>
+              <Archive aria-hidden="true" size={16} /> Archive draft
+            </ContextMenu.Item>
+          )}
+          <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onDelete(automation)}>
+            <Trash2 aria-hidden="true" size={16} /> Delete automation
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
@@ -266,6 +281,8 @@ export function Sidebar({
   notes = [],
   workstreams,
   loading,
+  onArchiveDraftAutomation,
+  onDeleteAutomation,
   onMarkWorkstreamUnread,
   onRenameWorkstream,
   onRunAutomation,
@@ -282,6 +299,19 @@ export function Sidebar({
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Drafts are unfinished automations, so they sit under the ones that run
+  // rather than interleaving with them by name. Among themselves they lead with
+  // the one touched most recently, which is the draft still being worked on.
+  const orderedAutomations = [
+    ...automations.filter((automation) => automation.status !== 'draft'),
+    ...automations
+      .filter((automation) => automation.status === 'draft')
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+  ];
   const groups = groupActivityItems<RecentSidebarItem>([
     ...workstreams.map((workstream) => ({
       type: 'workstream' as const,
@@ -301,6 +331,26 @@ export function Sidebar({
     setRenameTarget(workstream);
     setRenameTitle(workstream.title);
     setRenameError(null);
+  };
+
+  const closeDelete = (): void => {
+    if (deleting) return;
+    setDeleteTarget(null);
+    setDeleteError(null);
+  };
+
+  const submitDelete = async (): Promise<void> => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteAutomation(deleteTarget);
+      setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'The automation could not be deleted.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const closeRename = (): void => {
@@ -376,11 +426,17 @@ export function Sidebar({
               <p className="sidebar-empty">No active automations</p>
             ) : (
               <div className="sidebar-list">
-                {automations.map((automation) => (
+                {orderedAutomations.map((automation) => (
                   <AutomationRow
                     automation={automation}
                     debugEnabled={debugEnabled}
                     key={automation.id}
+                    onArchiveDraft={(target) => {
+                      void onArchiveDraftAutomation(target).catch((error: unknown) => {
+                        setArchiveError(error instanceof Error ? error.message : 'The draft could not be archived.');
+                      });
+                    }}
+                    onDelete={setDeleteTarget}
                     onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
                   />
                 ))}
@@ -506,6 +562,38 @@ export function Sidebar({
           </label>
         </form>
         {renameError && <InlineError>{renameError}</InlineError>}
+      </Modal>
+      <Modal
+        footer={<Button onClick={() => setArchiveError(null)}>Close</Button>}
+        onOpenChange={(open) => {
+          if (!open) setArchiveError(null);
+        }}
+        open={Boolean(archiveError)}
+        title="Draft could not be archived"
+      >
+        <p className="modal-copy">The draft is still in the sidebar. Try again in a moment.</p>
+        {archiveError && <InlineError>{archiveError}</InlineError>}
+      </Modal>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={deleting} onClick={closeDelete}>Cancel</Button>
+            <Button className="button-danger" disabled={deleting} onClick={() => void submitDelete()}>
+              Delete
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeDelete();
+        }}
+        open={Boolean(deleteTarget)}
+        title="Delete automation"
+      >
+        <p className="modal-copy">
+          <strong>{deleteTarget?.name}</strong> stops running and leaves the sidebar for good. Its past
+          runs and the work streams it created stay where they are.
+        </p>
+        {deleteError && <InlineError>{deleteError}</InlineError>}
       </Modal>
     </>
   );

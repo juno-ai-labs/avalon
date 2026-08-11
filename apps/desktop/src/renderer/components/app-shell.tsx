@@ -58,6 +58,23 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         automations={automations.data ?? []}
         loading={automations.isLoading || workstreams.isLoading || notes.isLoading}
         notes={notes.data ?? []}
+        onArchiveDraftAutomation={async (automation) => {
+          if (!api) return;
+          await api.archiveDraftAutomation(automation.id);
+          await queryClient.invalidateQueries({ queryKey: ['automations'] });
+          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+        }}
+        onDeleteAutomation={async (automation) => {
+          if (!api) return;
+          await api.deleteAutomation(automation.id);
+          // Deleting closes any run that was opened ahead of its planned time,
+          // so the work-stream list is stale too, not just the automation list.
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['automations'] }),
+            queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+          ]);
+          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+        }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);

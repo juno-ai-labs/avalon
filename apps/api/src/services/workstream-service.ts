@@ -38,6 +38,12 @@ import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunities } from "./work-opportunity-batching";
+import {
+  claimDueWorkstreamWakeup,
+  releaseClaimedWorkstreamWakeup,
+  wakeupExecutionPrincipal,
+  type WorkstreamWakeupRow,
+} from "./workstream-wakeup-service";
 
 type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
@@ -132,6 +138,7 @@ export async function launchWorkstreamHarness(
     slackSearchAuthorization?: SlackSearchAuthorization;
     parentHarnessRunId?: string;
     supersedeActiveRun?: boolean;
+    scheduledWakeupId?: string;
   },
 ): Promise<string> {
   const id = newId();
@@ -180,6 +187,7 @@ export async function launchWorkstreamHarness(
     automationSubscriptionId: null,
     activityId: null,
     executionPrincipal: input.executionPrincipal,
+    ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
     ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
     ...(input.slackSearchAuthorization
       ? { slackSearchAuthorization: input.slackSearchAuthorization }
@@ -216,6 +224,150 @@ export async function launchWorkstreamHarness(
     status: "running",
   });
   return id;
+}
+
+/**
+ * Start the run one due wake-up asked for.
+ *
+ * Called by the workspace scheduler's alarm. The order is deliberate: claim the
+ * row, re-check the authority that scheduled it, note it in the transcript, and
+ * only then launch. A claim that cannot reach a running harness is released so
+ * the next alarm retries it; a claim that is refused because the workspace has
+ * since revoked the principal stays consumed, because retrying it would only
+ * fail again.
+ */
+export async function fireWorkstreamWakeup(
+  env: Env,
+  row: WorkstreamWakeupRow,
+): Promise<{ fired: boolean; harnessRunId?: string }> {
+  if (!await claimDueWorkstreamWakeup(env, row)) return { fired: false };
+
+  // Everything after the claim runs under one release-on-throw path. A claim is
+  // only safe to hold if every way out of this function either starts a run or
+  // hands the row back: once the row leaves `pending` the scheduler's own retry
+  // gate is useless, because `refresh()` no longer sees it as a due target.
+  // Returning `fired: false` below is the deliberate exception — those are
+  // decisions, not failures, and retrying them would only reach the same answer.
+  try {
+    const principal = wakeupExecutionPrincipal(row);
+    const workstream = await env.DB.prepare(
+      `SELECT archived_at FROM workstreams WHERE id = ? AND workspace_id = ?`,
+    ).bind(row.workstream_id, row.workspace_id).first<{ archived_at: string | null }>();
+    if (!workstream || workstream.archived_at !== null) {
+      // The work stream this wake-up belongs to is gone. Leave the row claimed:
+      // there is nothing left to wake, and a retry cannot change that.
+      return { fired: false };
+    }
+    if (!await wakeupPrincipalStillAuthorized(env, row.workspace_id, principal)) {
+      return { fired: false };
+    }
+
+    await appendWakeupSystemMessage(env, row);
+
+    const harnessRunId = await launchWorkstreamHarness(env, {
+      workspaceId: row.workspace_id,
+      workstreamId: row.workstream_id,
+      triggerMessageId: null,
+      origin: "scheduled_wakeup",
+      executionPrincipal: principal,
+      scheduledWakeupId: row.id,
+    });
+    return { fired: true, harnessRunId };
+  } catch (error) {
+    // Nothing durable ran, so the wake-up has not happened. Hand it back to the
+    // scheduler's retry backoff rather than consuming it. A failure to release
+    // must not replace the diagnosis of what actually went wrong.
+    await releaseClaimedWorkstreamWakeup(env, row).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** The same membership rule the harness applies, checked again at fire time. */
+async function wakeupPrincipalStillAuthorized(
+  env: Pick<Env, "DB">,
+  workspaceId: string,
+  principal: ExecutionPrincipal,
+): Promise<boolean> {
+  if (principal.type === "workspace") {
+    if (principal.workspaceId !== workspaceId) return false;
+    const workspace = await env.DB.prepare("SELECT id FROM workspaces WHERE id = ?")
+      .bind(workspaceId).first<{ id: string }>();
+    return workspace !== null;
+  }
+  const member = await env.DB.prepare(
+    `SELECT status FROM workspace_members WHERE workspace_id = ? AND user_id = ?`,
+  ).bind(workspaceId, principal.userId).first<{ status: string }>();
+  return member?.status === "active";
+}
+
+const WAKEUP_PROMPT_PREVIEW_LENGTH = 300;
+
+/**
+ * Shorten a wake-up prompt for its transcript row.
+ *
+ * Break on a word boundary and mark the cut. A hard slice ends mid-word, which
+ * reads as a rendering bug rather than as a summary of something longer, and
+ * the full prompt is the run's own trigger anyway.
+ */
+function wakeupPromptPreview(prompt: string): string {
+  const collapsed = prompt.replace(/\s+/gu, " ").trim();
+  if (collapsed.length <= WAKEUP_PROMPT_PREVIEW_LENGTH) return collapsed;
+  const clipped = truncateUtf16Safe(collapsed, WAKEUP_PROMPT_PREVIEW_LENGTH);
+  const lastSpace = clipped.lastIndexOf(" ");
+  const wordSafe = lastSpace > WAKEUP_PROMPT_PREVIEW_LENGTH / 2
+    ? clipped.slice(0, lastSpace)
+    : clipped;
+  return `${wordSafe.replace(/[\s,.;:]+$/u, "")}…`;
+}
+
+/**
+ * Put the wake-up in the human transcript.
+ *
+ * The model reads the prompt through the run's trigger context, not this row —
+ * system rows are deliberately UI state — so this exists to answer the question
+ * a person opening the work stream will have: why did this start on its own?
+ */
+async function appendWakeupSystemMessage(env: Env, row: WorkstreamWakeupRow): Promise<void> {
+  const messageId = newId();
+  const clientMessageId = `wakeup:${row.id}`;
+  const at = nowIso();
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO messages
+       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+        message_type, text_content, structured_content_json, sequence_number, created_at)
+       SELECT ?, ?, ?, w.id, 'system', NULL, 'system', ?, NULL, w.next_sequence_number, ?
+       FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?
+       ON CONFLICT(workstream_id, client_message_id) DO NOTHING`,
+    ).bind(
+      messageId,
+      clientMessageId,
+      row.workspace_id,
+      `Avalon woke this work stream up as scheduled: ${wakeupPromptPreview(row.prompt)}`,
+      at,
+      row.workstream_id,
+      row.workspace_id,
+    ),
+    env.DB.prepare(
+      `UPDATE workstreams
+       SET next_sequence_number = next_sequence_number + 1,
+           last_activity_at = ?, updated_at = ?
+       WHERE id = ? AND workspace_id = ?
+         AND EXISTS (SELECT 1 FROM messages WHERE id = ?)`,
+    ).bind(at, at, row.workstream_id, row.workspace_id, messageId),
+  ]);
+  if (Number(results[0]?.meta.changes ?? 0) === 0) return;
+  const message = await createDatabase(env.DB).workstreams.getMessageByClientId(
+    row.workspace_id,
+    row.workstream_id,
+    clientMessageId,
+  );
+  if (message) {
+    await publishWorkstreamEvent(env, row.workspace_id, row.workstream_id, {
+      type: "message_created",
+      message,
+    });
+  }
 }
 
 function json<T>(value: unknown, fallback: T): T {

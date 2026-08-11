@@ -69,12 +69,12 @@ export class AutomationService {
   async list() {
     const result = await this.env.DB.prepare(
       `SELECT s.id, s.email_address, s.email_route_status, t.name, t.description, s.scope, s.status,
-         s.next_run_at, s.last_run_at,
+         s.next_run_at, s.last_run_at, s.updated_at,
          CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
        FROM automation_subscriptions s
        JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND t.archived_at IS NULL
+       WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.lifecycle_state = 'visible'
          AND (s.scope = 'workspace' OR s.owner_user_id = ?)
        ORDER BY t.name COLLATE NOCASE`,
     ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
@@ -101,6 +101,7 @@ export class AutomationService {
       status: String(row.status),
       nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
       lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
+      updatedAt: String(row.updated_at),
       updateAvailable: Number(row.update_available) === 1,
     })) };
   }
@@ -328,6 +329,7 @@ export class AutomationService {
     return {
       id: String(row.id), name: String(row.name), description: String(row.description), emailAddress, scope: String(row.scope), status: String(row.status),
       nextRunAt: row.next_run_at == null ? null : String(row.next_run_at), lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
+      updatedAt: String(row.updated_at),
       updateAvailable, templateId: String(row.template_id), templateVersionId: String(row.template_version_id),
       versionNumber: Number(row.version_number), overview: String(row.overview ?? ""), instructions: String(row.instructions), triggers: parseJson(row.trigger_definitions_json, []),
       requiredCapabilities: parseJson(row.required_capabilities_json, []), expectedOutputs: parseJson(row.expected_outputs_json, []),
@@ -490,6 +492,123 @@ export class AutomationService {
     await this.refreshScheduler();
   }
 
+  /** Hides an abandoned draft from the automation list; a finished automation is
+   * paused or deleted instead. A draft is created without schedules and holds no
+   * active email route, so archiving one stops nothing that was running — but
+   * the schedules are disabled anyway rather than trusting that, since a
+   * hidden-yet-firing automation is the one outcome this must never produce. */
+  async archiveDraft(id: string): Promise<void> {
+    const subscription = await this.loadSubscription(id);
+    this.assertCanManageSubscription(subscription);
+    if (subscription.status !== "draft") {
+      throw new ApiError(409, "automation_not_draft", "Only a draft automation can be archived");
+    }
+    const at = nowIso();
+    const [, disabled] = await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE automation_subscriptions SET lifecycle_state = 'archived', updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND lifecycle_state = 'visible'`,
+      ).bind(at, id, this.auth.workspaceId),
+      this.env.DB.prepare(
+        `UPDATE schedules SET enabled = 0, updated_at = ?, version = version + 1
+         WHERE automation_subscription_id = ? AND enabled = 1`,
+      ).bind(at, id),
+    ]);
+    // The workspace alarm only needs recomputing if a draft did carry one.
+    if (Number(disabled?.meta?.changes ?? 0) > 0) await this.refreshScheduler();
+  }
+
+  /** Removes an automation for good. The row stays so its runs, work streams,
+   * memory scope, and permanent email tombstone keep their referent, but every
+   * way it could still fire is closed in one transaction:
+   *
+   * - Calendar and interval triggers: every schedule is disabled and the
+   *   workspace alarm is recomputed, so the Durable Object stops waking for it.
+   * - Activity, webhook, and resource-watch triggers: matching selects only
+   *   visible, active subscriptions, so nothing routes to it again.
+   * - Inbound email: the route is disabled and ingestion requires the same
+   *   visible-and-active subscription. The address stays reserved forever.
+   * - Manual runs and pre-opened runs: both load the subscription, which no
+   *   longer resolves.
+   * - A run already in flight loses tool authority at its next revalidation,
+   *   exactly as a pause does.
+   */
+  async deleteAutomation(id: string): Promise<void> {
+    const subscription = await this.loadSubscription(id);
+    this.assertCanManageSubscription(subscription);
+    const at = nowIso();
+    // A run opened ahead of its planned time is a queued trigger of its own:
+    // the work stream and run already exist and only wait for the alarm.
+    // Nothing would start them once the schedule is disabled, so they would sit
+    // in the sidebar claiming to be scheduled forever.
+    //
+    // The run's own state decides this, not the work stream's. The scheduler
+    // marks a run running as soon as it creates the Workflow instance, while
+    // the work stream stays harness_status = 'scheduled' until the harness
+    // claims its attempt — so a work stream matched on that alone could belong
+    // to a run that is already live.
+    const planned = await this.env.DB.prepare(
+      `SELECT w.id FROM workstreams w
+       JOIN automation_runs r ON r.workstream_id = w.id AND r.workspace_id = w.workspace_id
+       WHERE w.workspace_id = ? AND w.automation_subscription_id = ?
+         AND w.harness_status = 'scheduled' AND w.archived_at IS NULL
+         AND r.status = 'scheduled' AND r.started_at IS NULL`,
+    ).bind(this.auth.workspaceId, id).all<{ id: string }>();
+    const plannedWorkstreamIds = (planned.results ?? []).map((row) => String(row.id));
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE automation_subscriptions SET lifecycle_state = 'deleted', updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND lifecycle_state = 'visible'`,
+      ).bind(at, id, this.auth.workspaceId),
+      this.env.DB.prepare(
+        "UPDATE schedules SET enabled = 0, updated_at = ?, version = version + 1 WHERE automation_subscription_id = ?",
+      ).bind(at, id),
+      // Ordered: this reads the run rows the statement below rewrites, so
+      // archiving has to happen while those runs still read 'scheduled'.
+      this.env.DB.prepare(
+        `UPDATE workstreams SET archived_at = ?, updated_at = ?
+         WHERE workspace_id = ? AND automation_subscription_id = ?
+           AND harness_status = 'scheduled' AND archived_at IS NULL
+           AND EXISTS (SELECT 1 FROM automation_runs r
+                        WHERE r.workstream_id = workstreams.id
+                          AND r.workspace_id = workstreams.workspace_id
+                          AND r.status = 'scheduled' AND r.started_at IS NULL)`,
+      ).bind(at, at, this.auth.workspaceId, id),
+      this.env.DB.prepare(
+        `UPDATE automation_runs SET status = 'failed', completed_at = ?,
+           result_summary = COALESCE(result_summary, 'The automation was deleted before this run started')
+         WHERE workspace_id = ? AND automation_subscription_id = ?
+           AND status = 'scheduled' AND started_at IS NULL`,
+      ).bind(at, this.auth.workspaceId, id),
+    ]);
+    const emailRouting = new WorkstreamEmailRoutingService(this.env);
+    try {
+      await emailRouting.ensureAutomationAddress(this.automationRouteInput(id));
+      for (const workstreamId of plannedWorkstreamIds) {
+        await emailRouting.ensureWorkstreamAddress({
+          region: this.env.AVALON_REGION,
+          workspaceId: this.auth.workspaceId,
+          workstreamId,
+        });
+      }
+    } catch (error) {
+      if (!isRecoverableEmailRouteTransition(error)) throw error;
+      // The Global lifecycle marker stays stale rather than replaying the
+      // deletion. Inbound mail is rejected regardless: automation ingestion
+      // requires a visible, active subscription, and work-stream ingestion
+      // rejects an archived owner.
+    }
+    try {
+      await this.refreshScheduler();
+    } catch {
+      // The deletion is already committed, and a retry would 404 because the
+      // subscription no longer loads — so failing here would strand the caller
+      // on work that actually succeeded. Nothing is lost by tolerating it: the
+      // alarm re-reads enabled schedules from D1 on every firing, so a stale
+      // armed alarm wakes, finds nothing due, and clears itself.
+    }
+  }
+
   async runs(id: string, limit = 50) {
     await this.loadSubscription(id);
     const result = await this.env.DB.prepare(
@@ -525,7 +644,8 @@ export class AutomationService {
   async listTemplates() {
     const result = await this.env.DB.prepare(
       `SELECT t.*, u.name AS author_name,
-       (SELECT COUNT(*) FROM automation_subscriptions s WHERE s.template_id = t.id) AS use_count,
+       (SELECT COUNT(*) FROM automation_subscriptions s
+         WHERE s.template_id = t.id AND s.lifecycle_state = 'visible') AS use_count,
        v.required_capabilities_json, v.trigger_definitions_json
        FROM automation_templates t JOIN users u ON u.id = t.owner_user_id
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
@@ -1253,7 +1373,7 @@ export class AutomationService {
        , t.owner_user_id AS template_owner_user_id
        FROM automation_subscriptions s JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.id = ? AND s.workspace_id = ?
+       WHERE s.id = ? AND s.workspace_id = ? AND s.lifecycle_state = 'visible'
          AND (s.scope = 'workspace' OR s.owner_user_id = ?) AND t.archived_at IS NULL`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "automation_not_found", "Automation not found");
