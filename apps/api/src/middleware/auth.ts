@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from "hono";
 import type { AuthContext, Env, HonoAppEnv, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { requestDeferral } from "../lib/defer";
+import { logWarn } from "../observability/logger";
 import { verifyAccessToken } from "../services/auth-service";
 
 type Context = Parameters<MiddlewareHandler<HonoAppEnv>>[0];
@@ -46,7 +47,7 @@ async function touchLastSeen(env: Env, workspaceId: string, userId: string): Pro
     // test that stubs only what the route under test touches — raises here
     // rather than synchronously past the caller's guard. Nothing about a request
     // depends on this write; failing one over it would be absurd.
-    console.warn("Could not record workspace member activity", {
+    logWarn(env, "workspace_member_last_seen_write_failed", {
       workspace_id: workspaceId,
       user_id: userId,
       reason: error instanceof Error ? error.message : "unknown",
