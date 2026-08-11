@@ -1544,8 +1544,20 @@ pre {
 .header-origin-icon { align-items: center; color: #9b9a94; display: flex; flex: 0 0 auto; }
 .workstream-title-block { display: flex; flex-direction: column; min-width: 0; }
 .workstream-title-line { align-items: center; display: flex; gap: 8px; min-width: 0; }
-.workstream-title-line h1 { font-size: 13px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-title-line h1 { border-radius: 5px; font-size: 13px; margin: 0 0 0 -4px; overflow: hidden; padding: 1px 4px; text-overflow: ellipsis; white-space: nowrap; }
+.workstream-title-line h1:hover { background: var(--raised-hover); }
+.workstream-title-edit { align-items: center; display: flex; gap: 3px; margin-left: -5px; min-width: 0; }
+.workstream-title-input { background: #191a17; border: 1px solid #3b3c36; border-radius: 6px; color: var(--ink); font-size: 13px; font-weight: 600; min-width: 90px; outline: 0; padding: 1px 6px; width: 340px; }
+.workstream-title-input:focus { border-color: #77786f; box-shadow: 0 0 0 2px rgba(130, 151, 172, .12); }
+.workstream-title-edit .icon-button { height: 26px; width: 26px; }
+.title-edit-save { background: color-mix(in srgb, var(--green) 14%, var(--raised)); color: var(--green); }
+.title-edit-save:hover:not(:disabled) { background: color-mix(in srgb, var(--green) 22%, var(--raised)); border-color: color-mix(in srgb, var(--green) 45%, var(--line)); color: var(--green); }
+.title-edit-cancel { background: color-mix(in srgb, var(--red) 13%, var(--raised)); color: var(--red); }
+.title-edit-cancel:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 21%, var(--raised)); border-color: color-mix(in srgb, var(--red) 45%, var(--line)); color: var(--red); }
+.title-edit-save:disabled,
+.title-edit-cancel:disabled { opacity: .55; }
 .workstream-subtitle { align-items: center; display: flex; gap: 10px; margin-top: 2px; }
+.workstream-subtitle .inline-error { font-size: 10px; margin: 0; }
 .workstream-subtitle > span:not(.status-indicator) { align-items: center; color: var(--muted); display: flex; font-size: 10px; gap: 4px; }
 .workstream-header-actions { gap: 2px; }
 /* Every control that owns the right sidebar reads as pressed while its panel is

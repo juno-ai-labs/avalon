@@ -9,6 +9,7 @@ import {
   ArrowDown,
   ArrowUp,
   CalendarClock,
+  Check,
   Copy,
   Ellipsis,
   FileText,
@@ -22,6 +23,7 @@ import {
   RefreshCcw,
   Search,
   UserPlus,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -249,6 +251,7 @@ export function WorkstreamHeader({
   hypersightPreferencePending,
   onAddParticipant,
   onOpenRail,
+  onRename,
   onToggleHyperSight,
 }: {
   workstream: WorkstreamDetail;
@@ -257,6 +260,7 @@ export function WorkstreamHeader({
   hypersightPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
+  onRename: (title: string) => Promise<void>;
   onToggleHyperSight: () => void;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
@@ -270,6 +274,45 @@ export function WorkstreamHeader({
   const toggleRail = (variant: RailVariant): void => {
     if (showing(variant)) closeRail();
     else onOpenRail(variant);
+  };
+  // A null draft means the heading is displayed; any string means the inline
+  // editor is open, so there is one source of truth for both.
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  // The route keeps this component mounted across work streams, so an open
+  // editor would otherwise carry the previous stream's draft into the next one.
+  useEffect(() => {
+    setRenameDraft(null);
+    setRenameError(null);
+  }, [workstream.id]);
+  const startRename = (): void => {
+    setRenameDraft(workstream.title);
+    setRenameError(null);
+  };
+  const cancelRename = (): void => {
+    setRenameDraft(null);
+    setRenameError(null);
+  };
+  const submitRename = async (): Promise<void> => {
+    const title = renameDraft?.trim() ?? '';
+    if (!title || renaming) return;
+    // An unchanged name is a no-op rather than a request; the editor still
+    // closes, so Save never looks inert.
+    if (title === workstream.title) {
+      cancelRename();
+      return;
+    }
+    setRenaming(true);
+    setRenameError(null);
+    try {
+      await onRename(title);
+      setRenameDraft(null);
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : 'The work stream could not be renamed.');
+    } finally {
+      setRenaming(false);
+    }
   };
   // Copy the canonical HTTPS link, not the `avalon://` deep link. A copied link
   // is going somewhere else — Slack, mail, a Linear comment — where an unknown
@@ -293,12 +336,67 @@ export function WorkstreamHeader({
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
         <div className="workstream-title-block">
           <div className="workstream-title-line">
-            <h1>{workstream.title}</h1>
+            {renameDraft === null ? (
+              <h1
+                onDoubleClick={startRename}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === 'F2') {
+                    event.preventDefault();
+                    startRename();
+                  }
+                }}
+                tabIndex={0}
+                title="Double-click to rename"
+              >
+                {workstream.title}
+              </h1>
+            ) : (
+              <form
+                className="workstream-title-edit"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitRename();
+                }}
+              >
+                <input
+                  aria-label="Work-stream name"
+                  autoFocus
+                  className="workstream-title-input"
+                  disabled={renaming}
+                  onChange={(event) => setRenameDraft(event.currentTarget.value)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      cancelRename();
+                    }
+                  }}
+                  value={renameDraft}
+                />
+                <IconButton
+                  className="title-edit-save"
+                  disabled={renaming || renameDraft.trim().length === 0}
+                  label="Save name"
+                  type="submit"
+                >
+                  {renaming ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+                </IconButton>
+                <IconButton className="title-edit-cancel" disabled={renaming} label="Cancel rename" onClick={cancelRename}>
+                  <X size={15} />
+                </IconButton>
+              </form>
+            )}
             {workstream.origin === 'automation' && <Badge>{workstream.automationName ?? 'Automation'}</Badge>}
           </div>
           <div className="workstream-subtitle">
-            <StatusDot status={workstream.harnessStatus} />
-            {workstream.plannedFor && <span><CalendarClock size={11} /> {formatDateTime(workstream.plannedFor)}</span>}
+            {renameError ? (
+              <InlineError>{renameError}</InlineError>
+            ) : (
+              <>
+                <StatusDot status={workstream.harnessStatus} />
+                {workstream.plannedFor && <span><CalendarClock size={11} /> {formatDateTime(workstream.plannedFor)}</span>}
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -711,6 +809,20 @@ export function WorkstreamScreen(): React.JSX.Element {
     onSuccess: (updated) => {
       queryClient.setQueryData(['workstream', id], updated);
       setParticipantDialogOpen(false);
+    },
+  });
+
+  // The header renames in place, so both the open detail and the sidebar list
+  // have to show the new title without a refetch round trip.
+  const renameWorkstream = useMutation({
+    mutationFn: (title: string) => api!.renameWorkstream(id, title),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
+        current ? { ...current, title: updated.title } : current,
+      );
+      queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+        current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
+      );
     },
   });
 
@@ -1140,6 +1252,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         hypersightPreferencePending={hypersightPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
+        onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
         onToggleHyperSight={() => setHyperSightVisible(!hypersightOpen)}
         socketState={socketState}
         workstream={displayedDetail}
