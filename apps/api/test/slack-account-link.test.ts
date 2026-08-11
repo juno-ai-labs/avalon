@@ -111,6 +111,48 @@ describe("Slack account linking", () => {
       .resolves.toMatchObject({ slackUserId: "U456" });
   });
 
+  it("leaves a working link when two clicks open their modals concurrently", async () => {
+    const database = await seededDatabase();
+    // Hold both `views.open` calls until each has arrived, so both challenges
+    // are minted and both modals are on screen before either click retires
+    // anything. Retiring every token but its own leaves the member two modals
+    // and no redeemable link; retiring by mint time cannot.
+    let opened = 0;
+    let bothOpened: () => void = () => {};
+    const barrier = new Promise<void>((resolve) => { bothOpened = resolve; });
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      if (url.pathname.endsWith("views.open")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { view: { blocks: Record<string, unknown>[] } };
+        urls.push(String((connectButton(body.view) as { url: string }).url));
+        opened += 1;
+        if (opened === 2) bothOpened();
+        await barrier;
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }));
+    const service = new SlackAgentService(environment(database));
+
+    await Promise.all([
+      service.processInteraction(connectClick(), "click-one"),
+      service.processInteraction(connectClick(), "click-two"),
+    ]);
+
+    expect(urls).toHaveLength(2);
+    const redeemable = await Promise.all(urls.map(async (url) => {
+      const token = new URLSearchParams(new URL(url).hash.slice(1)).get("token") ?? "";
+      return service.previewLink(auth(), token).then(() => true, () => false);
+    }));
+    // Whichever click landed last, the member is left holding a link that
+    // works. Two mints in the same millisecond retire neither, which is the
+    // harmless direction, so this asserts the floor rather than an exact count.
+    expect(redeemable).toContain(true);
+  });
+
   it("retires the previous link once the new modal has opened", async () => {
     const database = await seededDatabase();
     await seedChallenge(database, "earlier-token", { expiresAt: "2099-01-01T00:00:00.000Z" });
