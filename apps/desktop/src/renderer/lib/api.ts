@@ -26,6 +26,7 @@ import {
   WorkspaceInvitationSchema as WireWorkspaceInvitationSchema,
   WorkspaceSchema as WireWorkspaceSchema,
   WorkstreamDetailSchema as WireWorkstreamDetailSchema,
+  DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
   WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
   type AutomationDraft as WireAutomationDraft,
@@ -53,12 +54,14 @@ import type {
   ActivitySuggestionData,
   ArtifactData,
   AutomationCreateOptions,
+  AutomationDeliveryTargetType,
   AutomationDetail,
   AutomationDraftResponse,
   AutomationRunSummary,
   AutomationSummary,
   BackgroundTask,
   CreatedWorkstream,
+  DigestSchedule,
   ElicitationData,
   HarnessStatus,
   HyperSight,
@@ -326,6 +329,8 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
+    scope: workstream.scope,
+    ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
     preview: workstream.objective,
   };
 }
@@ -796,6 +801,23 @@ export class AvalonApi {
     return this.getWorkspace();
   }
 
+  async getDigestSchedule(signal?: AbortSignal): Promise<DigestSchedule> {
+    return this.request('/digest', { schema: WireDigestScheduleSchema, signal });
+  }
+
+  /**
+   * Replaces the digest wholesale. A partial update could not express "no days"
+   * or "no destinations", and both are things someone can legitimately mean.
+   */
+  async updateDigestSchedule(input: {
+    enabled: boolean;
+    days: number[];
+    times: number[];
+    deliveryTargets: Array<{ type: AutomationDeliveryTargetType; connectionId: string | null }>;
+  }): Promise<DigestSchedule> {
+    return this.request('/digest', { method: 'PUT', body: input, schema: WireDigestScheduleSchema });
+  }
+
   async getWorkspaceMembers(signal?: AbortSignal): Promise<WorkspaceMember[]> {
     const page = await this.request('/workspace/members', { schema: wireMemberPageSchema, signal });
     return page.items.map((member) => ({ ...mapUser(member.user), role: member.role }));
@@ -930,6 +952,7 @@ export class AvalonApi {
       title: 'Automation run',
       origin: 'automation',
       harnessStatus: 'running',
+      scope: 'workspace',
       lastActivityAt: new Date().toISOString(),
       latestAttentionSequenceNumber: 0,
       readThroughSequenceNumber: 0,
@@ -940,8 +963,15 @@ export class AvalonApi {
     };
   }
 
-  async getWorkstreams(signal?: AbortSignal): Promise<WorkstreamSummary[]> {
-    const page = await this.request('/workstreams?limit=250', { schema: wireWorkstreamPageSchema, signal });
+  /**
+   * `includeSystem` widens what the sidebar shows, not who may see it: the API
+   * still only returns a system work stream to someone who participates in it.
+   */
+  async getWorkstreams(signal?: AbortSignal, includeSystem = false): Promise<WorkstreamSummary[]> {
+    const page = await this.request(
+      `/workstreams?limit=250${includeSystem ? '&includeSystem=true' : ''}`,
+      { schema: wireWorkstreamPageSchema, signal },
+    );
     return page.items.map(mapWorkstreamSummary);
   }
 

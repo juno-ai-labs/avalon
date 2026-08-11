@@ -64,6 +64,7 @@ function detail(): WorkstreamDetail {
     title: 'Create Linear issues for comments',
     origin: 'ad_hoc',
     harnessStatus: 'completed',
+    scope: 'workspace',
     latestAttentionSequenceNumber: 3,
     readThroughSequenceNumber: 3,
     manualUnreadFromSequenceNumber: null,

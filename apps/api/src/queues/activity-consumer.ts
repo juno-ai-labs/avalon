@@ -23,6 +23,7 @@ import { SlackAgentService } from "../services/slack-agent-service";
 import { scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
+import { recordActivityEvent } from "../services/activity-event-service";
 
 interface ActivityRow {
   id: string;
@@ -37,6 +38,7 @@ interface ActivityRow {
   event_type: string;
   resource_type: string | null;
   provider_resource_id: string | null;
+  actor_json: string;
   occurred_at: string;
   received_at: string;
   title: string;
@@ -264,6 +266,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     if (directWorkstreamIds.size === 0 && !routedContextually) {
       await enqueueActivityOpportunity(env, activity.id);
     }
+    await projectActivityEvent(env, activity);
 
     await env.DB.prepare(
       `UPDATE activities
@@ -303,6 +306,83 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     const attempts = Math.max(1, message.attempts);
     message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
   }
+}
+
+/**
+ * Projects a processed connector activity into the first-party activity log.
+ *
+ * It happens here, after routing, rather than at ingest: an activity is only
+ * something a person should hear about once it has survived verification and
+ * routing, and `activities` rows are rewritten during processing. The
+ * connection's own scope is the audience — a personal connection speaks only to
+ * its owner, a workspace-wide one to the whole workspace — which is the same
+ * rule the rest of the product already applies to connector data.
+ */
+async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<void> {
+  // The same rule the rest of the consumer applies, rather than a second one:
+  // null means the whole workspace may see it, an empty list means nobody may,
+  // and a populated list names exactly who may. A Slack private channel or DM
+  // arrives on a workspace-wide connection but is restricted to the people in
+  // it, so `connection_scope` alone is not the audience.
+  const restrictedUserIds = restrictedActivityUserIds(activity);
+  if (restrictedUserIds?.length === 0) return;
+
+  const shared = {
+    workspaceId: activity.workspace_id,
+    eventType: `connector.${activity.provider}.${activity.event_type}`,
+    subjectType: activity.resource_type ?? "connector_activity",
+    subjectId: activity.provider_resource_id ?? activity.id,
+    actorType: "external" as const,
+    actorLabel: connectorActorLabel(activity),
+    title: activity.title,
+    body: activity.summary || activity.text_snippet,
+    canonicalUrl: connectorActivityUrl(activity),
+    occurredAt: activity.occurred_at,
+    sourceKind: "activity",
+    sourceId: activity.id,
+    metadata: { provider: activity.provider, connectorType: activity.connector_type },
+  };
+
+  if (!restrictedUserIds) {
+    await recordActivityEvent(env, {
+      ...shared,
+      audience: { kind: "workspace" },
+      dedupeKey: `activity:${activity.id}`,
+      // The provider already told us who it concerns; `target_user_ids_json`
+      // holds the Avalon users it resolved to.
+      targets: parseStrings(activity.target_user_ids_json).map((userId) => ({ userId, relation: "involved" })),
+    });
+    return;
+  }
+
+  // A restricted activity becomes one event per permitted reader. `audience`
+  // names a single user by design — a set-valued audience would need a join
+  // table to answer the one question this table exists to answer quickly — and
+  // these lists are small, because they come from a mention or a private
+  // conversation's membership.
+  for (const userId of restrictedUserIds) {
+    await recordActivityEvent(env, {
+      ...shared,
+      audience: { kind: "user", userId },
+      dedupeKey: `activity:${activity.id}:${userId}`,
+      targets: [{ userId, relation: "involved" }],
+    });
+  }
+}
+
+function connectorActorLabel(activity: ActivityRow): string {
+  const displayName = parseRecord(activity.actor_json).displayName;
+  if (typeof displayName === "string" && displayName.length > 0) return displayName;
+  return activity.provider;
+}
+
+function connectorActivityUrl(activity: ActivityRow): string | null {
+  const metadata = parseRecord(activity.metadata_json);
+  // Providers disagree on the key; take the first that is actually a link.
+  for (const candidate of [metadata.canonicalUrl, metadata.url, metadata.htmlUrl, metadata.permalink]) {
+    if (typeof candidate === "string" && /^https?:\/\//u.test(candidate)) return candidate;
+  }
+  return null;
 }
 
 async function loadActivity(env: Env, input: ActivityQueueMessage): Promise<ActivityRow | null> {
@@ -800,6 +880,7 @@ async function isWorkstreamVisibleToUser(
 
 export const __testing = {
   matchesFilters,
+  projectActivityEvent,
   restrictedActivityUserIds,
   runMatchingAutomations,
   triggerMatches,

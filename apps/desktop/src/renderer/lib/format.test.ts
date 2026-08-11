@@ -12,6 +12,7 @@ function stream(
     title: id,
     origin: 'ad_hoc',
     harnessStatus,
+    scope: 'workspace',
     lastActivityAt,
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,

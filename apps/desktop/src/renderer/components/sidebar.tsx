@@ -8,6 +8,7 @@ import {
   ChevronsLeft,
   Check,
   CirclePause,
+  Cog,
   Copy,
   EyeOff,
   FileStack,
@@ -214,14 +215,25 @@ function WorkstreamRow({
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row workstream-row', isActive && 'is-active', workstream.hasUnread && 'is-unread')}
+            className={({ isActive }) => clsx(
+              'sidebar-row workstream-row',
+              isActive && 'is-active',
+              workstream.hasUnread && 'is-unread',
+              // Machinery the reader has opted into seeing. Dimmed rather than
+              // badged, so it reads as one level below the work it sits beside
+              // without adding another thing to decode.
+              workstream.systemKind && 'is-system',
+            )}
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
               <StatusDot compact status={workstream.harnessStatus} tooltip />
             </span>
             <span className="sidebar-row-main">
-              <span className="sidebar-row-title">{workstream.title}</span>
+              <span className="sidebar-row-title">
+                {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
+                {workstream.title}
+              </span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">
                   <span className="sidebar-row-hint-text">
@@ -230,6 +242,7 @@ function WorkstreamRow({
                 </span>
               )}
             </span>
+            {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -252,6 +265,20 @@ function WorkstreamRow({
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
+  );
+}
+
+/**
+ * The one "only you can see this" marker in the sidebar. Notes wear it when
+ * their scope is personal; a system work stream wears it because nobody but its
+ * participant can open it. Same badge either way — a reader should not have to
+ * learn two ways of being told the same thing.
+ */
+function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
+  return (
+    <span aria-label={label} className="sidebar-note-privacy" role="img">
+      <IconLock aria-hidden="true" size={15} stroke={1.8} />
+    </span>
   );
 }
 
@@ -287,11 +314,7 @@ function NoteRow({
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{note.title}</span>
             </span>
-            {note.scope === 'personal' && (
-              <span aria-label="Private note" className="sidebar-note-privacy" role="img">
-                <IconLock aria-hidden="true" size={15} stroke={1.8} />
-              </span>
-            )}
+            {note.scope === 'personal' && <PrivacyMarker label="Private note" />}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
