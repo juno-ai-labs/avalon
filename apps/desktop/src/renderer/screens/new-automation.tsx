@@ -7,6 +7,7 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  Copy,
   Ellipsis,
   Info,
   LoaderCircle,
@@ -35,6 +36,7 @@ import {
 } from '../lib/elicitation';
 import { newAutomationDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useDraftText } from '../lib/use-draft-text';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -360,6 +362,63 @@ function DeliveryChoice({
   );
 }
 
+/**
+ * The system prompt a run of this draft would start from, read-only, at the end
+ * of the create card while Application → Developer → **Debug enabled** is on.
+ *
+ * Fetched on expand rather than with the draft: it is several kilobytes that no
+ * ordinary creation needs, and every edit to the draft produces a new one. The
+ * query is keyed on the draft *and* the scope in force, because `Runs as`
+ * decides the run's execution authority and that authority is a paragraph of
+ * the prompt — a viewer left open across a scope change would otherwise show
+ * the policy the run will not have.
+ *
+ * There is nothing to edit here. The instructions inside this prompt are the
+ * draft's, and the draft is changed by describing the change to the architect
+ * in the composer below; the rest is standing platform policy that is not any
+ * one automation's to rewrite.
+ */
+function DraftSystemPrompt({ draftId, scope }: { draftId: string; scope: AutomationScope }): React.JSX.Element {
+  const { api } = useAppSession();
+  const [open, setOpen] = useState(false);
+  const systemPrompt = useQuery({
+    queryKey: ['automation-draft-system-prompt', draftId, scope],
+    queryFn: ({ signal }) => api!.getAutomationDraftSystemPrompt(draftId, scope, signal),
+    enabled: open && Boolean(api),
+    staleTime: Infinity,
+  });
+  return (
+    <section className="automation-plugin-defaults automation-system-prompt" aria-label="System prompt">
+      <header>
+        <div>
+          <strong>System prompt</strong>
+          <small>Read-only. What each run of this automation starts from, before its trigger evidence and recalled memory arrive as messages.</small>
+        </div>
+        <Button aria-expanded={open} className="button-quiet" onClick={() => setOpen(!open)}>
+          {open ? 'Hide' : 'Show'}
+        </Button>
+      </header>
+      {open && (
+        systemPrompt.isPending ? (
+          <p className="automation-plugin-empty"><LoaderCircle className="spin" size={13} /> Rendering the system prompt…</p>
+        ) : systemPrompt.error ? (
+          <InlineError>{systemPrompt.error.message}</InlineError>
+        ) : (
+          <>
+            <pre className="automation-system-prompt-body" tabIndex={0}>{systemPrompt.data}</pre>
+            <div className="automation-system-prompt-actions">
+              <small>Durable-table identifiers are assigned when this automation is created.</small>
+              <Button className="button-quiet" onClick={() => void desktopBridge().copyText(systemPrompt.data)}>
+                <Copy size={13} /> Copy
+              </Button>
+            </div>
+          </>
+        )
+      )}
+    </section>
+  );
+}
+
 function DraftSummary({
   draft,
   creating,
@@ -391,6 +450,7 @@ function DraftSummary({
   onDeliveryConnectionChange: (connectionId: string) => void;
   onCreate: () => void;
 }): React.JSX.Element | null {
+  const debugEnabled = useDebugEnabled();
   if (!draft.summary) return null;
   const summary = draft.summary;
   const activitySources = summary.activitySources ?? [];
@@ -464,6 +524,7 @@ function DraftSummary({
           ))}
         </ul>
       </section>
+      {debugEnabled && <DraftSystemPrompt draftId={draft.draftId} scope={scope} />}
       <footer>
         <span>Avalon preloads the plugins this draft needs, and never widens their runtime authority.</span>
         <Button
@@ -702,6 +763,10 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       attachmentDraft.consume(payload.attachmentLocalIds);
       setStreamingAssistant({ hasText: false, text: '' });
       setDraft(response);
+      // A compiled turn rewrites the draft the developer-mode viewer renders,
+      // and the draft id it is keyed on survives the edit. Without this the
+      // viewer would answer with the prompt of a draft that no longer exists.
+      void queryClient.invalidateQueries({ queryKey: ['automation-draft-system-prompt'] });
       const responseMessage = response.question
         ? automationQuestionMessage(response.assistantMessage, response.question)
         : response.assistantMessage

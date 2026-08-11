@@ -59,6 +59,7 @@ import type {
   AutomationDetail,
   AutomationDraftResponse,
   AutomationRunSummary,
+  AutomationScope,
   AutomationSummary,
   BackgroundTask,
   CreatedWorkstream,
@@ -256,6 +257,7 @@ const runNowResponseSchema = z.object({
   reused: z.boolean(),
 });
 const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() });
+const automationDraftSystemPromptSchema = z.object({ systemPrompt: z.string() });
 
 export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']): HarnessStatus {
   return status === 'idle' ? 'completed' : status;
@@ -1645,6 +1647,30 @@ export class AvalonApi {
     this.automationDetails.set(raw.id, raw);
     this.drafts.delete(draftId);
     return mapAutomationDetail(raw);
+  }
+
+  /**
+   * The system prompt a run of this draft would start from.
+   *
+   * Rendered by the service rather than here: the standing policy the prompt is
+   * mostly made of lives in `@avalon/agent-harness`, which the renderer does not
+   * carry, and a copy of it in the client would be a second prompt that drifts
+   * from the one runs actually receive. The draft is sent from this cache the
+   * way creation sends it — `Runs as` decides the run's execution authority, so
+   * it travels with it.
+   */
+  async getAutomationDraftSystemPrompt(draftId: string, scope: AutomationScope, signal?: AbortSignal): Promise<string> {
+    const state = this.drafts.get(draftId);
+    if (!state?.draft) {
+      throw new ApiError('This automation draft is no longer available.', 404, 'automation_draft_not_found');
+    }
+    const raw = await this.request('/automations/draft/system-prompt', {
+      method: 'POST',
+      body: { draft: state.draft, scope: scope === 'you' ? 'personal' : 'workspace' },
+      schema: automationDraftSystemPromptSchema,
+      signal,
+    });
+    return raw.systemPrompt;
   }
 
   async getWorkspaceTemplates(signal?: AbortSignal): Promise<WorkspaceTemplate[]> {

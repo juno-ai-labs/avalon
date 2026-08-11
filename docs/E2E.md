@@ -86,6 +86,15 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 7. Pin explicitly to the first listed model, confirm the trigger changes from **Default** to **Grok 4.3**, and confirm the created work stream carries that id — an explicit pin to the flag's own default must be distinguishable from never having touched the control. Then choose **Default** again and confirm the next work stream is created with no override.
 8. Repeat in **New automation**: choose a model and create the automation. Exercise all three run paths — **Run now**, a scheduled run fired by the workspace scheduler, and a run triggered by matching connector activity — and confirm each one's work stream carries the override and each run uses it. Only the first goes through `AutomationService.createRun`; the other two build the work stream themselves. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
 
+## Desktop automation system-prompt viewer acceptance
+
+1. With Application → Developer → **Debug enabled** off, draft an automation through to **Ready to create** and confirm the card ends at **Deliver results** and its footer: there is no **System prompt** section, and the network shows no request for one.
+2. Turn Debug enabled on in the Settings window and confirm the section appears at the end of the same card without reopening the screen, collapsed, with the request still not made. Expand it and confirm the prompt arrives, is scrollable inside its own box rather than stretching the card, and offers no way to edit it. **Copy** puts the same text on the clipboard.
+3. Read the **Authorized task context** JSON at the end of the prompt and confirm it names this draft: the automation's name and description as the work stream's title and objective, its instructions, its expected outputs, `versionNumber` 1, and empty overrides. Where the draft declares a durable table, confirm its identifiers read `(assigned when this automation is created)` rather than uuids, and that reopening the viewer renders the same text rather than new ones.
+4. With the viewer open, change **Runs as** from You to Workspace and confirm the prompt is re-rendered: `"executionAuthority": "workspace"` and a **# Workspace execution authority** section that was absent under You.
+5. With the viewer open, send another instruction to the architect. Confirm the prompt is re-rendered once the new draft arrives rather than continuing to show the one from before the edit.
+6. Create the automation, run it, and pull that run's raw inference per [`RUNBOOK.md`](RUNBOOK.md#inspecting-a-runs-raw-inference). Confirm its system prompt matches what the viewer showed, apart from the durable-table identifiers the run now has.
+
 ## PRD flow 1 — ad hoc collaboration
 
 Use a test workspace with two members, Adam and Samantha.
