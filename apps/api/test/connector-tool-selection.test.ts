@@ -647,7 +647,10 @@ describe("connector tools selected for harness runs", () => {
     expect(mail?.systemMessage).toContain("use the Gmail search tool first");
     expect(mail?.systemMessage).toContain("do not substitute public web search");
     expect(mail?.systemMessage).not.toContain("Drive search");
-    expect(mail?.systemMessage).toContain("never derive one from a display name");
+    // The plugin message carries only Gmail mechanics; not inventing an address
+    // is platform policy and lives in the work-stream system prompt.
+    expect(mail?.systemMessage).toContain("Resolve an unknown recipient address");
+    expect(mail?.systemMessage).not.toContain("plausible placeholder");
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
       "gmail.search",
       "gmail.find_contacts",
