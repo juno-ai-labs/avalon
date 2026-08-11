@@ -49,7 +49,11 @@ const headerWorkstream: WorkstreamDetail = {
 
 function renderWorkstreamHeader(
   workstream = headerWorkstream,
-  overrides: { hypersightOpen?: boolean; onToggleHyperSight?: () => void } = {},
+  overrides: {
+    hypersightOpen?: boolean;
+    onRename?: (title: string) => Promise<void>;
+    onToggleHyperSight?: () => void;
+  } = {},
 ): ReturnType<typeof render> {
   return render(
     <Tooltip.Provider>
@@ -60,6 +64,7 @@ function renderWorkstreamHeader(
         // The screen opens the rail through the same store action, after
         // giving up the right sidebar's other occupant.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+        onRename={overrides.onRename ?? (async () => undefined)}
         onToggleHyperSight={overrides.onToggleHyperSight ?? vi.fn()}
         socketState="connected"
         workstream={workstream}
@@ -163,6 +168,99 @@ describe('WorkstreamHeader origin affordances', () => {
       ctrlKey: false,
     });
     expect(screen.queryByRole('menuitem', { name: 'Automation runs' })).not.toBeInTheDocument();
+  });
+});
+
+describe('WorkstreamHeader inline rename', () => {
+  beforeEach(() => {
+    useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
+  });
+
+  it('opens the editor on a double click and saves the new name', async () => {
+    const onRename = vi.fn(async () => undefined);
+    renderWorkstreamHeader(headerWorkstream, { onRename });
+
+    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    const input = screen.getByRole('textbox', { name: 'Work-stream name' });
+    expect(input).toHaveValue('Daily product brief');
+
+    fireEvent.change(input, { target: { value: '  Launch planning  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith('Launch planning'));
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Work-stream name' })).not.toBeInTheDocument());
+  });
+
+  it('discards the draft on Cancel and on Escape without calling the rename', async () => {
+    const onRename = vi.fn(async () => undefined);
+    renderWorkstreamHeader(headerWorkstream, { onRename });
+
+    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Discarded' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel rename' }));
+    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+
+    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Also discarded' } });
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Work-stream name' }), { key: 'Escape' });
+
+    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty name and keeps the editor open when the rename fails', async () => {
+    const onRename = vi.fn(async () => {
+      throw new Error('The work stream could not be renamed.');
+    });
+    renderWorkstreamHeader(headerWorkstream, { onRename });
+
+    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    const input = screen.getByRole('textbox', { name: 'Work-stream name' });
+    fireEvent.change(input, { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: 'Save name' })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: 'Launch planning' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The work stream could not be renamed.');
+    expect(screen.getByRole('textbox', { name: 'Work-stream name' })).toHaveValue('Launch planning');
+  });
+
+  it('drops an open draft when the header moves to another work stream', () => {
+    const { rerender } = renderWorkstreamHeader();
+
+    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Work-stream name' }), { target: { value: 'Stale draft' } });
+
+    rerender(
+      <Tooltip.Provider>
+        <WorkstreamHeader
+          hypersightOpen={false}
+          hypersightPreferencePending={false}
+          onAddParticipant={vi.fn()}
+          onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
+          onRename={async () => undefined}
+          onToggleHyperSight={vi.fn()}
+          socketState="connected"
+          workstream={{ ...headerWorkstream, id: 'workstream-other', title: 'Another stream' }}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.queryByRole('textbox', { name: 'Work-stream name' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Another stream' })).toBeInTheDocument();
+  });
+
+  it('closes without a request when the name is unchanged, so Save is never inert', async () => {
+    const onRename = vi.fn(async () => undefined);
+    renderWorkstreamHeader(headerWorkstream, { onRename });
+
+    fireEvent.doubleClick(screen.getByRole('heading', { name: 'Daily product brief' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+
+    expect(onRename).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Daily product brief' })).toBeInTheDocument();
   });
 });
 
