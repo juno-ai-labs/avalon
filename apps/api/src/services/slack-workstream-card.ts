@@ -61,14 +61,6 @@ export function workstreamUnfurlSummary(row: Record<string, unknown>): Workstrea
 }
 
 /**
- * Only a work stream that is doing something, or waiting on someone, says so.
- *
- * A card reading "Completed" tells a reader nothing they can act on and reads
- * as clutter next to the title — and because a card is only rewritten when its
- * status drifts, a settled one would carry that badge indefinitely. Every other
- * state renders as no badge at all, leaving the title and timestamp to speak.
- */
-/**
  * Only a work stream someone can act on wears a badge: one that is working, one
  * that is waiting on a person, and one that stopped because it broke.
  * `completed`, `scheduled`, and `idle` render none — "Completed" tells a reader
