@@ -22,19 +22,24 @@
  */
 
 /**
- * A SQL fragment for a query that has the `workstreams` table aliased as `w`.
+ * The rule as SQL, for a query with the `workstreams` table aliased as `w`.
  *
  * Self-contained on purpose — it correlates to `automation_subscriptions`
  * itself rather than requiring a join the caller has to remember to add, so
  * pasting it into a new query cannot quietly weaken it.
  *
- * Binds three values, all the reading user's id, in the order they appear.
- * Use {@link workstreamVisibilityBindings} rather than writing them out.
+ * `reader` is the SQL expression naming the person doing the reading, and is
+ * the only reason this is a function: the work-stream room binds by position
+ * (`?3`) and its eviction sweep asks the question of a whole column at once
+ * (`wm.user_id`), and neither could use a fragment that hard-coded a single
+ * anonymous `?`. It is interpolated, so it takes a constant written at the call
+ * site and never a value from a request.
  */
-export const WORKSTREAM_VISIBILITY_SQL = `(
+export function workstreamVisibilitySql(reader: string): string {
+  return `(
     w.scope <> 'personal' OR EXISTS (
       SELECT 1 FROM workstream_participants scoped
-       WHERE scoped.workstream_id = w.id AND scoped.user_id = ? AND scoped.removed_at IS NULL
+       WHERE scoped.workstream_id = w.id AND scoped.user_id = ${reader} AND scoped.removed_at IS NULL
     )
   )
   AND (
@@ -42,13 +47,22 @@ export const WORKSTREAM_VISIBILITY_SQL = `(
     OR EXISTS (
       SELECT 1 FROM automation_subscriptions owned
        WHERE owned.id = w.automation_subscription_id
-         AND (owned.scope = 'workspace' OR owned.owner_user_id = ?)
+         AND (owned.scope = 'workspace' OR owned.owner_user_id = ${reader})
     )
     OR EXISTS (
       SELECT 1 FROM workstream_participants involved
-       WHERE involved.workstream_id = w.id AND involved.user_id = ? AND involved.removed_at IS NULL
+       WHERE involved.workstream_id = w.id AND involved.user_id = ${reader} AND involved.removed_at IS NULL
     )
   )`;
+}
+
+/**
+ * The rule for a query that binds the reading user anonymously.
+ *
+ * Binds three values, all the reading user's id, in the order they appear. Use
+ * {@link workstreamVisibilityBindings} rather than writing them out.
+ */
+export const WORKSTREAM_VISIBILITY_SQL = workstreamVisibilitySql("?");
 
 /** The bindings {@link WORKSTREAM_VISIBILITY_SQL} consumes, in order. */
 export function workstreamVisibilityBindings(userId: string): [string, string, string] {

@@ -1042,7 +1042,14 @@ export const StartWorkOpportunityRequestSchema = z.object({
 export const UpdateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(4000).optional(),
-  archived: z.boolean().optional()
+  archived: z.boolean().optional(),
+  /**
+   * Who may read it from now on. `personal` narrows the work stream to the
+   * people already in it, `workspace` opens it to every member. Anyone who can
+   * read a work stream may move it either way, because a private work stream is
+   * shared work with a smaller room rather than one person's property.
+   */
+  scope: ScopeSchema.optional()
 });
 
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
@@ -1148,6 +1155,16 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     type: z.literal("workstream_renamed"),
     title: z.string().min(1).max(180),
     titleStatus: z.enum(["automatic", "settled"])
+  }),
+  /**
+   * Who may read this work stream changed. Everyone still in the room learns
+   * the new state so the lock on their sidebar row and the header they are
+   * reading agree with it; those the change just excluded are disconnected by
+   * the room rather than told.
+   */
+  ServerEventBaseSchema.extend({
+    type: z.literal("workstream_scope_changed"),
+    scope: ScopeSchema
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),

@@ -674,10 +674,25 @@ export class WorkstreamService {
   async update(id: string, input: UpdateWorkstreamInput) {
     const before = await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
+    const previousScope = before.scope === "personal" ? "personal" : "workspace";
+    const scopeChanged = input.scope != null && input.scope !== previousScope;
+    if (scopeChanged) this.assertScopeIsThisRowsToDecide(before);
+    // Whoever makes a work stream private has to stay in the room they just
+    // closed, and `personal` is enforced as "an active participant, and nobody
+    // else" — so this is what stops the change from being the one action in
+    // Avalon that locks its author out of its own result. It runs before the
+    // scope is flipped: a reader arriving between the two writes finds a work
+    // stream that is still open rather than one nobody may read.
+    if (scopeChanged && input.scope === "personal") {
+      await this.database.workstreams.addParticipant(
+        this.auth.workspaceId, id, this.auth.userId, this.auth.userId, "explicit",
+      );
+    }
     const at = nowIso();
     const write = this.env.DB.prepare(
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
+       scope = COALESCE(?, scope),
        description_source = CASE WHEN ? IS NULL OR ? = objective THEN description_source ELSE 'authored' END,
        -- A person naming a work stream settles it: a naming pass still in
        -- flight must not overwrite what they chose.
@@ -690,6 +705,7 @@ export class WorkstreamService {
       .bind(
         input.title ?? null,
         input.objective ?? null,
+        input.scope ?? null,
         input.objective ?? null,
         input.objective ?? null,
         input.title ?? null,
@@ -742,7 +758,50 @@ export class WorkstreamService {
         titleStatus: "settled",
       });
     }
+    // The room is the only thing that knows who is reading this work stream
+    // right now. It applies the new state to the people who may stay and closes
+    // the sockets of those this change just excluded — a member who had it open
+    // when it went private would otherwise keep receiving its transcript.
+    if (scopeChanged) {
+      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+        type: "workstream_scope_changed",
+        scope: updated.scope,
+      });
+    }
     return updated;
+  }
+
+  /**
+   * Whether `scope` is the rule that actually decides who reads this row.
+   *
+   * For an ordinary work stream it is, and both directions mean what the menu
+   * says. Two kinds of row are governed by something else, and moving their
+   * scope would either do nothing or do harm:
+   *
+   * - **A subsystem's own work stream** (`system_kind`) is machinery. A digest
+   *   is assembled from one person's private activity, so publishing it to the
+   *   workspace would hand that activity to everyone.
+   * - **A work stream an automation generated** takes its audience from that
+   *   automation's scope, which is checked separately and independently of this
+   *   column. Opening it would broaden nothing, and closing it would hide the
+   *   row from the automation's owner, who is reached by that separate rule
+   *   rather than by being a participant.
+   */
+  private assertScopeIsThisRowsToDecide(row: Record<string, unknown>): void {
+    if (row.system_kind != null) {
+      throw new ApiError(
+        422,
+        "scope_change_unsupported",
+        "This work stream belongs to Avalon itself, so its visibility cannot be changed",
+      );
+    }
+    if (row.automation_subscription_id != null) {
+      throw new ApiError(
+        422,
+        "scope_change_unsupported",
+        "This work stream is visible to whoever the automation that created it is visible to",
+      );
+    }
   }
 
   async messages(id: string, limit: number, before?: number, after?: number, around?: number) {

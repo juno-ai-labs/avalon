@@ -46,6 +46,7 @@ const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
   onChangeNoteScope: async (): Promise<void> => undefined,
+  onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
@@ -913,11 +914,21 @@ describe('private work streams', () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  function renderWith(streams: WorkstreamSummary[]): void {
+  function renderWith(
+    streams: WorkstreamSummary[],
+    onChangeWorkstreamScope?: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>,
+  ): void {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
-          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            {...(onChangeWorkstreamScope ? { onChangeWorkstreamScope } : {})}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
         </Tooltip.Provider>
       </MemoryRouter>,
     );
@@ -938,5 +949,85 @@ describe('private work streams', () => {
     renderWith([workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed')]);
 
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
+  });
+
+  it('closes a work stream to the people in it from the right-click menu', async () => {
+    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [workstream('00000000-4000-4000-8000-000000000023', 'Launch', 'completed')],
+      onChangeWorkstreamScope,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
+    // Named for the state it moves to, the way the note item is.
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
+
+    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '00000000-4000-4000-8000-000000000023' }),
+      'personal',
+    );
+  });
+
+  it('opens a private work stream back up to the workspace', async () => {
+    const onChangeWorkstreamScope = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [{
+        ...workstream('00000000-4000-4000-8000-000000000024', 'Comp review', 'completed'),
+        scope: 'personal',
+      }],
+      onChangeWorkstreamScope,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Comp review/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make public to workspace' }));
+
+    expect(onChangeWorkstreamScope).toHaveBeenCalledWith(
+      expect.objectContaining({ id: '00000000-4000-4000-8000-000000000024' }),
+      'workspace',
+    );
+  });
+
+  // Both of these take their audience from something other than this column, so
+  // the menu does not offer a change that would not happen.
+  it('does not offer the toggle on a work stream an automation generated', async () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000025', 'Daily brief', 'completed', 'automation'),
+      automationSubscriptionId: '00000000-4000-4000-8000-000000000026',
+    }]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily brief/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Make private' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer the toggle on a work stream that belongs to Avalon itself', async () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000027', 'Digest · Adam', 'completed'),
+      scope: 'personal',
+      systemKind: 'digest',
+    }]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Digest/u }), { clientX: 120, clientY: 90 });
+
+    expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Make public to workspace' })).not.toBeInTheDocument();
+  });
+
+  it('reports a visibility change the server rejected instead of failing silently', async () => {
+    renderWith(
+      [workstream('00000000-4000-4000-8000-000000000028', 'Launch', 'completed')],
+      vi.fn(async () => {
+        throw new Error('The work stream could not be reached.');
+      }),
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Make private' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Work stream visibility could not be changed' });
+    expect(within(dialog).getByText('The work stream is still visible to the workspace. Try again in a moment.'))
+      .toBeVisible();
+    expect(within(dialog).getByText('The work stream could not be reached.')).toBeVisible();
   });
 });
