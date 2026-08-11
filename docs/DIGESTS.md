@@ -388,3 +388,53 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
 | The work-stream list every surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts` |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
+
+## Changelog
+
+### 2026-08-11 — A digest run is handed its window, and only hears about what a connector confirmed is worth hearing
+
+**What changed:** Two things, because the same digest exposed both. A scheduled
+run now receives its frozen window as a labelled user-role trigger message
+rendered by `renderScheduledDigestBriefMessage`, instead of relying on the
+transcript row the brief is written to. And the window itself is filtered:
+`activity_events.digestible` carries a per-event answer, `listActivityEventsForUser`
+takes a required `digestibleOnly`, and a digest passes `true`.
+
+**Why:** A production digest arrived reading "No changes since last digest; no
+prior baseline or connected activity found", beside a pill counting 200 updates.
+The recorded inference for every turn of that run held exactly one message — the
+system prompt. The brief is written to `messages` as a `system` row, and the
+protocol projector drops system rows as UI state, so the window never reached the
+model; asked to summarize something it could not see, it searched memory and
+durable tables, found nothing, and reported that nothing had happened. The count
+in the email came from `event_count`, which never passes through the model, so
+the two halves of the same email disagreed.
+
+The window was also the wrong 200 events. It covered seventeen minutes of one
+morning and was 84% GitHub check runs and workflow transitions, because the log
+could not tell a connector's machinery from its news. Against the workspace that
+produced the empty digest, per-event digestibility withholds 1,610 of 1,937
+events, which is the difference between a digest that covers a day and one that
+covers a quarter of an hour.
+
+**Considered and rejected:** Making the projector carry `system` rows, which
+would have delivered the brief with a one-line change. It would also replay
+unlabelled connector text as ordinary history on every later turn of every run
+that has a system row, which is what the projector exists to prevent. Also
+rejected: filtering the noisy GitHub event types at projection time inside the
+digest. That puts a list of one provider's event names inside the digest, where
+nobody adding a connector would ever find it — the connector manifest is where
+somebody is already deciding what an event means.
+
+**Consequences:** A digest run now fails its attempt when it cannot find its
+brief, rather than running blind; the unsettled delivery folds its window into
+the next occurrence. The cursor deliberately still advances past withheld
+events, so a window that was all machinery settles as `empty` rather than being
+re-scanned forever — which means a genuinely quiet week and a week of pure
+machinery are indistinguishable from the delivery table alone. Anything that
+starts a run from a schedule has to hand the host something to render as a
+trigger; a transcript row is not a channel to the model. The reasoning behind
+everything in this document before this entry is not recorded, and was not
+reconstructed.
+
+Shipped on `claude/empty-digest-investigation-qicglw`.
