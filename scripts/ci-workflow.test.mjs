@@ -11,37 +11,84 @@ async function readWorkflow() {
   return readFile(workflowPath, 'utf8');
 }
 
+function matrixCommand(workflow, lane) {
+  const escapedLane = lane.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const match = workflow.match(new RegExp(
+    `^ {10}- name: ${escapedLane}\\n {12}command: (?:>-\\n(?<folded>(?:^ {14}.+\\n?)+)|(?<inline>.+))`,
+    'mu',
+  ));
+
+  assert.ok(match, `CI must define the ${lane} matrix lane`);
+  return match.groups.inline ?? match.groups.folded
+    .trim()
+    .split('\n')
+    .map((line) => line.trim())
+    .join(' ');
+}
+
+async function packageScripts(packageDirectory) {
+  const source = await readFile(join(repositoryDirectory, packageDirectory, 'package.json'), 'utf8');
+  return JSON.parse(source).scripts;
+}
+
 test('CI distributes the expensive verification work across independent lanes', async () => {
   const workflow = await readWorkflow();
 
-  for (const lane of [
-    'lint',
-    'typecheck-and-build-invariants',
-    'desktop-tests-1-of-2',
-    'desktop-tests-2-of-2',
-    'api-tests-1-of-2',
-    'api-tests-2-of-2',
-    'remaining-tests',
-  ]) {
-    assert.match(workflow, new RegExp(`^ {10}- name: ${lane}$`, 'mu'));
-  }
-
-  for (const command of [
-    'pnpm --filter @avalon/desktop exec vitest run --shard=1/2',
-    'pnpm --filter @avalon/desktop exec vitest run --shard=2/2',
-    'pnpm --filter @avalon/api exec vitest run --shard=1/2',
-    'pnpm --filter @avalon/api exec vitest run --shard=2/2',
-    "pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test",
-  ]) {
-    assert.ok(workflow.includes(command), `CI must retain ${command}`);
-  }
+  assert.equal(matrixCommand(workflow, 'lint'), 'pnpm lint');
+  assert.equal(
+    matrixCommand(workflow, 'typecheck-and-build-invariants'),
+    'pnpm typecheck && pnpm --filter @avalon/api build && '
+      + 'pnpm --filter @avalon/api build:eu && pnpm --filter @avalon/desktop test:release',
+  );
+  assert.equal(
+    matrixCommand(workflow, 'remaining-tests'),
+    "pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test && "
+      + 'pnpm test:scripts',
+  );
 
   assert.match(workflow, /^ {6}fail-fast: false$/mu);
 });
 
+test('CI shards the package-owned desktop and API test commands without drift', async () => {
+  const [workflow, desktopScripts, apiScripts] = await Promise.all([
+    readWorkflow(),
+    packageScripts('apps/desktop'),
+    packageScripts('apps/api'),
+  ]);
+  const apiTestCommands = apiScripts.test.split(' && ');
+
+  assert.deepEqual(
+    apiTestCommands,
+    [apiTestCommands[0], apiScripts['test:workers']],
+    'API test must remain one shardable command followed by the package-owned workers suite',
+  );
+  assert.equal(
+    matrixCommand(workflow, 'desktop-tests-1-of-2'),
+    `pnpm --filter @avalon/desktop exec ${desktopScripts.test} --shard=1/2`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'desktop-tests-2-of-2'),
+    `pnpm --filter @avalon/desktop exec ${desktopScripts.test} --shard=2/2`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-1-of-2'),
+    `pnpm --filter @avalon/api exec ${apiTestCommands[0]} --shard=1/2`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-2-of-2'),
+    `pnpm --filter @avalon/api exec ${apiTestCommands[0]} --shard=2/2 && `
+      + 'pnpm --filter @avalon/api test:workers',
+  );
+});
+
 test('CI retains one terminal verify check for branch protection', async () => {
   const workflow = await readWorkflow();
-  const verifyJob = workflow.slice(workflow.indexOf('\n  verify:'));
+  const start = workflow.indexOf('\n  verify:');
+  const end = workflow.indexOf('\n  secrets:', start);
+
+  assert.notEqual(start, -1, 'CI must define a terminal verify job');
+  assert.notEqual(end, -1, 'CI must keep the secrets job after verify');
+  const verifyJob = workflow.slice(start, end);
 
   assert.match(verifyJob, /^ {4}name: verify$/mu);
   assert.match(verifyJob, /^ {4}needs: checks$/mu);
@@ -59,8 +106,8 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm --filter @avalon/api build:eu',
     'pnpm --filter @avalon/desktop test:release',
     'pnpm test:scripts',
-    'vitest run --config vitest.workers.config.ts',
+    'pnpm --filter @avalon/api test:workers',
   ]) {
-    assert.match(workflow, new RegExp(command.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+    assert.ok(workflow.includes(command), `CI must retain ${command}`);
   }
 });
