@@ -199,11 +199,14 @@ describe("agent harness", () => {
       "requiredCapabilities",
     ]));
     const elicitationTool = (requestBody!.tools as Array<{
-      function: { name: string; parameters: { properties: Record<string, unknown> } };
+      function: { name: string; description: string; parameters: { properties: Record<string, unknown> } };
     }>).find((tool) => tool.function.name === "core_request_elicitation");
     expect(elicitationTool).toBeDefined();
     expect(elicitationTool!.function.parameters.properties).toHaveProperty("responseType");
     expect(elicitationTool!.function.parameters.properties).toHaveProperty("options");
+    // The precondition is the point of this tool's description; without an
+    // assertion it could be dropped without anything failing.
+    expect(elicitationTool!.function.description).toContain("Check the plugin catalog as part of that search");
   });
 
   it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
@@ -1843,6 +1846,14 @@ describe("agent harness", () => {
     );
     expect(requestBodies[0]!.messages[0]!.content).toContain(
       "or requesting it from a person, inspect the compact catalog",
+    );
+    // The other two halves of the same fix had no assertion anywhere, so a
+    // later edit could drop either sentence in silence.
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      "Asking a person for something counts as answering",
+    );
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      "An available plugin is part of this run's capability, not a suggestion",
     );
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain("gh1_search");
     expect(requestBodies[1]!.messages[0]!.content).toContain(

@@ -423,27 +423,6 @@ describe("prompt renderers", () => {
     expect(prompt).toContain("target ID, not the visible label");
   });
 
-  it("treats an unloaded plugin as capability the run already has", () => {
-    const catalog = renderPromptPluginCatalog({
-      activePluginIds: new Set(["avalon_core"]),
-      plugins: [
-        { pluginId: "avalon_core", description: "Core utilities." },
-        {
-          pluginId: "plugin_google",
-          displayName: "Google Mail + Calendar",
-          searchAliases: ["gmail", "mail", "email", "inbox"],
-          description: "Load this plugin for email, inbox, mail, meeting, schedule, or calendar requests.",
-        },
-      ],
-    });
-
-    // The catalog already says when to load it; a run that asked a person for an
-    // address instead had read this and treated it as a suggestion.
-    expect(catalog).toContain("Available to load:");
-    expect(catalog).toContain("aliases: gmail, mail, email, inbox");
-    expect(catalog).toContain("Load this plugin for email");
-  });
-
   it("requires a source for every fact in an outward-facing write, whatever the connector", () => {
     const prompt = renderWorkstreamSystemPrompt({
       title: "Draft the intro",
