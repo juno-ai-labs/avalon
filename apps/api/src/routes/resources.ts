@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
-import { IdSchema } from "@avalon/contracts";
+import { IdSchema, ResourceSchema } from "@avalon/contracts";
 import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -25,15 +25,21 @@ const listQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+const ResourcePageSchema = z.object({
+  items: z.array(ResourceSchema),
+  nextCursor: z.string().nullable(),
+});
+const WatchStateSchema = z.object({ watchEnabled: z.boolean() });
+
 export const resourceRoutes = new Hono<HonoAppEnv>();
 
 resourceRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(await new ResourceService(c.env, getAuth(c)).list({
+  return c.json(ResourcePageSchema.parse(await new ResourceService(c.env, getAuth(c)).list({
     ...(query.q ? { query: query.q } : {}),
     ...(query.cursor ? { cursor: query.cursor } : {}),
     limit: query.limit,
-  }));
+  })));
 });
 
 resourceRoutes.post("/upload", async (c) => {
@@ -43,13 +49,14 @@ resourceRoutes.post("/upload", async (c) => {
   const title = typeof body.title === "string" ? body.title : undefined;
   const draftId = IdSchema.safeParse(c.req.header("X-Avalon-Draft-Id"));
   if (!draftId.success) throw new ApiError(422, "draft_id_required", "A valid draft attachment ID is required");
-  return c.json(await new ResourceService(c.env, getAuth(c)).upload(file, title, draftId.data), 201);
+  return c.json(ResourceSchema.parse(
+    await new ResourceService(c.env, getAuth(c)).upload(file, title, draftId.data)), 201);
 });
 resourceRoutes.post("/resolve", zValidator("json", resolveBody), async (c) =>
-  c.json(await new ResourceService(c.env, getAuth(c)).resolve(c.req.valid("json")), 201),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).resolve(c.req.valid("json"))), 201),
 );
 resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
-  c.json(await new ResourceService(c.env, getAuth(c)).get(c.req.valid("param").id)),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).get(c.req.valid("param").id))),
 );
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
   new ResourceService(c.env, getAuth(c)).content(c.req.valid("param").id),
@@ -59,10 +66,11 @@ resourceRoutes.delete("/:id", zValidator("param", idParam), async (c) => {
   return c.body(null, 204);
 });
 resourceRoutes.post("/:id/hydrate", zValidator("param", idParam), async (c) =>
-  c.json(await new ResourceService(c.env, getAuth(c)).hydrate(c.req.valid("param").id)),
+  c.json(ResourceSchema.parse(await new ResourceService(c.env, getAuth(c)).hydrate(c.req.valid("param").id))),
 );
 resourceRoutes.post("/:id/watch", zValidator("param", idParam), zValidator("json", watchBody), async (c) =>
-  c.json(await new ResourceService(c.env, getAuth(c)).watch(c.req.valid("param").id, c.req.valid("json").workstreamId)),
+  c.json(WatchStateSchema.parse(
+    await new ResourceService(c.env, getAuth(c)).watch(c.req.valid("param").id, c.req.valid("json").workstreamId))),
 );
 resourceRoutes.delete("/:id/watch", zValidator("param", idParam), zValidator("query", watchQuery), async (c) => {
   await new ResourceService(c.env, getAuth(c)).unwatch(c.req.valid("param").id, c.req.valid("query").workstreamId);
