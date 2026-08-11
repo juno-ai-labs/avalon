@@ -16,6 +16,7 @@ const currentVersionId = '00000000-0000-7000-8000-000000000010';
 const nextVersionId = '00000000-0000-7000-8000-000000000011';
 const artifactId = '00000000-0000-7000-8000-000000000012';
 const taskId = '00000000-0000-7000-8000-000000000013';
+const noteId = '00000000-0000-7000-8000-000000000014';
 
 const user = {
   id: userId,
@@ -656,6 +657,12 @@ describe('Avalon API wire adapter', () => {
     await expect(api.stopHarness(workstreamId)).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith(
       `https://api.avalon.test/workstreams/${workstreamId}/stop`,
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    await expect(api.archiveNote(noteId)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      `https://api.avalon.test/notes/${noteId}/archive`,
       expect.objectContaining({ method: 'POST' }),
     );
   });
