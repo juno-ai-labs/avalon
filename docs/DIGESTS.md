@@ -82,6 +82,35 @@ an expired `log_sequence` sits below every live one, so a window that has lost
 its rows reads as empty rather than as new. A surface that wants to read further
 back than ninety days needs this number raised, not a second table.
 
+### Digestible: what a person should be *told*
+
+Audience answers who *may* hear about an event. `digestible` answers whether
+anybody wants to. They are different questions, and collapsing them is how a
+digest becomes a transcript of continuous integration: a repository under active
+development emits two events per check run and three per workflow run, so the
+oldest two hundred events in a window can be seventeen minutes of one morning's
+builds while the reviews, merges and comments sit behind them unread.
+
+**Every event carries the answer on its row**, in `activity_events.digestible`,
+and `listActivityEventsForUser` takes a required `digestibleOnly` — required
+rather than defaulted because both readings are legitimate and the wrong one is
+invisible. An activity feed wants everything that happened; a digest, which
+interrupts somebody on a schedule, wants the subset. A digest passes `true`.
+
+**A withheld event is not a lesser event.** It is ingested, routed, matched
+against automations and watches, recorded in the log, and readable by everyone
+its audience covers. It simply does not interrupt anybody.
+
+**The window still ends at the top of the log.** The cursor steps over what was
+withheld, so a quiet occurrence settles as `empty` and moves on; stopping at the
+last digestible event would make every later occurrence re-scan the same
+withheld rows forever.
+
+For connector activity the answer comes from the connector's own manifest —
+`digestible` on each activity type, plus a polling stream's veto over its own
+output — which [`CONNECTORS.md`](CONNECTORS.md#declaring-what-a-digest-may-read)
+owns. Nothing about which events matter is written here or in the digest.
+
 ### Adding a producer
 
 Call `recordActivityEvent` with a `dedupeKey` that is stable per workspace, so a
@@ -90,12 +119,19 @@ It never throws into its caller: an event log that can fail a message post is
 worse than one that occasionally misses a row. Use
 `recordActivityEventOrThrow` when the write genuinely has to land.
 
+`digestible` is a required field of that call, with no default. A producer that
+has not decided whether it is writing news or machinery should not get the
+benefit of the doubt in somebody's inbox, and the compiler asks at the call site
+rather than letting the question be answered weeks later by whoever receives the
+email. A first-party producer knows the answer where it stands; a connector
+producer resolves it from the manifest.
+
 Producers today:
 
-| Producer | Event type | Audience |
-| --- | --- | --- |
-| `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets |
-| `activity-consumer` after routing | `connector.<provider>.<event>` | the connection's own scope |
+| Producer | Event type | Audience | Digestible |
+| --- | --- | --- | --- |
+| `WorkstreamService.createMessage` | `workstream.message.posted` | the work stream; mentions become `mentioned` targets | always — everything Avalon records here is somebody addressing somebody |
+| `activity-consumer` after routing | `connector.<provider>.<event>` | the connection's own scope | whatever the connector's manifest declared for that activity type |
 
 ## The digest
 
@@ -172,6 +208,27 @@ scheduler:
 
 An empty window settles as `empty` without running the model, and its cursor
 still advances so the next digest does not re-scan it.
+
+**The brief reaches the model through the run's trigger context, not through the
+transcript.** Step 4 puts it in `messages` as a `system` row, and system rows are
+UI state that the protocol projector deliberately drops — they answer "why did
+this start on its own?" for a person opening the work stream, and admitting them
+to the model would replay unlabelled connector text as history on every later
+turn. So `loadRunPromptContext` re-reads the brief through the delivery, whose
+`digest:<delivery-id>` client message id makes it impossible to pick up another
+occurrence's window, and renders it as a labelled user-role message beside a
+wake-up's and a trigger activity's.
+
+Without that message a digest run reaches the model as a bare system prompt
+carrying only the work stream's objective, and a model asked to summarize a
+window it cannot see does not report that it cannot see one — it goes looking in
+memory and durable tables, finds nothing, and writes that nothing happened. That
+shipped: `digest-run-context.test.ts` is the regression, and it also pins the
+transcript row staying invisible, so the two halves cannot drift apart.
+
+A run that cannot find its brief throws rather than proceeding. An unsettled
+delivery folds its window into the next occurrence; one that runs blind consumes
+the window and delivers nothing.
 
 **Digests never touch `workstream_read_states`.** A digest cursor means "what you
 have already been told"; a read waterline means "what you have read". Collapsing
@@ -323,6 +380,8 @@ sqlite3 /tmp/global.sqlite < /tmp/global.sql
 | The log: writes, visibility-scoped reads, cursors | `apps/api/src/services/activity-event-service.ts` |
 | Digest configuration, RRULE derivation, schedule rows | `apps/api/src/services/digest-service.ts` |
 | Firing one occurrence, the window, the hidden work stream, the brief | `apps/api/src/services/digest-run-service.ts` |
+| Getting the brief in front of the model | `loadRunPromptContext` in `apps/api/src/services/integrations.ts`, rendered by `renderScheduledDigestBriefMessage` |
+| Deciding whether a connector activity may be digested | `activityIsDigestible` in `apps/api/src/queues/activity-consumer.ts` |
 | Recording and sending what a run wrote | `apps/api/src/services/digest-run-settlement.ts` |
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |

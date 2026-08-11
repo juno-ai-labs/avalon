@@ -23,7 +23,19 @@ afterEach(() => {
 });
 
 function envFor(database: DatabaseSync): Env {
-  return { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+  // The Slack credentials are what put Slack in this env's connector registry,
+  // and the registry is what answers whether an event type is digestible.
+  // Without them every projection here would be withheld for the uninteresting
+  // reason that the connector is unregistered in this region.
+  return {
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    PUBLIC_API_BASE_URL: "https://api.example.com",
+    SLACK_CLIENT_ID: "client",
+    SLACK_CLIENT_SECRET: "secret",
+    SLACK_SIGNING_SECRET: "signing",
+  } as unknown as Env;
 }
 
 function seededDatabase(): DatabaseSync {
@@ -53,7 +65,7 @@ function activity(overrides: Record<string, unknown> = {}) {
     connection_owner_user_id: null,
     provider: "slack",
     provider_event_id: "ev-1",
-    event_type: "message.posted",
+    event_type: "slack.message.posted",
     resource_type: "message",
     provider_resource_id: "C1/1",
     actor_json: JSON.stringify({ displayName: "Dana Okafor" }),
@@ -71,9 +83,20 @@ function activity(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof projectActivityEvent>[1];
 }
 
+/** Everything this person may see, digestible or not — an audience question. */
 async function readFor(env: Env, userId: string) {
   const through = await latestActivityEventCursor(env, WORKSPACE);
-  return await listActivityEventsForUser(env, { workspaceId: WORKSPACE, userId, through, limit: 50 });
+  return await listActivityEventsForUser(env, {
+    workspaceId: WORKSPACE, userId, through, digestibleOnly: false, limit: 50,
+  });
+}
+
+/** Only what a connector confirmed is worth telling this person about. */
+async function digestReadFor(env: Env, userId: string) {
+  const through = await latestActivityEventCursor(env, WORKSPACE);
+  return await listActivityEventsForUser(env, {
+    workspaceId: WORKSPACE, userId, through, digestibleOnly: true, limit: 50,
+  });
 }
 
 describe("projecting connector activity into the activity log", () => {
@@ -151,6 +174,55 @@ describe("projecting connector activity into the activity log", () => {
     await projectActivityEvent(env, activity());
 
     expect(database.prepare("SELECT COUNT(*) AS count FROM activity_events").get()).toEqual({ count: 1 });
+  });
+});
+
+describe("deciding what a digest may read back", () => {
+  it("carries the connector manifest's answer onto the event", async () => {
+    const env = envFor(seededDatabase());
+
+    await projectActivityEvent(env, activity());
+    await projectActivityEvent(env, activity({
+      id: "00000000-0000-7000-8000-0000000000a2",
+      provider_event_id: "ev-2",
+      event_type: "slack.reaction.added",
+      title: "Dana reacted",
+    }));
+
+    // Both happened and both are readable; only the one Slack declared
+    // digestible is something to interrupt somebody with.
+    expect(await readFor(env, MEMBER_A)).toHaveLength(2);
+    expect((await digestReadFor(env, MEMBER_A)).map((event) => event.event_type))
+      .toEqual(["connector.slack.slack.message.posted"]);
+  });
+
+  it("withholds an activity whose polling stream withheld itself", async () => {
+    const env = envFor(seededDatabase());
+
+    // Stamped by the poll host when a stream declares itself non-digestible.
+    // The event type still says digestible; a stream may only ever subtract.
+    await projectActivityEvent(env, activity({
+      metadata_json: JSON.stringify({ _streamNotDigestible: true }),
+    }));
+
+    expect(await readFor(env, MEMBER_A)).toHaveLength(1);
+    expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
+  });
+
+  it("withholds an event type no registered connector declares", async () => {
+    const env = envFor(seededDatabase());
+
+    // A connector unregistered in this region, or an event type dropped from a
+    // manifest, is nobody confirming anything. It still reaches the log.
+    await projectActivityEvent(env, activity({ connector_type: "unregistered_provider" }));
+    await projectActivityEvent(env, activity({
+      id: "00000000-0000-7000-8000-0000000000a3",
+      provider_event_id: "ev-3",
+      event_type: "slack.invented.event",
+    }));
+
+    expect(await readFor(env, MEMBER_A)).toHaveLength(2);
+    expect(await digestReadFor(env, MEMBER_A)).toEqual([]);
   });
 });
 

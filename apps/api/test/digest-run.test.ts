@@ -81,6 +81,7 @@ async function recordEvent(env: Env, dedupeKey: string): Promise<string> {
     title: "Launch",
     body: "Shipped the installer",
     audience: { kind: "workspace" },
+    digestible: true,
     occurredAt: "2026-08-11T09:00:00.000Z",
     sourceKind: "message",
     dedupeKey,
@@ -105,6 +106,73 @@ describe("firing a digest occurrence", () => {
     ).get() as { status: string; event_count: number; cursor_from: number | null; cursor_through: number };
     expect(delivery).toMatchObject({ status: "running", event_count: 2, cursor_from: null });
     expect(delivery.cursor_through).toBe(2);
+  });
+
+  it("steps its cursor over what no connector confirmed is worth telling anyone", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await recordEvent(env, "message:1");
+    for (const index of [1, 2, 3]) {
+      await recordActivityEventOrThrow(env, {
+        workspaceId: WORKSPACE,
+        eventType: "connector.github.github.check_run.completed",
+        subjectType: "github_commit",
+        subjectId: null,
+        actorType: "external",
+        actorLabel: "github",
+        title: "check run completed — verify / lint",
+        audience: { kind: "workspace" },
+        digestible: false,
+        occurredAt: "2026-08-11T09:00:00.000Z",
+        sourceKind: "activity",
+        dedupeKey: `activity:${index}`,
+      });
+    }
+
+    await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
+
+    const delivery = database.prepare(
+      "SELECT event_count, cursor_through FROM digest_deliveries",
+    ).get() as { event_count: number; cursor_through: number };
+    // One event digested, and the cursor past all four. Stopping at the last
+    // digestible event instead would make every later occurrence re-scan the
+    // three that were withheld, forever.
+    expect(delivery).toEqual({ event_count: 1, cursor_through: 4 });
+    const brief = database.prepare(
+      "SELECT text_content FROM messages WHERE message_type = 'system'",
+    ).get() as { text_content: string };
+    expect(brief.text_content).toContain("(1 item)");
+    expect(brief.text_content).not.toContain("check run completed");
+  });
+
+  it("settles as empty when a whole window was machinery", async () => {
+    const database = seededDatabase();
+    const env = envFor(database);
+    await recordActivityEventOrThrow(env, {
+      workspaceId: WORKSPACE,
+      eventType: "connector.github.github.workflow_run.in_progress",
+      subjectType: "github_workflow_run",
+      subjectId: null,
+      actorType: "external",
+      actorLabel: "github",
+      title: "workflow run in_progress — CI",
+      audience: { kind: "workspace" },
+      digestible: false,
+      occurredAt: "2026-08-11T09:00:00.000Z",
+      sourceKind: "activity",
+      dedupeKey: "activity:1",
+    });
+
+    const outcome = await fireDigestSchedule(env, {
+      scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR,
+    });
+
+    // Nothing to say and nothing sent, rather than a model asked to write a
+    // morning briefing about continuous integration.
+    expect(outcome).toEqual({ started: false, reason: "empty" });
+    expect(launchWorkstreamHarness).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT status, cursor_through FROM digest_deliveries").get())
+      .toEqual({ status: "empty", cursor_through: 1 });
   });
 
   it("runs in a private work stream the recipient alone participates in", async () => {
@@ -256,6 +324,7 @@ describe("firing a digest occurrence", () => {
       actorLabel: "Other",
       title: "Launch",
       audience: { kind: "workspace" },
+      digestible: true,
       occurredAt: "2026-08-11T09:00:00.000Z",
       sourceKind: "message",
       dedupeKey: "message:2",

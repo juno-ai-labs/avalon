@@ -17,6 +17,7 @@ import {
   ConnectorError,
   defineConnectorActivityTriggers,
   defineConnectorAgentPlugin,
+  type ConnectorActivityTypePartition,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
   type ConnectorToolContext,
@@ -213,19 +214,42 @@ const SlackIngressEnvelopeSchema = z.object({
 
 export type SlackIngressEnvelope = z.infer<typeof SlackIngressEnvelopeSchema>;
 
+/**
+ * Slack's activity types, split by whether a person should hear about one in
+ * their digest.
+ *
+ * Digestible is what somebody said and what was addressed to this reader.
+ * Reactions, joins and leaves are how a channel breathes rather than what
+ * happened in it, and an edit or a deletion revises something the reader was
+ * already told about once.
+ */
+export const SlackActivityTypes = {
+  digestible: [
+    "slack.message.posted",
+    "slack.message.replied",
+    "slack.app_mention.received",
+    "slack.direct_message.received",
+    "slack.file.shared",
+  ],
+  operational: [
+    "slack.message.edited",
+    "slack.message.deleted",
+    "slack.reaction.added",
+    "slack.reaction.removed",
+    "slack.channel.created",
+    "slack.member.joined_channel",
+    "slack.member.left_channel",
+  ],
+} as const satisfies ConnectorActivityTypePartition;
+
+/**
+ * Every Slack activity type, derived from the partition rather than listed
+ * beside it: a second list is a second place to forget an event type, and the
+ * one that gets forgotten is always the digest side.
+ */
 export const SlackActivityEventTypes = [
-  "slack.message.posted",
-  "slack.message.replied",
-  "slack.message.edited",
-  "slack.message.deleted",
-  "slack.app_mention.received",
-  "slack.direct_message.received",
-  "slack.reaction.added",
-  "slack.reaction.removed",
-  "slack.file.shared",
-  "slack.channel.created",
-  "slack.member.joined_channel",
-  "slack.member.left_channel",
+  ...SlackActivityTypes.digestible,
+  ...SlackActivityTypes.operational,
 ] as const;
 
 export function slackActivityEventType(envelope: SlackIngressEnvelope): string | null {
@@ -1823,7 +1847,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       ],
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("Slack", SlackActivityEventTypes, {
+      activityTriggers: defineConnectorActivityTriggers("Slack", SlackActivityTypes, {
         "slack.message.posted": {
           label: "Message posted",
           description: "A human posted a new root message in a Slack channel selected by an automation.",

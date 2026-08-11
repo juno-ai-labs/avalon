@@ -4,6 +4,7 @@ import {
 } from "@avalon/agent-harness";
 import { connectorRetryAfterMs } from "@avalon/connectors";
 import {
+  ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
   ActivityRoutingResultSchema,
   ExecutionPrincipalSchema,
@@ -25,6 +26,7 @@ import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
 import { logWarn } from "../observability/logger";
+import { connectorRegistryForEnv } from "../lib/connector-registry";
 
 interface ActivityRow {
   id: string;
@@ -329,7 +331,9 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
   const restrictedUserIds = restrictedActivityUserIds(activity);
   if (restrictedUserIds?.length === 0) return;
 
+  const digestible = activityIsDigestible(env, activity);
   const shared = {
+    digestible,
     workspaceId: activity.workspace_id,
     eventType: `connector.${activity.provider}.${activity.event_type}`,
     subjectType: activity.resource_type ?? "connector_activity",
@@ -369,6 +373,36 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
       dedupeKey: `activity:${activity.id}:${userId}`,
       targets: [{ userId, relation: "involved" }],
     });
+  }
+}
+
+/**
+ * Whether this connector activity may be read back to a person in a digest.
+ *
+ * The connector's manifest is the authority, keyed on the event type — the one
+ * thing an activity durably carries all the way from the provider to the log.
+ * A polling stream may additionally withhold its own output, and says so
+ * through the metadata the poll host stamps; a stream can only ever subtract,
+ * so the two declarations cannot contradict each other into a digest.
+ *
+ * Everything unknown is withheld. An unregistered connector in this region, a
+ * manifest that has dropped an event type it used to emit, an activity from a
+ * connector that predates the declaration — none of those are somebody
+ * confirming that a person wants this in their inbox, and the cost of being
+ * wrong runs one way only: a withheld event is still logged, still routes, and
+ * still triggers automations.
+ */
+function activityIsDigestible(env: Env, activity: ActivityRow): boolean {
+  if (parseRecord(activity.metadata_json)[ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY] === true) {
+    return false;
+  }
+  try {
+    return connectorRegistryForEnv(env)
+      .get(activity.connector_type)
+      .manifest.digestibleActivityTypes
+      .includes(activity.event_type);
+  } catch {
+    return false;
   }
 }
 
