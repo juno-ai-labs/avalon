@@ -99,10 +99,21 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize developer debug identifiers version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
+
+/** Words that only lead somewhere while the Developer section is on offer. They
+ * are appended to Application rather than written into it, so searching "debug"
+ * cannot send someone the flag excludes to a pane that has no such section. */
+const developerSectionSearchTerms = 'developer debug identifiers';
+
+function navigationSearchTerms(item: SettingsNavItem, developerSettingsAvailable: boolean): string {
+  return item.id === 'application' && developerSettingsAvailable
+    ? `${item.searchTerms} ${developerSectionSearchTerms}`
+    : item.searchTerms;
+}
 
 const linearNativeAgentEnabled = import.meta.env.VITE_LINEAR_NATIVE_AGENT_ENABLED === 'true';
 const supportedTimezones = typeof Intl.supportedValuesOf === 'function'
@@ -464,16 +475,20 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
     () => (invitations.data ?? []).filter((invitation) => invitation.status !== 'pending'),
     [invitations.data],
   );
+  const developerSettingsAvailable = applicationSettings?.developerSettingsAvailable ?? false;
   const filteredNavigation = useMemo(() => {
     const query = navigationQuery.trim().toLowerCase();
     if (!query) return settingsNavigation;
     return settingsNavigation
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => `${item.label} ${item.searchTerms}`.toLowerCase().includes(query)),
+        items: group.items.filter((item) =>
+          `${item.label} ${navigationSearchTerms(item, developerSettingsAvailable)}`
+            .toLowerCase()
+            .includes(query)),
       }))
       .filter((group) => group.items.length > 0);
-  }, [navigationQuery]);
+  }, [navigationQuery, developerSettingsAvailable]);
   const availableSections = useMemo(
     () => new Set(filteredNavigation.flatMap((group) => group.items.map((item) => item.id))),
     [filteredNavigation],

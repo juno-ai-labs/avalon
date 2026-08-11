@@ -975,6 +975,35 @@ describe('Workspace settings', () => {
     expect(toggle).not.toBeChecked();
   });
 
+  it('does not answer a search for "debug" with a pane that has no Developer section', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+    });
+    renderSettings();
+    await screen.findByRole('navigation', { name: 'Settings sections' });
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    fireEvent.change(search, { target: { value: 'debug' } });
+    expect(screen.getByText('No settings found')).toBeVisible();
+
+    // The same search finds it once the section is actually on offer.
+    act(() => {
+      for (const listener of applicationSettingsListeners) {
+        listener({
+          lockdownMode: false,
+          lockdownAvailable: true,
+          debugEnabled: false,
+          developerSettingsAvailable: true,
+        });
+      }
+    });
+    expect(within(navigation).getByRole('button', { name: 'Application' })).toBeVisible();
+  });
+
   it('offers no Developer section when the service has not enabled the flag', async () => {
     getApplicationSettings.mockResolvedValue({
       lockdownMode: false,
