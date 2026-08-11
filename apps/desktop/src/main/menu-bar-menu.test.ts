@@ -290,6 +290,20 @@ describe('menu bar menu', () => {
       .toBe('Investigate ENG-142, ENG-143, and the retry storm behind…');
   });
 
+  it('cuts between characters a reader sees, never through one', () => {
+    // 70 visible characters, 140 code units, and no space to retreat to — so
+    // the cut is hard and lands where a code-unit slice would split a pair.
+    const label = menuBarLabel('🎯'.repeat(70));
+
+    // A slice by code unit lands inside a surrogate pair and renders as `�`
+    // immediately before the ellipsis.
+    expect(label).not.toContain('\uFFFD');
+    expect([...label].every((character) => character !== '\uD83C' && character !== '\uDFAF')).toBe(true);
+    expect(label.endsWith('…')).toBe(true);
+    expect([...new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(label)].length)
+      .toBeLessThanOrEqual(60);
+  });
+
   it('cuts hard when trimming to a word would leave a stub', () => {
     // One long word, or a boundary too near the start: the space saved is worth
     // less than the label it would throw away.

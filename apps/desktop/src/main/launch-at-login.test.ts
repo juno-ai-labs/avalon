@@ -84,6 +84,31 @@ describe('launch at login', () => {
     expect(subject.storedSettings().launchAtLoginDefaultApplied).toBe(false);
   });
 
+  it('reports the registration it made even when recording it failed', async () => {
+    const subject = harness();
+    let write = 0;
+    const controller = new LaunchAtLoginController({
+      supported: true,
+      registersDefault: true,
+      getLoginItemState: () => ({ ...subject.state }),
+      setOpenAtLogin: subject.setOpenAtLogin,
+      readSettings: () => Promise.resolve({ ...defaultStoredApplicationSettings }),
+      writeSettings: () => {
+        write += 1;
+        return Promise.reject(new Error('the preference file is read-only'));
+      },
+      onChange: vi.fn(),
+    });
+
+    await expect(controller.initialize()).rejects.toThrow(/read-only/u);
+
+    // The login item is registered. Reporting it as off would have Settings
+    // offer to turn on something macOS already holds on, and the marker is
+    // retried on the next launch anyway.
+    expect(write).toBe(1);
+    expect(controller.enabled()).toBe(true);
+  });
+
   it('reports what macOS holds rather than what was asked for', async () => {
     const subject = harness({ stored: { launchAtLoginDefaultApplied: true }, registrationTakesEffect: false });
     await subject.controller.initialize();

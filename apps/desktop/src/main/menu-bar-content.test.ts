@@ -164,6 +164,70 @@ describe('menu bar content', () => {
     expect(subject.logWarning).toHaveBeenCalledTimes(1);
   });
 
+  it('drops an answer that arrives after sign-out', async () => {
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    subject.requestJson.mockImplementation((path: string) => held.then(() =>
+      path.startsWith('/workstreams')
+        ? workstreamPage([{ id: 'a', title: 'Acme renewal' }])
+        : { items: [] }));
+
+    const inFlight = subject.store.refresh();
+    subject.store.clear();
+    release();
+    await inFlight;
+
+    // The whole point of clearing: the previous account's titles must not come
+    // back through a request that was already on the wire when they signed out.
+    expect(subject.store.content()).toEqual({ recents: [], pinned: [], suggestions: [] });
+  });
+
+  it('does not hand a sign-out-era request back to the account that follows', async () => {
+    respond(subject.requestJson, {
+      '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
+      '/work-opportunities': { items: [] },
+    });
+    const abandoned = subject.store.refresh();
+    subject.store.clear();
+
+    const reissued = subject.store.refresh();
+    expect(reissued).not.toBe(abandoned);
+    await Promise.all([abandoned, reissued]);
+    expect(subject.store.content().recents).toEqual([{ id: 'a', title: 'Acme renewal' }]);
+  });
+
+  it('does not let a refresh already in flight put a started suggestion back', async () => {
+    let releaseStale: () => void = () => undefined;
+    const stalePage = new Promise<void>((resolve) => {
+      releaseStale = resolve;
+    });
+    let started = false;
+    subject.requestJson.mockImplementation((path: string) => {
+      if (path.includes('/start')) {
+        started = true;
+        return Promise.resolve({ workstream: { id: 'created' } });
+      }
+      // The poll already on the wire still carries the suggestion; by the one
+      // issued after the start, the service has consumed it.
+      const body = path.startsWith('/work-opportunities')
+        ? { items: started ? [] : [{ id: 'o1', version: 5, displayPrompt: 'Reply to Dana' }] }
+        : workstreamPage([]);
+      return started ? Promise.resolve(body) : stalePage.then(() => body);
+    });
+
+    const stale = subject.store.refresh();
+    await subject.store.startSuggestion({ id: 'o1', version: 5, label: 'Reply to Dana' });
+    await subject.store.refresh();
+    releaseStale();
+    await stale;
+
+    // Starting consumes it. A second click would be refused by the version
+    // check with nothing on screen explaining why.
+    expect(subject.store.content().suggestions).toEqual([]);
+  });
+
   it('coalesces overlapping refreshes', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
