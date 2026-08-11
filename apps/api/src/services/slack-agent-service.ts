@@ -1806,7 +1806,7 @@ export class SlackAgentService {
               v.trigger_definitions_json
        FROM automation_subscriptions s
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND s.status = 'active'
+       WHERE s.workspace_id = ? AND s.status = 'active' AND s.lifecycle_state = 'visible'
          AND EXISTS (
            SELECT 1 FROM json_each(s.connector_bindings_json)
            WHERE json_each.value = ?
@@ -2198,7 +2198,8 @@ export class SlackAgentService {
         this.env.DB.prepare(
           `SELECT s.id, t.name, s.status, s.next_run_at FROM automation_subscriptions s
            JOIN automation_templates t ON t.id = s.template_id
-           WHERE s.workspace_id = ? AND s.owner_user_id = ? ORDER BY s.updated_at DESC LIMIT 5`,
+           WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
+           ORDER BY s.updated_at DESC LIMIT 5`,
         ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
         this.env.DB.prepare(
           `SELECT display_name, status FROM connector_connections
