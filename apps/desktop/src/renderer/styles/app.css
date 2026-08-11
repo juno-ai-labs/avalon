@@ -1711,7 +1711,16 @@ pre {
    the pointer cursor would promise an action the button does not perform.
    `:not(:disabled)` matches the weight of the global `button` cursor rule,
    which outranks a bare class and would otherwise win. */
-.workstream-title-button { background: transparent; border-radius: 5px; display: block; margin-left: -4px; max-width: 100%; overflow: hidden; padding: 1px 4px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+/* The hover pill hangs 4px back into the header's padding so that the title's
+   text, rather than its background, lines up with the subtitle under it. That
+   overhang also has to be added back to the cap: the heading and every column
+   above it are sized shrink-to-fit from this button's margin box, which the
+   -4px takes 4px out of, so a plain `max-width: 100%` settles 4px below the
+   width the button's own text and padding need. The title would then lose its
+   last characters to the ellipsis in a header with room to spare. `max-content`
+   is what makes the cap the binding constraint — a block box left at `width:
+   auto` fills its parent and never grows to a wider max-width. */
+.workstream-title-button { background: transparent; border-radius: 5px; display: block; margin-left: -4px; max-width: calc(100% + 4px); overflow: hidden; padding: 1px 4px; text-align: left; text-overflow: ellipsis; white-space: nowrap; width: max-content; }
 .workstream-title-button:not(:disabled) { cursor: default; }
 .workstream-title-button:hover { background: var(--raised-hover); }
 .workstream-title-edit { align-items: center; display: flex; gap: 3px; margin-left: -5px; min-width: 0; }
