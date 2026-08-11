@@ -98,6 +98,15 @@ test('CI retains one terminal verify check for branch protection', async () => {
 
 test('CI still runs every repository quality gate', async () => {
   const workflow = await readWorkflow();
+  const commands = [
+    'lint',
+    'typecheck-and-build-invariants',
+    'desktop-tests-1-of-2',
+    'desktop-tests-2-of-2',
+    'api-tests-1-of-2',
+    'api-tests-2-of-2',
+    'remaining-tests',
+  ].flatMap((lane) => matrixCommand(workflow, lane).split(' && '));
 
   for (const command of [
     'pnpm lint',
@@ -108,6 +117,6 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm test:scripts',
     'pnpm --filter @avalon/api test:workers',
   ]) {
-    assert.ok(workflow.includes(command), `CI must retain ${command}`);
+    assert.ok(commands.includes(command), `CI must retain the exact command: ${command}`);
   }
 });
