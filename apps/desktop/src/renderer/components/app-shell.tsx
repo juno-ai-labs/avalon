@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, type CSSProperties, type PropsWithChildren } from 'react';
+import { useEffect, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
@@ -75,6 +75,30 @@ export function applyPinnedWorkstreams(
   );
 }
 
+/**
+ * Apply a pin response only if a later one has not been issued behind it.
+ *
+ * The three pin mutations all rewrite the same list, and their responses can
+ * come back out of order: two quick moves, the second answered first, and the
+ * first response then describes an arrangement the server has already moved
+ * past. Written unconditionally it would put that stale order on screen — and
+ * the local drag order has been cleared by then, so nothing else is holding the
+ * newer one. Ordering by *issue* rather than arrival is what makes the last
+ * thing the reader did the last thing they see.
+ *
+ * Returns whether the response was applied, which is what the tests assert on.
+ */
+export function applyPinnedWorkstreamsIfCurrent(
+  queryClient: ReturnType<typeof useQueryClient>,
+  pinned: WorkstreamSummary[],
+  issued: number,
+  latestIssued: number,
+): boolean {
+  if (issued !== latestIssued) return false;
+  applyPinnedWorkstreams(queryClient, pinned);
+  return true;
+}
+
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
   const navigate = useNavigate();
@@ -98,6 +122,21 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     staleTime: 20_000,
   });
   const workstreams = useWorkstreamsQuery();
+  // One counter across all three pin mutations, because they all rewrite the
+  // same list and a response can only be judged stale against the others.
+  const pinRequestsIssued = useRef(0);
+  const applyPinResponse = async (request: () => Promise<WorkstreamSummary[]>): Promise<void> => {
+    pinRequestsIssued.current += 1;
+    const issued = pinRequestsIssued.current;
+    const pinned = await request();
+    if (!applyPinnedWorkstreamsIfCurrent(queryClient, pinned, issued, pinRequestsIssued.current)) return;
+    // The response is the whole pinned list and can name a work stream this
+    // device has never listed — pinned on another machine, and too quiet to sit
+    // on the page this one last fetched. Patching positions cannot conjure that
+    // row, so the list is refetched behind the patch: the patch is what moves
+    // the section immediately, the refetch is what makes it complete.
+    void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+  };
   const notes = useQuery({
     queryKey: ['notes'],
     queryFn: ({ signal }) => api!.getNotes(signal),
@@ -224,14 +263,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         }}
         onPinWorkstream={async (workstream, pinned) => {
           if (!api) return;
-          applyPinnedWorkstreams(
-            queryClient,
-            pinned ? await api.pinWorkstream(workstream.id) : await api.unpinWorkstream(workstream.id),
-          );
+          await applyPinResponse(() => pinned
+            ? api.pinWorkstream(workstream.id)
+            : api.unpinWorkstream(workstream.id));
         }}
         onReorderPinnedWorkstreams={async (workstreamIds) => {
           if (!api) return;
-          applyPinnedWorkstreams(queryClient, await api.reorderWorkstreamPins(workstreamIds));
+          await applyPinResponse(() => api.reorderWorkstreamPins(workstreamIds));
         }}
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;

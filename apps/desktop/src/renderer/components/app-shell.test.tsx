@@ -2,7 +2,12 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
-import { applyPinnedWorkstreams, openWorkstreamId, staleHarnessStatusWorkstreamId } from './app-shell';
+import {
+  applyPinnedWorkstreams,
+  applyPinnedWorkstreamsIfCurrent,
+  openWorkstreamId,
+  staleHarnessStatusWorkstreamId,
+} from './app-shell';
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
 
@@ -73,6 +78,27 @@ describe('applyPinnedWorkstreams', () => {
       .toEqual([
         expect.objectContaining({ id: workstreamId, pinPosition: null }),
         expect.objectContaining({ id: other, pinPosition: 0 }),
+      ]);
+  });
+
+  // Two quick moves, the second answered first. The first response then
+  // describes an order the server has already moved past, and the local drag
+  // order has been cleared by the time it lands, so nothing else would hold the
+  // newer arrangement on screen.
+  it('discards a response a later request has superseded', () => {
+    const newest = { ...summary('completed'), pinPosition: 1 };
+    const queryClient = cacheWith([newest, { ...summary('completed', other), pinPosition: 0 }]);
+
+    const stale = [{ ...summary('completed'), pinPosition: 0 }];
+    expect(applyPinnedWorkstreamsIfCurrent(queryClient, stale, 1, 2)).toBe(false);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toBe(newest);
+
+    // The response of the newest request is the one that wins, whenever it lands.
+    expect(applyPinnedWorkstreamsIfCurrent(queryClient, stale, 2, 2)).toBe(true);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY))
+      .toEqual([
+        expect.objectContaining({ id: workstreamId, pinPosition: 0 }),
+        expect.objectContaining({ id: other, pinPosition: null }),
       ]);
   });
 

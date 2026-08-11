@@ -175,17 +175,6 @@ export const ViewerSchema = z.object({
 
 export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
 
-/**
- * How many work streams one person may pin.
- *
- * The pinned list is manually ordered and sits above everything else in the
- * sidebar, so its whole value is that a glance takes it in; past a screenful it
- * is a second recent list with worse sorting. 50 is far above what anyone has
- * arranged by hand and low enough that the reorder rewrite stays one small
- * batch. It is a product limit, not a storage one — the table would hold more.
- */
-export const MAX_PINNED_WORKSTREAMS = 50;
-
 export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -1100,11 +1089,16 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
  * caller has since unpinned elsewhere are ignored rather than rejected, and
  * pins the caller does not name keep their relative order behind the ones it
  * did — a second window that pinned something a moment ago loses its position,
- * never its pin. The bound is {@link MAX_PINNED_WORKSTREAMS}, which is what a
- * single arrangement can contain.
+ * never its pin.
+ *
+ * Deliberately unbounded. Nothing limits how many work streams a person may
+ * pin, so any count this array could be capped at would be a number the server
+ * can legitimately exceed — and the arrangement is all-or-nothing, so a cap
+ * would not truncate a drag, it would refuse one and leave the list
+ * unreorderable for as long as the person stayed above it.
  */
 export const ReorderWorkstreamPinsRequestSchema = z.object({
-  workstreamIds: z.array(IdSchema).max(MAX_PINNED_WORKSTREAMS),
+  workstreamIds: z.array(IdSchema),
 });
 
 export const CreateMessageRequestSchema = z.object({
