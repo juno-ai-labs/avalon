@@ -77,15 +77,35 @@ test('a dispatch plans without reading the release record at all', () => {
     assert.match(dispatched, /create_tag=false/u);
 
     // The control: the same tree still plans a branch push, which does read the
-    // record — from main's tip through git, where deleting the working-tree copy
-    // cannot reach it. Without this the dispatch case could pass on a worktree
-    // too broken to run anything.
-    assert.match(run({ GITHUB_EVENT_NAME: 'push', GITHUB_SHA: UNRESOLVABLE_SHA }), /should_release=/u);
-  } finally {
-    execFileSync('git', ['worktree', 'remove', '--force', worktree], {
+    // record — through git, where deleting the working-tree copy cannot reach
+    // it. Without this the dispatch case could pass on a worktree too broken to
+    // run anything. It passes a resolvable commit rather than the unresolvable
+    // one so it holds wherever it runs: CI checks a pull request out at depth 1,
+    // so `origin/main` does not exist there, and a push planned from an
+    // unresolvable head would fall through to the deleted working-tree copy and
+    // fail for a reason that has nothing to do with what is being tested.
+    const resolvableSha = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: repositoryRoot,
-      stdio: 'ignore',
-    });
+      encoding: 'utf8',
+    }).trim();
+    assert.match(run({ GITHUB_EVENT_NAME: 'push', GITHUB_SHA: resolvableSha }), /should_release=/u);
+  } finally {
+    // Best effort, so a cleanup failure cannot replace whatever the test was
+    // actually reporting with a git error — `worktree add` failing early would
+    // otherwise guarantee that swap. Prune covers a registration whose removal
+    // failed, and the directory goes either way: mkdtemp created it before git
+    // was involved, so nothing above is a precondition for deleting it.
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', worktree], {
+        cwd: repositoryRoot,
+        stdio: 'ignore',
+      });
+    } catch {
+      try {
+        execFileSync('git', ['worktree', 'prune'], { cwd: repositoryRoot, stdio: 'ignore' });
+      } catch { /* A stale registration outlives the run at worst. */ }
+    }
+    rmSync(worktree, { recursive: true, force: true });
   }
 });
 
