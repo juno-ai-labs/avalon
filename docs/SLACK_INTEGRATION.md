@@ -405,16 +405,33 @@ challenge exists. `loadLinkChallenge` checks its conditions in a deliberate orde
 minted for another Avalon workspace learns nothing about it — and a new condition
 has to be placed in that order rather than appended.
 
-Two orderings in the interaction handler are load-bearing and look arbitrary.
-Avalon's buttons are matched on the Slack action id and never on the payload's
-`callback_id`, whose fallback prefers a top-level value that a block action
-raised from inside a view carries — matching the other way sends a connect button
-placed in a modal down the shortcut path instead. And `supersedeLinksMintedBefore`
+Two things in the interaction handler are load-bearing and look arbitrary.
+**Every** one of Avalon's buttons is matched on the Slack action id and none on
+the payload's `callback_id`, whose fallback prefers a top-level value that a
+block action raised from inside a view carries — matching the other way sends a
+connect button placed in a modal down the shortcut path instead. The four
+buttons this change did not otherwise touch were converted with it rather than
+left as a rule that held for two of six, since the manifest's only shortcuts
+carry no action at all and reach the task modal by falling past every branch.
+And `supersedeLinksMintedBefore`
 runs after `views.open` rather than inside the mint, so a modal that fails to
 open cannot retire the link the member is still holding, and it is bounded by
 mint time rather than retiring every token but its own — two clicks in flight
 together would otherwise each retire the other's, leaving two modals on screen
 and no redeemable link between them.
+
+**The `avalon_connect` action id was deliberately reused rather than renamed**,
+which has a cost on deploy day worth knowing about. Every App Home view published
+before this shipped still carries a button with that id *and* the old `url`, and
+Slack both follows a `url` button's link and sends its interaction — so the first
+click on a not-yet-republished view opens a long-dead handoff (an error in the
+desktop app) and mints a working modal behind it. A new id would have made those
+stale views inert on the interaction path instead, leaving the member the error
+and nothing else; reusing it means the recovery is already on screen when the
+error appears. The window closes for each member the moment they next open Home,
+which republishes it, and any real click is preceded by exactly that. Claim DMs
+already sitting in history keep their dead URLs either way — nothing republishes
+a message — which is the cost of ever having put a link in one.
 
 Slack's rendering of the new modal and buttons was verified structurally, against
 the Block Kit payloads in `apps/api/test/slack-account-link.test.ts`; Slack
