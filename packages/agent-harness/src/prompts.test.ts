@@ -90,7 +90,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "dfa112db755bafcf3ea4d7ddba826719528c90fb18d1023db1362837ef89eee7",
+        hash: "ecf880389285d5522d731144523715870ab2cd032907737559ed8d3f1bdf34d9",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -98,7 +98,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "5ef0cc6bb995bef7fe7a281a1a615ad999380d852065cc72c2415ca1d185450e",
+        hash: "be263bdad77755fea2ba7650e898c166331b011fdd3b6741ee0b206f3bc26ff8",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -336,6 +336,19 @@ describe("prompt renderers", () => {
 
     expect(prompt).toContain("[@Display Name](person:<person-id>)");
     expect(prompt).toContain("target ID, not the visible label");
+  });
+
+  it("requires a source for every fact in an outward-facing write, whatever the connector", () => {
+    const prompt = renderWorkstreamSystemPrompt({
+      title: "Draft the intro",
+      objective: "Introduce two people over email.",
+    });
+
+    expect(prompt).toContain("must come from a tool result in this run");
+    // The rule has to settle its own tie-break against inferring defaults,
+    // which sits two bullets above it, or a model resolves it silently.
+    expect(prompt).toContain("never supplies a fact you do not have");
+    expect(prompt).toContain("A value you cannot source is a missing identifier");
   });
 
   it("keeps workspace authority separate from external actor attribution and personal connectors", () => {
