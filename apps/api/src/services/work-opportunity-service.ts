@@ -629,9 +629,12 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
        FROM external_user_identities WHERE workspace_id = ? ORDER BY updated_at DESC LIMIT 1000`,
     ).bind(window.workspace_id).all<Record<string, unknown>>(),
     env.DB.prepare(
+      // Machinery is excluded outright rather than filtered per audience: a
+       // digest work stream's title names its owner, and the automation clause
+       // below admits it unconditionally because it carries no subscription.
       `SELECT w.id, w.title, w.objective FROM workstreams w
        LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-       WHERE w.workspace_id = ? AND w.archived_at IS NULL
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL AND w.system_kind IS NULL
          AND (
            ? = 'workspace' OR w.automation_subscription_id IS NULL OR s.scope = 'workspace'
            OR s.owner_user_id = ? OR EXISTS (

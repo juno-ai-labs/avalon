@@ -30,6 +30,7 @@ const headerWorkstream: WorkstreamDetail = {
   origin: 'automation',
   automationName: 'Daily monitor',
   harnessStatus: 'completed',
+  scope: 'workspace',
   lastActivityAt: '2026-08-07T12:00:00.000Z',
   latestAttentionSequenceNumber: 0,
   readThroughSequenceNumber: 0,

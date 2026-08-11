@@ -9,6 +9,7 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus']): WorkstreamS
     id: workstreamId,
     title: 'Draft the reply',
     origin: 'ad_hoc',
+    scope: 'workspace',
     harnessStatus,
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,

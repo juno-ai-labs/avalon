@@ -29,6 +29,7 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import { WORKSTREAMS_QUERY_KEY } from './use-workstreams-query';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 
@@ -328,7 +329,7 @@ export function applyHarnessStatus(
 ): void {
   queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
     current && current.harnessStatus !== harnessStatus ? { ...current, harnessStatus } : current);
-  queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+  queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
     current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
       ? { ...workstream, harnessStatus }
       : workstream));
@@ -399,7 +400,7 @@ export function useWorkstreamSocket(
       void Promise.all([
         queryClient.invalidateQueries({ queryKey: ['messages', workstreamId], exact: true }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
-        queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         syncHyperSightQueries(),
       ]);
     };
@@ -430,7 +431,7 @@ export function useWorkstreamSocket(
           mayStillEmitRealtime
             ? mergeCanonicalTranscript(current, canonicalMessages)
             : replaceWithCanonicalTranscript(current, canonicalMessages));
-        queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
+        queryClient.setQueryData(WORKSTREAMS_QUERY_KEY, canonicalWorkstreams);
         void Promise.all([
           queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
           syncHyperSightQueries(),
@@ -488,7 +489,7 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, message));
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
@@ -506,7 +507,7 @@ export function useWorkstreamSocket(
           insertMessage(current, message));
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? advanceWorkstreamAttention(current, message) : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
@@ -720,7 +721,7 @@ export function useWorkstreamSocket(
             mayStillEmitRealtime
               ? mergeCanonicalTranscript(current, canonicalMessages)
               : replaceWithCanonicalTranscript(current, canonicalMessages));
-          queryClient.setQueryData(['workstreams'], canonicalWorkstreams);
+          queryClient.setQueryData(WORKSTREAMS_QUERY_KEY, canonicalWorkstreams);
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
             syncHyperSightQueries(),

@@ -156,7 +156,22 @@ export const WorkstreamSchema = z.object({
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
-  archivedAt: TimestampSchema.nullable()
+  archivedAt: TimestampSchema.nullable(),
+  /**
+   * Who may read it, in the same vocabulary `notes` uses: `personal` is only the
+   * people in it, `workspace` is anyone in the workspace. Declared on the row
+   * and enforced from it, so "private" is a property rather than a rule a caller
+   * has to remember.
+   */
+  scope: ScopeSchema.default("workspace"),
+  /**
+   * Non-null on a work stream that exists so a subsystem can use the agent loop
+   * rather than because somebody started it. A separate question from `scope`:
+   * this decides whether it is *listed*, that decides who may read it. Listing
+   * surfaces leave these out unless the reader has asked to see them, and render
+   * them as secondary when they do.
+   */
+  systemKind: z.enum(["digest"]).nullable().default(null)
 });
 
 export const ExternalActorSchema = z.object({
@@ -889,6 +904,68 @@ export const UpdateWorkspaceRequestSchema = z.object({
   "At least one workspace preference is required",
 );
 
+// --- Digest ---------------------------------------------------------------
+
+/** Sunday through Saturday, matching `Date#getDay` so no table maps between. */
+export const DigestWeekdaySchema = z.number().int().min(0).max(6);
+/** Local wall-clock minute in the schedule's own timezone. */
+export const DigestMinuteOfDaySchema = z.number().int().min(0).max(1439);
+
+/**
+ * A destination a digest can be sent to. `email` is always offered and needs no
+ * connector; every other value is a connector's declared `userDelivery` surface,
+ * which is why this is the connector target enum plus nothing — the two lists
+ * are the same list, and a connector declaring a new surface must not need a
+ * contract change to become a digest destination.
+ */
+export const DigestDeliveryTargetTypeSchema = AutomationDeliveryTargetTypeSchema;
+
+export const DigestDeliveryTargetSchema = z.object({
+  type: DigestDeliveryTargetTypeSchema,
+  connectionId: IdSchema.nullable().default(null),
+  /** What the destination is called in the UI, frozen when it was chosen. */
+  displayName: z.string().min(1).max(320),
+  status: z.enum(["active", "needs_input", "disabled"]),
+  lastDeliveredAt: TimestampSchema.nullable().default(null),
+});
+
+export const DigestScheduleSchema = z.object({
+  id: IdSchema,
+  enabled: z.boolean(),
+  /** Deduplicated and ascending, so the UI never has to sort or dedupe. */
+  days: z.array(DigestWeekdaySchema).max(7),
+  times: z.array(DigestMinuteOfDaySchema).max(12),
+  /**
+   * Read-only. A digest runs in its owner's own day, so this mirrors their
+   * account timezone rather than storing a second one that could disagree.
+   */
+  timezone: IanaTimezoneSchema,
+  deliveryTargets: z.array(DigestDeliveryTargetSchema).max(8),
+  nextRunAt: TimestampSchema.nullable(),
+  lastDeliveredAt: TimestampSchema.nullable(),
+});
+
+/**
+ * The one write. A digest is a small, wholly-owned configuration, so it is
+ * replaced rather than patched — that keeps "no days selected" and "no times
+ * selected" expressible, which a partial update cannot do.
+ */
+export const UpdateDigestScheduleRequestSchema = z.object({
+  enabled: z.boolean(),
+  days: z.array(DigestWeekdaySchema).max(7),
+  times: z.array(DigestMinuteOfDaySchema).max(12),
+  deliveryTargets: z.array(z.object({
+    type: DigestDeliveryTargetTypeSchema,
+    connectionId: IdSchema.nullable().default(null),
+  })).max(8),
+}).refine(
+  // An enabled digest that names no day, no time, or nowhere to go would sit in
+  // the scheduler forever without ever producing anything a person receives.
+  (value) => !value.enabled
+    || (value.days.length > 0 && value.times.length > 0 && value.deliveryTargets.length > 0),
+  "An enabled digest needs at least one day, one time, and one destination",
+);
+
 export const CreateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(4000).optional(),
@@ -1194,6 +1271,13 @@ export const WorkstreamWorkflowInputSchema = z.object({
    * nullable so every existing producer keeps parsing unchanged.
    */
   scheduledWakeupId: IdSchema.optional(),
+  /**
+   * Set when the workspace scheduler started this run to write a scheduled
+   * digest. The run reads its window from the delivery row and the delivery is
+   * what gets sent when the run finishes. Optional for the same reason
+   * `scheduledWakeupId` is: every existing producer keeps parsing unchanged.
+   */
+  digestDeliveryId: IdSchema.optional(),
   executionPrincipal: ExecutionPrincipalSchema,
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
@@ -1577,6 +1661,10 @@ export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
 export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;
+export type DigestSchedule = z.infer<typeof DigestScheduleSchema>;
+export type DigestDeliveryTarget = z.infer<typeof DigestDeliveryTargetSchema>;
+export type DigestDeliveryTargetType = z.infer<typeof DigestDeliveryTargetTypeSchema>;
+export type UpdateDigestScheduleRequest = z.infer<typeof UpdateDigestScheduleRequestSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
 export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;

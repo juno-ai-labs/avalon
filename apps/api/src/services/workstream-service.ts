@@ -1,6 +1,6 @@
 import { buildMessageAttachmentStatements, createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
-import { HarnessFailureCodeSchema, WorkstreamDetailSchema } from "@avalon/contracts";
+import { HarnessFailureCodeSchema, WorkstreamDetailSchema, workstreamCanonicalUrl } from "@avalon/contracts";
 import type {
   AnswerElicitationRequestSchema,
   Connection,
@@ -21,6 +21,10 @@ import { ApiError } from "../lib/api-error";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
 import {
+  WORKSTREAM_VISIBILITY_SQL,
+  workstreamVisibilityBindings,
+} from "../lib/workstream-visibility";
+import {
   isCanonicalPersonMention,
   prepareMentionMarkdown,
   type MentionPerson,
@@ -39,6 +43,7 @@ import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
 import { enqueueMentionOpportunities } from "./work-opportunity-batching";
+import { recordActivityEvent } from "./activity-event-service";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -150,6 +155,7 @@ export async function launchWorkstreamHarness(
     parentHarnessRunId?: string;
     supersedeActiveRun?: boolean;
     scheduledWakeupId?: string;
+    digestDeliveryId?: string;
   },
 ): Promise<string> {
   const id = newId();
@@ -199,6 +205,7 @@ export async function launchWorkstreamHarness(
     activityId: null,
     executionPrincipal: input.executionPrincipal,
     ...(input.scheduledWakeupId ? { scheduledWakeupId: input.scheduledWakeupId } : {}),
+    ...(input.digestDeliveryId ? { digestDeliveryId: input.digestDeliveryId } : {}),
     ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
     ...(input.slackSearchAuthorization
       ? { slackSearchAuthorization: input.slackSearchAuthorization }
@@ -312,6 +319,12 @@ async function wakeupPrincipalStillAuthorized(
 }
 
 const WAKEUP_PROMPT_PREVIEW_LENGTH = 300;
+/**
+ * How much of a message body the activity log keeps. Long enough for a digest
+ * to summarize from the log alone without re-reading `messages`, short enough
+ * that the log does not become a second copy of the transcript.
+ */
+const ACTIVITY_EVENT_BODY_LIMIT = 2_000;
 
 /**
  * Shorten a wake-up prompt for its transcript row.
@@ -401,8 +414,12 @@ export class WorkstreamService {
     this.database = createDatabase(env.DB);
   }
 
-  async list(limit: number, before?: string) {
+  async list(limit: number, before?: string, includeSystem = false) {
     const cursorClause = before ? "AND w.last_activity_at < ?" : "";
+    // Two different questions. `system_kind` says this is machinery, which
+    // decides whether it is listed at all; `scope` says who may read it, and is
+    // enforced below whatever the caller asked to see.
+    const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
     const statement = this.env.DB.prepare(
       `SELECT w.*, t.name AS origin_label,
          rs.user_id AS viewer_read_state_user_id,
@@ -414,19 +431,14 @@ export class WorkstreamService {
        LEFT JOIN automation_templates t ON t.id = s.template_id
        LEFT JOIN workstream_read_states rs
          ON rs.workstream_id = w.id AND rs.user_id = ?
-       WHERE w.workspace_id = ? AND w.archived_at IS NULL ${cursorClause}
-         AND (
-           w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
-           OR EXISTS (
-             SELECT 1 FROM workstream_participants p
-             WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-           )
-         )
+       WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
+         AND ${WORKSTREAM_VISIBILITY_SQL}
        ORDER BY w.last_activity_at DESC LIMIT ?`,
     );
+    const visibility = workstreamVisibilityBindings(this.auth.userId);
     const result = before
-      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>()
-      : await statement.bind(this.auth.userId, this.auth.workspaceId, this.auth.userId, this.auth.userId, limit + 1).all<Record<string, unknown>>();
+      ? await statement.bind(this.auth.userId, this.auth.workspaceId, before, ...visibility, limit + 1).all<Record<string, unknown>>()
+      : await statement.bind(this.auth.userId, this.auth.workspaceId, ...visibility, limit + 1).all<Record<string, unknown>>();
     const rows = result.results ?? [];
     const unreconciledAddressRows = rows.filter((row) =>
       row.email_address == null || row.email_route_status !== "active");
@@ -823,6 +835,7 @@ export class WorkstreamService {
     const messageWithMentions = { ...message, mentions: preparedInput.mentions };
     await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, { type: "message_created", message: messageWithMentions });
     const mentionedOtherUsers = personIds.filter((userId) => userId !== this.auth.userId);
+    await this.recordMessageActivityEvent(messageWithMentions, workstream, mentionedOtherUsers);
     if (mentionedOtherUsers.length > 0) {
       await enqueueMentionOpportunities(
         this.env,
@@ -1257,14 +1270,9 @@ export class WorkstreamService {
          ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
-         AND (
-         w.automation_subscription_id IS NULL OR s.scope = 'workspace' OR s.owner_user_id = ?
-         OR EXISTS (
-           SELECT 1 FROM workstream_participants p
-           WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
-         )
-       )`,
-    ).bind(this.auth.userId, id, this.auth.workspaceId, this.auth.userId, this.auth.userId).first<Record<string, unknown>>();
+         AND ${WORKSTREAM_VISIBILITY_SQL}`,
+    ).bind(this.auth.userId, id, this.auth.workspaceId, ...workstreamVisibilityBindings(this.auth.userId))
+      .first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "workstream_not_found", "Work stream not found");
     return row;
   }
@@ -1409,6 +1417,56 @@ export class WorkstreamService {
       name: row.name,
       avatarUrl: row.avatar_url,
     }]));
+  }
+
+  /**
+   * Projects a posted human message into the first-party activity log. The
+   * message itself stays canonical in `messages`; this is the notification-shaped
+   * record of it, so a digest or any other feed reads one table instead of
+   * re-deriving participants, mentions and visibility for itself.
+   *
+   * Events from a hidden system work stream never reach a reader — the reader
+   * excludes them — so this path does not have to know about them.
+   */
+  private async recordMessageActivityEvent(
+    message: Message,
+    workstream: Workstream,
+    mentionedUserIds: string[],
+  ): Promise<void> {
+    const author = message.author.type === "human" ? message.author.user.name : "";
+    await recordActivityEvent(this.env, {
+      workspaceId: this.auth.workspaceId,
+      eventType: "workstream.message.posted",
+      subjectType: "workstream",
+      subjectId: workstream.id,
+      subjectSequenceNumber: message.sequenceNumber,
+      actorType: "user",
+      actorUserId: this.auth.userId,
+      actorLabel: author,
+      title: workstream.title,
+      body: truncateUtf16Safe(message.textContent, ACTIVITY_EVENT_BODY_LIMIT),
+      canonicalUrl: this.workstreamLinkOrNull(workstream.id),
+      audience: { kind: "workstream", workstreamId: workstream.id },
+      occurredAt: message.createdAt,
+      sourceKind: "message",
+      sourceId: message.id,
+      dedupeKey: `message:${message.id}`,
+      metadata: { workstreamTitle: workstream.title },
+      targets: mentionedUserIds.map((userId) => ({ userId, relation: "mentioned" })),
+    });
+  }
+
+  /**
+   * The event's link, or nothing. A deployment without a usable web base URL
+   * still has a work stream worth recording; the link is a convenience on top of
+   * it, and must never be the reason a message post fails.
+   */
+  private workstreamLinkOrNull(workstreamId: string): string | null {
+    try {
+      return workstreamCanonicalUrl(this.env.PUBLIC_WEB_BASE_URL, workstreamId);
+    } catch {
+      return null;
+    }
   }
 
   private scheduleMentionNotifications(message: Message, workstream: Workstream): void {
@@ -1814,5 +1872,7 @@ function toWorkstream(row: Record<string, unknown>) {
     firstUnreadSequenceNumber: manualUnreadFromSequenceNumber
       ?? (hasUnread ? Math.min(latestAttentionSequenceNumber, readThroughSequenceNumber + 1) : null),
     lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
+    scope: row.scope === "personal" ? "personal" as const : "workspace" as const,
+    systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
   };
 }

@@ -50,6 +50,8 @@ const detail = {
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: null,
+  scope: 'workspace' as const,
+  systemKind: null,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
   viewers: [{ user, connectedAt: timestamp }],
   resources: [],

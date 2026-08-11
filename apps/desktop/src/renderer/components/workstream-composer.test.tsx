@@ -20,6 +20,7 @@ const workstream: WorkstreamDetail = {
   title: 'Investigate the release',
   origin: 'ad_hoc',
   harnessStatus: 'completed',
+  scope: 'workspace' as const,
   lastActivityAt: '2026-07-31T20:00:00.000Z',
   latestAttentionSequenceNumber: 1,
   readThroughSequenceNumber: 1,
