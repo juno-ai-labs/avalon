@@ -941,6 +941,50 @@ describe('useWorkstreamSocket', () => {
     );
   });
 
+  it('pushes a status change into the sidebar list without waiting for a refetch', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000110';
+    const otherWorkstreamId = '00000000-0000-7000-8000-000000000111';
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      harnessStatus: 'running',
+    });
+    queryClient.setQueryData(['workstreams'], [
+      { id: workstreamId, harnessStatus: 'running' },
+      { id: otherWorkstreamId, harnessStatus: 'running' },
+    ]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getMessages: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => []),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'harness_status_changed',
+      sequence: 1,
+      occurredAt: '2026-08-06T05:00:00.000Z',
+      status: 'needs_input',
+    }));
+
+    // Asserted before the canonical reconciliation resolves: the frame itself
+    // has to move both views, or the sidebar dot lags the header by a round trip.
+    const summaries = queryClient.getQueryData<WorkstreamSummary[]>(['workstreams']);
+    expect(summaries?.find((item) => item.id === workstreamId)?.harnessStatus).toBe('needs_input');
+    expect(summaries?.find((item) => item.id === otherWorkstreamId)?.harnessStatus).toBe('running');
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.harnessStatus).toBe('needs_input');
+    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(false);
+    await flushPromises();
+  });
+
   it('does not lose socket messages that arrive while terminal reconciliation is in flight', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
