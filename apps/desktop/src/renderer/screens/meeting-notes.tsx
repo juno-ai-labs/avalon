@@ -26,8 +26,12 @@ import { desktopBridge } from '../lib/platform';
 import type { NoteDetail, NoteTranscriptSegment } from '../lib/types';
 import { useRealtimeDictation } from '../lib/use-realtime-dictation';
 
-export const MEETING_TRANSCRIPTION_SEGMENT_MS = 5 * 60 * 1_000;
-export const MEETING_NOTES_INTERVAL_MS = 5 * 60 * 1_000;
+// Control Tower is only useful while the conversation it describes is still
+// happening, so the transcript is committed and the briefing rewritten once a
+// minute. The two constants are one cadence: the commit is what makes the last
+// minute of speech visible to the refresh that follows it.
+export const MEETING_TRANSCRIPTION_SEGMENT_MS = 60 * 1_000;
+export const MEETING_NOTES_INTERVAL_MS = 60 * 1_000;
 const NOTE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function noteIdFromSearch(search: string, createId: () => string = () => crypto.randomUUID()): string {
@@ -67,7 +71,7 @@ export function mergeSavedMeetingSegmentDuration(
   // While recording, recordedBeforeActiveMs is the immutable duration from
   // earlier recording sessions. The active clock contributes this session's
   // elapsed time, so folding segment boundaries into the base would count the
-  // same active span again at every five-minute commit.
+  // same active span again at every segment commit.
   return activeStartedAtMs === null
     ? Math.max(recordedBeforeActiveMs, segmentEndOffsetMs)
     : recordedBeforeActiveMs;
@@ -652,7 +656,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
                 <div className="meeting-empty-state">
                   <WandSparkles aria-hidden="true" size={24} />
                   <strong>Your live meeting briefing will appear here</strong>
-                  <p>Control Tower keeps you current every five minutes, then creates a complete summary when recording ends.</p>
+                  <p>Control Tower keeps you current every minute, then creates a complete summary when recording ends.</p>
                 </div>
               )}
               {notesPending && (
