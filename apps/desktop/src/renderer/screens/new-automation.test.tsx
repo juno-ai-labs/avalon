@@ -7,7 +7,7 @@ import { ApiError } from '../lib/api';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
 import type { Workspace } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
-import { NewAutomationScreen } from './new-automation';
+import { NewAutomationScreen, retainableNarration } from './new-automation';
 
 const api = vi.hoisted(() => ({
   compileAutomation: vi.fn(),
@@ -672,15 +672,35 @@ describe('New automation composer', () => {
     });
     await waitFor(() => expect(surface.scrollTop).toBe(4_000));
 
-    // Scrolling away from the bottom stops the follow; scrolling back resumes
-    // it, so a reader who looked at an earlier step is never yanked forward.
-    surface.scrollTop = 1_000;
+    // The follow's own scroll event is dispatched at frame time, by which
+    // point more narration has landed and the bottom has moved. Measuring
+    // that as the reader scrolling up would switch the follow off a second
+    // into every compile.
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 5_000 });
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: ' Still following.', reset: false }); });
+    await waitFor(() => expect(surface.scrollTop).toBe(5_000));
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
+
+    // A few pixels above the bottom of the 3_100 scroll range is still the
+    // reader taking control. A larger tolerance would read this as "close
+    // enough" and yank them forward on the next fragment.
+    surface.scrollTop = 3_090;
     fireEvent.scroll(surface);
     act(() => { stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false }); });
     await screen.findByText(/Searching GitHub next\./);
+    expect(surface.scrollTop).toBe(3_090);
+
+    surface.scrollTop = 1_000;
+    fireEvent.scroll(surface);
+    act(() => { stream({ type: 'delta', delta: '\n\nReading the workflow docs.', reset: false }); });
+    await screen.findByText(/Reading the workflow docs\./);
     expect(surface.scrollTop).toBe(1_000);
 
-    surface.scrollTop = 3_950;
+    // Back at the bottom by their own hand, the follow resumes. The one-pixel
+    // slack absorbs the fractional maximum a browser clamps a programmatic
+    // scroll to; it is not a "near the bottom" allowance.
+    surface.scrollTop = 3_099;
     fireEvent.scroll(surface);
     act(() => { stream({ type: 'delta', delta: '\n\nDrafting it now.', reset: false }); });
     await waitFor(() => expect(surface.scrollTop).toBe(4_000));
@@ -1239,6 +1259,49 @@ describe('New automation composer', () => {
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Email');
     expect(screen.queryByText('email')).not.toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'Avalon is working' })).toBeInTheDocument();
+  });
+
+  it('drops the tail of a runaway narration rather than the explanation', () => {
+    const plan = 'Watching GitHub deployment runs on main.';
+    const spew = Array.from({ length: 120 }, (_, index) => `Wait! Column ${index} rejected.`).join('\n\n');
+
+    expect(retainableNarration(`  ${plan}  `)).toBe(plan);
+    const retained = retainableNarration(`${plan}\n\n${spew}`);
+    expect(retained.startsWith(plan)).toBe(true);
+    expect(retained.endsWith('\n\n…')).toBe(true);
+    expect(retained.length).toBeLessThan(1_600);
+    expect(retained).not.toContain('Wait! Column 119');
+  });
+
+  it('keeps the narration when a compile fails', async () => {
+    let rejectCompile!: (reason: unknown) => void;
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((_resolve, reject) => {
+      rejectCompile = reject;
+      stream = onStream;
+    }));
+    renderScreen();
+
+    const example = 'Check this blog every 24 hours for a new post.';
+    fireEvent.click(screen.getByRole('button', { name: example }));
+    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+
+    act(() => {
+      stream({ type: 'started' });
+      stream({ type: 'delta', delta: 'No blog connector is authorized,', reset: false });
+      stream({ type: 'delta', delta: ' so I am checking the public web instead.', reset: false });
+    });
+    await screen.findByText(/No blog connector is authorized/);
+
+    // A compile that exhausts the wall clock is when the narration explains
+    // the most, so it settles into the transcript rather than being cleared.
+    await act(async () => { rejectCompile(new Error('Avalon took too long to refine the automation.')); });
+
+    const settled = (await screen.findByText(
+      'No blog connector is authorized, so I am checking the public web instead.',
+    )).closest('article');
+    expect(settled).toHaveClass('message-block', 'agent-message');
+    expect(await screen.findByText(/Avalon took too long/)).toBeInTheDocument();
   });
 
   it('reapplies the elicitation answer when a failed follow-up is retried', async () => {
