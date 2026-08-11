@@ -712,6 +712,27 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).toBe(before);
   });
 
+  it('opens the new work stream screen, which is how the menu bar starts one', async () => {
+    bridge.getSession.mockResolvedValueOnce({
+      ...globalIdentitySession,
+      workspace: {
+        id: '7d7a69ac-59ef-4fc2-a022-f9629e631878',
+        name: 'Juno Labs',
+        region: 'global',
+        role: 'owner',
+      },
+    });
+    renderProvider();
+    expect(await screen.findByText('global:Juno Labs')).toBeVisible();
+
+    await dispatchDeepLink('avalon://workstreams/new');
+
+    // `/new` has to be read before the identifier branch, which would otherwise
+    // measure it against the UUID pattern and reject it.
+    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/new'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
   it.each([
     'avalon://settings/workspace?section=connections',
     'avalon://settings/Workspace',

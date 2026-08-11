@@ -12,23 +12,22 @@ import {
 function actions(): MenuBarActions {
   return {
     newMeetingNote: vi.fn(),
+    newWorkstream: vi.fn(),
     newAutomation: vi.fn(),
     startSuggestion: vi.fn(),
     openWorkstream: vi.fn(),
     openAvalon: vi.fn(),
-    setLaunchAtLogin: vi.fn(),
     quit: vi.fn(),
   };
 }
 
 function template(
   content: MenuBarContent,
-  overrides: { launchAtLogin?: boolean; signedIn?: boolean; actions?: MenuBarActions } = {},
+  overrides: { signedIn?: boolean; actions?: MenuBarActions } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Avalon',
     content,
-    launchAtLogin: overrides.launchAtLogin ?? true,
     signedIn: overrides.signedIn ?? true,
     actions: overrides.actions ?? actions(),
   });
@@ -61,6 +60,7 @@ describe('menu bar menu', () => {
 
     expect(labels(items)).toEqual([
       'New Meeting/Note',
+      'New Work Stream',
       'New Automation',
       'Reply to the Acme renewal thread',
       'Summarize yesterday’s standup',
@@ -72,8 +72,6 @@ describe('menu bar menu', () => {
       'Work stream 4',
       '—',
       'Open Avalon',
-      'Launch at login',
-      '—',
       'Quit Avalon',
     ]);
   });
@@ -84,17 +82,16 @@ describe('menu bar menu', () => {
     expect(recentLabels).toHaveLength(MENU_BAR_RECENT_LIMIT);
   });
 
-  it('keeps the rule and both fixed actions when Avalon has nothing to suggest', () => {
+  it('keeps the rule and all three fixed actions when Avalon has nothing to suggest', () => {
     const items = template({ suggestions: [], recents: workstreams.slice(0, 1) });
     expect(labels(items)).toEqual([
       'New Meeting/Note',
+      'New Work Stream',
       'New Automation',
       '—',
       'Work stream 0',
       '—',
       'Open Avalon',
-      'Launch at login',
-      '—',
       'Quit Avalon',
     ]);
   });
@@ -107,18 +104,13 @@ describe('menu bar menu', () => {
     expect(signedOut.find((item) => item.label === 'Sign in to Avalon')?.enabled).toBe(false);
   });
 
-  it('reflects and toggles whether Avalon opens at login', () => {
-    const enabled = template(emptyMenuBarContent, { launchAtLogin: true });
-    const enabledItem = enabled.find((item) => item.label === 'Launch at login');
-    expect(enabledItem?.type).toBe('checkbox');
-    expect(enabledItem?.checked).toBe(true);
-
-    const menuActions = actions();
-    const disabled = template(emptyMenuBarContent, { launchAtLogin: false, actions: menuActions });
-    const disabledItem = disabled.find((item) => item.label === 'Launch at login');
-    expect(disabledItem?.checked).toBe(false);
-    activate(disabledItem);
-    expect(menuActions.setLaunchAtLogin).toHaveBeenCalledWith(true);
+  it('offers no login-item control: that preference lives in Settings', () => {
+    const items = template(emptyMenuBarContent);
+    // A menu rebuilt only when its content moves cannot be trusted to show a
+    // checkbox for state the operating system can change behind it. Settings
+    // reads the value fresh every time it opens.
+    expect(items.some((item) => item.type === 'checkbox')).toBe(false);
+    expect(labels(items).some((label) => label?.toLowerCase().includes('login'))).toBe(false);
   });
 
   it('routes each row to its action, carrying the suggestion version with it', () => {
@@ -131,6 +123,7 @@ describe('menu bar menu', () => {
     for (const item of items) activate(item);
 
     expect(menuActions.newMeetingNote).toHaveBeenCalledTimes(1);
+    expect(menuActions.newWorkstream).toHaveBeenCalledTimes(1);
     expect(menuActions.newAutomation).toHaveBeenCalledTimes(1);
     // The version is what the service checks the start against, so it has to
     // travel with the click rather than be re-read from a later refresh.
@@ -142,7 +135,32 @@ describe('menu bar menu', () => {
 
   it('flattens a model-written title into one readable row', () => {
     expect(menuBarLabel('  Reply to\n  the Acme  thread ')).toBe('Reply to the Acme thread');
-    expect(menuBarLabel('x'.repeat(200))).toHaveLength(60);
-    expect(menuBarLabel('x'.repeat(200)).endsWith('…')).toBe(true);
+    expect(menuBarLabel('Reply to Dana')).toBe('Reply to Dana');
+  });
+
+  it('truncates a long label at a word boundary, never mid-word', () => {
+    // 180 characters is what both contracts allow, and a suggested prompt
+    // routinely uses them.
+    const prompt = 'Prepare the Acme client follow-up and capture every promised action with an owner';
+    const truncated = menuBarLabel(prompt);
+
+    expect(truncated).toBe('Prepare the Acme client follow-up and capture every…');
+    expect(truncated.length).toBeLessThanOrEqual(60);
+    expect(prompt.startsWith(truncated.slice(0, -1))).toBe(true);
+  });
+
+  it('drops punctuation left dangling by the cut', () => {
+    expect(menuBarLabel('Investigate ENG-142, ENG-143, and the retry storm behind both of them'))
+      .toBe('Investigate ENG-142, ENG-143, and the retry storm behind…');
+  });
+
+  it('cuts hard when trimming to a word would leave a stub', () => {
+    // One long word, or a boundary too near the start: the space saved is worth
+    // less than the label it would throw away.
+    const single = menuBarLabel('x'.repeat(200));
+    expect(single).toHaveLength(60);
+    expect(single.endsWith('…')).toBe(true);
+
+    expect(menuBarLabel(`Acme ${'y'.repeat(120)}`)).toBe(`Acme ${'y'.repeat(54)}…`);
   });
 });

@@ -33,6 +33,7 @@ const getApplicationSettings = vi.hoisted(() => vi.fn());
 const setLockdownMode = vi.hoisted(() => vi.fn());
 const setDebugEnabled = vi.hoisted(() => vi.fn());
 const setMenuBarEnabled = vi.hoisted(() => vi.fn());
+const setLaunchAtLogin = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
 const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 const settingsSectionRequest = vi.hoisted(() => ({
@@ -60,6 +61,7 @@ vi.mock('../lib/platform', () => ({
     setLockdownMode,
     setDebugEnabled,
     setMenuBarEnabled,
+    setLaunchAtLogin,
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettingsListeners.add(listener);
       return () => applicationSettingsListeners.delete(listener);
@@ -196,6 +198,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
       lockdownMode,
@@ -204,6 +208,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     }));
     setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
       lockdownMode: false,
@@ -212,6 +218,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     }));
     setMenuBarEnabled.mockImplementation(async (menuBarEnabled: boolean) => ({
       lockdownMode: false,
@@ -220,6 +228,18 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
+    }));
+    setLaunchAtLogin.mockImplementation(async (launchAtLogin: boolean) => ({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      launchAtLogin,
+      launchAtLoginAvailable: true,
     }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
@@ -948,6 +968,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -967,6 +989,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1000,6 +1024,64 @@ describe('Workspace settings', () => {
     expect(toggle).toBeChecked();
   });
 
+  it('toggles opening at login from Startup, and offers it nowhere in the menu bar', async () => {
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Open Avalon at login' });
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(false));
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalledWith(true));
+    expect(toggle).toBeChecked();
+  });
+
+  it('reports what macOS holds rather than what was asked for', async () => {
+    // A registration macOS is still waiting to have approved leaves the login
+    // item off. Showing the toggle on because the write succeeded would tell
+    // someone Avalon opens at login when it does not.
+    setLaunchAtLogin.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      launchAtLogin: false,
+      launchAtLoginAvailable: true,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    const toggle = await screen.findByRole('switch', { name: 'Open Avalon at login' });
+    fireEvent.click(toggle);
+
+    await waitFor(() => expect(setLaunchAtLogin).toHaveBeenCalled());
+    await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it('offers no login toggle where there are no login items', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: true,
+      menuBarEnabled: true,
+      menuBarAvailable: true,
+      launchAtLogin: false,
+      launchAtLoginAvailable: false,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(screen.queryByRole('switch', { name: 'Open Avalon at login' })).toBeNull();
+  });
+
   it('offers no menu bar toggle where there is no menu bar to put Avalon in', async () => {
     getApplicationSettings.mockResolvedValue({
       lockdownMode: false,
@@ -1008,6 +1090,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: false,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1040,6 +1124,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     await screen.findByRole('navigation', { name: 'Settings sections' });
@@ -1073,6 +1159,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1091,6 +1179,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -1110,6 +1200,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: true,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     expect(screen.getByRole('switch', { name: 'Debug enabled' })).toBeChecked();
 
@@ -1122,6 +1214,8 @@ describe('Workspace settings', () => {
       developerSettingsAvailable: false,
       menuBarEnabled: true,
       menuBarAvailable: true,
+      launchAtLogin: true,
+      launchAtLoginAvailable: true,
     });
     expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
   });

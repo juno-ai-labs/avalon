@@ -28,6 +28,10 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // toggle is offered nowhere it cannot work.
   menuBarEnabled: true,
   menuBarAvailable: false,
+  // A tab is not a login item either. Both read as unavailable so neither
+  // toggle is offered where it could not work.
+  launchAtLogin: false,
+  launchAtLoginAvailable: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
@@ -207,6 +211,9 @@ const browserBridge: AvalonDesktopBridge = {
   },
   async setMenuBarEnabled() {
     throw new Error('The menu bar item is available only in the Avalon desktop app.');
+  },
+  async setLaunchAtLogin() {
+    throw new Error('Opening at login is available only in the Avalon desktop app.');
   },
   onApplicationSettingsChanged(listener) {
     browserApplicationSettingsListeners.add(listener);

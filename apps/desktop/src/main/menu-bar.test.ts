@@ -7,11 +7,11 @@ import { emptyMenuBarContent, type MenuBarActions, type MenuBarContent } from '.
 function noopActions(): MenuBarActions {
   return {
     newMeetingNote: vi.fn(),
+    newWorkstream: vi.fn(),
     newAutomation: vi.fn(),
     startSuggestion: vi.fn(),
     openWorkstream: vi.fn(),
     openAvalon: vi.fn(),
-    setLaunchAtLogin: vi.fn(),
     quit: vi.fn(),
   };
 }
@@ -41,7 +41,6 @@ function harness(options: {
     appName: 'Avalon',
     createTray,
     content: () => options.content ?? emptyMenuBarContent,
-    launchAtLogin: () => true,
     signedIn: () => true,
     actions: noopActions(),
     readSettings: () => Promise.resolve(settings),
