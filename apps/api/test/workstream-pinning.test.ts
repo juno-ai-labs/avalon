@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MAX_PINNED_WORKSTREAMS } from "@avalon/contracts";
+
 import type { Env } from "../src/env";
 import { WorkstreamService } from "../src/services/workstream-service";
 
@@ -157,20 +159,93 @@ describe("per-user work-stream pinning", () => {
     expect((await workstreams.unpin(second)).items.map((item) => item.id)).toEqual([first, third]);
   });
 
-  it("keeps a quiet pinned work stream on the first page it would otherwise fall off", async () => {
+  it("carries a quiet pinned work stream on the first page and never repeats it", async () => {
     const { env } = fixture();
-    const [oldest] = WORKSTREAM_IDS;
+    const [oldest, middle, newest] = WORKSTREAM_IDS;
     await service(env, USER_ONE_ID).pin(oldest);
 
     // A page of one would hold only the most recent work stream. The pin is
     // rendered in its own section, so losing it there loses it entirely.
-    const page = await service(env, USER_ONE_ID).list(1);
-    expect(page.items.map((item) => item.id)).toEqual([WORKSTREAM_IDS[2], oldest]);
-    expect(page.nextCursor).toBe("2026-02-03T00:00:00.000Z");
+    const first = await service(env, USER_ONE_ID).list(1);
+    expect(first.items.map((item) => item.id)).toEqual([newest, oldest]);
+    // Taken from the paged rows, not from the last item, which is the pin.
+    expect(first.nextCursor).toBe("2026-02-03T00:00:00.000Z");
 
-    // A cursor page continues the recency order and does not repeat the pin.
-    const second = await service(env, USER_ONE_ID).list(1, "2026-02-03T00:00:00.000Z");
-    expect(second.items.map((item) => item.id)).toEqual([WORKSTREAM_IDS[1]]);
+    // Walking the cursor must not hand the pin back a second time: it is out of
+    // the recency order entirely, not merely absent from the page it belongs on.
+    const second = await service(env, USER_ONE_ID).list(1, first.nextCursor ?? undefined);
+    expect(second.items.map((item) => item.id)).toEqual([middle]);
+    // The walk ends there. The pinned work stream is older than `middle` and
+    // would have been the next page had it stayed in the recency order at all.
+    expect(second.nextCursor).toBeNull();
+
+    // The same walk for somebody who has pinned nothing sees all three in the
+    // ordinary order, so the exclusion is the viewer's and not the row's.
+    const other = await service(env, USER_TWO_ID).list(50);
+    expect(other.items.map((item) => item.id)).toEqual([newest, middle, oldest]);
+  });
+
+  it("counts the limit against pins that can still be seen, and refuses past it", async () => {
+    const { database, env } = fixture();
+    const workstreams = service(env, USER_ONE_ID);
+    const extraId = (index: number): string => `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    const extras = Array.from({ length: MAX_PINNED_WORKSTREAMS }, (_, index) => extraId(index));
+    for (const [index, id] of extras.entries()) {
+      const at = `2026-04-01T00:00:${String(index).padStart(2, "0")}.000Z`;
+      database.exec(`
+        INSERT INTO workstreams
+          (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
+           created_by_user_id, harness_status, next_sequence_number, latest_attention_sequence_number,
+           last_activity_at, created_at, updated_at)
+        VALUES ('${id}', '${WORKSPACE_ID}', 'Extra ${index}', 'Objective', 'extra-${index}@automation.with-avalon.com',
+                'active', 'ad_hoc', '${USER_ONE_ID}', 'completed', 1, 0, '${at}', '${at}', '${at}');
+      `);
+      await workstreams.pin(id);
+    }
+    // A full list refuses the next one rather than quietly dropping it.
+    await expect(workstreams.pin(WORKSTREAM_IDS[0]))
+      .rejects.toMatchObject({ status: 422, code: "pin_limit_reached" });
+
+    // Archiving takes a row out of every pinned read, so the pin behind it
+    // shows nothing and offers no menu. Counting it would spend a slot its
+    // owner has no way to free, and 50 archived pins would wedge the feature
+    // shut behind an empty section.
+    database.prepare("UPDATE workstreams SET archived_at = ? WHERE id = ?")
+      .run("2026-05-01T00:00:00.000Z", extraId(0));
+    const pinned = await workstreams.pin(WORKSTREAM_IDS[0]);
+    expect(pinned.items).toHaveLength(MAX_PINNED_WORKSTREAMS);
+    expect(pinned.items.at(-1)?.id).toBe(WORKSTREAM_IDS[0]);
+
+    // The dead pin survived, so the work stream coming back brings its place
+    // back with it rather than arriving unpinned.
+    database.prepare("UPDATE workstreams SET archived_at = NULL WHERE id = ?").run(extraId(0));
+    const restored = await workstreams.reorderPins([]);
+    expect(restored.items).toHaveLength(MAX_PINNED_WORKSTREAMS + 1);
+    expect(restored.items[0]?.id).toBe(extraId(0));
+  });
+
+  it("gives a pin its own position even when the run has a hole in it", async () => {
+    const { database, env } = fixture();
+    const [first, second, third] = WORKSTREAM_IDS;
+    const workstreams = service(env, USER_ONE_ID);
+    await workstreams.pin(first);
+    await workstreams.pin(second);
+
+    // A work stream deleted outright takes its pin with it by cascade, which
+    // leaves a run whose length is no longer its next free position. Choosing
+    // one from the row count would collide with the survivor.
+    database.prepare("DELETE FROM workstreams WHERE id = ?").run(first);
+    await workstreams.pin(third);
+
+    const positions = database.prepare(
+      "SELECT workstream_id, position FROM workstream_pins WHERE user_id = ? ORDER BY position",
+    ).all(USER_ONE_ID);
+    expect(positions).toEqual([
+      { workstream_id: second, position: 1 },
+      { workstream_id: third, position: 2 },
+    ]);
+    expect((await workstreams.reorderPins([third, second])).items.map((item) => item.id))
+      .toEqual([third, second]);
   });
 
   it("refuses to pin a work stream the caller cannot read, and still lets them unpin one that closed", async () => {

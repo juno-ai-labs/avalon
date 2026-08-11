@@ -216,7 +216,8 @@ function AutomationRow({
  */
 interface PinnedRowDrag {
   dragging: boolean;
-  onDragEnd: () => void;
+  /** `cancelled` is a drag backed out of rather than dropped on the list. */
+  onDragEnd: (cancelled: boolean) => void;
   onDragOver: (workstream: WorkstreamSummary) => void;
   onDragStart: (workstream: WorkstreamSummary) => void;
   /** Keyboard equivalent of a drag: one step toward the top or the bottom. */
@@ -259,14 +260,22 @@ function WorkstreamRow({
         <div
           className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
           draggable={drag !== undefined}
-          onDragEnd={drag ? () => drag.onDragEnd() : undefined}
+          onDragEnd={drag
+            // A drag nothing accepted reports `none`. Treated as cancelled when
+            // the browser gives no `dataTransfer` at all, because a drop this
+            // list handled always leaves one behind.
+            ? (event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') === 'none')
+            : undefined}
           onDragOver={drag
             ? (event) => {
-              // Both are required for a drop to be accepted at all, and the
-              // reorder happens here rather than on `drop` so the list settles
-              // under the pointer as it moves instead of jumping once at the
-              // end.
+              // `preventDefault` is what makes this a drop target at all, and
+              // the effect is what a release here reports back to `dragend`;
+              // without it a finished drag is indistinguishable from an
+              // abandoned one. The reorder happens here rather than on `drop`
+              // so the list settles under the pointer as it moves instead of
+              // jumping once at the end.
               event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
               drag.onDragOver(workstream);
             }
             : undefined}
@@ -705,7 +714,11 @@ export function Sidebar({
         message: error instanceof Error ? error.message : 'The pinned order could not be saved.',
       });
     } finally {
-      setDragOrder(null);
+      // Only if this call's arrangement is still the one on screen. Two moves
+      // in quick succession overlap, and clearing unconditionally would let the
+      // first response snap the list back to an order the second has already
+      // moved past — visibly, and for as long as the second request takes.
+      setDragOrder((current) => current === order ? null : current);
     }
   };
 
@@ -726,14 +739,17 @@ export function Sidebar({
         return moveWithin(order, draggingId, targetIndex);
       });
     },
-    onDragEnd: () => {
+    onDragEnd: (cancelled) => {
       const order = dragOrder;
       draggingWorkstreamId.current = null;
-      // `dragend` fires on a cancelled drag too, so an unchanged arrangement is
-      // not worth a request — and sending one would rewrite every position for
-      // a drag that went nowhere.
       if (order === null) return;
-      if (order.join() === storedPinnedWorkstreams.map((pinned) => pinned.id).join()) {
+      // `dragend` fires whatever ended the drag. Escape, or a release outside
+      // the pinned list, leaves `dropEffect` at `none` — and the arrangement
+      // built while the pointer passed over other rows must be abandoned, not
+      // saved, or backing out of a drag becomes the same thing as finishing it.
+      // An unchanged arrangement is likewise not worth rewriting every position
+      // for.
+      if (cancelled || order.join() === storedPinnedWorkstreams.map((pinned) => pinned.id).join()) {
         setDragOrder(null);
         return;
       }
@@ -861,7 +877,17 @@ export function Sidebar({
               <div className="sidebar-section-heading">
                 <h2 id="pinned-heading">Pinned</h2>
               </div>
-              <div className="sidebar-list">
+              {/* The list is a drop target in its own right, so a release that
+                  lands in the gap between two rows still counts as a drop on
+                  the section rather than reading as a drag backed out of. */}
+              <div
+                className="sidebar-list"
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                }}
+                onDrop={(event) => event.preventDefault()}
+              >
                 {pinnedWorkstreams.map((pinned, index) => (
                   <WorkstreamRow
                     debugEnabled={debugEnabled}

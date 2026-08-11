@@ -5,13 +5,17 @@
 -- It is stored here rather than on the device because the same person's other
 -- machines have to see the same pinned list.
 --
--- `position` is a dense ascending run, rewritten in full whenever the list
--- changes. Sparse or fractional positions would avoid the rewrite, but the list
--- is small and bounded by how many rows a person will tolerate above their
--- recent work, and a dense run is the only representation in which "what order
--- is this list in" has exactly one answer. There is deliberately no unique
--- index on `(user_id, position)`: a reorder rewrites every row of the run, and
--- any intermediate state of that rewrite collides with itself.
+-- `position` is unique and ascending per person, rewritten as a dense run
+-- whenever a pin is removed or the list is rearranged. Sparse or fractional
+-- positions would avoid the rewrite, but the list is small and bounded by how
+-- many rows a person will tolerate above their recent work, and a dense run is
+-- the only representation in which "what order is this list in" has exactly one
+-- answer. A new pin takes `MAX(position) + 1` rather than the row count, so a
+-- hole left by a cascade delete cannot hand out a position twice; that hole
+-- survives until the next rewrite and is harmless while it does. There is
+-- deliberately no unique index on `(user_id, position)`: a reorder rewrites
+-- every row of the run, and any intermediate state of that rewrite collides
+-- with itself.
 CREATE TABLE workstream_pins (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   workstream_id TEXT NOT NULL REFERENCES workstreams(id) ON DELETE CASCADE,

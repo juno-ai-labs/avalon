@@ -1089,9 +1089,17 @@ describe('pinned work streams', () => {
     return wrapper;
   }
 
-  /** jsdom implements no `DataTransfer`; the row only ever writes to one. */
-  function dataTransfer(): { effectAllowed: string; setData: () => void } {
-    return { effectAllowed: '', setData: () => undefined };
+  /**
+   * jsdom implements no `DataTransfer`. `dropEffect` is the field that matters:
+   * a drag the pinned list accepted reports `move` back on `dragend`, and one
+   * cancelled with Escape or released off the list reports `none`.
+   */
+  function dataTransfer(dropEffect: 'move' | 'none' = 'move'): {
+    dropEffect: string;
+    effectAllowed: string;
+    setData: () => void;
+  } {
+    return { dropEffect, effectAllowed: '', setData: () => undefined };
   }
 
   it('lifts a pinned work stream out of the recent list into its own section', () => {
@@ -1165,7 +1173,7 @@ describe('pinned work streams', () => {
       expect.stringContaining('Bravo'),
     ]);
 
-    fireEvent.dragEnd(dragTarget(/Charlie/u));
+    fireEvent.dragEnd(dragTarget(/Charlie/u), { dataTransfer: dataTransfer('move') });
     await waitFor(() => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-c', 'ws-a', 'ws-b']));
   });
 
@@ -1180,9 +1188,34 @@ describe('pinned work streams', () => {
     );
 
     fireEvent.dragStart(dragTarget(/Alpha/u), { dataTransfer: dataTransfer() });
-    fireEvent.dragEnd(dragTarget(/Alpha/u));
+    fireEvent.dragEnd(dragTarget(/Alpha/u), { dataTransfer: dataTransfer('move') });
 
     expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+  });
+
+  // Backing out of a drag has to mean backing out of it. The rows have already
+  // moved under the pointer by then, so treating the release the same way a
+  // drop is treated would make Escape the slowest possible way to reorder.
+  it('abandons the arrangement when a drag is cancelled rather than dropped', async () => {
+    const onReorderPinnedWorkstreams = vi.fn(async (): Promise<void> => undefined);
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.dragStart(dragTarget(/Bravo/u), { dataTransfer: dataTransfer() });
+    fireEvent.dragOver(dragTarget(/Alpha/u), { dataTransfer: dataTransfer() });
+    expect(pinnedRowTitles()).toEqual([expect.stringContaining('Bravo'), expect.stringContaining('Alpha')]);
+
+    // Escape, or a release anywhere nothing accepted the drop.
+    fireEvent.dragEnd(dragTarget(/Bravo/u), { dataTransfer: dataTransfer('none') });
+
+    expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+    await waitFor(() => expect(pinnedRowTitles())
+      .toEqual([expect.stringContaining('Alpha'), expect.stringContaining('Bravo')]));
   });
 
   it('moves a pinned row with the keyboard, so the order is not pointer-only', async () => {
@@ -1204,6 +1237,44 @@ describe('pinned work streams', () => {
     onReorderPinnedWorkstreams.mockClear();
     fireEvent.keyDown(screen.getByRole('link', { name: /Alpha/u }), { key: 'ArrowUp', altKey: true });
     expect(onReorderPinnedWorkstreams).not.toHaveBeenCalled();
+  });
+
+  // Two moves in a row overlap, because the first request is still in flight
+  // when the second is made. Whichever lands first must not put the list back
+  // to an order the reader has already moved past.
+  it('holds the newer arrangement when an older reorder finishes underneath it', async () => {
+    const settle: (() => void)[] = [];
+    const onReorderPinnedWorkstreams = vi.fn(
+      () => new Promise<void>((resolve) => settle.push(resolve)),
+    );
+    renderWith(
+      [
+        pinned(workstream('ws-a', 'Alpha', 'completed'), 0),
+        pinned(workstream('ws-b', 'Bravo', 'completed'), 1),
+        pinned(workstream('ws-c', 'Charlie', 'completed'), 2),
+      ],
+      { onReorderPinnedWorkstreams },
+    );
+
+    fireEvent.keyDown(screen.getByRole('link', { name: /Charlie/u }), { key: 'ArrowUp', altKey: true });
+    fireEvent.keyDown(screen.getByRole('link', { name: /Charlie/u }), { key: 'ArrowUp', altKey: true });
+    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(1, ['ws-a', 'ws-c', 'ws-b']);
+    expect(onReorderPinnedWorkstreams).toHaveBeenNthCalledWith(2, ['ws-c', 'ws-a', 'ws-b']);
+
+    await act(async () => {
+      settle[0]?.();
+    });
+
+    // Not [Alpha, Bravo, Charlie], which is what the unchanged props still say.
+    expect(pinnedRowTitles()).toEqual([
+      expect.stringContaining('Charlie'),
+      expect.stringContaining('Alpha'),
+      expect.stringContaining('Bravo'),
+    ]);
+
+    await act(async () => {
+      settle[1]?.();
+    });
   });
 
   it('leaves a recent row undraggable, since its order is activity and not a choice', () => {
