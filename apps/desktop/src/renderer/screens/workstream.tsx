@@ -46,7 +46,7 @@ import type { ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, Hy
 import { AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
-import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot } from '../components/primitives';
+import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { MessageBlock } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { HyperSightPanel, HyperSightRail } from '../components/hypersight-panel';
@@ -356,7 +356,9 @@ export function WorkstreamHeader({
         <IconButton className="header-menu-button" label="Open navigation" onClick={() => setSidebarOpen(true)}><Menu size={16} /></IconButton>
         <div className="workstream-title-block">
           <div className="workstream-title-line">
-            {renameDraft === null ? (
+            {workstream.titleStatus === 'naming' ? (
+              <h1><TitleSkeleton className="title-skeleton-header" /></h1>
+            ) : renameDraft === null ? (
               <h1>
                 {/* A heading cannot carry the interaction itself: a focusable
                     h1 is still announced as a heading, so a screen-reader user

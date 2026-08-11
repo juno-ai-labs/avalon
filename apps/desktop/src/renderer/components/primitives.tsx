@@ -167,6 +167,25 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
   );
 }
 
+/**
+ * Stands in for a work stream's title while Avalon is choosing one.
+ *
+ * The title a work stream is created with is the first line of the request,
+ * which is a placeholder rather than a name — showing it and swapping it a
+ * second later reads as a glitch, while a skeleton reads as what it is. It is
+ * a live region rather than decoration: a screen-reader user is told the name
+ * is coming, and hears it when it arrives.
+ */
+export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <span
+      aria-label="Avalon is naming this work stream"
+      className={clsx('title-skeleton', className)}
+      role="status"
+    />
+  );
+}
+
 export interface DropdownOption {
   value: string;
   label: string;
