@@ -550,6 +550,15 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     hasText: false,
     text: '',
   });
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Narration and tool rows grow the transcript past the viewport, and this
+   * screen has no virtualizer following it the way a work stream does. The
+   * view is pinned to the bottom while a compile streams, and unpinned the
+   * moment the reader scrolls up: yanking someone back who has deliberately
+   * looked at an earlier step is worse than not following at all.
+   */
+  const followStreamRef = useRef(true);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
@@ -816,12 +825,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           });
           return;
         }
-        setStreamingAssistant((current) => ({
-          hasText: true,
-          text: event.reset ? event.delta : current.text + event.delta,
-        }));
+        setStreamingAssistant((current) => {
+          // A reset that restores nothing has to leave no bubble behind: an
+          // abandoned first turn resets to empty text, and an empty agent
+          // block would read as Avalon having said something blank.
+          const text = event.reset ? event.delta : current.text + event.delta;
+          return { hasText: text.length > 0, text };
+        });
       }),
     onMutate: (payload) => {
+      followStreamRef.current = true;
       setStreamingAssistant({ hasText: false, text: '' });
       setTurns((current) => {
         const updated = payload.elicitation
@@ -878,6 +891,17 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       setTurns((current) => settleThought(current, `${payload.turnId}-thought`));
     },
   });
+
+  const compilePending = compile.isPending;
+  const streamingText = streamingAssistant.text;
+  useEffect(() => {
+    // Only while a compile streams. Once the draft settles the summary below
+    // the transcript is what the reader wants, and jumping past it to the
+    // create button would hide the thing they are being asked to accept.
+    if (!compilePending || !followStreamRef.current) return;
+    const element = transcriptScrollRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [compilePending, streamingText, turns]);
 
   const deliveryConnection = (connections.data ?? []).find((connection) =>
     connection.id === deliveryConnectionId && connection.userDelivery);
@@ -946,7 +970,14 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const draftId = draft?.draftId;
 
   return (
-    <div className="new-automation-screen screen-with-titlebar">
+    <div
+      className="new-automation-screen screen-with-titlebar"
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        followStreamRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      }}
+      ref={transcriptScrollRef}
+    >
       <div className="screen-drag-strip window-drag" />
       <div className="new-automation-actions window-no-drag">
         <DropdownMenu.Root>

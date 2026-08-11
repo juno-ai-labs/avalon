@@ -74,7 +74,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "fa9bd8510d2f996831129ebbcf094a02acc245741b5e72f665a660b570b691d6",
+        hash: "983108d988cf987dbcf10c3a226226bece524e6f54be7b3eadbcbd190e181ad9",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -85,7 +85,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "2f01a9bc2b5188af005fd927479752eb45fbab30fcedde7ce349fc7f678a207d",
+        hash: "d4afdc133550d7a3139d08bb9e0a08735951889edad66f4226bbfe6f6935cd36",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -549,12 +549,17 @@ describe("prompt renderers", () => {
     }
     expect(policy).toContain("# Goal");
     expect(policy).toContain("# Plan");
+    expect(policy).toContain("# Narration");
     expect(policy).toContain("# Submission");
     expect(policy).toContain("Use these phases flexibly rather than as a fixed sequence");
     expect(policy).toContain("Once the automation is well defined, call automation_submit_draft");
     expect(policy).toContain("Default suggestedScope to personal");
-    expect(policy).toContain("Then call core_request_elicitation");
-    expect(policy).toContain("Tool-call turns must contain no assistant text");
+    expect(policy).toContain("call automation_submit_draft with ready=false and then core_request_elicitation");
+    expect(policy).toContain("Write assistant text on research turns so that transcript is not silent");
+    expect(policy).toContain("one or two sentences roughly every three or four tool calls");
+    expect(policy).toContain(
+      "The turn that calls automation_submit_draft or core_request_elicitation must contain no assistant text",
+    );
     expect(policy).toContain("Do not emit a separate confirmation or question");
     expect(policy).toContain("medium-sized model");
     expect(policy).toContain("automation_plugins_list");
