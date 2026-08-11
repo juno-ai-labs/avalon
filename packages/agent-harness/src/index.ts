@@ -1990,7 +1990,8 @@ export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSche
 
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",
-  description: "Ask a structured blocking question and pause this harness run for human input.",
+  description:
+    "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. State in the prompt what you already searched and what it returned.",
   capability: "elicitation.write",
   mode: "write",
   idempotency: "provider_key",

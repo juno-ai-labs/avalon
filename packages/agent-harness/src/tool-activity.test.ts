@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { toolResultMessage } from "@juno-ai/bind/plugins";
+import { readStructuredFailure } from "@avalon/contracts";
 import { hasAvalonToolProse, toolActivityName } from "./tool-activity";
 
 const drive = { pluginId: "plugin_google_2", displayName: "Google Drive · Work" };
@@ -41,6 +43,9 @@ describe("tool activity names", () => {
       .toBe("Downloaded from Google Drive · Work");
     expect(toolActivityName({ toolName: "google_2_docs_append", status: "completed", plugin: drive }))
       .toBe("Appended to Google Drive · Work");
+    // Named for its object rather than its verb, and still not the generic row.
+    expect(toolActivityName({ toolName: "google_2_gmail_find_contacts", status: "started", plugin: drive }))
+      .toBe("Looking up contacts in Google Drive · Work");
   });
 
   it("does not describe a connector write as a read", () => {
@@ -91,5 +96,29 @@ describe("tool activity names", () => {
       status: "completed",
       plugin: { pluginId: "plugin_custom", displayName: "   " },
     })).toBe("Custom thing");
+  });
+
+  it("puts a failed tool's structured remediation somewhere the model actually reads", () => {
+    // `toolResultMessage` serializes only the failure variant's declared
+    // fields, so extra keys spread onto the result object are dropped without a
+    // type error. `data` is the declared slot, and asserting on the encoded
+    // message rather than the object is what distinguishes the two.
+    const structured = readStructuredFailure(
+      Object.assign(new Error("Wrong id family"), {
+        code: "invalid_payload",
+        details: { reason: "wrong_id_family", field: "messageId" },
+      }),
+    );
+    const encoded = toolResultMessage("call-1", {
+      success: false,
+      kind: "external",
+      error: "Wrong id family",
+      ...(structured ? { data: structured } : {}),
+    });
+    const content = JSON.parse(String(encoded.content)) as Record<string, unknown>;
+    expect(content).toMatchObject({
+      success: false,
+      data: { code: "invalid_payload", details: { reason: "wrong_id_family", field: "messageId" } },
+    });
   });
 });
