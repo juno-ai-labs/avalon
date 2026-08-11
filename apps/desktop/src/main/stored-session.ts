@@ -7,6 +7,7 @@ import {
   TimestampSchema,
   type Session,
 } from '@avalon/contracts';
+import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
 import { z } from 'zod';
 
 const PACIFIC_TIMEZONE = 'America/Los_Angeles';
@@ -23,7 +24,7 @@ const storedSessionSchema = z.object({
     id: IdSchema,
     email: z.string().email(),
     name: z.string().min(1),
-    avatarUrl: z.string().url().nullable(),
+    avatarUrl: HttpUrlSchema.nullable(),
     timezone: IanaTimezoneSchema,
     createdAt: TimestampSchema,
   }),
@@ -37,7 +38,7 @@ const storedSessionSchema = z.object({
     logAgentInference: z.boolean().default(false),
     createdAt: TimestampSchema,
   }).nullable(),
-  apiBaseUrl: z.string().url(),
+  apiBaseUrl: HttpUrlSchema,
 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {

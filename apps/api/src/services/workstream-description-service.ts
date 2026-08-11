@@ -29,7 +29,6 @@
  */
 import {
   MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
-  OpenRouterClient,
   renderWorkstreamDescriptionMessages,
   type WorkstreamDescriptionMessageInput,
 } from "@avalon/agent-harness";
@@ -37,7 +36,7 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
-import { resolveAgentModelRouting } from "./agent-model-flags";
+import { runStructuredInference } from "./structured-inference";
 
 /**
  * The recency half of the window. Long enough that a work stream worked on
@@ -418,21 +417,15 @@ async function evaluate(
   const claim = await claimEvaluation(env, input, window, now);
   if (!claim) return { status: "skipped", reason: "resting" };
 
-  const routing = await resolveAgentModelRouting(env, "workstream_description", {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-  });
-  const client = new OpenRouterClient({
-    apiKey: env.OPENROUTER_API_KEY,
-    primaryModel: routing.model,
-    fallbackModels: routing.fallbackModels,
-    appUrl: env.PUBLIC_API_BASE_URL,
-    appName: "Avalon",
-  });
-
   let proposal: z.infer<typeof DescriptionDecisionSchema>;
+  let evaluatedModel = "unknown";
   try {
-    proposal = await client.structured({
+    const inference = await runStructuredInference(env, {
+      role: "workstream_description",
+      context: {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+      },
       messages: renderWorkstreamDescriptionMessages({
         title: workstream.title,
         currentDescription: workstream.objective,
@@ -443,12 +436,17 @@ async function evaluate(
       schemaName: "workstream_description_review",
       jsonSchema: descriptionJsonSchema,
       parse: (value) => DescriptionDecisionSchema.parse(value),
+      onModelResolved: (model) => {
+        evaluatedModel = model;
+      },
     });
+    proposal = inference.result;
+    evaluatedModel = inference.model;
   } catch (error) {
     await recordOutcome(env, input, claim, {
       decision: "failed",
       rejectionCode: "model_unavailable",
-      model: routing.model,
+      model: evaluatedModel,
       previousDescription: workstream.objective,
       description: null,
       confidence: null,
@@ -464,7 +462,7 @@ async function evaluate(
     await recordOutcome(env, input, claim, {
       decision: "kept",
       rejectionCode: null,
-      model: routing.model,
+      model: evaluatedModel,
       previousDescription: workstream.objective,
       description: workstream.objective,
       confidence: proposal.confidence,
@@ -479,12 +477,12 @@ async function evaluate(
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,
       rejection_code: verdict.code,
-      model: routing.model,
+      model: evaluatedModel,
     });
     await recordOutcome(env, input, claim, {
       decision: "rejected",
       rejectionCode: verdict.code,
-      model: routing.model,
+      model: evaluatedModel,
       previousDescription: workstream.objective,
       description: workstream.objective,
       confidence: proposal.confidence,
@@ -520,7 +518,7 @@ async function evaluate(
     await recordOutcome(env, input, claim, {
       decision: "rejected",
       rejectionCode: "description_changed_during_evaluation",
-      model: routing.model,
+      model: evaluatedModel,
       previousDescription: workstream.objective,
       description: inForce?.objective ?? null,
       confidence: proposal.confidence,
@@ -534,7 +532,7 @@ async function evaluate(
   await recordOutcome(env, input, claim, {
     decision: "rewritten",
     rejectionCode: null,
-    model: routing.model,
+    model: evaluatedModel,
     previousDescription: workstream.objective,
     description: verdict.description,
     confidence: proposal.confidence,
@@ -545,7 +543,7 @@ async function evaluate(
   logStructuredEvent(env, "info", "workstream_description_rewritten", {
     workspace_id: input.workspaceId,
     workstream_id: input.workstreamId,
-    model: routing.model,
+    model: evaluatedModel,
     confidence: proposal.confidence,
     window_message_count: window.messages.length,
   });

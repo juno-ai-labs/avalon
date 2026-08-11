@@ -1,4 +1,5 @@
 import type { ConnectorActivityFilterField, NormalizedActivity, ToolDefinition } from "@avalon/contracts";
+import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
   isRecord,
@@ -552,8 +553,8 @@ const SlackHistoryFileSchema = z.object({
   mimetype: z.string().optional(),
   filetype: z.string().optional(),
   size: z.number().int().nonnegative().optional(),
-  url_private: z.string().url().optional(),
-  url_private_download: z.string().url().optional(),
+  url_private: HttpsUrlSchema.optional(),
+  url_private_download: HttpsUrlSchema.optional(),
   permalink: z.string().optional(),
 }).passthrough();
 const SlackHistoryMessageSchema = z.object({
@@ -964,7 +965,7 @@ export function parseSlackAgentInvocation(input: unknown): SlackAgentInvocation 
     const schema = z.object({
       team_id: z.string().min(1), user_id: z.string().min(1), command: z.string().min(1),
       text: z.string().default(""), channel_id: z.string().min(1), trigger_id: z.string().min(1),
-      response_url: z.string().url().nullable().default(null),
+      response_url: HttpsUrlSchema.nullable().default(null),
     });
     const command = schema.parse(input.payload);
     return { kind: "command", teamId: command.team_id, userId: command.user_id, command: command.command, text: command.text, channelId: command.channel_id, triggerId: command.trigger_id, responseUrl: command.response_url };

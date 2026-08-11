@@ -9,6 +9,7 @@ import {
   type Workspace,
   type WorkspaceOnboardingState,
 } from "@avalon/contracts";
+import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { Env, IdentityAuthContext } from "../env";
@@ -21,7 +22,7 @@ const platformIdentitySchema = z.object({
   googleSubject: z.string().min(1).max(255),
   email: z.string().email().max(254),
   name: z.string().min(1).max(255),
-  avatarUrl: z.string().url().nullable(),
+  avatarUrl: HttpUrlSchema.nullable(),
   timezone: IanaTimezoneSchema,
   createdAt: z.string().datetime({ offset: true }),
 });
