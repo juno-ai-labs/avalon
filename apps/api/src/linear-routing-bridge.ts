@@ -1,23 +1,28 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
-import type {
-  LinearRouteInput,
-  LinearRouteStatusInput,
-} from "./services/linear-routing-service";
 import {
   LinearRoutingService,
   serializeLinearRpcResult,
 } from "./services/linear-routing-service";
+import {
+  LinearRouteInputSchema,
+  LinearRouteStatusInputSchema,
+  parseRpcInput,
+} from "./lib/rpc-contracts";
 
 /** Internal EU-to-Global route-registration surface; it has no public URL. */
 export class LinearRoutingBridge extends WorkerEntrypoint<Env> {
-  registerLinearRoute(input: LinearRouteInput) {
+  registerLinearRoute(input: unknown) {
     return serializeLinearRpcResult(() =>
-      new LinearRoutingService(this.env).registerInGlobal(input));
+      new LinearRoutingService(this.env).registerInGlobal(
+        parseRpcInput(LinearRouteInputSchema, input, "registerLinearRoute"),
+      ));
   }
 
-  setLinearRouteStatus(input: LinearRouteStatusInput) {
+  setLinearRouteStatus(input: unknown) {
     return serializeLinearRpcResult(() =>
-      new LinearRoutingService(this.env).setStatusInGlobal(input));
+      new LinearRoutingService(this.env).setStatusInGlobal(
+        parseRpcInput(LinearRouteStatusInputSchema, input, "setLinearRouteStatus"),
+      ));
   }
 }
