@@ -366,12 +366,17 @@ function DeliveryChoice({
  * The system prompt a run of this draft would start from, read-only, at the end
  * of the create card while Application → Developer → **Debug enabled** is on.
  *
- * Fetched on expand rather than with the draft: it is several kilobytes that no
- * ordinary creation needs, and every edit to the draft produces a new one. The
- * query is keyed on the draft *and* the scope in force, because `Runs as`
+ * Shown outright rather than behind a disclosure. A section that has already
+ * been asked for — by turning debugging on — does not need to be asked for a
+ * second time, and the prompt is the reason to be here: the box scrolls inside
+ * itself, so its length costs the card a fixed height rather than the create
+ * action's position. Nothing beyond the prompt is labelled either. The prompt
+ * says what it is, and a caption repeating that only pushes it further down.
+ *
+ * The query is keyed on the draft *and* the scope in force, because `Runs as`
  * decides the run's execution authority and that authority is a paragraph of
- * the prompt — a viewer left open across a scope change would otherwise show
- * the policy the run will not have.
+ * the prompt — leaving the rendered prompt in place across a scope change would
+ * otherwise show the policy the run will not have.
  *
  * There is nothing to edit here. The instructions inside this prompt are the
  * draft's, and the draft is changed by describing the change to the architect
@@ -380,40 +385,28 @@ function DeliveryChoice({
  */
 function DraftSystemPrompt({ draftId, scope }: { draftId: string; scope: AutomationScope }): React.JSX.Element {
   const { api } = useAppSession();
-  const [open, setOpen] = useState(false);
   const systemPrompt = useQuery({
     queryKey: ['automation-draft-system-prompt', draftId, scope],
     queryFn: ({ signal }) => api!.getAutomationDraftSystemPrompt(draftId, scope, signal),
-    enabled: open && Boolean(api),
+    enabled: Boolean(api),
     staleTime: Infinity,
   });
   return (
     <section className="automation-plugin-defaults automation-system-prompt" aria-label="System prompt">
       <header>
-        <div>
-          <strong>System prompt</strong>
-          <small>Read-only. What each run of this automation starts from, before its trigger evidence and recalled memory arrive as messages.</small>
-        </div>
-        <Button aria-expanded={open} className="button-quiet" onClick={() => setOpen(!open)}>
-          {open ? 'Hide' : 'Show'}
-        </Button>
+        <div><strong>System prompt</strong></div>
+        {systemPrompt.data !== undefined && (
+          <Button className="button-quiet" onClick={() => void desktopBridge().copyText(systemPrompt.data)}>
+            <Copy size={13} /> Copy
+          </Button>
+        )}
       </header>
-      {open && (
-        systemPrompt.isPending ? (
-          <p className="automation-plugin-empty"><LoaderCircle className="spin" size={13} /> Rendering the system prompt…</p>
-        ) : systemPrompt.error ? (
-          <InlineError>{systemPrompt.error.message}</InlineError>
-        ) : (
-          <>
-            <pre className="automation-system-prompt-body" tabIndex={0}>{systemPrompt.data}</pre>
-            <div className="automation-system-prompt-actions">
-              <small>Durable-table identifiers are assigned when this automation is created.</small>
-              <Button className="button-quiet" onClick={() => void desktopBridge().copyText(systemPrompt.data)}>
-                <Copy size={13} /> Copy
-              </Button>
-            </div>
-          </>
-        )
+      {systemPrompt.isPending ? (
+        <p className="automation-plugin-empty"><LoaderCircle className="spin" size={13} /> Rendering the system prompt…</p>
+      ) : systemPrompt.error ? (
+        <InlineError>{systemPrompt.error.message}</InlineError>
+      ) : (
+        <pre className="automation-system-prompt-body" tabIndex={0}>{systemPrompt.data}</pre>
       )}
     </section>
   );
