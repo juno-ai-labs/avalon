@@ -3213,7 +3213,7 @@ function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-/** Mirrors the `length(url) BETWEEN 1 AND 2000` check in `0054_slack_unfurled_links.sql`. */
+/** Mirrors the `length(url) BETWEEN 1 AND 2000` check in `0055_slack_unfurled_links.sql`. */
 const SLACK_UNFURL_MAX_URL_LENGTH = 2_000;
 
 /**
