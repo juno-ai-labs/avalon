@@ -60,6 +60,25 @@ test("catches the read however the process object is reached", () => {
   assert.equal(lint("if (nodeProcess.argv[1] === fileURLToPath(import.meta.url)) { main(); }").length, 1);
 });
 
+test("catches the read spelled as a method call", () => {
+  assert.equal(lint("if (process.argv.at(1) === fileURLToPath(import.meta.url)) { main(); }").length, 1);
+});
+
+test("does not catch a comparison separated from the read", () => {
+  // Pinned as a known limit rather than asserted as correct. Reaching these
+  // needs scope analysis the rule does not do, so they are the honest boundary
+  // of what it guarantees — recorded here so a future reader trusts the rule
+  // exactly as far as it goes. Found by probing in review.
+  assert.deepEqual(
+    lint("const invoked = process.argv[1]; if (invoked === fileURLToPath(import.meta.url)) { main(); }"),
+    [],
+  );
+  assert.deepEqual(
+    lint("const [, entry] = process.argv; if (entry === fileURLToPath(import.meta.url)) { main(); }"),
+    [],
+  );
+});
+
 test("accepts the helper the rule points at", () => {
   assert.deepEqual(lint("if (isEntryPoint(import.meta.url)) { main(); }"), []);
 });

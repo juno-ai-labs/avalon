@@ -29,6 +29,19 @@ test('an imported module is not the entry point', () => {
   assert.equal(isEntryPoint(new URL('./entry-point.mjs', import.meta.url).href), false);
 });
 
+test('an unresolvable invocation path is answered rather than thrown', () => {
+  // Fails closed: a release must not die because a path could not be resolved.
+  // Covered here as well as at the repository root because this folder keeps
+  // its own copy, and this was the one property the two suites disagreed on.
+  const original = process.argv[1];
+  process.argv[1] = join(scriptsDirectory, 'no-such-directory/no-such-file.mjs');
+  try {
+    assert.equal(isEntryPoint(new URL('./entry-point.mjs', import.meta.url).href), false);
+  } finally {
+    process.argv[1] = original;
+  }
+});
+
 test('a script reached through a symlinked directory still runs', () => {
   // The macOS release job's failure, at the level of the guard itself: every
   // path under that platform's os.tmpdir() arrives through `/var`, a symlink to

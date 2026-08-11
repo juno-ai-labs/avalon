@@ -9,6 +9,20 @@
  * caller reads as success. macOS's `os.tmpdir()` is such a directory, so this
  * shipped as a green Linux CI and a broken macOS release job.
  *
+ * What it does not catch, established by probing it in review: an operand
+ * hoisted into a local (`const invoked = process.argv[1]` compared on the next
+ * line), a destructured `const [, entry] = process.argv`, or any other form
+ * where the read and the comparison are separated. Catching those needs scope
+ * analysis this rule deliberately does not do. So it is a guard against the
+ * spellings that are actually written, not a proof that the bug is absent —
+ * the tests on `isEntryPoint()` itself are what prove the behaviour, and this
+ * rule is what stops a hand-rolled copy appearing beside them.
+ *
+ * A correct inline implementation — two `realpathSync` calls compared — is
+ * reported too. That is intended rather than tolerated: the point is to route
+ * every call site through the shared helper, which is exempt structurally
+ * because it takes the module URL as a parameter and so names neither operand.
+ *
  * The rule matches the comparison rather than any one spelling of it, because
  * the three variants in this repository differed only in spelling:
  * `fileURLToPath(import.meta.url) === process.argv[1]`,
@@ -65,14 +79,29 @@ function isImportMeta(node) {
 // real instance of the bug, and the breadth costs nothing, because the other
 // operand still has to be `import.meta` for the rule to fire at all.
 function isArgvEntry(node) {
+  // `process.argv.at(1)`, the same read spelled as a method call.
+  if (node.type === "CallExpression") {
+    const { callee } = node;
+    return callee.type === "MemberExpression"
+      && !callee.computed
+      && callee.property.type === "Identifier"
+      && callee.property.name === "at"
+      && node.arguments.length === 1
+      && node.arguments[0].type === "Literal"
+      && node.arguments[0].value === 1
+      && isArgv(callee.object);
+  }
   if (node.type !== "MemberExpression" || !node.computed) return false;
   if (node.property.type !== "Literal" || node.property.value !== 1) return false;
-  const { object } = node;
-  if (object.type === "Identifier") return object.name === "argv";
-  return object.type === "MemberExpression"
-    && !object.computed
-    && object.property.type === "Identifier"
-    && object.property.name === "argv";
+  return isArgv(node.object);
+}
+
+function isArgv(node) {
+  if (node.type === "Identifier") return node.name === "argv";
+  return node.type === "MemberExpression"
+    && !node.computed
+    && node.property.type === "Identifier"
+    && node.property.name === "argv";
 }
 
 // Whether any node in the subtree satisfies `predicate`. The comparison's
