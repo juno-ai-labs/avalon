@@ -70,6 +70,34 @@ describe('useFilePaste', () => {
     expect(onFiles).toHaveBeenCalledWith([file]);
   });
 
+  it('attaches a file named like a synthesized bitmap when the clipboard paths it', () => {
+    const onFiles = vi.fn();
+    const { result } = renderHook(() => useFilePaste(onFiles));
+    const file = new File(['png'], 'image.png', { type: 'image/png' });
+    const event = pasteEvent({ files: [file], text: '/Users/adam/Pictures/image.png' });
+
+    result.current(event);
+
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    // A path proves the file came off disk, so it keeps both its attachment and its name.
+    expect(onFiles).toHaveBeenCalledWith([file]);
+  });
+
+  it('reads a file URL as the clipboard describing its own files', () => {
+    const onFiles = vi.fn();
+    const { result } = renderHook(() => useFilePaste(onFiles));
+    const first = new File(['png'], 'image.png', { type: 'image/png' });
+    const second = new File(['pdf'], 'Q3 report.pdf', { type: 'application/pdf' });
+    const event = pasteEvent({
+      files: [first, second],
+      text: 'file:///Users/adam/image.png\nfile:///Users/adam/Q3%20report.pdf',
+    });
+
+    result.current(event);
+
+    expect(onFiles).toHaveBeenCalledWith([first, second]);
+  });
+
   it('ignores every paste while the surface is disabled', () => {
     const onFiles = vi.fn();
     const { result } = renderHook(() => useFilePaste(onFiles, true));
