@@ -34,14 +34,22 @@ export const noRawEntryPointCheckRule = {
     return {
       BinaryExpression(node) {
         if (!["===", "!==", "==", "!="].includes(node.operator)) return;
-        const sides = [node.left, node.right];
-        const mentionsImportMeta = sides.some((side) => subtreeHas(side, isImportMeta));
-        const mentionsArgvEntry = sides.some((side) => subtreeHas(side, isArgvEntry));
-        if (mentionsImportMeta && mentionsArgvEntry) context.report({ node, messageId: "raw" });
+        // Opposite sides, rather than "both appear somewhere in the pair". The
+        // defect is comparing one against the other, so an expression that
+        // mentions both on the same side — `(import.meta.url + argv[1]) === x` —
+        // is doing something else and is not this bug.
+        if (comparesAcross(node.left, node.right) || comparesAcross(node.right, node.left)) {
+          context.report({ node, messageId: "raw" });
+        }
       },
     };
   },
 };
+
+// One operand identifies this module and the other identifies the invocation.
+function comparesAcross(module, invocation) {
+  return subtreeHas(module, isImportMeta) && subtreeHas(invocation, isArgvEntry);
+}
 
 // `import.meta`, wherever it sits in the expression — bare, unwrapped by
 // fileURLToPath, or read through `.url`.
@@ -51,7 +59,11 @@ function isImportMeta(node) {
     && node.property?.name === "meta";
 }
 
-// `process.argv[1]` and the destructured `argv[1]`, which is the same read.
+// `process.argv[1]`, the destructured `argv[1]`, and the same read reached
+// through an alias or `globalThis` — all one thing. Matching the property
+// rather than the exact `process.argv` spelling is deliberate: an alias is a
+// real instance of the bug, and the breadth costs nothing, because the other
+// operand still has to be `import.meta` for the rule to fire at all.
 function isArgvEntry(node) {
   if (node.type !== "MemberExpression" || !node.computed) return false;
   if (node.property.type !== "Literal" || node.property.value !== 1) return false;
