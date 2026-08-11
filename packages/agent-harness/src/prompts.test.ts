@@ -70,7 +70,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "22b849d824d57c7ae258dfb994e33305871b8aa66919d865295d69dbb2b2be51",
+        hash: "f522795f29d111ab116ad7054683fad40e72c698610b0b4326135cec7c9a0783",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -81,7 +81,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "905b016cccbaa6c9f151a2039bfda1e22b673fa5b921bece90304f9ad0bb4735",
+        hash: "f6fa09cdacd837ec52a06b86fc37dc4d25346ecbe576b7789f70be95ba722799",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -379,6 +379,10 @@ describe("prompt renderers", () => {
     expect(policy).toContain("no Gmail send or draft, no Slack message");
     expect(policy).toContain("unless that person explicitly asks for that provider send");
     expect(policy).toContain("Do not recommend a plugin's send, post, or draft tools for delivery");
+    // The connector prohibition must not read as a ban on naming an Avalon
+    // destination, or a draft delivered by Avalon email cannot describe itself.
+    expect(policy).toContain("Naming an Avalon destination is expected");
+    expect(policy).not.toContain("do not describe the automation as emailing or messaging the person");
     expect(policy).toContain("the destination is blocking with no safe default");
     expect(policy).toContain("An email from Avalon to the owner's account address");
     expect(policy).toContain("A direct message from Avalon in Slack");
