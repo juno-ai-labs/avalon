@@ -70,7 +70,16 @@ export class DeveloperSettingsFlagController {
   observeSession(identity: string): void {
     const changedAccount = identity !== this.identity;
     this.identity = identity;
-    if (changedAccount) this.invalidate();
+    if (changedAccount) {
+      this.invalidate();
+      // Closed until the *new* account is answered for. Keeping the last answer
+      // through a failed poll is a rule about one account's connection, and it
+      // must not carry an answer across accounts: onboarding replaces a Global
+      // identity session with a regional one without passing through signed-out,
+      // so without this the section would stay open on whatever the previous
+      // context resolved to — indefinitely, if the new region's polls fail.
+      this.settle(false);
+    }
     const startedPolling = this.timer === null;
     if (startedPolling) {
       const intervalMs = this.dependencies.pollIntervalMs ?? DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS;

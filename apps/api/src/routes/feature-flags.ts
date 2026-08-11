@@ -12,5 +12,12 @@ export const featureFlagRoutes = new Hono<HonoAppEnv>();
  * organization yet still has to be told the feature is off rather than left
  * reading a 403 as an outage.
  */
-featureFlagRoutes.get("/", async (c) =>
-  c.json(await resolveClientFeatureFlags(c.env, getIdentityAuth(c))));
+featureFlagRoutes.get("/", async (c) => {
+  // The answer is per person and this is the one route a client polls on a
+  // timer, so it is exactly the shape an intermediary would be tempted to
+  // cache — and a cached answer would either withhold a grant that has landed
+  // or, worse, serve one person's to another. The identity routes set this for
+  // the same reason.
+  c.header("Cache-Control", "no-store");
+  return c.json(await resolveClientFeatureFlags(c.env, getIdentityAuth(c)));
+});
