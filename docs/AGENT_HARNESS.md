@@ -22,6 +22,8 @@ Every write is conditional on the status the pass started from, which is what ke
 
 The generic Workflow creates one replay-stable attempt identity, reaps expired attempts, and claims a time-bounded D1 lease. At most one unexpired harness lease may run in a work stream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed.
 
+Starting a run is two steps, and a caller with a person waiting on it may split them. The `harness_runs` row and the work stream's `running` status are always written before the launch returns, so the run and its ID are real; only the Workflows round trip behind them, and the `harness_status_changed` event that follows it, may be deferred to `waitUntil`. Today `POST /workstreams` is the only caller that defers, and a deferred start that fails reports itself on the run rather than as a `503` — see [`workstream-creation.md`](workstream-creation.md).
+
 After admission Avalon validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, health, and policy checks may only remove authority.
 
 ## Context and stable prompts
