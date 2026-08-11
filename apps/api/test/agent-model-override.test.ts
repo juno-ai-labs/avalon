@@ -41,12 +41,12 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function serviceFor(database: DatabaseSync): AutomationService {
+function serviceFor(database: DatabaseSync, logLevel = "error"): AutomationService {
   const env = {
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
-    LOG_LEVEL: "error",
+    LOG_LEVEL: logLevel,
     // No FLAGS binding, so an unpinned run resolves to the Worker variables —
     // which is exactly the value a pinned run has to differ from.
     OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
@@ -116,6 +116,36 @@ describe("automation model override", () => {
       .toEqual({ model_override: null });
     expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
       .toEqual({ model: "x-ai/grok-4.3" });
+  });
+
+  // Retiring a model from `AGENT_MODEL_OVERRIDES` drops the pins naming it. The
+  // work-stream read path says so; these paths write the column, so without
+  // their own log a retirement would move every pinned automation in silence.
+  it("says so when a run drops a pin naming a model that has left the list", async () => {
+    const database = seededDatabase();
+    database.exec(`
+      UPDATE automation_subscriptions SET model_override = 'anthropic/claude-opus-4.6'
+       WHERE id = '${PINNED_SUBSCRIPTION_ID}';
+    `);
+    // Workers Logs indexes object properties, so the diagnostic is logged as a
+    // structured entry rather than a string — assert on the fields.
+    const warnings: Array<Record<string, unknown>> = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((entry: unknown) => {
+      warnings.push(entry as Record<string, unknown>);
+    });
+
+    const run = await serviceFor(database, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
+
+    expect(database.prepare("SELECT model_override FROM workstreams WHERE id = ?").get(run.workstreamId))
+      .toEqual({ model_override: null });
+    expect(database.prepare("SELECT model FROM harness_runs WHERE workstream_id = ?").get(run.workstreamId))
+      .toEqual({ model: "x-ai/grok-4.3" });
+    expect(warnings).toContainEqual(expect.objectContaining({
+      event: "workstream_model_override_unknown",
+      automation_subscription_id: PINNED_SUBSCRIPTION_ID,
+      stored_model: "anthropic/claude-opus-4.6",
+    }));
+    warn.mockRestore();
   });
 
   // A scheduled run is the common automation shape, and it never passes through

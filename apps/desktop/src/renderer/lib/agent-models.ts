@@ -64,14 +64,19 @@ export const AGENT_MODEL_CHOICES: readonly AgentModelChoice[] = AGENT_MODEL_OVER
 }));
 
 /**
- * The same models grouped under their vendor for the menu. Grouping is derived
- * from the order above rather than sorted, so the default stays at the top and
- * a model's neighbours are the ones the contract listed it beside.
+ * The same models grouped under their vendor for the menu, each provider
+ * appearing once, in the order the contract first mentions it.
+ *
+ * One group per provider rather than one per adjacent run: the provider is the
+ * React key for its section, so a list that mentioned a vendor in two separate
+ * places would otherwise render duplicate keys among siblings. The contract
+ * happens to keep each vendor's models together today, and this does not
+ * depend on it continuing to.
  */
 export const AGENT_MODEL_GROUPS: ReadonlyArray<{ provider: string; models: AgentModelChoice[] }> =
   AGENT_MODEL_CHOICES.reduce<Array<{ provider: string; models: AgentModelChoice[] }>>((groups, choice) => {
-    const current = groups.at(-1);
-    if (current?.provider === choice.provider) current.models.push(choice);
+    const existing = groups.find((group) => group.provider === choice.provider);
+    if (existing) existing.models.push(choice);
     else groups.push({ provider: choice.provider, models: [choice] });
     return groups;
   }, []);
