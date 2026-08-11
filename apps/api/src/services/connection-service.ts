@@ -59,6 +59,14 @@ const capabilityScopes: Record<string, readonly string[]> = {
   "sheets.write": GoogleCapabilityScopes.sheetsWrite,
 };
 
+const googleBroaderProviderScopeAliases: Readonly<Record<string, readonly string[]>> = {
+  "https://www.googleapis.com/auth/gmail.modify": ["https://mail.google.com/"],
+  "https://www.googleapis.com/auth/calendar.readonly": ["https://www.googleapis.com/auth/calendar"],
+  "https://www.googleapis.com/auth/calendar.events": ["https://www.googleapis.com/auth/calendar"],
+  "https://www.googleapis.com/auth/drive.readonly": ["https://www.googleapis.com/auth/drive"],
+  "https://www.googleapis.com/auth/drive.file": ["https://www.googleapis.com/auth/drive"],
+};
+
 interface StoredConnection extends Record<string, unknown> {
   id: string;
   workspace_id: string;
@@ -2330,52 +2338,14 @@ function assertGoogleCapabilitiesGranted(
       "Google did not report which connector permissions were granted; restart the connection",
     );
   }
-  const has = (...scopes: string[]) => scopes.some((scope) => granted.has(scope));
-  const allAccess = "https://mail.google.com/";
-  const capabilityGranted: Record<string, boolean> = {
-    "gmail.read": has(
-      GoogleCapabilityScopes.gmailRead[0],
-      allAccess,
-    ),
-    "gmail.draft": has(
-      GoogleCapabilityScopes.gmailDraft[0],
-      allAccess,
-    ),
-    "gmail.send": has(
-      GoogleCapabilityScopes.gmailSend[0],
-      allAccess,
-    ),
-    "calendar.read": has(
-      GoogleCapabilityScopes.calendarRead[0],
-      GoogleCapabilityScopes.calendarWrite[0],
-      "https://www.googleapis.com/auth/calendar",
-    ),
-    "calendar.write": has(
-      GoogleCapabilityScopes.calendarWrite[0],
-      "https://www.googleapis.com/auth/calendar",
-    ),
-    "drive.read": has(
-      GoogleCapabilityScopes.driveRead[0],
-      "https://www.googleapis.com/auth/drive",
-    ),
-    "docs.read": has(
-      GoogleCapabilityScopes.docsRead[0],
-      "https://www.googleapis.com/auth/drive",
-    ),
-    "docs.write": has(
-      GoogleCapabilityScopes.docsWrite[0],
-      "https://www.googleapis.com/auth/drive",
-    ),
-    "sheets.read": has(
-      GoogleCapabilityScopes.sheetsRead[0],
-      "https://www.googleapis.com/auth/drive",
-    ),
-    "sheets.write": has(
-      GoogleCapabilityScopes.sheetsWrite[0],
-      "https://www.googleapis.com/auth/drive",
-    ),
-  };
-  const missing = capabilities.filter((capability) => !capabilityGranted[capability]);
+  const missing = capabilities.filter((capability) => {
+    const requiredScopes = capabilityScopes[capability];
+    if (!requiredScopes || requiredScopes.length === 0) return true;
+    return requiredScopes.some((requiredScope) =>
+      !granted.has(requiredScope)
+      && !(googleBroaderProviderScopeAliases[requiredScope] ?? []).some((alias) => granted.has(alias))
+    );
+  });
   if (missing.length > 0) {
     throw new ApiError(
       403,

@@ -238,6 +238,14 @@ describe("API security utilities", () => {
       { scopes: ["https://www.googleapis.com/auth/drive.file"] },
     )).toThrow(/docs\.read, sheets\.read/u);
     expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      ["calendar.read", "calendar.write"],
+      { scopes: ["https://www.googleapis.com/auth/calendar.events"] },
+    )).toThrow(/calendar\.read/u);
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
+      ["docs.read", "docs.write"],
+      { scopes: ["https://www.googleapis.com/auth/drive"] },
+    )).not.toThrow();
+    expect(() => __connectionServiceTesting.assertGoogleCapabilitiesGranted(
       [
         "gmail.draft",
         "gmail.send",
