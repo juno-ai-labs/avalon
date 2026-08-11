@@ -863,8 +863,72 @@ describe("connectors", () => {
         signal: AbortSignal.timeout(1_000)
       }
     );
-    expect(result.output).toMatchObject({ query: "Danny", scannedMessages: 0, contacts: [] });
+    // The remedy has to be in `output`; `summary` never reaches the model.
+    expect(result.output).toMatchObject({
+      query: "Danny",
+      scannedMessages: 0,
+      contacts: [],
+      reason: "no_messages_matched"
+    });
+    expect((result.output as { hint: string }).hint).toContain("differently spelled name");
     expect(result.summary).toContain("No address");
+  });
+
+  it("distinguishes correspondence that named nobody from no correspondence at all", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }] });
+      }
+      return googleJson({
+        id: "message-1",
+        threadId: "thread-1",
+        payload: { headers: [{ name: "From", value: "Priya <priya@example.com>" }] }
+      });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.find_contacts",
+      { name: "Danny" },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(result.output).toMatchObject({
+      scannedMessages: 1,
+      contacts: [],
+      reason: "no_address_matched_name"
+    });
+  });
+
+  it("caps returned contacts with the same maxResults name the other Google tools use", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }] });
+      }
+      return googleJson({
+        id: "message-1",
+        threadId: "thread-1",
+        payload: {
+          headers: [{
+            name: "To",
+            value: "Dana One <dana.one@example.com>, Dana Two <dana.two@example.com>"
+          }]
+        }
+      });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.find_contacts",
+      { name: "Dana", maxResults: 1 },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect((result.output as { contacts: unknown[] }).contacts).toHaveLength(1);
   });
 
   it("creates and updates Google Calendar events with bounded event fields", async () => {
