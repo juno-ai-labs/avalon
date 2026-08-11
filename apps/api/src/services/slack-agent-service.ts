@@ -130,6 +130,21 @@ const SlackModalContextSchema = z.object({
 }).strict();
 
 const SLACK_PENDING_PROMPT_TTL_MS = 24 * 60 * 60_000;
+/**
+ * The automations App Home shows a linked person, newest activity first.
+ *
+ * Drafts are excluded rather than merely ordered after. A draft's `updated_at`
+ * moves on every compile turn, so the ones being written right now would take
+ * the whole of this short list and push out the automations that actually run —
+ * and App Home offers nothing that can be done with a draft anyway, since a
+ * draft is finished in the desktop builder.
+ */
+const PERSONAL_AUTOMATIONS_FOR_HOME_SQL =
+  `SELECT s.id, t.name, s.status, s.next_run_at FROM automation_subscriptions s
+   JOIN automation_templates t ON t.id = s.template_id
+   WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
+     AND s.status <> 'draft'
+   ORDER BY s.updated_at DESC LIMIT 5`;
 const SLACK_CONNECTION_DENIAL_TEXT = "Avalon’s Slack workspace connection needs attention, so it did not start this task. Ask an Avalon workspace admin to reconnect or test Slack in Avalon Settings, then reply `try again` in this thread.";
 const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Avalon` again and restate what you want me to do.";
 const SLACK_RETRYABLE_DENIAL_PREFIXES = [
@@ -2311,10 +2326,7 @@ export class SlackAgentService {
              w.last_activity_at DESC LIMIT 6`,
         ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
         this.env.DB.prepare(
-          `SELECT s.id, t.name, s.status, s.next_run_at FROM automation_subscriptions s
-           JOIN automation_templates t ON t.id = s.template_id
-           WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
-           ORDER BY s.updated_at DESC LIMIT 5`,
+          PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
         ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
         this.env.DB.prepare(
           `SELECT display_name, status FROM connector_connections
@@ -3438,6 +3450,7 @@ function recordableUnfurlLinks(
 }
 
 export const __slackAgentTesting = {
+  PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,

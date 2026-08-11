@@ -13,6 +13,21 @@ interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
 }
 
+/**
+ * Whether the screen at this route is showing the named automation, and would
+ * therefore be stranded once it stops being served.
+ *
+ * There are two such screens, not one. An automation that runs is read on its
+ * overview; a draft is read in the builder, which the sidebar reaches through a
+ * query rather than a path. Missing the second leaves the builder on a
+ * conversation the API will not serve again — and with a Create button that
+ * would insert a second automation instead of promoting this one.
+ */
+export function showsAutomation(pathname: string, search: string, automationId: string): boolean {
+  if (pathname === `/automations/${automationId}`) return true;
+  return pathname === '/automations/new' && new URLSearchParams(search).get('draft') === automationId;
+}
+
 export function openWorkstreamId(pathname: string): string | null {
   const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
   if (id === undefined || id === 'new') return null;
@@ -110,6 +125,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const hypersightWidth = useUiStore((state) => state.hypersightWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
+  // Replacing rather than pushing, so Back cannot return to an automation that
+  // is no longer served — true of an archived draft as much as a deleted
+  // automation.
+  const leaveAutomationScreen = (automationId: string): void => {
+    if (showsAutomation(location.pathname, location.search, automationId)) {
+      void navigate('/workstreams/new', { replace: true });
+    }
+  };
+
   // HyperSight and the inspector rail are the same slot, so the main pane makes
   // room for whichever one holds it — including a panel that has lost the slot
   // and is still fading out, which is on screen and has to be laid out for.
@@ -179,12 +203,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) return;
           await api.archiveDraftAutomation(automation.id);
           await queryClient.invalidateQueries({ queryKey: ['automations'] });
-          // A draft is read in the builder rather than on an overview, so that
-          // is the screen archiving can leave stranded on a conversation the
-          // API will no longer serve.
-          const openDraft = location.pathname === '/automations/new'
-            && new URLSearchParams(location.search).get('draft') === automation.id;
-          if (openDraft || location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+          leaveAutomationScreen(automation.id);
         }}
         onArchiveNote={async (note) => {
           if (!api) return;
@@ -250,9 +269,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // Leaving the deleted automation's route replaces it rather than
           // pushing, so Back cannot return to it, and the detail query goes
           // with it so nothing can render the automation from cache.
-          if (location.pathname === `/automations/${automation.id}`) {
-            void navigate('/workstreams/new', { replace: true });
-          }
+          leaveAutomationScreen(automation.id);
           queryClient.removeQueries({ queryKey: ['automation', automation.id] });
         }}
         onMarkWorkstreamUnread={async (workstream) => {

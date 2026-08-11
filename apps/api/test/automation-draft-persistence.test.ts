@@ -270,6 +270,69 @@ describe("automation drafts", () => {
     ).get(mine.draftId)).toEqual({ owner_user_id: userId });
   });
 
+  it("refuses to resume a draft into a running automation", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft());
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Watch my blog." }],
+    }, "request-1");
+
+    // Resuming is a transition between two states only a created automation
+    // reaches. Arriving at 'active' through it would skip every check `create`
+    // makes and hand a half-written automation a live address and a Run now.
+    await expect(service.setPaused(compiled.draftId, false)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_not_created",
+    });
+    expect(database.prepare(
+      "SELECT status FROM automation_subscriptions WHERE id = ?",
+    ).get(compiled.draftId)).toEqual({ status: "draft" });
+    expect(activateAutomationRoute).not.toHaveBeenCalled();
+    expect(ensureAutomationAddress).not.toHaveBeenCalled();
+  });
+
+  it("deletes a draft without minting the address it never had", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft());
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Watch my blog." }],
+    }, "request-1");
+
+    await service.deleteAutomation(compiled.draftId);
+
+    // Reserving an address purely to disable it would tombstone one forever for
+    // an automation nobody ever created.
+    expect(ensureAutomationAddress).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT lifecycle_state, email_address FROM automation_subscriptions WHERE id = ?",
+    ).get(compiled.draftId)).toEqual({ lifecycle_state: "deleted", email_address: null });
+  });
+
+  it("still closes the address of an automation that has one", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Report every day." }],
+    }, "request-1");
+    await service.create({
+      draftId: compiled.draftId,
+      draft: compiled.draft,
+      scope: "personal",
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      resourceIds: [],
+      deliveryTargets: [],
+    });
+    ensureAutomationAddress.mockClear();
+
+    await service.deleteAutomation(compiled.draftId);
+
+    expect(ensureAutomationAddress).toHaveBeenCalled();
+  });
+
   it("lists a draft alongside the automations that run, each with its own status", async () => {
     const database = seededDatabase();
     compileAutomationDraft.mockResolvedValue(draft({ name: "Alpha report", followUpQuestion: null, ready: true }));
