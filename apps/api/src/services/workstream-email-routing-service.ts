@@ -91,6 +91,13 @@ interface LocalAutomationEmailRow {
   email_address: string | null;
   email_route_status: AutomationEmailRoute["status"];
   status: string;
+  lifecycle_state: string;
+}
+
+/** An address accepts mail only while its automation is both running and still
+ * present: a paused, archived, or deleted automation has a disabled route. */
+function automationRouteDesiredStatus(row: LocalAutomationEmailRow): AutomationEmailRouteStatusInput["status"] {
+  return row.status === "active" && row.lifecycle_state === "visible" ? "active" : "disabled";
 }
 
 export class WorkstreamEmailRoutingService {
@@ -171,7 +178,7 @@ export class WorkstreamEmailRoutingService {
     if (!stored.email_address || stored.email_address.toLowerCase() !== route.emailAddress.toLowerCase()) {
       throw new ApiError(409, "automation_email_address_conflict", "The automation already has a different email address");
     }
-    const storedDesiredStatus: AutomationEmailRoute["status"] = stored.status === "active" ? "active" : "disabled";
+    const storedDesiredStatus = automationRouteDesiredStatus(stored);
     if (route.status !== storedDesiredStatus) {
       await this.setAutomationStatuses([{ ...input, status: storedDesiredStatus }]);
     }
@@ -224,7 +231,7 @@ export class WorkstreamEmailRoutingService {
       return { ...reservation, status: row.email_route_status };
     });
     const statusChanges = inputs.flatMap((input, index): AutomationEmailRouteStatusInput[] => {
-      const desiredStatus = stored[index]!.status === "active" ? "active" : "disabled";
+      const desiredStatus = automationRouteDesiredStatus(stored[index]!);
       return stored[index]!.email_route_status !== desiredStatus
         || reservations[index]!.status !== desiredStatus
         ? [{ ...input, status: desiredStatus }]
@@ -588,7 +595,7 @@ export class WorkstreamEmailRoutingService {
 
   private async loadLocalAutomationEmailRow(input: AutomationEmailRouteInput): Promise<LocalAutomationEmailRow> {
     const row = await this.env.DB.prepare(
-      `SELECT email_address, email_route_status, status
+      `SELECT email_address, email_route_status, status, lifecycle_state
        FROM automation_subscriptions WHERE id = ? AND workspace_id = ?`,
     ).bind(input.automationSubscriptionId, input.workspaceId).first<LocalAutomationEmailRow>();
     if (!row) throw new ApiError(404, "automation_not_found", "Automation not found");
@@ -597,7 +604,7 @@ export class WorkstreamEmailRoutingService {
 
   private async loadLocalAutomationEmailRows(inputs: AutomationEmailRouteInput[]): Promise<LocalAutomationEmailRow[]> {
     const results = await this.env.DB.batch(inputs.map((input) => this.env.DB.prepare(
-      `SELECT email_address, email_route_status, status
+      `SELECT email_address, email_route_status, status, lifecycle_state
        FROM automation_subscriptions WHERE id = ? AND workspace_id = ?`,
     ).bind(input.automationSubscriptionId, input.workspaceId)));
     return results.map((result) => {

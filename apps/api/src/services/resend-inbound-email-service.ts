@@ -641,7 +641,7 @@ export class ResendRegionalEmailService {
       `SELECT s.id, s.scope, s.owner_user_id
        FROM automation_subscriptions s
        JOIN automation_templates t ON t.id = s.template_id
-       WHERE s.id = ? AND s.workspace_id = ? AND s.status = 'active'
+       WHERE s.id = ? AND s.workspace_id = ? AND s.status = 'active' AND s.lifecycle_state = 'visible'
          AND s.email_address = ? COLLATE NOCASE AND t.archived_at IS NULL
        LIMIT 1`,
     ).bind(input.automationSubscriptionId, input.workspaceId, input.emailAddress).first<{

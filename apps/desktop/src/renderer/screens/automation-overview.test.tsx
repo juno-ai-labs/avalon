@@ -38,6 +38,7 @@ const detail: AutomationDetail = {
   scope: 'you',
   status: 'active',
   statusMessage: 'Update available',
+  updatedAt: '2026-08-01T09:00:00.000Z',
   versionNumber: 1,
   overview: 'A short weekly brief of recent changes.',
   instructions: 'Summarize changes.',
