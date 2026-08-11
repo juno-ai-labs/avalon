@@ -203,7 +203,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             queryClient.invalidateQueries({ queryKey: ['automations'] }),
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           ]);
-          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+          // Leaving the deleted automation's route replaces it rather than
+          // pushing, so Back cannot return to it, and the detail query goes
+          // with it so nothing can render the automation from cache.
+          if (location.pathname === `/automations/${automation.id}`) {
+            void navigate('/workstreams/new', { replace: true });
+          }
+          queryClient.removeQueries({ queryKey: ['automation', automation.id] });
         }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;

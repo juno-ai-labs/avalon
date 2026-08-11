@@ -12,7 +12,11 @@ import {
 } from "./linear";
 import { linearAgentActivationAcknowledgement } from "./linear-agent";
 import type { FetchLike } from "./provider-utils";
-import { connectorCapabilitySupportsScope, type ConnectorConnectionContext } from "./types";
+import {
+  type AuthorizedConnectorConnection,
+  authorizedConnection,
+  connectorCapabilitySupportsScope,
+} from "./types";
 
 const AVALON_WORKSPACE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AVALON_CONNECTION_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -687,8 +691,8 @@ function linearConfig(fetcher: FetchLike): LinearConnectorConfig {
   };
 }
 
-function linearConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function linearConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: AVALON_CONNECTION_ID,
     workspaceId: AVALON_WORKSPACE_ID,
     scope: "workspace",
@@ -702,11 +706,11 @@ function linearConnection(grantedScopes: string[]): ConnectorConnectionContext {
     },
     cursor: {},
     config: { region: "global" },
-  };
+  });
 }
 
-function personalLinearConnection(grantedScopes: string[]): ConnectorConnectionContext {
-  return {
+function personalLinearConnection(grantedScopes: string[]): AuthorizedConnectorConnection {
+  return authorizedConnection({
     ...linearConnection(grantedScopes),
     scope: "personal",
     ownerUserId: "avalon-user-1",
@@ -715,7 +719,7 @@ function personalLinearConnection(grantedScopes: string[]): ConnectorConnectionC
       oauthActor: "user",
       authorizedUserId: "linear-user-1",
     },
-  };
+  });
 }
 
 function verifiedLinearEvent(

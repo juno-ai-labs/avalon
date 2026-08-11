@@ -24,7 +24,12 @@ import { toolActivityName } from "./tool-activity";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
-export { BUILT_IN_SKILLS, DEEP_RESEARCH_SKILL } from "./built-in-skills";
+export {
+  BUILT_IN_SKILLS,
+  DEEP_RESEARCH_SKILL,
+  SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  WRITING_AN_EMAIL_SKILL,
+} from "./built-in-skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
   AVALON_SKILLS_SYSTEM_MESSAGE,
@@ -1742,7 +1747,18 @@ function executeAutomationCreatorDiscoveryTool(
           idempotency: tool.idempotency ?? "safe",
           inputSchema: tool.inputSchema,
         })),
-        activityTriggers: plugin.activityTriggers,
+        // Projected rather than returned whole, like `plugins_search` above.
+        // A descriptor also carries `digestible`, which answers a question
+        // about scheduled digests and nothing about whether an automation may
+        // trigger on the event — and it reads `false` on two thirds of GitHub's
+        // triggers, which a model building an automation would reasonably take
+        // as "not available to me".
+        activityTriggers: plugin.activityTriggers.map((trigger) => ({
+          eventType: trigger.eventType,
+          label: trigger.label,
+          description: trigger.description,
+          filterFields: trigger.filterFields,
+        })),
       },
     } : { error: "plugin_not_found", pluginId };
   }
@@ -2068,7 +2084,7 @@ export type RequestElicitationInput = z.infer<typeof RequestElicitationInputSche
 export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
   name: "request_elicitation",
   description:
-    "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. State in the prompt what you already searched and what it returned.",
+    "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. Check the plugin catalog as part of that search — a connector listed there can answer even though its tools are absent from the current turn, and the tools in front of you are only the ones already loaded. State in the prompt what you already searched and what it returned.",
   capability: "elicitation.write",
   mode: "write",
   idempotency: "provider_key",
@@ -2199,6 +2215,18 @@ export interface HarnessCompactionConfig {
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
 }
 
+/**
+ * The outcome of revalidating one plugin's authorization.
+ *
+ * `denied` is a decision about authority: the credential was revoked, the
+ * grant was withdrawn, the principal no longer owns it. `indeterminate` is the
+ * absence of a decision — a provider timeout, a transport failure, a host
+ * error. Both leave the plugin inactive, and they are deliberately separate:
+ * only `denied` may be reported to the model as an authorization outcome, so a
+ * failure to verify is never presented to a run as a revoked grant.
+ */
+export type PluginAuthorization = "authorized" | "denied" | "indeterminate";
+
 export interface RunHarnessInput {
   config: OpenRouterConfig & {
     maxIterations: number;
@@ -2277,7 +2305,7 @@ export interface RunHarnessInput {
     inputHash: string,
     policy: { pluginId: string } & HarnessToolPolicyIdentity,
   ) => Promise<HarnessToolResult | null>;
-  reauthorizePlugin?: (canonicalId: string) => boolean | Promise<boolean>;
+  reauthorizePlugin?: (canonicalId: string) => PluginAuthorization | Promise<PluginAuthorization>;
   persistActivation?: (canonicalId: string) => void | Promise<void>;
   onActivationDropped?: (drop: unknown) => void | Promise<void>;
   beforeToolCall?: BeforeToolCallHook;
@@ -2401,6 +2429,7 @@ export async function canonicalToolInputHash(value: unknown): Promise<string> {
 
 export const __testing = {
   canonicalJson,
+  executeAutomationCreatorDiscoveryTool,
   addressingJsonSchema,
   automationJsonSchema: automationDraftSubmissionJsonSchema,
   normalizeAutomationDraft

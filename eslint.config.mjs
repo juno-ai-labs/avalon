@@ -85,6 +85,30 @@ export default tseslint.config(
     },
   },
   {
+    // `authorizedConnection` mints the brand that lets a connection reach a
+    // provider. Only the credential door has actually refreshed the
+    // credentials by that point, so it is the only module allowed to say so.
+    files: ["apps/api/src/**/*.{ts,tsx}"],
+    ignores: [
+      "apps/api/src/services/connector-connection-access.ts",
+      "**/*.test.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@avalon/connectors",
+              importNames: ["authorizedConnection"],
+              message: "Reach an adapter through withAuthorizedConnection; it is what refreshes the credentials this brand asserts are fresh.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ["packages/agent-harness/src/bind-runtime.ts"],
     rules: {
       "avalon/require-inference-signal": "error",
