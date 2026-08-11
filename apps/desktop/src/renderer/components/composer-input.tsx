@@ -16,8 +16,10 @@ import {
 import type { AvalonApi } from '../lib/api';
 import {
   AGENT_MODEL_GROUPS,
-  DEFAULT_AGENT_MODEL,
+  UNPINNED_AGENT_MODEL,
+  UNPINNED_AGENT_MODEL_LABEL,
   agentModelLabel,
+  agentModelTriggerLabel,
   type AgentModelOverride,
 } from '../lib/agent-models';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
@@ -52,11 +54,13 @@ interface ComposerInputProps {
    *
    * `value` is `null` until something is chosen, which is what keeps an
    * untouched composer on the flag rather than silently pinning every work
-   * stream a developer starts to the model the selector happens to display.
+   * stream a developer starts. That state is shown as **Default** rather than
+   * as a model name: which model it resolves to is the flag's answer, and this
+   * process cannot see the served variation.
    */
   modelOverride?: {
     value: AgentModelOverride | null;
-    onChange: (model: AgentModelOverride) => void;
+    onChange: (model: AgentModelOverride | null) => void;
   };
   onAttach: (files: FileList | File[]) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -347,23 +351,31 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <IconButton
-                    className="model-selector-trigger"
+                    className={clsx('model-selector-trigger', !modelOverride.value && 'is-unpinned')}
                     disabled={submitting}
-                    label={`Model: ${agentModelLabel(modelOverride.value ?? DEFAULT_AGENT_MODEL)}`}
+                    label={agentModelTriggerLabel(modelOverride.value)}
                   >
-                    <span>{agentModelLabel(modelOverride.value ?? DEFAULT_AGENT_MODEL)}</span>
+                    <span>{agentModelLabel(modelOverride.value)}</span>
                     <ChevronDown aria-hidden="true" size={13} />
                   </IconButton>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
                     <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
-                    {/* Unchosen reads as the default rather than as nothing: it is
-                        the model this work will actually run on today. */}
+                    {/* Unpinned is its own value rather than the first model:
+                        the flag decides which model it resolves to, and naming
+                        one here would be a claim the renderer cannot make. */}
                     <DropdownMenu.RadioGroup
-                      onValueChange={(model) => modelOverride.onChange(model as AgentModelOverride)}
-                      value={modelOverride.value ?? DEFAULT_AGENT_MODEL}
+                      onValueChange={(model) =>
+                        modelOverride.onChange(model === UNPINNED_AGENT_MODEL ? null : model as AgentModelOverride)}
+                      value={modelOverride.value ?? UNPINNED_AGENT_MODEL}
                     >
+                      <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
+                        <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
+                        <DropdownMenu.ItemIndicator asChild>
+                          <Check aria-hidden="true" size={15} />
+                        </DropdownMenu.ItemIndicator>
+                      </DropdownMenu.RadioItem>
                       {AGENT_MODEL_GROUPS.map((group) => (
                         <Fragment key={group.provider}>
                           <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>

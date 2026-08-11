@@ -2087,6 +2087,9 @@ pre {
    opening the menu. */
 .model-selector-trigger { font-size: 10.5px; gap: 3px; letter-spacing: .01em; padding: 0 7px; white-space: nowrap; width: auto; }
 .model-selector-trigger > svg { color: var(--muted); flex: 0 0 auto; }
+/* Nothing pinned is the quiet state: it reads as a control nobody has used
+   rather than as a model name, which is what it is not. */
+.model-selector-trigger.is-unpinned { color: var(--muted); }
 .model-selector-menu { max-width: min(300px, calc(100vw - 24px)); min-width: 220px; }
 .model-selector-menu .menu-label { color: var(--muted); font-size: 11px; }
 .model-selector-provider { font-size: 9.5px; letter-spacing: .06em; padding-top: 6px; text-transform: uppercase; }

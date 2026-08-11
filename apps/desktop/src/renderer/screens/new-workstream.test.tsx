@@ -208,9 +208,9 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
-    // Showing the default is not the same as pinning to it: an untouched
-    // selector leaves the work stream on whatever the flag serves it.
-    await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    // Unpinned is its own state, named for what it is rather than for a model
+    // the renderer cannot know the flag will serve.
+    await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -225,7 +225,7 @@ describe('New work-stream home', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
     renderScreen();
 
-    const selector = await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
     fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
 
@@ -238,6 +238,50 @@ describe('New work-stream home', () => {
       openingMessage: 'Prepare the launch brief',
       participantIds: [],
       modelOverride: 'deepseek/deepseek-v4-pro',
+    }));
+  });
+
+  it('pins the flag’s own default model as a deliberate, visible choice', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderScreen();
+
+    // The first listed model is still a choice someone can make, and making it
+    // has to look different from never having touched the control — which it
+    // would not if unpinned borrowed that model's value.
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Grok 4.3' }));
+    await screen.findByRole('button', { name: 'Model: Grok 4.3' });
+
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: 'Prepare the launch brief',
+      participantIds: [],
+      modelOverride: 'x-ai/grok-4.3',
+    }));
+  });
+
+  it('releases a pin back to the flag without leaving the screen', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderScreen();
+
+    const selector = await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+    fireEvent.pointerDown(selector, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'DeepSeek V4 Pro' }));
+    await screen.findByRole('button', { name: 'Model: DeepSeek V4 Pro' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Model: DeepSeek V4 Pro' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Default' }));
+    await screen.findByRole('button', { name: 'Model: Default (follows the agent-model-workstream flag)' });
+
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the launch brief' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith({
+      openingMessage: 'Prepare the launch brief',
+      participantIds: [],
     }));
   });
 

@@ -3,12 +3,30 @@ import { AGENT_MODEL_OVERRIDES, type AgentModelOverride } from '@avalon/contract
 export type { AgentModelOverride };
 
 /**
- * The model the work-stream agent runs on when nothing is pinned. It is the
- * first entry of the contract's list, and the selector shows it before anything
- * has been chosen — a developer opening the menu should see where the work is
- * going, not an empty control.
+ * The unpinned state, as a radio value the menu can carry.
+ *
+ * It is deliberately not the first model in the list. Which model an unpinned
+ * work stream runs on is decided by the `agent-model-workstream` flag, and the
+ * renderer cannot see the served variation — so naming a model here would be a
+ * claim this process is not in a position to make, and would be wrong for
+ * exactly the audience this control exists for the moment the flag is rolled
+ * anywhere else. Keeping the two states distinct also leaves every model in the
+ * list, including the first, available as a deliberate choice.
  */
-export const DEFAULT_AGENT_MODEL: AgentModelOverride = AGENT_MODEL_OVERRIDES[0];
+export const UNPINNED_AGENT_MODEL = 'unpinned';
+export const UNPINNED_AGENT_MODEL_LABEL = 'Default';
+
+/**
+ * The trigger's accessible name and tooltip. Unpinned says which mechanism is
+ * in charge instead of naming a model, because that is the honest thing this
+ * process can say — and it is what makes an explicit pin to the first listed
+ * model observably different from never having touched the control.
+ */
+export function agentModelTriggerLabel(id: AgentModelOverride | null): string {
+  return id === null
+    ? `Model: ${UNPINNED_AGENT_MODEL_LABEL} (follows the agent-model-workstream flag)`
+    : `Model: ${PRESENTATION[id].label}`;
+}
 
 interface AgentModelPresentation {
   provider: string;
@@ -58,6 +76,7 @@ export const AGENT_MODEL_GROUPS: ReadonlyArray<{ provider: string; models: Agent
     return groups;
   }, []);
 
-export function agentModelLabel(id: AgentModelOverride): string {
-  return PRESENTATION[id].label;
+/** The name a pinned model wears, or `Default` where nothing is pinned. */
+export function agentModelLabel(id: AgentModelOverride | null): string {
+  return id === null ? UNPINNED_AGENT_MODEL_LABEL : PRESENTATION[id].label;
 }
