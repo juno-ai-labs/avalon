@@ -1,17 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env, IdentityAuthContext } from "../src/env";
 import {
-  DEVELOPER_SETTINGS_FLAG_KEY,
   resolveClientFeatureFlags,
   resolveDeveloperSettingsEnabled,
 } from "../src/services/client-feature-flags";
+import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const staffUserId = "00000000-0000-4000-8000-0000000000a1";
 const customerUserId = "00000000-0000-4000-8000-0000000000a2";
 const workspaceId = "00000000-0000-4000-8000-0000000000a3";
 const staffPlatformUserId = "00000000-0000-4000-8000-0000000000b1";
-const accountCreatedAt = "2026-01-02T03:04:05.000Z";
+const createdAt = "2026-01-02T03:04:05.000Z";
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
 // quiet the way it does in development.
@@ -21,7 +21,15 @@ const baseEnv = {
   LOG_LEVEL: "error",
 } as unknown as Env;
 
-function envWithAccounts(flags?: Partial<Flagship>, platformUserId: string | null = staffPlatformUserId): Env {
+afterEach(() => {
+  // Attributes are cached in the isolate; a test must not inherit another's rows.
+  clearFlagTargetingAttributeCache();
+});
+
+function envWithAccounts(
+  flags?: Partial<Flagship>,
+  platformUserId: string | null = staffPlatformUserId,
+): Env {
   const database = migratedSqliteDatabase();
   const accounts: Array<[string, string, string | null]> = [
     [staffUserId, "Adam@Juno-Labs.com", platformUserId],
@@ -33,7 +41,21 @@ function envWithAccounts(flags?: Partial<Flagship>, platformUserId: string | nul
         `INSERT INTO users (id, google_subject, email, name, platform_user_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, `google-${id}`, email, "Adam", platformId, accountCreatedAt, accountCreatedAt);
+      .run(id, `google-${id}`, email, "Adam", platformId, createdAt, createdAt);
+  }
+  database
+    .prepare(
+      `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+       VALUES (?, 'Juno', 'juno', 'global', ?, ?, ?)`,
+    )
+    .run(workspaceId, staffUserId, createdAt, createdAt);
+  for (const id of [staffUserId, customerUserId]) {
+    database
+      .prepare(
+        `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+         VALUES (?, ?, 'member', 'active', ?)`,
+      )
+      .run(workspaceId, id, createdAt);
   }
   return {
     ...baseEnv,
@@ -83,51 +105,60 @@ function serving(value: unknown): Partial<Flagship> {
   };
 }
 
+function contextOf(flags: Partial<Flagship>): FlagshipEvaluationContext {
+  return (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] ?? {};
+}
+
 describe("client feature flags", () => {
-  it("describes the signed-in person with every attribute a rule may target", async () => {
+  it("describes the person in the same vocabulary an agent evaluation uses", async () => {
     const flags = serving(true);
     const env = envWithAccounts(flags);
 
     await resolveClientFeatureFlags(env, auth(staffUserId));
 
-    expect(flags.getBooleanDetails).toHaveBeenCalledWith(DEVELOPER_SETTINGS_FLAG_KEY, false, {
-      // The stable identity a percentage rollout is bucketed by, kept distinct
-      // from the regional row id, which differs per region for one person.
-      platformUserId: staffPlatformUserId,
-      regionalUserId: staffUserId,
+    // The shared loader's attributes, plus the caller's identity over the top.
+    expect(contextOf(flags)).toMatchObject({
+      userId: staffUserId,
+      workspaceId,
       region: "global",
       appEnv: "production",
-      // Normalized, so a rule can be written in one spelling of the address.
-      email: "adam@juno-labs.com",
-      emailDomain: "juno-labs.com",
-      regionalAccountJoinedAt: accountCreatedAt,
-      workspaceId,
-      workspaceRole: "member",
+      userEmailDomain: "juno-labs.com",
+      userRole: "member",
+      userPlatformId: staffPlatformUserId,
+      workspaceSlug: "juno",
     });
   });
 
-  it("never passes a regional id off as the person's stable identity", async () => {
-    // An account that predates the platform control plane carries no
-    // `platform_user_id`. Substituting the regional row id would bucket the
-    // same person differently per region; the attribute is omitted instead, so
-    // a rule keyed on it does not match rather than matching the wrong person.
+  it("never sends an address, only its domain", async () => {
     const flags = serving(true);
-    const env = envWithAccounts(flags, null);
+    const env = envWithAccounts(flags);
 
-    await resolveDeveloperSettingsEnabled(env, auth(staffUserId));
+    await resolveClientFeatureFlags(env, auth(staffUserId));
 
-    const context = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
-    expect(context).not.toHaveProperty("platformUserId");
-    expect(context).toMatchObject({ regionalUserId: staffUserId });
+    // The boundary `flag-targeting-attributes.ts` owns: a domain is a cohort, a
+    // local part is a person, and a flag-targeting system gets only the first.
+    const values = Object.values(contextOf(flags)).map(String);
+    expect(values.some((value) => value.includes("@"))).toBe(false);
   });
 
   it("lets a Flagship rule decide the cohort rather than deciding it here", async () => {
-    // The staff rollout as it is actually provisioned: one rule on emailDomain.
-    const staffOnly = servingWhen((context) => context.emailDomain === "juno-labs.com");
+    // The staff rollout as it is actually provisioned: one rule on the domain.
+    const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
 
     await expect(resolveDeveloperSettingsEnabled(envWithAccounts(staffOnly), auth(staffUserId)))
       .resolves.toBe(true);
+    clearFlagTargetingAttributeCache();
     await expect(resolveDeveloperSettingsEnabled(envWithAccounts(staffOnly), auth(customerUserId)))
+      .resolves.toBe(false);
+  });
+
+  it("can be staged per person on an identity that is stable across regions", async () => {
+    const chosen = servingWhen((context) => context.userPlatformId === staffPlatformUserId);
+
+    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(chosen), auth(staffUserId)))
+      .resolves.toBe(true);
+    clearFlagTargetingAttributeCache();
+    await expect(resolveDeveloperSettingsEnabled(envWithAccounts(chosen), auth(customerUserId)))
       .resolves.toBe(false);
   });
 
@@ -136,41 +167,44 @@ describe("client feature flags", () => {
     // resolver may narrow that; only Flagship decides who is in.
     await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving(true)), auth(customerUserId)))
       .resolves.toBe(true);
+    clearFlagTargetingAttributeCache();
     await expect(resolveDeveloperSettingsEnabled(envWithAccounts(serving(false)), auth(staffUserId)))
       .resolves.toBe(false);
   });
 
-  it("omits the organization attributes before one is chosen, rather than sending them empty", async () => {
+  it("omits the organization attributes before one is chosen", async () => {
     const flags = serving(true);
     const env = envWithAccounts(flags);
 
     await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId, null))).resolves.toBe(true);
-    const context = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
+    const context = contextOf(flags);
     expect(context).not.toHaveProperty("workspaceId");
-    expect(context).not.toHaveProperty("workspaceRole");
-    expect(context).toMatchObject({ regionalUserId: staffUserId, emailDomain: "juno-labs.com" });
+    expect(context).not.toHaveProperty("workspaceSlug");
+    // The role is a property of a membership, so it goes with the workspace…
+    expect(context).not.toHaveProperty("userRole");
+    // …while who they are does not.
+    expect(context).toMatchObject({ userEmailDomain: "juno-labs.com", userId: staffUserId });
   });
 
-  it("sends no address attributes for an account it cannot read, so a cohort rule cannot match", async () => {
-    const staffOnly = servingWhen((context) => context.emailDomain === "juno-labs.com");
+  it("sends no account attributes for a session whose user row is gone", async () => {
+    const staffOnly = servingWhen((context) => context.userEmailDomain === "juno-labs.com");
     const env = envWithAccounts(staffOnly);
 
-    // A session whose user row is gone still evaluates, on identity alone.
     await expect(resolveDeveloperSettingsEnabled(env, auth("00000000-0000-4000-8000-0000000000ff")))
       .resolves.toBe(false);
-    const context = (staffOnly.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
-    expect(context).not.toHaveProperty("email");
-    expect(context).not.toHaveProperty("emailDomain");
+    expect(contextOf(staffOnly)).not.toHaveProperty("userEmailDomain");
   });
 
   it("evaluates, without throwing, when the account store is unavailable", async () => {
-    const flags = servingWhen((context) => context.regionalUserId === staffUserId);
+    const flags = servingWhen((context) => context.userId === staffUserId);
     const env = {
       ...baseEnv,
       DB: { prepare: () => { throw new Error("D1 unavailable"); } } as unknown as D1Database,
       FLAGS: flags as unknown as Flagship,
     } as Env;
 
+    // Attributes are an enrichment, never a precondition: the identity still
+    // reaches the flag, so a rule written on it still decides.
     await expect(resolveDeveloperSettingsEnabled(env, auth(staffUserId))).resolves.toBe(true);
   });
 
