@@ -474,6 +474,55 @@ describe('New automation composer', () => {
     ));
   });
 
+  it('preselects the destination the person chose in the conversation', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack-acme',
+        modelPluginId: 'plugin_slack_acme',
+        connectorType: 'slack',
+        displayName: 'Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+      },
+    ]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-chose-email',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Azure model watch',
+        description: 'Watches Azure for new billable models.',
+        overview: 'Emails the result when a new model appears.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Every weekday at 9:00 AM',
+        capabilities: [],
+        suggestedDelivery: 'email',
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Watch Azure for new billable models' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const createButton = await screen.findByRole('button', { name: 'Create automation' });
+    // The answer to a required question reaches the control, so creating
+    // without touching it freezes the destination the person actually named.
+    expect(await screen.findByRole('checkbox', { name: /^Email/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Slack DM · Acme/ })).not.toBeChecked();
+    fireEvent.click(createButton);
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
+      'draft-chose-email',
+      [],
+      {},
+      { scope: 'you', delivery: { email: true } },
+    ));
+  });
+
   it('freezes one Slack destination at a time alongside email', async () => {
     api.getConnections.mockResolvedValue([
       {

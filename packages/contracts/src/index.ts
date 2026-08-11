@@ -298,6 +298,13 @@ export const GenerateNoteNotesRequestSchema = z.object({
 // additional destinations a personal automation freezes when it is saved.
 export const AutomationDeliveryTargetTypeSchema = z.enum(["slack_agent_dm", "email"]);
 
+// What the compiler was told to deliver to, before the create screen freezes
+// actual targets. `avalon_only` means the work stream and nothing else.
+export const AutomationSuggestedDeliverySchema = z.enum([
+  "avalon_only",
+  ...AutomationDeliveryTargetTypeSchema.options,
+]);
+
 export const ConnectionSchema = z.object({
   id: IdSchema,
   modelPluginId: z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u),
@@ -646,6 +653,12 @@ export const AutomationDraftSchema = z.object({
   recommendedPlugins: z.array(AutomationPluginRecommendationSchema).default([]),
   memoryTables: z.array(AutomationMemoryTableSchema).default([]),
   suggestedScope: ScopeSchema,
+  /**
+   * The destination the person chose for this automation's results. It seeds
+   * the create screen's Deliver results controls; the frozen delivery targets
+   * are still whatever those controls hold when the automation is saved.
+   */
+  suggestedDelivery: AutomationSuggestedDeliverySchema.default("avalon_only"),
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()

@@ -17,6 +17,7 @@ const draft = {
       recommendedPlugins: [],
       memoryTables: [],
   suggestedScope: "personal" as const,
+  suggestedDelivery: "avalon_only" as const,
   followUpQuestion: "Which blog should I monitor?",
   elicitation: {
     responseType: "free_text" as const,

@@ -1532,7 +1532,8 @@ export class AvalonApi {
               scope: raw.suggestedScope === 'personal' ? 'you' : 'workspace',
               triggerSummary: raw.triggers.map(triggerSummary).join(' · '),
               capabilities: raw.requiredCapabilities,
-              requiresSlackDelivery: raw.expectedOutputs.some((output) => /\bslack\b/iu.test(output)),
+              suggestedDelivery: raw.suggestedDelivery,
+              requiresSlackDelivery: raw.suggestedDelivery === 'slack_agent_dm',
             },
           }
         : {}),
