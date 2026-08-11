@@ -413,6 +413,25 @@ describe('New work-stream home', () => {
     expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toBe(composer);
   });
 
+  // A create carrying only files is one `submit` accepts, and its turn is a
+  // bubble of tiles. Showing no turn for it would let the files appear at the
+  // navigation, which is the jump the launch surface exists to remove.
+  it('shows the opening turn for a create carrying only attachments', async () => {
+    api.createWorkstream.mockReturnValue(new Promise(() => undefined));
+    renderScreen();
+
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Opening work-stream message' }), { key: 'Enter' });
+
+    // The tile shows the extension and carries the file name as its accessible
+    // name, exactly as the sent turn will once the message is persisted.
+    const turn = await screen.findByRole('article', { name: 'Message from Adam Juhasz' });
+    expect(within(turn).getByRole('button', { name: 'notes.txt' })).toBeInTheDocument();
+  });
+
   it('takes back the optimistic work stream when creation fails', async () => {
     api.createWorkstream.mockRejectedValueOnce(new Error('offline'));
     renderScreen();

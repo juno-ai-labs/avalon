@@ -10,7 +10,8 @@ The promise is that starting a work stream looks like opening one. The launcher
 and the work stream being created are one element tree in one component, so the
 change between them is a change of geometry rather than a change of screen, and
 the composer is never unmounted across it. On the server, everything the response
-does not depend on has been moved off the create path.
+does not depend on still waits for it anyway — deliberately, and after one
+attempt at the opposite that the changelog records.
 
 ## Where the code lives
 
@@ -21,9 +22,9 @@ does not depend on has been moved off the create path.
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
-| `apps/api/src/routes/workstreams.ts` | `POST /workstreams`, and the one place `requestDeferral` is handed to `WorkstreamService`. |
-| `apps/api/src/services/workstream-service.ts` | `create`, the `offCriticalPath` helper, and `launchWorkstreamHarness`'s deferrable tail. |
-| `apps/api/src/lib/defer.ts` | `requestDeferral` — the only way work reaches `waitUntil`. |
+| `apps/api/src/durable-objects/workstream-room.ts` | `loadWorkstreamRoomSnapshot`, which has to describe the latest run because a snapshot replaces the client's whole detail. |
+| `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
+| `apps/api/src/services/workstream-service.ts` | `create`, and `launchWorkstreamHarness` — the run row, the Workflows start, and what happens when it fails. |
 
 ## How it works
 
@@ -72,10 +73,11 @@ end of `app.css`, which flattens all of it to a single 0.001ms iteration.
 
 ### What the optimistic surface shows
 
-The opening turn is a `Message` built from what was typed, rendered through the
-same `MessageBlock` the work-stream screen uses, with the current user as author
-so it takes the same own-turn treatment. The header shows `TitleSkeleton` — the
-same skeleton the created work stream shows while the naming agent answers, so
+The opening turn is a `Message` built from what was typed and from the files that
+were attached — a create carrying only attachments is one `submit` accepts, and
+its turn is a bubble of tiles. It is rendered through the same `MessageBlock` the
+work-stream screen uses, with the current user as author so it takes the same
+own-turn treatment. The header shows `TitleSkeleton` — the same skeleton the created work stream shows while the naming agent answers, so
 the header does not change hands at the swap; it is already waiting for the same
 name.
 
@@ -101,21 +103,23 @@ immediately, with the same turn in the same place, at the same geometry.
 
 ### What the server makes you wait for
 
-`POST /workstreams` is the one create path with a person at a keyboard, and the
-only one handed a `requestDeferral`. That deferral is what scopes every
-optimization below to this route: every other caller of the same service — Slack
-ingress, automations, tests — is unchanged and still awaits everything.
+Everything. `POST /workstreams` finishes the participant and attachment checks,
+the address reservation, the work-stream and opening-message write, the route
+activation, the `message_created` publish, the harness run row, and the Workflows
+round trip that starts the run — and only then answers. The one thing off the
+path is the naming call, which was already deferred before this module existed.
 
-Inline, because the response depends on it: the participant and attachment
-checks (run together rather than in sequence, and both no-ops when there is
-nothing to check), the email address reservation, the work-stream and opening
-message write, the message read-back, and the `message_created` publish. Then the
-harness run row, which is what makes `harnessRunId` real and the work stream
-`running`.
+That is deliberate, and it is a reversal: deferring the route activation and the
+Workflows round trip to `waitUntil` was built, reviewed, and taken back out. The
+changelog below records why. The wait is not what the person who pressed enter
+experiences — the launch surface above is — so buying it back with a durability
+risk was the wrong trade.
 
-Deferred, because the response does not: the email **route activation**, and the
-**Workflows round trip** that starts the harness plus the `harness_status_changed`
-event that follows it.
+The one saving kept is that the participant and attachment checks run
+concurrently. Both are no-ops when there is nothing to check, so it costs
+nothing in the common case, and the pair is settled rather than raced: a request
+that violates both is refused with `invalid_workspace_member` every time rather
+than whichever rejection landed first.
 
 ## Invariants
 
@@ -132,20 +136,25 @@ event that follows it.
   failure.** An optimistic turn stands for a work stream that does not exist; it
   cannot remain on screen next to an error explaining why it never will.
 - **The work timer's `startedAt` is frozen at submit** and seeded onto the
-  created run, so the timer does not restart at the swap. It is optimistic by
-  exactly the create's duration: the run really started later, so the first
-  refetch steps the elapsed time back by that much. That correction is accepted
-  — it lands a second after the transition rather than during it, and the
-  alternative is a timer that starts only once the response arrives.
+  created run, so the timer does not restart at the swap. It is optimistic by the
+  create's duration — the run really started a few hundred milliseconds later —
+  so the elapsed time can be corrected slightly downward when the canonical run
+  arrives. In practice the difference is smaller than the second the label
+  rounds to and is not visible; a change that makes creates much slower, or the
+  label finer-grained, would make it so.
 - **`message_created` is published before the harness launch.** Both land in the
   same Durable Object log, and a client resyncing from a sequence must not see the
   run start before the message that triggered it.
-- **Deferred work is only ever handed work whose result the response does not
-  carry.** The harness run row and its id are written inline for exactly this
-  reason; only the workflow start behind them is deferred.
-- **A deferral is never given a promise that can reject into `waitUntil`.** Both
-  deferred paths record their failure — on the run, or in a structured log — and
-  then swallow it. Rejecting there fails a request that already succeeded.
+- **A run row that says `running` must have a Workflow behind it.** `attempt_id`
+  and `lease_expires_at` stay NULL until the Workflow admits the run, and nothing
+  reaps that shape: `stop` only records a request a live workflow has to observe,
+  `retry` refuses a `running` work stream, and no screen offers either. A start
+  that is not awaited can therefore leave a work stream permanently "working".
+- **The pre-flight checks run ahead of the reservation.** A create that is going
+  to be refused must not leave an address reserved for a work stream that never
+  exists.
+- **Concurrent refusals are reported in a fixed order.** The pre-flight pair is
+  settled and rethrown in order, so one bad request always gets the same code.
 
 ## Boundary
 
@@ -170,16 +179,11 @@ and scope belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
 - **The create fails.** `launching` is cleared, the launcher comes back with the
   typed message restored into the composer unless a newer draft has replaced it,
   and the error renders under the composer. No work stream is left on screen.
-- **The deferred workflow start fails.** The run is marked `failed`, the work
-  stream's `harness_status` is set to `failed`, and a `harness_status_changed`
-  event is published — so the client learns over the socket and renders the
-  existing run-failure notice with its retry, rather than receiving a 503 about a
-  work stream that exists either way. Callers with no deferral still get the 503.
-- **The deferred route activation fails.** The work stream keeps the address it
-  was given; only its route status stays `reserved`, which means inbound mail to
-  it does not route yet. `list` reconciles any such route through
-  `backfillWorkstreamAddresses`. The failure is logged as
-  `workstream_email_route_activation_failed`.
+- **The workflow start fails.** The run is marked `failed`, the work stream's
+  `harness_status` is set to `failed`, a `harness_status_changed` event is
+  published so anyone already watching is not left on a `running` row, and the
+  caller gets a 503. The work stream and its opening message exist either way;
+  the client clears its launch surface and restores the composer.
 - **A create is refused.** The participant and attachment checks run ahead of the
   reservation deliberately, so a create that is going to be refused does not leave
   an address reserved for a work stream that never exists.
@@ -202,12 +206,15 @@ and scope belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
   a test that skips either will see a restored draft from its predecessor.
 - `apps/api/test/workstream-create-latency.test.ts` —
   `pnpm --filter @avalon/api exec vitest run test/workstream-create-latency.test.ts`.
-  Covers the boundary itself. Two of its tests hold a dependency open and assert
-  the create returns anyway, so **a regression that moves either step back onto
-  the critical path shows up as a timeout rather than an assertion failure**. The
-  route-activation test has to hold activation open explicitly: against an
-  in-memory D1 it would otherwise finish inside the create whether it was awaited
-  or not, and the test would pass while proving nothing.
+  Covers what the create finishes before it answers: the run started, the route
+  active, no address reserved for a create it is about to refuse, and one stable
+  code for a request that violates both pre-flight checks. That last one loops
+  five creates rather than asserting once — a fixed order that only held by luck
+  would pass a single run.
+- `apps/api/test/workstream-room-snapshot.test.ts` — includes the case that the
+  snapshot describes the latest run rather than naming its id. The snapshot
+  replaces the client's whole detail, so a field dropped there is invisible until
+  something notices a missing timer.
 - These are component and service tests, so neither sees the transition. **A
   change to the animation or to either state's geometry has to be looked at in a
   real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
@@ -215,14 +222,65 @@ and scope belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
 ## Regional impact
 
 The email route reservation crosses to the Global registry from every non-Global
-region, and activation crosses a second time. Deferring activation therefore
-removes a cross-region hop from the create path for EU workspaces specifically —
-it is the single largest saving of this change outside Global, and the reason
-activation was chosen over the other candidates. Reservation itself cannot move:
-the address it returns is written onto the work stream in the same statement that
-creates it. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
+region, and activation crosses a second time, so an EU create pays two hops that
+a Global one does not. Both are on the create path. Moving activation off it was
+tried and reverted — see the changelog — because the create's own cache
+invalidation makes `list` backfill the route immediately, paying the same hop a
+moment later against extra reads. Anything that wants that hop back has to deal
+with the backfill first. See [`REGIONALIZATION.md`](REGIONALIZATION.md).
 
 ## Changelog
+
+### 2026-08-11 — The create path waits for its own work again; only the launch surface stays
+
+**What changed:** Both deferrals from the entry below are reverted.
+`POST /workstreams` again awaits the Cloudflare Workflows round trip that starts
+the harness and the email route activation. `launchWorkstreamHarness` no longer
+takes a deferral at all, and `offCriticalPath` is gone. What stays is everything
+on the client — the launch surface, the composer hand-off, the seeded run — plus
+the concurrent pre-flight checks, which are now settled and rethrown in a fixed
+order. The optimistic turn also renders for a create carrying only attachments,
+which it previously skipped.
+
+**Why:** Three things the first version got wrong, all found in review.
+
+The deferral was passed straight from `this.defer`, and `POST /workstreams/:id/messages`
+is built with `requestDeferral` too — so sending a message into an existing work
+stream deferred its workflow start as well, despite the comment and this document
+both saying create-only. During a Workflows outage that turned a 503 into a 201
+with nothing shown, *after* `supersedeActiveRun` had already cancelled the live
+run.
+
+Worse, a deferred start that never runs is unrecoverable. The run row says
+`running` while `attempt_id` and `lease_expires_at` stay NULL until the Workflow
+admits the run, and nothing reaps that shape: `stop` only records a request a
+live workflow has to observe, `retry` refuses a `running` work stream, and no
+screen offers either. `waitUntil` is best-effort, so the cost of losing one was a
+work stream permanently reading "Avalon is working", with no way out.
+
+And the activation deferral did not pay. `create.onSuccess` invalidates the
+work-stream list immediately, and `list` backfills every route that is not yet
+`active` — so the same Global-registry hop was made a moment later by the
+refresh, against four extra D1 reads, with two activations of one route able to
+overlap and fail each other's reconcile.
+
+**Considered and rejected:** *Keeping the deferral and making the stuck run
+recoverable* — a sweep for `running` rows with a NULL `attempt_id` older than
+some threshold, or letting `retry` rescue one. Both are real options, but they
+add machinery to the harness's lease and fencing protocol to buy back latency
+that nobody is now waiting on, and there is no screen that would surface the
+stuck state to ask for a retry in the first place. *Scoping the deferral to
+`create` alone and keeping it* — that fixes the leak but not the unrecoverable
+run.
+
+**Consequences:** The create path is slower than it was for the two-week life of
+the entry below, and that is accepted: the launch surface is what the person
+experiences, and it does not care how long the response takes. Any future attempt
+to move work off this path has to answer two questions first — what recovers the
+state if `waitUntil` is dropped, and does the client immediately undo the saving
+by refetching. A run row that says `running` must have a Workflow behind it.
+
+Pull request not yet opened; add the trailer when it is.
 
 ### 2026-08-11 — The work stream opens on the keystroke, and the create path stops waiting for what the caller does not need
 

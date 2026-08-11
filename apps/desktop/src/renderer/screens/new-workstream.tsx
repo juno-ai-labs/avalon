@@ -368,7 +368,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const participantSummary = participants.length <= 2
     ? participants.map((participant) => participant.name).join(', ')
     : `${workspace.currentUser.name} +${participants.length - 1}`;
-  const openingTurn: Message | null = launching && launching.openingMessage
+  // Text or files: `submit` accepts a create carrying only attachments, and
+  // that turn is a bubble of tiles rather than an empty one. Suggested work is
+  // the only launch with no turn at all — its opening message is the agent's,
+  // written from the expanded prompt, and nothing here could stand in for it.
+  const openingTurn: Message | null = launching && (launching.openingMessage || launching.attachments.length > 0)
     ? {
       id: 'launching-opening-message',
       workstreamId: 'launching',
