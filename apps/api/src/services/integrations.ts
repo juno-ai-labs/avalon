@@ -93,6 +93,7 @@ import {
   cancelWorkstreamWakeup,
   countPendingWorkstreamWakeups,
   createWorkstreamWakeup,
+  deleteUnarmedWorkstreamWakeup,
   findWorkstreamWakeupByIdempotencyKey,
   formatWakeupLocalTime,
   listPendingWorkstreamWakeups,
@@ -4615,6 +4616,16 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           providerIdempotencyKey,
         );
         if (replayed) {
+          // Re-arm on the replay too. The most likely reason this receipt is
+          // being retried at all is that the first attempt inserted the row and
+          // then failed on the refresh below, and that attempt is the one that
+          // owed the workspace an alarm. Refresh is idempotent — it just
+          // recomputes the earliest due target — so paying it again is cheap
+          // next to a pending wake-up in a workspace with nothing else due,
+          // where no later alarm would ever arrive to notice the row.
+          if (replayed.status === "pending") {
+            await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+          }
           const persistedDueAt = new Date(replayed.dueAt);
           return {
             output: {
@@ -4655,7 +4666,20 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           dueAt: resolved.dueAt,
           idempotencyKey: providerIdempotencyKey,
         });
-        await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+        try {
+          await refreshWorkspaceSchedulerAlarm(env, input.workspaceId);
+        } catch (error) {
+          // The row exists but nothing is armed to fire it, and a workspace with
+          // no other due target will never wake to notice. Roll the insert back
+          // so the model is told the wake-up was not scheduled, rather than
+          // being told it was and having it never arrive. If this delete also
+          // fails, the replay branch above re-arms on the retry.
+          await deleteUnarmedWorkstreamWakeup(env, {
+            workspaceId: input.workspaceId,
+            wakeupId,
+          }).catch(() => undefined);
+          throw error;
+        }
         const dueAtLocal = formatWakeupLocalTime(resolved.dueAt, resolved.timezone);
         return {
           output: {

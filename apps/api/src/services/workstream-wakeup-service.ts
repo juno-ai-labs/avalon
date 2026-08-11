@@ -274,9 +274,9 @@ export interface ResolvedWakeupInstant {
 /**
  * Turn "in N seconds" or a timestamp into one UTC instant.
  *
- * Exactly one of `delaySeconds` and `at` must be present. An `at` that already
- * carries an offset is absolute; one without is read in `timezone`, which is
- * how "August 12th at 5:26pm Pacific" arrives without the model having to know
+ * Exactly one of `delay` and `at` must be present. An `at` that already carries
+ * an offset is absolute; one without is read in `timezone`, which is how
+ * "August 12th at 5:26pm Pacific" arrives without the model having to know
  * whether that date is on daylight time.
  */
 export function resolveWakeupInstant(request: WakeupInstantRequest): ResolvedWakeupInstant {
@@ -301,20 +301,24 @@ export function resolveWakeupInstant(request: WakeupInstantRequest): ResolvedWak
   const dueAt = hasDelay
     ? new Date(request.now.getTime() + parseWakeupDelay(request.delay!) * 1_000)
     : resolveTimestamp(request.at!, request.timezone, timezone);
+  // Both bounds below apply to the resolved instant, so either form can trip
+  // them. Quote the grammar of the form the caller actually used — telling a
+  // caller who passed `at` about duration units is not a recovery path.
+  const formHint = hasDelay ? ACCEPTED_DELAY_UNITS_HINT : ACCEPTED_TIMESTAMP_HINT;
 
   const delayMs = dueAt.getTime() - request.now.getTime();
   if (delayMs < MINIMUM_WAKEUP_DELAY_SECONDS * 1_000) {
     throw new WakeupInputError(
       "wakeup_too_soon",
       `That time is ${Math.round(delayMs / 1_000)} seconds away, and a wake-up must be at least ${MINIMUM_WAKEUP_DELAY_SECONDS} seconds away`,
-      `Pick a time at least ${MINIMUM_WAKEUP_DELAY_SECONDS} seconds from now, or do the work in this run instead of scheduling it. ${ACCEPTED_DELAY_UNITS_HINT}`,
+      `Pick a time at least ${MINIMUM_WAKEUP_DELAY_SECONDS} seconds from now, or do the work in this run instead of scheduling it. ${formHint}`,
     );
   }
   if (delayMs > MAXIMUM_WAKEUP_DELAY_SECONDS * 1_000) {
     throw new WakeupInputError(
       "wakeup_too_distant",
       `That time is ${Math.round(delayMs / 86_400_000)} days away, and a wake-up must be within ${MAXIMUM_WAKEUP_DELAY_SECONDS / 86_400} days`,
-      `Pick a time within one year from now. ${ACCEPTED_DELAY_UNITS_HINT}`,
+      `Pick a time within one year from now. ${formHint}`,
     );
   }
   return { dueAt, timezone };
@@ -516,6 +520,24 @@ export async function createWorkstreamWakeup(
   );
   if (existing) return { wakeupId: existing.wakeupId, created: false };
   throw new Error("workstream_wakeup_target_unavailable");
+}
+
+/**
+ * Undo an insert whose alarm could not be armed.
+ *
+ * Arming needs the row to exist, so the two cannot be one atomic step. When the
+ * second half fails, removing the first is what keeps the states honest: either
+ * a wake-up exists with an alarm behind it, or it does not exist and the caller
+ * was told so. A pending row with no alarm is the one outcome that lies.
+ */
+export async function deleteUnarmedWorkstreamWakeup(
+  env: Pick<Env, "DB">,
+  input: { workspaceId: string; wakeupId: string },
+): Promise<void> {
+  await env.DB.prepare(
+    `DELETE FROM workstream_wakeups
+      WHERE id = ? AND workspace_id = ? AND status = 'pending'`,
+  ).bind(input.wakeupId, input.workspaceId).run();
 }
 
 export async function cancelWorkstreamWakeup(
