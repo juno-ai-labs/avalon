@@ -235,3 +235,45 @@ Admission failures are retried through new batch windows only while an event's a
 A connector's normalized `title`/`summary` is not independently bounded to the API contract's suggestion and resource limits (`ActivitySuggestionSchema`/`ResourceSchema` in `packages/contracts`, 300 characters for `title`). Each connector truncates to its own cap before writing `activities` — GitHub's webhook titles cap at 500 — which is wider than what the response schema accepts. `WorkstreamService`/`WorkstreamRoom` defensively truncate at every read and write site that surfaces this data, but a new connector should not rely on that alone: keep any new title/summary truncation at or under 300/2,000 characters at the connector layer too, so a work stream never depends solely on a downstream guard to stay openable.
 
 Slack is a composable `resource` and `messaging_agent` connector. Workspace installations host the Agent, App Home, interactive surfaces, activity triggers, and deterministic automation delivery; the bot joins existing public channels after install/reconnect and new public channels when Slack reports their creation. Accepted DM and mention prompts receive an immediate `eyes` reaction through the shared activation hook before processing. Optional personal authorizations use Slack's hosted MCP server for user-scoped tools. Slack delivers bounded message, reaction, file-share, channel, and membership events. Agent-thread events follow the existing conversational path; events matching an exact active automation source are normalized into the shared regional activity pipeline. Unmatched activity is discarded before durable queueing and is never turned into a general Slack feed or mirrored corpus. See `docs/SLACK_INTEGRATION.md` for the product and data flow and `docs/SLACK_PERMISSIONS.md` for the complete OAuth scope inventory.
+
+## Changelog
+
+### 2026-08-11 — Declaring an activity type means saying whether a person should hear about it
+
+**What changed:** `ConnectorActivityTriggerDescriptor` carries a required
+`digestible`, and `defineConnectorActivityTriggers` takes the event types as a
+`{ digestible, operational }` partition rather than a flat list. A polling
+activity stream declares `digestible` too, and may only ever withhold — an
+activity reaches a digest when its event type says so *and* its stream agrees.
+Every registered connector is classified; the verdicts and their reasons are in
+[`connector-digestibility.md`](connector-digestibility.md), which this document
+owns.
+
+**Why:** A scheduled digest read the activity log directly, and the log could not
+tell a connector's news from its machinery. GitHub reports two events per check
+run and three per workflow run, so the first digest for a real workspace covered
+seventeen minutes of one morning and was 84% continuous integration. The
+judgement of which is which exists in exactly one place — the person adding the
+event type to a manifest — and it was never being asked for.
+
+**Considered and rejected:** A single `digestible: boolean` field on a flat list
+of event types. It would have been quieter to write, and it has no state meaning
+"nobody decided": a new event type would default to something, and whichever
+default was chosen would be wrong for most connectors. Two lists have no
+default, so adding an event type is answering the question. Also rejected:
+letting a stream's declaration grant digestibility as well as withhold it, which
+makes two sources of truth that can disagree, in a direction that ends in
+somebody's inbox.
+
+**Consequences:** Adding an activity type is now a compile error until it is
+classified, in both the manifest and
+[`connector-digestibility.md`](connector-digestibility.md) — `digestibility-doc.test.ts`
+enforces the second. Everything unknown is withheld: an unregistered connector,
+a dropped event type, an activity older than the declaration. That is deliberate
+and one-directional, but it means a misconfigured region withholds everything
+rather than failing loudly, which is why `activityIsDigestible` logs anything
+that is not an ordinary unregistered-connector error. The reasoning behind
+everything in this document before this entry is not recorded, and was not
+reconstructed.
+
+Shipped on `claude/empty-digest-investigation-qicglw`.

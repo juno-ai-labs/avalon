@@ -412,7 +412,7 @@ function activityIsDigestible(env: Env, activity: ActivityRow): boolean {
     // cursor over the discarded windows. That is indistinguishable from a quiet
     // week unless it says so, so it is logged rather than swallowed.
     if (!(error instanceof ConnectorError) || error.code !== "unsupported_capability") {
-      console.warn("Connector registry unavailable while classifying activity for digests", {
+      logWarn(env, "connector_registry_unavailable_for_digestibility", {
         workspace_id: activity.workspace_id,
         connector_type: activity.connector_type,
         reason: error instanceof Error ? error.message : "unknown",
