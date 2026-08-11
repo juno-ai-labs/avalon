@@ -1,3 +1,4 @@
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
@@ -1133,14 +1134,37 @@ describe('Avalon API wire adapter', () => {
   });
 });
 
+describe('socket ticket transport', () => {
+  it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
+    // The server keeps `?ticket=` in the URL for desktop builds released before
+    // the subprotocol scheme. Nothing here may open a socket with it, because
+    // Cloudflare records request URLs into stores this app cannot redact.
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=socket-ticket`,
+      ticket: 'socket-ticket',
+    })));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    });
+  });
+});
+
 describe('expired access-token recovery', () => {
   const renewed: DesktopSession = { ...session, accessToken: 'renewed-access-token-longer-than-twenty' };
-  const socketTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+  // What the endpoint sends, and what the client hands back after stripping the
+  // query ticket and attaching the handshake subprotocols. Keeping them
+  // separate stops the fixture from implying the server sends `protocols`.
+  const wireTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+  const parsedTicket = { ...wireTicket, protocols: socketTicketProtocols('socket-ticket') };
 
   function unauthorizedUntilRenewed() {
     return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
       new Headers(init?.headers).get('Authorization') === `Bearer ${renewed.accessToken}`
-        ? json(socketTicket)
+        ? json(wireTicket)
         : json({ error: { code: 'invalid_session', message: 'The session is invalid or expired' } }, { status: 401 }),
     ));
   }
@@ -1152,7 +1176,7 @@ describe('expired access-token recovery', () => {
     const renew = vi.fn().mockResolvedValue(renewed);
     api.setCredentialRenewal(renew);
 
-    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(socketTicket);
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(parsedTicket);
     expect(renew).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Authorization'))
@@ -1176,7 +1200,7 @@ describe('expired access-token recovery', () => {
     await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
     release(renewed);
 
-    await expect(pending).resolves.toEqual([socketTicket, socketTicket, socketTicket]);
+    await expect(pending).resolves.toEqual([parsedTicket, parsedTicket, parsedTicket]);
     expect(renew).toHaveBeenCalledOnce();
   });
 
@@ -1217,14 +1241,14 @@ describe('expired access-token recovery', () => {
     for (const code of ['invalid_session', 'authentication_required', 'session_revoked']) {
       const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
         new Headers(init?.headers).get('Authorization') === `Bearer ${renewed.accessToken}`
-          ? json(socketTicket)
+          ? json(wireTicket)
           : json({ error: { code } }, { status: 401 }),
       ));
       vi.stubGlobal('fetch', fetchMock);
       const api = new AvalonApi('https://api.avalon.test', session);
       api.setCredentialRenewal(vi.fn().mockResolvedValue(renewed));
 
-      await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(socketTicket);
+      await expect(api.getSocketTicket(workstreamId)).resolves.toEqual(parsedTicket);
       expect(fetchMock, code).toHaveBeenCalledTimes(2);
     }
   });

@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
+    "./socket-tickets": "./src/socket-tickets.ts",
     "./workstream-links": "./src/workstream-links.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts"

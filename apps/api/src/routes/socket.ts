@@ -7,7 +7,9 @@ import { SocketService } from "../services/socket-service";
 import { RealtimeTranscriptionService } from "../services/realtime-transcription-service";
 
 const params = z.object({ id: IdSchema });
-const query = z.object({ ticket: z.string().min(20).max(4_000) });
+// Optional: a client that presents its ticket through `Sec-WebSocket-Protocol`
+// sends no query at all, and the service rejects a request that carries neither.
+const query = z.object({ ticket: z.string().min(20).max(4_000).optional() });
 
 export const socketRoutes = new Hono<HonoAppEnv>();
 socketRoutes.get("/workstreams/:id", zValidator("param", params), zValidator("query", query), async (c) =>
