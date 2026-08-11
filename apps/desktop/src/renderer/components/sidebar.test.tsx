@@ -191,6 +191,27 @@ describe('Sidebar work-stream markers', () => {
     expect(document.querySelector('.sidebar-titlebar')).not.toBeNull();
   });
 
+  it('explains a work-stream dot color on hover', async () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('input', 'Board decision', 'needs_input')]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const dot = screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input');
+    fireEvent.pointerMove(dot as HTMLElement, { pointerType: 'mouse' });
+
+    expect(await screen.findByText('Needs input — the agent is waiting on an answer.')).toBeVisible();
+  });
+
   it('renders only populated recency sections and keeps status from changing row order', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-31T20:00:00.000Z'));
