@@ -8,6 +8,7 @@ import {
   ChevronsLeft,
   Check,
   CirclePause,
+  Cog,
   Copy,
   EyeOff,
   FileStack,
@@ -214,14 +215,25 @@ function WorkstreamRow({
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row workstream-row', isActive && 'is-active', workstream.hasUnread && 'is-unread')}
+            className={({ isActive }) => clsx(
+              'sidebar-row workstream-row',
+              isActive && 'is-active',
+              workstream.hasUnread && 'is-unread',
+              // Machinery the reader has opted into seeing. Dimmed rather than
+              // badged, so it reads as one level below the work it sits beside
+              // without adding another thing to decode.
+              workstream.systemKind && 'is-system',
+            )}
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
               <StatusDot compact status={workstream.harnessStatus} tooltip />
             </span>
             <span className="sidebar-row-main">
-              <span className="sidebar-row-title">{workstream.title}</span>
+              <span className="sidebar-row-title">
+                {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
+                {workstream.title}
+              </span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">
                   <span className="sidebar-row-hint-text">

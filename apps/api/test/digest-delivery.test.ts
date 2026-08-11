@@ -44,9 +44,9 @@ function seededDatabase(status = "running"): DatabaseSync {
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${WORKSPACE}', '${OWNER}', 'owner', 'active', '2026-01-01');
     INSERT INTO digest_schedules
-      (id, workspace_id, user_id, day_mask, timezone, enabled, execution_principal_json,
+      (id, workspace_id, user_id, day_mask, enabled, execution_principal_json,
        version, created_at, updated_at)
-    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, 'Europe/London', 1,
+    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, 1,
             '{"type":"user","userId":"${OWNER}"}', 1, '2026-01-01', '2026-01-01');
     INSERT INTO digest_delivery_targets
       (id, workspace_id, digest_schedule_id, user_id, target_type, email_address,

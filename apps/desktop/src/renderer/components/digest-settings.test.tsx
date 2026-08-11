@@ -47,6 +47,8 @@ function apiWith(overrides: Partial<AvalonApi> = {}): {
   };
 }
 
+const onEditTimezone = vi.fn();
+
 function renderSettings(
   api: AvalonApi,
   connections: WorkstreamConnection[] = [],
@@ -54,7 +56,7 @@ function renderSettings(
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <DigestSettings api={api} connections={connections} timezoneOptions={['Europe/London', 'UTC']} />
+      <DigestSettings api={api} connections={connections} onEditTimezone={onEditTimezone} />
     </QueryClientProvider>,
   );
 }
@@ -123,7 +125,6 @@ describe('DigestSettings', () => {
       enabled: true,
       days: [0, 6],
       times: [540],
-      timezone: 'Europe/London',
       deliveryTargets: [{ type: 'email', connectionId: null }],
     });
   });

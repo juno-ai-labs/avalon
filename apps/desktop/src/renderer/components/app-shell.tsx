@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useUiStore } from '../lib/ui-store';
 import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
@@ -71,9 +72,13 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enabled: Boolean(api),
     staleTime: 20_000,
   });
+  // Debugging widens the sidebar to include system work streams — a digest
+  // run's transcript and anything like it. The flag is part of the query key so
+  // toggling the preference refetches rather than serving the narrower list.
+  const debugEnabled = useDebugEnabled();
   const workstreams = useQuery({
-    queryKey: ['workstreams'],
-    queryFn: ({ signal }) => api!.getWorkstreams(signal),
+    queryKey: ['workstreams', debugEnabled],
+    queryFn: ({ signal }) => api!.getWorkstreams(signal, debugEnabled),
     enabled: Boolean(api),
     staleTime: 10_000,
     refetchInterval: 15_000,

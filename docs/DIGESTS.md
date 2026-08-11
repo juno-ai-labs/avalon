@@ -45,8 +45,9 @@ knew what happened wrote `title` and `body` at the time.
 It is resolved against the reader at read time, in
 `listActivityEventsForUser` and nowhere else. Storing recipients instead would
 freeze the audience at write time: someone added to a work stream today would
-never see what happened in it yesterday. Hidden system work streams are excluded
-there too, so digest machinery can never appear inside a digest.
+never see what happened in it yesterday. System work streams are excluded there
+too, so digest machinery can never appear inside a digest — visible in the
+sidebar or not.
 
 **`activity_event_targets` is involvement, not audience.** Audience says who
 *may* see an event; a target row says the event is *about* someone — `mentioned`,
@@ -84,9 +85,40 @@ Producers today:
 
 ## The digest
 
-One digest per person per workspace: a set of days, a set of times, a timezone,
-and a set of destinations. It deliberately cannot vary times per day — that is
-one integer day mask and a set of times rather than a seven-way join.
+One digest per person per workspace: a set of days, a set of times, and a set of
+destinations. It deliberately cannot vary times per day — that is one integer
+day mask and a set of times rather than a seven-way join.
+
+**A digest is on by default**, for people who already exist and for anyone who
+joins later: weekdays at 09:00 in their own timezone, by email. Nobody should
+have to find a settings screen to be told what they missed.
+
+**There is no digest timezone.** A digest's times are wall-clock times in its
+owner's own day, and `users.timezone` already says when that is. A second copy
+would be a second answer to the same question, and the two would disagree the
+first time somebody moved. The derived `schedules` rows carry the resolved zone
+because that is the scheduler's contract, and `rebuildDigestSchedulesForTimezone`
+re-derives them whenever the account timezone changes — the configuration does
+not change, only the instants it resolves to. The settings screen shows the zone
+and links to Account rather than offering a second control.
+
+### Who gets one
+
+`reconcileDigestDefaults` runs on the ordinary cron and makes two things true.
+It is where "on by default" is implemented, rather than at the four places a
+membership is created: a reconciler covers the path someone adds next as well as
+the four that exist today, and repairs a half-written save instead of leaving it.
+
+1. **An active member with no digest gets the default.** Absence is unambiguous —
+   switching a digest off keeps its row with `enabled = 0` — so this can never
+   resurrect something somebody turned off. A member with no account address is
+   skipped, because the default destination is that address.
+2. **An enabled digest with days and times but no `schedules` rows gets them.**
+   That is the state a fresh default lands in, and the state a save leaves if it
+   fails between writing the configuration and deriving the rows.
+
+Both passes are idempotent and bounded per tick, and the workspace alarm is
+refreshed once per workspace rather than once per digest.
 
 ### Scheduling
 
@@ -132,18 +164,31 @@ have already been told"; a read waterline means "what you have read". Collapsing
 them would let skimming an email on a phone silently clear the unread badges in
 the app.
 
-### The hidden work stream
+### The system work stream
 
 The agent loop is work-stream shaped end to end — the transcript is `messages`,
 and compaction, tool invocations, artifacts and the realtime room all key off
-`workstream_id`. Running the *normal* loop therefore means having a work stream.
+`workstream_id`. Running the *normal* loop therefore means having a work stream,
+and reusing that abstraction is the point: a digest run gets compaction, tool
+receipts, the realtime room and the transcript for free.
 
-`workstreams.system_kind` marks the ones that are machinery: `NULL` is a normal,
-user-visible work stream, and any non-`NULL` value is filtered out of every
-listing surface. A digest's work stream is created once per person, not once per
-run, so the sidebar gains nothing and a later digest can see what earlier ones
-already said. The recipient is its sole participant, which is what makes every
-tool the run reaches for resolve against their own access.
+`workstreams.system_kind` marks the ones that are machinery. `NULL` is ordinary
+work; any non-`NULL` value is a subsystem's own work stream. Two rules apply, and
+they are different questions:
+
+- **Who may see it** — only an active participant. A digest's work stream has
+  exactly one, the recipient, which is also what makes every tool the run reaches
+  for resolve against their own access. Another member cannot open it even
+  knowing its id, because the brief inside is assembled from private activity.
+- **Whether it is shown** — off by default. `GET /workstreams?includeSystem=true`
+  asks for them, and the desktop sends it when Application → Developer → **Debug
+  enabled** is on. The flag widens what is listed, never who may read it.
+
+Shown, they render one level down: dimmed, with a small gear, full opacity on
+hover and while active — hierarchy should not cost legibility once you are in it.
+
+One work stream per person, not per run, so nothing accumulates and a later
+digest can see what earlier ones already said.
 
 ### Delivery
 
@@ -167,12 +212,56 @@ settled. A destination the provider permanently rejects is moved to
 
 ### The email
 
-`digest-email-content.ts` renders the run's Markdown to email-safe HTML. A
-general Markdown library is the wrong tool: mail clients ignore most of what one
-emits, several strip `<style>` entirely, and rendering raw HTML would mean
-rendering model output into an email. The renderer covers the subset a digest
-uses, escapes everything before a single tag is added, and only ever emits an
-`href` it built itself. Unknown syntax degrades to visible text.
+`digest-email-content.ts` renders the run's Markdown to email-safe HTML.
+
+It is dark, and deliberately only dark: the email is a copy of an Avalon surface
+and the app has one appearance. Every colour is the app's own token from
+`app.css`, written inline — a mail client will strip a `<style>` block, and
+several repaint a page that declares a light scheme, so the palette is stated on
+the elements themselves and `color-scheme: dark` is declared three ways.
+
+The structure is: preheader (what a phone shows beside the subject, leading with
+the count that decides whether this gets opened now), wordmark, title and
+occurrence, count pills with the "for you" pill in brand, the body, a primary
+action, and a footer. Layout is tables and inline styles only — no flexbox, no
+grid, nothing a 2007 renderer has to guess at.
+
+A general Markdown library is the wrong tool here: clients ignore most of what
+one emits, and rendering raw HTML would mean rendering model output into an
+email. The renderer covers the subset a digest uses — `##` sections with a
+brand rule, `###` subheads, bullets, links, bold, inline code, blockquote — and
+escapes everything before a single tag is added, so an `href` can only ever be
+one it built itself. Unknown syntax degrades to visible text.
+
+The brief names exactly that subset, so what the model writes and what the
+template styles are the same list. Each source group carries its canonical link,
+so the digest points at the real thing rather than describing it.
+
+### Looking at it
+
+`scripts/preview-digest-email.mjs` renders the template for every active member
+of a workspace and writes one HTML file each. Run it through `tsx`, because it
+imports the real template rather than a copy:
+
+```bash
+pnpm exec tsx scripts/preview-digest-email.mjs            # the local D1
+pnpm exec tsx scripts/preview-digest-email.mjs --db /tmp/global.sqlite
+```
+
+It prefers a digest that has actually been delivered to that person, and falls
+back to a sample body chosen to stress the template — a priority section, links,
+a blockquote, bold, and one bullet long enough to wrap. **Every visible change to
+the template should be looked at here before it is called done**; a test proves
+the markup contains a string, not that the hierarchy reads.
+
+For a remote workspace, export its D1 first — Wrangler holds those credentials,
+this script does not:
+
+```bash
+pnpm --filter @avalon/api exec wrangler d1 export DB --remote \
+  --config wrangler.global.jsonc --output /tmp/global.sql
+sqlite3 /tmp/global.sqlite < /tmp/global.sql
+```
 
 ## Where the code is
 
@@ -185,3 +274,4 @@ uses, escapes everything before a single tag is added, and only ever emits an
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
+| Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |

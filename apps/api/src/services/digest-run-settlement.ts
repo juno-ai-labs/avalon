@@ -40,9 +40,8 @@ export async function settleDigestRun(
   const delivery = await env.DB.prepare(
     `SELECT d.id, d.workspace_id, d.user_id, d.planned_for, d.event_count,
             d.highlight_count, d.status,
-            s.timezone, u.name AS user_name, w.name AS workspace_name
+            u.timezone, u.name AS user_name, w.name AS workspace_name
        FROM digest_deliveries d
-       JOIN digest_schedules s ON s.id = d.digest_schedule_id
        JOIN users u ON u.id = d.user_id
        JOIN workspaces w ON w.id = d.workspace_id
       WHERE d.id = ?`,

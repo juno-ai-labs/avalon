@@ -156,7 +156,14 @@ export const WorkstreamSchema = z.object({
   lastActivityAt: TimestampSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
-  archivedAt: TimestampSchema.nullable()
+  archivedAt: TimestampSchema.nullable(),
+  /**
+   * Non-null on a work stream that exists so a subsystem can use the agent loop
+   * rather than because somebody started it. Listing surfaces leave these out
+   * unless the reader has asked to see them, and render them as secondary when
+   * they do.
+   */
+  systemKind: z.enum(["digest"]).nullable().default(null)
 });
 
 export const ExternalActorSchema = z.object({
@@ -920,6 +927,10 @@ export const DigestScheduleSchema = z.object({
   /** Deduplicated and ascending, so the UI never has to sort or dedupe. */
   days: z.array(DigestWeekdaySchema).max(7),
   times: z.array(DigestMinuteOfDaySchema).max(12),
+  /**
+   * Read-only. A digest runs in its owner's own day, so this mirrors their
+   * account timezone rather than storing a second one that could disagree.
+   */
   timezone: IanaTimezoneSchema,
   deliveryTargets: z.array(DigestDeliveryTargetSchema).max(8),
   nextRunAt: TimestampSchema.nullable(),
@@ -935,7 +946,6 @@ export const UpdateDigestScheduleRequestSchema = z.object({
   enabled: z.boolean(),
   days: z.array(DigestWeekdaySchema).max(7),
   times: z.array(DigestMinuteOfDaySchema).max(12),
-  timezone: IanaTimezoneSchema,
   deliveryTargets: z.array(z.object({
     type: DigestDeliveryTargetTypeSchema,
     connectionId: IdSchema.nullable().default(null),

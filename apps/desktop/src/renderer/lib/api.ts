@@ -345,6 +345,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     firstUnreadSequenceNumber: workstream.firstUnreadSequenceNumber,
     lastActivityAt: workstream.lastActivityAt,
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
+    ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
     preview: workstream.objective,
   };
 }
@@ -827,7 +828,6 @@ export class AvalonApi {
     enabled: boolean;
     days: number[];
     times: number[];
-    timezone: string;
     deliveryTargets: Array<{ type: AutomationDeliveryTargetType; connectionId: string | null }>;
   }): Promise<DigestSchedule> {
     return this.request('/digest', { method: 'PUT', body: input, schema: digestScheduleSchema });
@@ -977,8 +977,15 @@ export class AvalonApi {
     };
   }
 
-  async getWorkstreams(signal?: AbortSignal): Promise<WorkstreamSummary[]> {
-    const page = await this.request('/workstreams?limit=250', { schema: wireWorkstreamPageSchema, signal });
+  /**
+   * `includeSystem` widens what the sidebar shows, not who may see it: the API
+   * still only returns a system work stream to someone who participates in it.
+   */
+  async getWorkstreams(signal?: AbortSignal, includeSystem = false): Promise<WorkstreamSummary[]> {
+    const page = await this.request(
+      `/workstreams?limit=250${includeSystem ? '&includeSystem=true' : ''}`,
+      { schema: wireWorkstreamPageSchema, signal },
+    );
     return page.items.map(mapWorkstreamSummary);
   }
 
