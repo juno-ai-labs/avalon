@@ -1,6 +1,7 @@
 import type { ClientFeatureFlags } from "@avalon/contracts";
 import type { Env, IdentityAuthContext } from "../env";
 import { logStructuredEvent } from "../observability/logger";
+import { loadFlagTargetingAttributes } from "./flag-targeting-attributes";
 
 /**
  * The Flagship flags a client is allowed to see, evaluated per signed-in
@@ -15,101 +16,17 @@ import { logStructuredEvent } from "../observability/logger";
  * a mistyped value all resolve to off.
  *
  * **Who gets a feature is a Flagship targeting rule, never a condition in this
- * file.** This module's whole job is to describe the person accurately enough
- * for those rules to be written against, and to fail closed when it cannot. A
- * cohort encoded here would be invisible from the Flagship console, would need
- * a deploy to change, and would silently override whatever the flag says. See
+ * file.** A cohort encoded here would be invisible from the Flagship console,
+ * would need a deploy to change, and would silently override whatever the flag
+ * says. What the rules match on comes from `flag-targeting-attributes.ts`, the
+ * same loader the model flags evaluate through — a client flag describes its
+ * subject in the one vocabulary rules are already written in, and inherits the
+ * boundary that keeps a person's data out of a flag-targeting system. See
  * `docs/FEATURE_FLAGS.md` for the rules each flag is provisioned with.
  */
 
 /** Flagship flag key behind Application → Developer. Boolean; defaults to off. */
 export const DEVELOPER_SETTINGS_FLAG_KEY = "developer-settings";
-
-interface FlagSubject {
-  email: string | null;
-  platformUserId: string | null;
-  createdAt: string | null;
-}
-
-async function flagSubject(env: Env, auth: IdentityAuthContext): Promise<FlagSubject> {
-  try {
-    const row = await env.DB.prepare(
-      "SELECT email, platform_user_id, created_at FROM users WHERE id = ?",
-    )
-      .bind(auth.userId)
-      .first<{ email: string | null; platform_user_id: string | null; created_at: string | null }>();
-    return {
-      email: row?.email ?? null,
-      platformUserId: row?.platform_user_id ?? null,
-      createdAt: row?.created_at ?? null,
-    };
-  } catch (error) {
-    // An unreadable account is not a reason to fail the request, and not a
-    // reason to invent attributes either. Evaluation continues with the
-    // identity alone, so a rule keyed on an attribute that is missing simply
-    // does not match and the flag serves its default.
-    logStructuredEvent(env, "warn", "client_flag_subject_unreadable", {
-      user_id: auth.userId,
-      error_name: error instanceof Error ? error.name : "UnknownError",
-    });
-    return { email: null, platformUserId: null, createdAt: null };
-  }
-}
-
-/** The domain of `email`, lower-cased, or `null` when it has no single one. */
-function emailDomain(email: string): string | null {
-  const parts = email.trim().toLowerCase().split("@");
-  return parts.length === 2 && parts[0] && parts[1] ? parts[1] : null;
-}
-
-/**
- * Everything a targeting rule may match a client flag on. Attributes are
- * omitted rather than sent empty, so `when=emailDomain equals …` cannot match
- * an account whose address could not be read.
- *
- * Add an attribute here rather than adding a condition to a resolver: this is
- * the vocabulary every client flag's rules are written in, and it is the whole
- * of what Flagship knows about the person.
- *
- * | Attribute | Value |
- * | --- | --- |
- * | `platformUserId` | The person, stable across regions. **Bucket percentage rollouts by this.** |
- * | `regionalUserId` | Their `users` row in *this* region — a different value per region for one person |
- * | `email` | The full address, lower-cased, for targeting one person |
- * | `emailDomain` | Lower-cased domain, for targeting an organization such as staff |
- * | `regionalAccountJoinedAt` | When they first appeared in *this* region, not the age of the account |
- * | `workspaceId` | Present once an organization is chosen |
- * | `workspaceRole` | `owner`, `admin`, or `member`, likewise |
- * | `region` | `global` or `eu` |
- * | `appEnv` | `development`, `test`, `staging`, or `production` |
- *
- * The two identity attributes are separate because `users.id` and
- * `users.created_at` are **regional** — see `docs/REGIONALIZATION.md`. One person
- * with workspaces in both regions has two rows, so a rollout bucketed by the
- * regional id would put them in different buckets on each, and a tenure rule
- * would read the date they joined that region. `platform_user_id` is the
- * identity the Global control plane establishes once and neither region may
- * change; it is absent only for an account that predates the control plane, and
- * a rule keyed on it then does not match rather than matching the wrong person.
- */
-export function clientFlagEvaluationContext(
-  env: Env,
-  auth: IdentityAuthContext,
-  subject: FlagSubject,
-): FlagshipEvaluationContext {
-  const domain = subject.email ? emailDomain(subject.email) : null;
-  return {
-    regionalUserId: auth.userId,
-    region: env.AVALON_REGION,
-    appEnv: env.APP_ENV,
-    ...(subject.platformUserId ? { platformUserId: subject.platformUserId } : {}),
-    ...(subject.email ? { email: subject.email.trim().toLowerCase() } : {}),
-    ...(domain ? { emailDomain: domain } : {}),
-    ...(subject.createdAt ? { regionalAccountJoinedAt: subject.createdAt } : {}),
-    ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
-    ...(auth.role ? { workspaceRole: auth.role } : {}),
-  };
-}
 
 /**
  * Evaluate one boolean client flag. Off unless Flagship says otherwise, and
@@ -159,12 +76,13 @@ async function resolveBooleanClientFlag(
   const enabled = details.value === true;
   // The variant and reason are what confirm a targeting rule actually matched
   // this person, which is the only way to tell a rule that excluded them from
-  // one that never fired. The domain is logged and the address is not: it is
-  // enough to read a cohort rule by, and it identifies nobody.
+  // one that never fired. The attribute *names* say whether the fact a rule is
+  // written against was even sent — a rule on a missing attribute silently
+  // never matches — and the names carry none of the values.
   logStructuredEvent(env, "debug", "client_flag_resolved", {
     user_id: auth.userId,
     flag_key: flagKey,
-    email_domain: context.emailDomain,
+    attributes: Object.keys(context).sort(),
     variant: details.variant,
     reason: details.reason,
     enabled,
@@ -175,12 +93,29 @@ async function resolveBooleanClientFlag(
 /**
  * Every client-visible flag, in the shape `GET /feature-flags` returns, all
  * evaluated against one description of the signed-in person.
+ *
+ * The context follows the same shape as an agent evaluation: the attributes
+ * `flag-targeting-attributes.ts` loads for the subject, with the caller's
+ * identity spread over the top so nothing read from D1 can redefine an id a
+ * percentage rollout buckets on. A client flag always knows a `userId` — there
+ * is a person asking, which is not true of most agent evaluations — so the
+ * `user*` attributes are always available to a rule here.
  */
 export async function resolveClientFeatureFlags(
   env: Env,
   auth: IdentityAuthContext,
 ): Promise<ClientFeatureFlags> {
-  const context = clientFlagEvaluationContext(env, auth, await flagSubject(env, auth));
+  const attributes = await loadFlagTargetingAttributes(env, {
+    userId: auth.userId,
+    ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+  });
+  const context: FlagshipEvaluationContext = {
+    ...attributes,
+    region: env.AVALON_REGION,
+    appEnv: env.APP_ENV,
+    userId: auth.userId,
+    ...(auth.workspaceId ? { workspaceId: auth.workspaceId } : {}),
+  };
   return {
     developerSettings: await resolveBooleanClientFlag(
       env,

@@ -208,6 +208,7 @@ did. Each id the caller passes brings its facts with it:
 | `workspaceOwnerEmailDomain` | string | Email domain of the user who created the workspace | `workspaceId` |
 | `userEmailDomain` | string | Email domain of the user the evaluation is for | `userId` |
 | `userRole` | string | `owner`, `admin`, or `member` **in the workspace being evaluated** | `userId` + `workspaceId` |
+| `userPlatformId` | string | The person, stable across regions. **Bucket a per-person rollout by this, not by `userId`** | `userId` |
 | `workstreamOrigin` | string | `ad_hoc` or `automation` | `workstreamId` |
 | `workstreamScope` | string | `personal` or `workspace` — who may read it | `workstreamId` |
 | `workstreamCreatedByUserId` | string | Who created it; absent when an automation did | `workstreamId` |
@@ -218,7 +219,18 @@ did. Each id the caller passes brings its facts with it:
 An attribute whose fact is unknown is **omitted rather than sent empty**, so a
 rule can never match a placeholder. The consequence worth knowing: a rule on an
 attribute that was not sent silently never matches, which is why
-`agent_model_flag_resolved` logs the attribute *names* that were sent.
+`agent_model_flag_resolved` and `client_flag_resolved` log the attribute *names*
+that were sent.
+
+`userPlatformId` is the one to reach for when a rollout is per *person* rather
+than per workspace. `userId` names a regional `users` row, and one person with
+workspaces in both regions has one in each — bucketing on it would place them in
+a different bucket per region and hand them a half-rolled-out feature on one of
+them. The platform id is established once by the Global control plane and is
+immutable in both regions ([`REGIONALIZATION.md`](REGIONALIZATION.md)). It is
+absent only for an account predating that control plane, and an absent attribute
+does not match, so such an account sits out the rollout rather than landing in
+the wrong half of it.
 
 `workspaceOwnerEmailDomain` exists because it is the only domain most
 evaluations can have. A work-stream run, a subagent, HyperSight, and the
@@ -335,54 +347,33 @@ it describes the person, evaluates the flag, and serves the answer. Changing who
 gets the section is a flag change with a changelog entry, not a deploy, and the
 console shows the whole truth about who is in.
 
-### The evaluation context
+### What a client flag's rules match on
 
-The resolver's real job is that description. Every attribute a rule may match a
-client flag on comes from `clientFlagEvaluationContext`:
+The same [identity](#identity) and [attributes](#attributes) an agent
+evaluation sends, from the same loader, with identity spread over the top so
+nothing read from D1 can redefine an id a rollout buckets on. There is no second
+vocabulary: a rule written for a client flag reads like every other rule, and
+the boundary in [what may become an attribute](#what-may-become-an-attribute)
+applies unchanged — the staff scope is `userEmailDomain`, never an address.
 
-| Attribute | Value |
-| --- | --- |
-| `platformUserId` | The person, stable across regions. **Bucket percentage rollouts by this.** |
-| `regionalUserId` | Their `users` row in *this* region — a different value per region for one person |
-| `email` | The full address, lower-cased, for targeting one person |
-| `emailDomain` | Lower-cased domain, for targeting an organization such as staff |
-| `regionalAccountJoinedAt` | When they first appeared in *this* region, not the age of the account |
-| `workspaceId` | Present once an organization is chosen |
-| `workspaceRole` | `owner`, `admin`, or `member`, likewise |
-| `region` | `global` or `eu` |
-| `appEnv` | `development`, `test`, `staging`, or `production` |
-
-**Two identity attributes, and the names are the warning.** `users.id` and
-`users.created_at` are regional, per [`REGIONALIZATION.md`](REGIONALIZATION.md):
-one person with workspaces in both regions has a row in each. Bucketing a
-rollout by `regionalUserId` would put them in a different bucket per region, so
-they would see the feature on one and not the other; a tenure rule on
-`regionalAccountJoinedAt` reads when they arrived in that region rather than how
-old the account is. `platformUserId` is the identity the Global control plane
-establishes once and neither region may change — it is the one to bucket by. It
-is absent only for an account that predates the control plane, and a rule keyed
-on a missing attribute does not match rather than matching the wrong person.
-
-That is the general rule: an attribute is **omitted rather than sent empty**
-when it is unknown — before an organization is chosen, when the account
-predates the control plane, or when the row cannot be read. An unreadable
-account therefore falls out of every cohort instead of into one, which is the
-whole of the fail-closed behavior on the targeting side. There is no special
-case for it.
-
-Every client flag is evaluated against one context built once per request, so
-two flags can never disagree about who is asking. Widening what rules can say
-means adding a row here — not adding a condition to a resolver.
+The one difference is what is reliably *present*. A client flag always knows a
+`userId`, because there is a person asking rather than a workspace running
+something, so `userEmailDomain`, `userRole`, and `userPlatformId` are always
+available to a rule here. `workstreamId` never is, so no `workstream*` attribute
+appears. `workspaceId` is present only once an organization has been chosen.
 
 Everything that is not an explicit `true` resolves to off: no binding, a binding
 that throws, a flag that does not resolve, a non-boolean value.
 `resolveClientFeatureFlags` never throws, so a Flagship outage cannot fail the
-poll; it just leaves the answer off.
+poll; it just leaves the answer off. Attribute loading fails the same way — an
+unreadable account yields no `user*` attributes rather than an error, so a
+cohort rule stops matching instead of the request failing.
 
-A resolution logs `client_flag_resolved` at `debug` with the served `variant`
-and `reason`, which is how you tell a rule that excluded someone from one that
-never fired. The `email_domain` is logged and the address is not — enough to
-read a cohort rule by, and it identifies nobody.
+A resolution logs `client_flag_resolved` at `debug` with the served `variant`,
+the `reason`, and the attribute *names* that were sent. The variant and reason
+tell a rule that excluded someone from one that never fired; the names tell you
+whether the fact the rule is written against was even available. Neither carries
+a value.
 
 ### The desktop half
 
@@ -496,7 +487,7 @@ the flag:
 
 ```bash
 pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
-  --add-rule "serve=on; when=emailDomain equals juno-labs.com"
+  --add-rule "serve=on; when=userEmailDomain equals juno-labs.com"
 ```
 
 Leave the default variation at `off` rather than promoting `on` with the rule
@@ -504,21 +495,23 @@ attached: the default is what an account the rule does not match falls through
 to, so `set … -V on` would hand the section to everyone regardless of the rule.
 
 To stage it among staff, roll out within that rule and bucket by
-`platformUserId` — not `regionalUserId`, which would bucket a person with
-workspaces in both regions twice. There is no workspace worth keeping consistent
-here, because the section describes one person's device:
+`userPlatformId` — not `userId`, which would bucket a person with workspaces in
+both regions twice. There is no workspace worth keeping consistent here, because
+the section describes one person's device:
 
 ```bash
 pnpm exec wrangler flagship flags rollout <APP_ID> developer-settings \
-  --to on --from off --percentage 50 --by platformUserId
+  --to on --from off --percentage 50 --by userPlatformId
 ```
 
 To hand it to one person outside a cohort — a contractor, a support session —
-add a second rule on `email` rather than editing any code:
+target them by their platform id rather than by address, which is not an
+attribute and never will be ([what may become an
+attribute](#what-may-become-an-attribute)):
 
 ```bash
 pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
-  --add-rule "serve=on; when=email equals someone@example.com"
+  --add-rule "serve=on; when=userPlatformId equals <platform-user-id>"
 ```
 
 Withdrawing the section from everyone is `set … -V off`, which overrides every
