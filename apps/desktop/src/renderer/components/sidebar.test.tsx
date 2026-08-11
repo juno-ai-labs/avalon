@@ -207,7 +207,8 @@ describe('Sidebar work-stream markers', () => {
     );
 
     const dot = screen.getByRole('link', { name: /Board decision/u }).querySelector('.status-needs_input');
-    fireEvent.pointerMove(dot as HTMLElement, { pointerType: 'mouse' });
+    if (!dot) throw new Error('the work-stream row rendered no needs-input status dot');
+    fireEvent.pointerMove(dot, { pointerType: 'mouse' });
 
     expect(await screen.findByText('Needs input — the agent is waiting on an answer.')).toBeVisible();
   });

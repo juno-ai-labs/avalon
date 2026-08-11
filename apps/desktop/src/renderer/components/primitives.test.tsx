@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvalonMark, DropdownSelect, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
@@ -9,6 +9,17 @@ vi.mock('thinking-orbs', () => ({
   ),
 }));
 
+afterEach(() => vi.unstubAllGlobals());
+
+/** Radix positions a tooltip with a ResizeObserver, which jsdom does not implement. */
+function stubResizeObserver(): void {
+  vi.stubGlobal('ResizeObserver', class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  });
+}
+
 describe('AvalonMark', () => {
   it('renders the shared mask-backed brand mark without the retired starburst SVG', () => {
     const { container } = render(<AvalonMark className="test-mark" />);
@@ -16,6 +27,13 @@ describe('AvalonMark', () => {
     expect(container.querySelector('svg')).toBeNull();
   });
 });
+
+/** The indicator wrapping a compact dot's screen-reader label — the tooltip trigger. */
+function statusIndicator(label: string): Element {
+  const indicator = screen.getByText(label).closest('.status-indicator');
+  if (!indicator) throw new Error(`no status indicator around "${label}"`);
+  return indicator;
+}
 
 describe('StatusDot', () => {
   it('exposes status text even in compact color-dot mode', () => {
@@ -41,19 +59,14 @@ describe('StatusDot', () => {
   });
 
   it('explains what the color means on hover when asked for a tooltip', async () => {
-    vi.stubGlobal('ResizeObserver', class {
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    });
+    stubResizeObserver();
     render(
       <Tooltip.Provider>
         <StatusDot compact status="failed" tooltip />
       </Tooltip.Provider>,
     );
 
-    const indicator = screen.getByText('Needs intervention').parentElement as HTMLElement;
-    fireEvent.pointerMove(indicator, { pointerType: 'mouse' });
+    fireEvent.pointerMove(statusIndicator('Needs intervention'), { pointerType: 'mouse' });
 
     expect(await screen.findByText('Needs intervention — the last run failed and stopped.')).toBeVisible();
   });
@@ -65,8 +78,7 @@ describe('StatusDot', () => {
       </Tooltip.Provider>,
     );
 
-    const indicator = screen.getByText('Needs intervention').parentElement as HTMLElement;
-    fireEvent.pointerMove(indicator, { pointerType: 'mouse' });
+    fireEvent.pointerMove(statusIndicator('Needs intervention'), { pointerType: 'mouse' });
 
     expect(screen.queryByText(/the last run failed and stopped/u)).not.toBeInTheDocument();
   });
@@ -74,11 +86,7 @@ describe('StatusDot', () => {
 
 describe('SocketStatusIndicator', () => {
   it('explains the current live-update state from the compact header indicator', async () => {
-    vi.stubGlobal('ResizeObserver', class {
-      observe(): void {}
-      unobserve(): void {}
-      disconnect(): void {}
-    });
+    stubResizeObserver();
     const { rerender } = render(
       <Tooltip.Provider delayDuration={0}>
         <SocketStatusIndicator state="reconnecting" />
