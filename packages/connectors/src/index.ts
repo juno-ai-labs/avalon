@@ -285,8 +285,10 @@ const GOOGLE_DRIVE_FILE_TYPE_TOOL: Record<
   presentation: { remedy: "Use drive.export to get its text.", capability: "drive.read" },
   form: { remedy: "Only drive.get_metadata can see anything of a form.", capability: "drive.read" },
   drawing: { remedy: "Use drive.export to get its contents.", capability: "drive.read" },
-  // Deliberately no remedy: Drive search has no folder filter, so pointing a
-  // caller at it would be advice that cannot be followed.
+  // Deliberately no remedy. `drive.search` can find a folder — `fileType:
+  // "folder"` matches one — but there is no tool that reads what is *inside*
+  // one, which is the only thing a caller who reached here wanted. Naming a
+  // tool that returns the folder again would be advice that goes nowhere.
   folder: null,
   pdf: { remedy: "Read it with drive.download, which returns bounded text.", capability: "drive.read" },
 };
