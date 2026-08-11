@@ -34,6 +34,7 @@ import { desktopBridge } from '../lib/platform';
 import { createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
+import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useUiStore } from '../lib/ui-store';
 import { insertMessage, mergeCanonicalTranscript, nextTranscriptSequence, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import type { BackgroundTask, ElicitationData, HarnessRunMetadata, HarnessStatus, HyperSight, HyperSightPreference, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource, WorkstreamSummary } from '../lib/types';
@@ -440,6 +441,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   const attachmentDraft = useFileAttachments(api);
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
+  // The composer does not take focus when a work stream opens, so a paste that
+  // lands on the document reaches the same draft the transcript and rail accept
+  // files into.
+  useWindowFilePaste(attachmentDraft.addFiles);
   const loadAttachmentContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => api!.getResourceContent(resourceId, signal),
     [api],
