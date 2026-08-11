@@ -831,6 +831,13 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("completed"),
+    /**
+     * The draft subscription this turn wrote. It is the automation's real id
+     * from the first turn onward — the row the sidebar lists, the next turn
+     * updates, and creation promotes — so the client adopts it rather than
+     * keeping the key it opened the conversation with.
+     */
+    draftId: IdSchema,
     draft: AutomationDraftSchema,
     assistantMessage: z.string().min(1)
   }),
@@ -845,6 +852,24 @@ export const AutomationDraftStreamEventSchema = z.discriminatedUnion("type", [
     })
   })
 ]);
+
+export const AutomationCompilerMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.string()
+});
+
+/**
+ * A draft automation as the compiler left it: the transcript so far, the
+ * resources it was given, and the draft it last produced. It is what the
+ * builder screen needs to pick a draft back up out of the sidebar, and exactly
+ * what the next compile turn sends back.
+ */
+export const AutomationDraftStateSchema = z.object({
+  draftId: IdSchema,
+  messages: z.array(AutomationCompilerMessageSchema),
+  attachmentIds: z.array(IdSchema).default([]),
+  draft: AutomationDraftSchema
+});
 
 export const AutomationSummarySchema = z.object({
   id: IdSchema,
@@ -1127,6 +1152,13 @@ export const AnswerElicitationRequestSchema = z.union([
   }).strict()
 ]);
 export const CreateAutomationRequestSchema = z.object({
+  /**
+   * The draft this automation was built from. Creating promotes that row in
+   * place — same id, same sidebar position — instead of leaving the draft
+   * behind beside the automation it became. Absent only when an automation is
+   * created without ever having been a draft.
+   */
+  draftId: IdSchema.optional(),
   draft: AutomationDraftSchema,
   scope: ScopeSchema,
   defaultPluginIds: z.array(ModelPluginIdSchema).default([]),
@@ -1153,8 +1185,14 @@ export const CreateAutomationRequestSchema = z.object({
   }
 });
 export const CompileAutomationRequestSchema = z.object({
+  /**
+   * The draft subscription this conversation is already writing to. Absent on
+   * the first turn, and ignored when it names anything but a visible draft the
+   * caller owns — a compile turn may update a draft, never an automation that
+   * runs.
+   */
   draftId: IdSchema.optional(),
-  messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1),
+  messages: z.array(AutomationCompilerMessageSchema).min(1),
   currentDraft: AutomationDraftSchema.nullable().default(null),
   attachmentIds: z.array(IdSchema).max(10).default([]),
 });
@@ -1847,6 +1885,8 @@ export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
 export type MemoryTableColumnType = z.infer<typeof MemoryTableColumnTypeSchema>;
 export type AutomationDraftStreamEvent = z.infer<typeof AutomationDraftStreamEventSchema>;
+export type AutomationCompilerMessage = z.infer<typeof AutomationCompilerMessageSchema>;
+export type AutomationDraftState = z.infer<typeof AutomationDraftStateSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;

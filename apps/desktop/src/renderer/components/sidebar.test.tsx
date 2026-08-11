@@ -416,6 +416,11 @@ describe('Sidebar work-stream markers', () => {
     expect(draftRow).toHaveClass('is-draft');
     expect(draftRow.querySelector('.mini-state.draft')).not.toBeNull();
     expect(within(draftRow).getByText('Draft')).toBeVisible();
+    // A draft has no overview worth opening — it has never run. Its row goes
+    // back to the conversation that was left unfinished.
+    expect(draftRow).toHaveAttribute('href', '/automations/new?draft=automation-2');
+    expect(screen.getByRole('link', { name: /Daily product brief/u }))
+      .toHaveAttribute('href', '/automations/automation-1');
 
     fireEvent.contextMenu(draftRow, { clientX: 120, clientY: 90 });
 
@@ -423,6 +428,42 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Archive draft' }));
     await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(staleDraft));
+  });
+
+  it('marks only the open draft, and not New automation, as the active entry', () => {
+    const openDraft: AutomationSummary = {
+      id: 'automation-2',
+      name: 'Ad hoc competitor scan',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-07-28T11:00:00.000Z',
+    };
+    const otherDraft: AutomationSummary = {
+      id: 'automation-3',
+      name: 'A support escalation digest',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-08-02T11:00:00.000Z',
+    };
+    render(
+      <MemoryRouter initialEntries={['/automations/new?draft=automation-2']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[openDraft, otherDraft]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    // Every draft row shares the builder's path and differs only in the query,
+    // so nothing but the query can tell them apart.
+    expect(screen.getByRole('link', { name: /Ad hoc competitor scan/u })).toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: /A support escalation digest/u })).not.toHaveClass('is-active');
+    expect(screen.getByRole('link', { name: 'New automation' })).not.toHaveClass('is-active');
   });
 
   it('reports an archive that the server rejected instead of failing silently', async () => {

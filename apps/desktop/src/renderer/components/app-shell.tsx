@@ -179,7 +179,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           if (!api) return;
           await api.archiveDraftAutomation(automation.id);
           await queryClient.invalidateQueries({ queryKey: ['automations'] });
-          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+          // A draft is read in the builder rather than on an overview, so that
+          // is the screen archiving can leave stranded on a conversation the
+          // API will no longer serve.
+          const openDraft = location.pathname === '/automations/new'
+            && new URLSearchParams(location.search).get('draft') === automation.id;
+          if (openDraft || location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
         }}
         onArchiveNote={async (note) => {
           if (!api) return;
