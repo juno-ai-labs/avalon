@@ -24,7 +24,7 @@ import {
   Users,
   Zap,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { formatDuration, formatRelative } from '../lib/format';
@@ -123,6 +123,15 @@ export function AutomationOverviewScreen(): React.JSX.Element {
 
   useEffect(() => () => closeRail(), [closeRail, id]);
 
+  // Evicting the deleted automation's detail query has to happen after this
+  // screen is gone. Removing a query that still has a mounted observer makes
+  // React Query rebuild and refetch it on the next render, which would put the
+  // automation straight back in the cache — the opposite of the intent.
+  const deletedRef = useRef(false);
+  useEffect(() => () => {
+    if (deletedRef.current) queryClient.removeQueries({ queryKey: ['automation', id] });
+  }, [id, queryClient]);
+
   useEffect(() => {
     setAutomationEmailCopyState('idle');
   }, [id]);
@@ -210,7 +219,14 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
       ]);
       setDeleteOpen(false);
-      void navigate('/workstreams/new');
+      // Replace rather than push: this screen is showing the automation that
+      // was just deleted, so leaving its route in history means Back lands on a
+      // resource that is gone. The detail query has to go too — its 10s
+      // staleTime would otherwise let a remount render the deleted automation
+      // from cache without ever asking the server — but that eviction waits for
+      // unmount, below, rather than happening here.
+      deletedRef.current = true;
+      void navigate('/workstreams/new', { replace: true });
     },
   });
   const adoptUpdate = useMutation({
@@ -238,6 +254,12 @@ export function AutomationOverviewScreen(): React.JSX.Element {
 
   const detail = automation.data;
   const automationEmailAddress = detail.emailAddress;
+  // A dialog reopened after a failed delete must not greet the user with the
+  // last attempt's error before they have tried anything.
+  const openDelete = (): void => {
+    remove.reset();
+    setDeleteOpen(true);
+  };
   const filteredRuns = detail.runs.filter((run) => filter === 'all' || run.triggerType === filter);
   const copyAutomationEmail = async (): Promise<void> => {
     if (!automationEmailAddress) return;
@@ -276,7 +298,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
             <DropdownMenu.Trigger asChild><IconButton label="More automation actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
             <DropdownMenu.Portal>
               <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-                <DropdownMenu.Item className="menu-item menu-item-danger" onSelect={() => setDeleteOpen(true)}>
+                <DropdownMenu.Item className="menu-item menu-item-danger" onSelect={openDelete}>
                   <Trash2 size={14} /> Delete automation
                 </DropdownMenu.Item>
               </DropdownMenu.Content>
