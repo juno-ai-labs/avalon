@@ -1,0 +1,713 @@
+import type { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { Env } from "../src/env";
+import {
+  DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
+  DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS,
+  DESCRIPTION_WINDOW_MINIMUM_MESSAGES,
+  MAXIMUM_DESCRIPTION_CHARACTERS,
+  MAXIMUM_DESCRIPTION_WINDOW_CHARACTERS,
+  MAXIMUM_DESCRIPTION_WINDOW_MESSAGES,
+  countNovelSubjectTerms,
+  isTooGenericDescription,
+  judgeDescriptionProposal,
+  refreshWorkstreamDescription,
+  restUntil,
+} from "../src/services/workstream-description-service";
+import { WorkstreamService } from "../src/services/workstream-service";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+
+const USER_ID = "00000000-0000-4000-8000-000000000000";
+const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
+const WORKSTREAM_ID = "00000000-0000-4000-8000-000000000002";
+const NOW = new Date("2026-08-11T12:00:00.000Z");
+
+const openDatabases: DatabaseSync[] = [];
+
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+  vi.restoreAllMocks();
+});
+
+interface Proposal {
+  decision: "keep" | "rewrite";
+  description: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+interface Fixture {
+  database: DatabaseSync;
+  env: Env;
+  /** Every prompt the loop actually sent, so a test can assert on the window it built. */
+  prompts: Array<{ system: string; user: string }>;
+}
+
+function fixture(options: {
+  proposal?: Proposal | (() => Proposal);
+  objective?: string;
+  descriptionSource?: "authored" | "derived";
+  originType?: "ad_hoc" | "automation";
+  archived?: boolean;
+} = {}): Fixture {
+  const database = migratedSqliteDatabase();
+  openDatabases.push(database);
+  database.exec(`
+    INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+    VALUES ('${USER_ID}', 'google-description', 'description@example.com', 'Morgan', '2026-01-01', '2026-01-01');
+    INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+    VALUES ('${WORKSPACE_ID}', 'Descriptions', 'descriptions', 'global', '${USER_ID}', '2026-01-01', '2026-01-01');
+    INSERT INTO workstreams
+      (id, workspace_id, title, objective, description_source, origin_type, created_by_user_id,
+       harness_status, next_sequence_number, last_activity_at, created_at, updated_at, archived_at)
+    VALUES ('${WORKSTREAM_ID}', '${WORKSPACE_ID}', 'Checkout',
+            '${options.objective ?? "Look into the payment error Morgan reported on Monday."}',
+            '${options.descriptionSource ?? "derived"}', '${options.originType ?? "ad_hoc"}', '${USER_ID}',
+            'idle', 1, '2026-08-11', '2026-01-01', '2026-01-01',
+            ${options.archived ? "'2026-08-01'" : "NULL"});
+  `);
+
+  const prompts: Array<{ system: string; user: string }> = [];
+  const proposal = options.proposal ?? {
+    decision: "keep" as const,
+    description: null,
+    confidence: 0.9,
+    reasoning: "Still the same work.",
+  };
+  const fetcher = async (_url: string, init: { body: string }) => {
+    const request = JSON.parse(init.body) as { messages: Array<{ role: string; content: string }> };
+    // The client appends its own schema-reminder user message; the one this
+    // loop rendered is the one carrying the work stream under review.
+    prompts.push({
+      system: request.messages.find((message) => message.role === "system")?.content ?? "",
+      user: request.messages.find(
+        (message) => message.role === "user" && message.content.includes("WORK STREAM UNDER REVIEW"),
+      )?.content ?? "",
+    });
+    const resolved = typeof proposal === "function" ? proposal() : proposal;
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(resolved) } }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  vi.stubGlobal("fetch", fetcher);
+
+  const env = {
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    LOG_LEVEL: "error",
+    OPENROUTER_API_KEY: "test-key",
+    OPENROUTER_STRUCTURED_MODEL: "test/structured",
+    OPENROUTER_FALLBACK_MODELS: "",
+    PUBLIC_API_BASE_URL: "https://api.example.com",
+  } as unknown as Env;
+  return { database, env, prompts };
+}
+
+/**
+ * A message substantial enough to be conversation and specific enough to be
+ * about something the seeded description does not name — what the admission
+ * gates are looking for, so a test that wants an evaluation gets one.
+ */
+const DRIFTING_MESSAGE =
+  "The 3-D Secure migration for our EU issuers needs a rollout plan, and issuer "
+  + "sandbox coverage is still short of the acquirer requirements we agreed.";
+/**
+ * Substantial conversation that raises nothing the description does not already
+ * name — a busy work stream that has not changed.
+ */
+const ON_TOPIC_MESSAGE =
+  "Morgan reported the payment error on Monday, and the payment error Morgan "
+  + "reported on Monday is still the payment error we are looking into.";
+
+function addMessages(
+  database: DatabaseSync,
+  count: number,
+  options: {
+    createdAt?: string;
+    startSequence?: number;
+    text?: string;
+    /**
+     * `external` mirrors how `createExternalMessage` actually stores a Slack
+     * participant: `author_type = 'system'` with an external actor alongside.
+     */
+    authorType?: "human" | "external" | "agent" | "system";
+  } = {},
+): void {
+  const startSequence = options.startSequence ?? 1;
+  const authorType = options.authorType ?? "human";
+  const storedAuthorType = authorType === "external" ? "system" : authorType;
+  for (let index = 0; index < count; index += 1) {
+    const sequence = startSequence + index;
+    database.prepare(
+      `INSERT INTO messages
+         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+          message_type, text_content, sequence_number, created_at, external_actor_json)
+       VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?, ?)`,
+    ).run(
+      `message-${sequence}`,
+      `client-${sequence}`,
+      WORKSPACE_ID,
+      WORKSTREAM_ID,
+      storedAuthorType,
+      authorType === "human" ? USER_ID : null,
+      options.text ?? DRIFTING_MESSAGE,
+      sequence,
+      options.createdAt ?? NOW.toISOString(),
+      authorType === "external"
+        ? JSON.stringify({
+            provider: "slack",
+            providerAccountId: "TACME",
+            providerUserId: "UROWAN",
+            displayName: "Rowan (Slack)",
+            avatarUrl: null,
+          })
+        : null,
+    );
+  }
+}
+
+/** The smallest transcript that clears every admission gate. */
+function addQualifyingConversation(
+  database: DatabaseSync,
+  options: { createdAt?: string; startSequence?: number } = {},
+): void {
+  addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, options);
+}
+
+/**
+ * The rendered transcript, dug back out of the prompt. The client appends its
+ * schema reminder to the same user message, so the transcript is the JSON array
+ * line rather than the last one.
+ */
+function transcriptOf(user: string): unknown[] {
+  const line = user.split("\n").find((candidate) => candidate.startsWith("["));
+  return JSON.parse(line ?? "[]") as unknown[];
+}
+
+function objective(database: DatabaseSync): string {
+  return (database.prepare(
+    "SELECT objective FROM workstreams WHERE id = ?",
+  ).get(WORKSTREAM_ID) as { objective: string }).objective;
+}
+
+function refreshRow(database: DatabaseSync): Record<string, unknown> | undefined {
+  return database.prepare(
+    "SELECT * FROM workstream_description_refreshes WHERE workstream_id = ?",
+  ).get(WORKSTREAM_ID) as Record<string, unknown> | undefined;
+}
+
+describe("who wrote the description", () => {
+  function service(env: Env): WorkstreamService {
+    return new WorkstreamService(env, {
+      sessionId: "session-1",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    });
+  }
+
+  it("marks a description a person edited as authored", async () => {
+    const { database, env } = fixture();
+
+    const updated = await service(env).update(WORKSTREAM_ID, {
+      objective: "Run the EU payments incident review.",
+    });
+
+    expect(updated.objective).toBe("Run the EU payments incident review.");
+    expect(database.prepare("SELECT description_source FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
+      .toMatchObject({ description_source: "authored" });
+  });
+
+  it("does not treat a resubmitted, unchanged description as authorship", async () => {
+    const { database, env } = fixture();
+    addQualifyingConversation(database);
+    await refreshWorkstreamDescription(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      now: NOW,
+    });
+
+    await service(env).update(WORKSTREAM_ID, {
+      objective: "Look into the payment error Morgan reported on Monday.",
+    });
+
+    // A no-op PATCH must not flip the provenance or reset the loop's state.
+    expect(database.prepare("SELECT description_source FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
+      .toMatchObject({ description_source: "derived" });
+    expect(refreshRow(database)).toMatchObject({ decision: "kept", consecutive_keeps: 1 });
+  });
+
+  it("never shortens a rest the work stream had already earned", async () => {
+    const { database, env } = fixture();
+    addQualifyingConversation(database);
+    await refreshWorkstreamDescription(env, {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      now: NOW,
+    });
+    // Stand in for a long-settled description that has earned the ceiling.
+    const earned = new Date(NOW.getTime() + 48 * 60 * 60 * 1_000).toISOString();
+    database.prepare(
+      "UPDATE workstream_description_refreshes SET rest_until = ?, consecutive_keeps = 4 WHERE workstream_id = ?",
+    ).run(earned, WORKSTREAM_ID);
+
+    await service(env).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
+
+    const row = refreshRow(database)!;
+    expect(String(row.rest_until)).toBe(earned);
+    // An edit is not an evaluation, so it neither confirms nor refutes.
+    expect(row.consecutive_keeps).toBe(4);
+  });
+
+  it("leaves the source alone when an edit does not touch the description", async () => {
+    const { database, env } = fixture({ descriptionSource: "authored" });
+
+    const updated = await service(env).update(WORKSTREAM_ID, { title: "EU payments" });
+
+    expect(updated.title).toBe("EU payments");
+    expect(objective(database)).toBe("Look into the payment error Morgan reported on Monday.");
+    expect(database.prepare("SELECT description_source FROM workstreams WHERE id = ?").get(WORKSTREAM_ID))
+      .toMatchObject({ description_source: "authored" });
+  });
+});
+
+describe("description proposal guards", () => {
+  const rewrite = (description: string | null, confidence = 0.95): Proposal => ({
+    decision: "rewrite",
+    description,
+    confidence,
+    reasoning: "The work moved.",
+  });
+  const current = "Look into the payment error Morgan reported on Monday.";
+
+  it("applies a confident, specific rewrite", () => {
+    expect(judgeDescriptionProposal(rewrite("Track the 3-D Secure migration for EU card issuers."), current)).toEqual({
+      status: "rewritten",
+      description: "Track the 3-D Secure migration for EU card issuers.",
+    });
+  });
+
+  it("keeps the saved description when the model is not confident", () => {
+    expect(judgeDescriptionProposal(rewrite("Track the 3-D Secure migration for EU card issuers.", 0.79), current))
+      .toEqual({ status: "kept" });
+  });
+
+  it.each([
+    "General discussion",
+    "general discussion.",
+    "  Ongoing work  ",
+    "Chat",
+    "Various topics",
+  ])("refuses the catch-all description %j", (description) => {
+    expect(isTooGenericDescription(description)).toBe(true);
+    expect(judgeDescriptionProposal(rewrite(description), current)).toEqual({
+      status: "rejected",
+      code: "description_too_generic",
+    });
+  });
+
+  it("keeps a rewrite that only restyles the saved wording", () => {
+    expect(judgeDescriptionProposal(rewrite("Look into the payment error Morgan reported on Monday!"), current))
+      .toEqual({ status: "kept" });
+  });
+
+  it.each([
+    ["", "empty_description"],
+    ["Payments", "description_too_short"],
+    ["Fix it now", "description_too_short"],
+    ["x".repeat(MAXIMUM_DESCRIPTION_CHARACTERS + 1), "description_too_long"],
+  ])("rejects the unusable proposal %j", (description, code) => {
+    expect(judgeDescriptionProposal(rewrite(description), current)).toEqual({ status: "rejected", code });
+  });
+});
+
+describe("work-stream description refresh", () => {
+  const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
+
+  it("records a keep without touching the description", async () => {
+    const { database, env } = fixture();
+    addQualifyingConversation(database);
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+    expect(objective(database)).toBe("Look into the payment error Morgan reported on Monday.");
+    expect(refreshRow(database)).toMatchObject({
+      decision: "kept",
+      rejection_code: null,
+      consecutive_keeps: 1,
+      evaluated_through_sequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
+    });
+  });
+
+  it("rewrites a description the work stream has outgrown and marks it derived", async () => {
+    const { database, env } = fixture({
+      descriptionSource: "authored",
+      proposal: {
+        decision: "rewrite",
+        description: "Track the 3-D Secure migration for EU card issuers.",
+        confidence: 0.92,
+        reasoning: "The work stream now runs the migration, not the original bug.",
+      },
+    });
+    addQualifyingConversation(database);
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({
+      status: "rewritten",
+      description: "Track the 3-D Secure migration for EU card issuers.",
+    });
+    expect(objective(database)).toBe("Track the 3-D Secure migration for EU card issuers.");
+    expect(database.prepare(
+      "SELECT description_source FROM workstreams WHERE id = ?",
+    ).get(WORKSTREAM_ID)).toMatchObject({ description_source: "derived" });
+    expect(refreshRow(database)).toMatchObject({
+      decision: "rewritten",
+      previous_description: "Look into the payment error Morgan reported on Monday.",
+      description: "Track the 3-D Secure migration for EU card issuers.",
+    });
+  });
+
+  it("tells the model how the description in force was written", async () => {
+    const { database, env, prompts } = fixture({ descriptionSource: "authored" });
+    addQualifyingConversation(database);
+
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
+    expect(prompts[0]!.user).toContain('"descriptionSource":"authored"');
+    expect(prompts[0]!.user).toContain("UNTRUSTED RECENT TRANSCRIPT");
+  });
+
+  it("refuses to overwrite a description a person changed mid-evaluation", async () => {
+    const { database, env } = fixture({
+      proposal: () => {
+        database.prepare("UPDATE workstreams SET objective = ? WHERE id = ?")
+          .run("Run the EU payments incident review.", WORKSTREAM_ID);
+        return {
+          decision: "rewrite",
+          description: "Track the 3-D Secure migration for EU card issuers.",
+          confidence: 0.95,
+          reasoning: "The work moved.",
+        };
+      },
+    });
+    addQualifyingConversation(database);
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "rejected", code: "description_changed_during_evaluation" });
+    expect(objective(database)).toBe("Run the EU payments incident review.");
+    expect(refreshRow(database)).toMatchObject({
+      decision: "rejected",
+      rejection_code: "description_changed_during_evaluation",
+      previous_description: "Look into the payment error Morgan reported on Monday.",
+      // What is in force afterwards is the other writer's text, not the text
+      // this evaluation read.
+      description: "Run the EU payments incident review.",
+    });
+  });
+
+  it("records an authored edit over a failed evaluation without tripping the row's constraints", async () => {
+    const { database, env } = fixture();
+    addQualifyingConversation(database);
+    vi.stubGlobal("fetch", async () => new Response(
+      JSON.stringify({ error: { message: "model unavailable" } }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    ));
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
+    expect(refreshRow(database)).toMatchObject({ decision: "failed", rejection_code: "model_unavailable" });
+
+    await new WorkstreamService(env, {
+      sessionId: "session-1",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    }).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
+
+    // A decision that carries a rejection code has to clear it on the way out,
+    // or the table's CHECK rejects the write and the person's edit 500s.
+    expect(refreshRow(database)).toMatchObject({ decision: "authored", rejection_code: null });
+    expect(objective(database)).toBe("Run the EU payments incident review.");
+  });
+
+  it("reads the last 200 messages when the last 72 hours holds fewer", async () => {
+    const { database, env, prompts } = fixture();
+    const old = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1_000).toISOString();
+    addMessages(database, 250, { createdAt: old });
+    addQualifyingConversation(database, { startSequence: 251 });
+
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
+    const transcript = transcriptOf(prompts[0]!.user);
+    expect(transcript).toHaveLength(DESCRIPTION_WINDOW_MINIMUM_MESSAGES);
+    expect(prompts[0]!.user).toContain(`${DESCRIPTION_WINDOW_MINIMUM_MESSAGES} messages, oldest first`);
+    expect(prompts[0]!.user).not.toContain("older messages in this window were omitted");
+  });
+
+  it("reads every message of a busy 72 hours, up to the ceiling, and says when it capped", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES + 40);
+
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
+    const transcript = transcriptOf(prompts[0]!.user);
+    expect(transcript).toHaveLength(MAXIMUM_DESCRIPTION_WINDOW_MESSAGES);
+    expect(prompts[0]!.user).toContain("older messages in this window were omitted");
+  });
+
+  it("bounds the window by characters as well as rows, keeping the newest", async () => {
+    const { database, env, prompts } = fixture();
+    // Every message renders at the per-message cap, so the character budget
+    // binds well before the row cap does.
+    const long = `${DRIFTING_MESSAGE} ${"padding ".repeat(200)}`;
+    addMessages(database, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES, { text: long });
+
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
+    const transcript = transcriptOf(prompts[0]!.user) as Array<{ text: string }>;
+    const characters = transcript.reduce((total, message) => total + message.text.length, 0);
+
+    expect(transcript.length).toBeLessThan(MAXIMUM_DESCRIPTION_WINDOW_MESSAGES);
+    expect(characters).toBeLessThanOrEqual(MAXIMUM_DESCRIPTION_WINDOW_CHARACTERS + transcript.length);
+    expect(prompts[0]!.user).toContain("older messages in this window were omitted");
+    // The newest message survives; the budget is spent from the oldest end.
+    expect(refreshRow(database)).toMatchObject({
+      evaluated_through_sequence: MAXIMUM_DESCRIPTION_WINDOW_MESSAGES,
+    });
+  });
+
+  it("leaves an automation's work stream to its automation", async () => {
+    const { database, env, prompts } = fixture({ originType: "automation" });
+    addQualifyingConversation(database);
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "automation_origin" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("leaves an archived work stream alone", async () => {
+    const { database, env, prompts } = fixture({ archived: true });
+    addQualifyingConversation(database);
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "archived" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("spends the window rather than retrying a model that failed", async () => {
+    const { database, env } = fixture();
+    addQualifyingConversation(database);
+    vi.stubGlobal("fetch", async () => new Response(
+      JSON.stringify({ error: { message: "model unavailable" } }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    ));
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "failed", code: "model_unavailable" });
+    expect(refreshRow(database)).toMatchObject({
+      decision: "failed",
+      rejection_code: "model_unavailable",
+      consecutive_keeps: 0,
+    });
+    expect(await refreshWorkstreamDescription(env, {
+      ...input,
+      now: new Date(NOW.getTime() + 60 * 1_000),
+    })).toEqual({ status: "skipped", reason: "resting" });
+  });
+});
+
+describe("what it takes to spend a model call", () => {
+  const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
+
+  it("will not look at a work stream that has not rested, however much was said", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+
+    const soon = new Date(NOW.getTime() + 60 * 1_000);
+    addQualifyingConversation(database, {
+      startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES + 1,
+      createdAt: soon.toISOString(),
+    });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: soon }))
+      .toEqual({ status: "skipped", reason: "resting" });
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("will not look at a rested work stream that has not changed", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+
+    expect(await refreshWorkstreamDescription(env, {
+      ...input,
+      now: new Date(NOW.getTime() + 20 * 60 * 60 * 1_000),
+    })).toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("looks once the work stream has both rested and changed", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+
+    const later = new Date(NOW.getTime() + 20 * 60 * 60 * 1_000);
+    addQualifyingConversation(database, {
+      startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES + 1,
+      createdAt: later.toISOString(),
+    });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: later })).toEqual({ status: "kept" });
+    expect(prompts).toHaveLength(2);
+  });
+
+  it("counts a Slack participant as a person, and names them to the model", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, { authorType: "external" });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+    const transcript = transcriptOf(prompts[0]!.user) as Array<{ authorType: string; authorName: string }>;
+    expect(transcript[0]).toMatchObject({ authorType: "external", authorName: "Rowan (Slack)" });
+  });
+
+  it("does not count an agent's own turns as the work stream changing", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, 1);
+    addMessages(database, 40, { startSequence: 2, authorType: "agent" });
+    addMessages(database, 10, { startSequence: 42, authorType: "system" });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("does not count a row of acknowledgements as a conversation", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 2, { text: "ack" });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("does not pay a model to confirm a description the conversation keeps restating", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 3, { text: ON_TOPIC_MESSAGE });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "nothing_new_discussed" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("rests longer after each consecutive confirmation, and returns to the floor on a rewrite", () => {
+    const hours = (keeps: number) =>
+      (Date.parse(restUntil(NOW, keeps)) - NOW.getTime()) / (60 * 60 * 1_000);
+
+    expect(hours(0)).toBe(6);
+    expect(hours(1)).toBe(12);
+    expect(hours(2)).toBe(24);
+    expect(hours(3)).toBe(48);
+    // Capped, so a long-settled description is still re-read every two days.
+    expect(hours(9)).toBe(48);
+  });
+
+  it("backs off across repeated confirmations and resets when the description is rewritten", async () => {
+    let proposal: Proposal = {
+      decision: "keep",
+      description: null,
+      confidence: 0.9,
+      reasoning: "Still the same work.",
+    };
+    const { database, env } = fixture({ proposal: () => proposal });
+
+    let sequence = 1;
+    let now = NOW;
+    for (const expectedKeeps of [1, 2, 3]) {
+      addQualifyingConversation(database, {
+        startSequence: sequence,
+        createdAt: now.toISOString(),
+      });
+      sequence += DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES;
+      expect(await refreshWorkstreamDescription(env, { ...input, now })).toEqual({ status: "kept" });
+      expect(refreshRow(database)).toMatchObject({ consecutive_keeps: expectedKeeps });
+      // Two days clears every rest the backoff can produce.
+      now = new Date(now.getTime() + 49 * 60 * 60 * 1_000);
+    }
+
+    proposal = {
+      decision: "rewrite",
+      description: "Track the 3-D Secure migration for EU card issuers.",
+      confidence: 0.95,
+      reasoning: "The work moved.",
+    };
+    addQualifyingConversation(database, { startSequence: sequence, createdAt: now.toISOString() });
+    await refreshWorkstreamDescription(env, { ...input, now });
+    expect(refreshRow(database)).toMatchObject({ decision: "rewritten", consecutive_keeps: 0 });
+    expect(refreshRow(database)!.rest_until).toBe(restUntil(now, 0));
+  });
+
+  it("rests instead of second-guessing a description a person just wrote", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+
+    await new WorkstreamService(env, {
+      sessionId: "session-1",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    }).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
+
+    const row = refreshRow(database)!;
+    // `authored`, not `kept`: the loop did not look, a person settled it.
+    expect(row).toMatchObject({
+      decision: "authored",
+      rejection_code: null,
+      confidence: null,
+      model: null,
+      consecutive_keeps: 0,
+      previous_description: "Look into the payment error Morgan reported on Monday.",
+      description: "Run the EU payments incident review.",
+      evaluated_through_sequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
+    });
+    // The edit stamps the wall clock, so the rest is asserted against the
+    // instant it recorded rather than against this test's frozen one.
+    expect(String(row.rest_until)).toBe(restUntil(new Date(String(row.evaluated_at)), 0));
+    expect(await refreshWorkstreamDescription(env, {
+      ...input,
+      now: new Date(String(row.evaluated_at)),
+    })).toEqual({ status: "skipped", reason: "resting" });
+    expect(prompts).toHaveLength(0);
+    expect(objective(database)).toBe("Run the EU payments incident review.");
+  });
+});
+
+describe("measuring what is new in a conversation", () => {
+  const description = "Resolve the EU checkout authorization failures Morgan reported.";
+  const title = "Checkout";
+
+  it("counts a subject the description does not name", () => {
+    expect(countNovelSubjectTerms({
+      newText: [
+        "The 3-D Secure migration needs a rollout plan.",
+        "Sandbox coverage for the migration is short, and the rollout plan needs issuer sign-off.",
+        "Each issuer wants its own sandbox window before we schedule the migration rollout.",
+      ].join("\n"),
+      description,
+      title,
+    })).toBeGreaterThanOrEqual(DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS);
+  });
+
+  it("counts nothing when the conversation restates the description", () => {
+    expect(countNovelSubjectTerms({
+      newText: "The EU checkout authorization failures Morgan reported are still failures in EU checkout.",
+      description,
+      title,
+    })).toBe(0);
+  });
+
+  it("ignores a subject mentioned only once, and ordinary sentence words", () => {
+    expect(countNovelSubjectTerms({
+      newText: "We should probably think about whether the invoicing thing matters here.",
+      description,
+      title,
+    })).toBe(0);
+  });
+});
