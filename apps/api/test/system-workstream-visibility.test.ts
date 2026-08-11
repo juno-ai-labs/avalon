@@ -48,12 +48,12 @@ function seededDatabase(): DatabaseSync {
     INSERT INTO workstreams
       (id, workspace_id, title, objective, email_address, email_route_status, origin_type,
        created_by_user_id, harness_status, next_sequence_number, last_activity_at,
-       created_at, updated_at, system_kind)
+       created_at, updated_at, system_kind, scope)
     VALUES
       ('${ORDINARY}', '${WORKSPACE}', 'Launch', '', 'launch@automation.example', 'active', 'ad_hoc',
-       '${OWNER}', 'idle', 1, '2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL),
+       '${OWNER}', 'idle', 1, '2026-01-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'workspace'),
       ('${HIDDEN}', '${WORKSPACE}', 'Digest · Owner', '', 'digest@automation.example', 'active', 'ad_hoc',
-       '${OWNER}', 'idle', 1, '2026-01-03T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'digest');
+       '${OWNER}', 'idle', 1, '2026-01-03T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'digest', 'personal');
     INSERT INTO workstream_participants
       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
     VALUES ('${HIDDEN}', '${OWNER}', '${OWNER}', 'creator', '2026-01-01T00:00:00.000Z');
@@ -74,8 +74,16 @@ describe("system work streams", () => {
     const page = await serviceFor(seededDatabase(), OWNER).list(20, undefined, true);
 
     expect(page.items.map((item) => item.id)).toEqual([HIDDEN, ORDINARY]);
-    expect(page.items.find((item) => item.id === HIDDEN)?.systemKind).toBe("digest");
-    expect(page.items.find((item) => item.id === ORDINARY)?.systemKind).toBeNull();
+    expect(page.items.find((item) => item.id === HIDDEN)).toMatchObject({
+      systemKind: "digest",
+      // Declared private, the same way a personal note is, rather than left for
+      // a caller to infer from `systemKind`.
+      scope: "personal",
+    });
+    expect(page.items.find((item) => item.id === ORDINARY)).toMatchObject({
+      systemKind: null,
+      scope: "workspace",
+    });
   });
 
   it("stays invisible to another member even when they ask for system rows", async () => {
@@ -89,7 +97,21 @@ describe("system work streams", () => {
   it("opens by id for its own participant", async () => {
     const detail = await serviceFor(seededDatabase(), OWNER).get(HIDDEN);
 
-    expect(detail).toMatchObject({ id: HIDDEN, systemKind: "digest" });
+    expect(detail).toMatchObject({ id: HIDDEN, systemKind: "digest", scope: "personal" });
+  });
+
+  it("is private because it says so, not because it is machinery", async () => {
+    const database = seededDatabase();
+    // A private work stream that is not machinery is refused just the same, so
+    // privacy does not depend on anyone remembering to check `system_kind`.
+    database.exec(`UPDATE workstreams SET system_kind = NULL WHERE id = '${HIDDEN}'`);
+
+    await expect(serviceFor(database, OTHER).get(HIDDEN)).rejects.toMatchObject({ status: 404 });
+    expect((await serviceFor(database, OTHER).list(20)).items.map((item) => item.id)).toEqual([ORDINARY]);
+    // Its own participant still reaches it, and now sees it in the ordinary
+    // list, because it is no longer machinery.
+    expect((await serviceFor(database, OWNER).list(20)).items.map((item) => item.id))
+      .toEqual([HIDDEN, ORDINARY]);
   });
 
   it("cannot be opened by another member who knows its id", async () => {

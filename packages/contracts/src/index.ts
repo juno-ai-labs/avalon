@@ -158,10 +158,18 @@ export const WorkstreamSchema = z.object({
   updatedAt: TimestampSchema,
   archivedAt: TimestampSchema.nullable(),
   /**
+   * Who may read it, in the same vocabulary `notes` uses: `personal` is only the
+   * people in it, `workspace` is anyone in the workspace. Declared on the row
+   * and enforced from it, so "private" is a property rather than a rule a caller
+   * has to remember.
+   */
+  scope: ScopeSchema.default("workspace"),
+  /**
    * Non-null on a work stream that exists so a subsystem can use the agent loop
-   * rather than because somebody started it. Listing surfaces leave these out
-   * unless the reader has asked to see them, and render them as secondary when
-   * they do.
+   * rather than because somebody started it. A separate question from `scope`:
+   * this decides whether it is *listed*, that decides who may read it. Listing
+   * surfaces leave these out unless the reader has asked to see them, and render
+   * them as secondary when they do.
    */
   systemKind: z.enum(["digest"]).nullable().default(null)
 });

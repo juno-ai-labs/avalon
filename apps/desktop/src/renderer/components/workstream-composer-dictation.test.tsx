@@ -53,6 +53,7 @@ const workstream: WorkstreamDetail = {
   title: 'Live transcript',
   origin: 'ad_hoc',
   harnessStatus: 'completed',
+  scope: 'workspace' as const,
   lastActivityAt: '2026-08-06T12:00:00.000Z',
   latestAttentionSequenceNumber: 0,
   readThroughSequenceNumber: 0,

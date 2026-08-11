@@ -228,6 +228,8 @@ export async function listActivityEventsForUser(
                  WHERE p.workstream_id = e.audience_workstream_id
                    AND p.user_id = ?2
                    AND p.removed_at IS NULL
+                   -- Machinery never feeds a digest, even for its own
+                   -- participant: a digest must not summarize itself.
                    AND w.system_kind IS NULL
               ))
         )

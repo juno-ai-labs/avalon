@@ -412,9 +412,9 @@ export class WorkstreamService {
 
   async list(limit: number, before?: string, includeSystem = false) {
     const cursorClause = before ? "AND w.last_activity_at < ?" : "";
-    // A system work stream is machinery — a digest run's transcript, say — so it
-    // is out of the sidebar by default and only ever reachable by the person it
-    // belongs to. `includeSystem` decides whether to show it, never who may.
+    // Two different questions. `system_kind` says this is machinery, which
+    // decides whether it is listed at all; `scope` says who may read it, and is
+    // enforced below whatever the caller asked to see.
     const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
     const statement = this.env.DB.prepare(
       `SELECT w.*, t.name AS origin_label,
@@ -428,8 +428,9 @@ export class WorkstreamService {
        LEFT JOIN workstream_read_states rs
          ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
+         -- Personal means the people in it, and nobody else.
          AND (
-           w.system_kind IS NULL OR EXISTS (
+           w.scope <> 'personal' OR EXISTS (
              SELECT 1 FROM workstream_participants p
              WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
            )
@@ -1277,11 +1278,11 @@ export class WorkstreamService {
          ON rs.workstream_id = w.id AND rs.user_id = ?
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
-         -- Machinery, not somebody's work. A digest's system work stream holds a
-         -- brief assembled from one person's private activity, so knowing its id
-         -- is not enough — only its own participant can open it.
+         -- A private work stream holds what only its people should read — a
+         -- digest's brief is assembled from one person's activity — so knowing
+         -- the id is not enough.
          AND (
-           w.system_kind IS NULL OR EXISTS (
+           w.scope <> 'personal' OR EXISTS (
              SELECT 1 FROM workstream_participants p
              WHERE p.workstream_id = w.id AND p.user_id = ? AND p.removed_at IS NULL
            )
@@ -1893,6 +1894,7 @@ function toWorkstream(row: Record<string, unknown>) {
     firstUnreadSequenceNumber: manualUnreadFromSequenceNumber
       ?? (hasUnread ? Math.min(latestAttentionSequenceNumber, readThroughSequenceNumber + 1) : null),
     lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
+    scope: row.scope === "personal" ? "personal" as const : "workspace" as const,
     systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
   };
 }
