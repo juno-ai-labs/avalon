@@ -10,7 +10,7 @@ import { useDraftText } from '../lib/use-draft-text';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import type { AgentModelOverride, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -47,8 +47,65 @@ interface LaunchingWorkstream {
   /** Frozen at submit so the optimistic turn and the persisted one agree. */
   createdAt: string;
   openingMessage: string;
+  /**
+   * Which launcher started this. Suggested work is created from the suggestion
+   * rather than from the composer, so its surface shows no opening turn and no
+   * draft — anything sitting in the composer belongs to a work stream that has
+   * not been started, and showing it here would attach it to one that has.
+   */
+  origin: 'composer' | 'suggested-work';
   /** Drives the work timer, which the created stream keeps counting from. */
   startedAt: number;
+}
+
+/**
+ * The detail a just-created work stream is put into the cache under, so its
+ * screen paints instead of loading.
+ *
+ * Both launchers seed through here. They differ only in what they can say about
+ * the transcript — a typed create authored its opening turn, suggested work's is
+ * the agent's — and if they differed in the detail as well, one of them would be
+ * the path whose work timer silently stopped surviving the navigation.
+ */
+function launchedWorkstreamDetail(
+  created: CreatedWorkstream,
+  context: {
+    creator: WorkspaceMember;
+    origin: string;
+    participants?: WorkspaceMember[];
+    /** The instant the launch surface has been counting from. */
+    startedAt: string;
+  },
+): WorkstreamDetail {
+  return {
+    ...created.workstream,
+    createdAt: created.createdAt,
+    createdBy: { ...context.creator, role: 'creator' },
+    participants: [{ ...context.creator, role: 'creator' }, ...context.participants ?? []],
+    viewers: [],
+    resources: [],
+    connections: [],
+    artifacts: [],
+    backgroundTasks: [],
+    automationRuns: [],
+    openElicitations: [],
+    suggestions: [],
+    // Without the run, the work timer the launch surface has been showing
+    // disappears on arrival and only comes back when the refetch answers —
+    // the one thing that still read as a navigation.
+    ...(created.harnessRunId
+      ? {
+        latestHarnessRunId: created.harnessRunId,
+        latestHarnessRun: {
+          id: created.harnessRunId,
+          origin: context.origin,
+          status: 'running' as const,
+          startedAt: context.startedAt,
+          createdAt: context.startedAt,
+        },
+      }
+      : {}),
+  };
 }
 
 /**
@@ -180,6 +237,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const opportunityKeys = useRef(new Map<string, string>());
+  // The instant the suggested-work surface started counting from, carried to
+  // `onSuccess` so the seeded run continues it rather than restarting.
+  const opportunityStartedAt = useRef<string | null>(null);
   const draftKey = newWorkstreamDraftKey(workspace.id);
   const { text: message, setText: setMessage } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
@@ -244,35 +304,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       const selectedParticipants = (members.data ?? [])
         .filter((member) => input.participantIds.includes(member.id))
         .map((member) => ({ ...member, role: 'explicit' }));
-      const detail: WorkstreamDetail = {
-        ...created.workstream,
-        createdAt: created.createdAt,
-        createdBy: { ...workspace.currentUser, role: 'creator' },
-        participants: [{ ...workspace.currentUser, role: 'creator' }, ...selectedParticipants],
-        viewers: [],
-        resources: [],
-        connections: [],
-        artifacts: [],
-        backgroundTasks: [],
-        automationRuns: [],
-        openElicitations: [],
-        suggestions: [],
-        // Without these the work timer the launch surface has been running
-        // disappears on arrival and comes back when the refetch answers, which
-        // is the one thing that still read as a navigation.
-        ...(created.harnessRunId
-          ? {
-            latestHarnessRunId: created.harnessRunId,
-            latestHarnessRun: {
-              id: created.harnessRunId,
-              origin: 'opening_message',
-              status: 'running' as const,
-              startedAt: input.startedAt,
-              createdAt: input.startedAt,
-            },
-          }
-          : {}),
-      };
+      const detail: WorkstreamDetail = launchedWorkstreamDetail(created, {
+          creator: workspace.currentUser,
+          origin: 'opening_message',
+          participants: selectedParticipants,
+          startedAt: input.startedAt,
+        });
       const openingMessage: Message = {
         id: created.messageId,
         clientMessageId: created.clientMessageId,
@@ -306,16 +343,34 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     // one is written by the agent from the expanded prompt, so there is nothing
     // here that could stand in for it without inventing what it says.
     onMutate: () => {
+      const createdAt = new Date().toISOString();
+      opportunityStartedAt.current = createdAt;
       setLaunching({
         attachments: [],
-        createdAt: new Date().toISOString(),
+        createdAt,
         openingMessage: '',
-        startedAt: Date.now(),
+        origin: 'suggested-work',
+        startedAt: Date.parse(createdAt),
       });
     },
     onError: () => setLaunching(null),
     onSuccess: (created, opportunity) => {
       opportunityKeys.current.delete(opportunity.id);
+      // Seeded for the same reason the typed path is: without it the work-stream
+      // screen has neither query and shows its full-screen `Opening work stream…`
+      // state, cutting away from a surface that was already showing this work
+      // stream. The transcript is seeded empty rather than invented — the opening
+      // turn here is the agent's, and it arrives with the refetch a moment later.
+      const detail = launchedWorkstreamDetail(created, {
+        creator: workspace.currentUser,
+        origin: 'suggested_work',
+        startedAt: opportunityStartedAt.current ?? created.createdAt,
+      });
+      queryClient.setQueryData(['workstream', created.workstream.id], detail);
+      queryClient.setQueryData(['messages', created.workstream.id], []);
+      queryClient.setQueryData(['messages-cursor', created.workstream.id], null);
+      void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
+      void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['work-opportunities'] });
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       void navigate(`/workstreams/${created.workstream.id}`);
@@ -352,7 +407,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     // Before the request, not after it: this is the whole point of the screen
     // below, and a state set in the same commit as the send is what makes the
     // work stream appear to open on the keystroke rather than on the response.
-    setLaunching({ attachments, createdAt, openingMessage, startedAt: Date.parse(createdAt) });
+    setLaunching({ attachments, createdAt, openingMessage, origin: 'composer', startedAt: Date.parse(createdAt) });
     create.mutate({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
       attachmentLocalIds: readyAttachments.map((attachment) => attachment.localId),
@@ -364,6 +419,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     });
   };
 
+  // Suggested work is not created from the composer, so the draft sitting in it
+  // is held back rather than shown attached to the work stream being started.
+  // Nothing is discarded: it is still in state and still in the draft cache, and
+  // it comes back the moment the launch ends either way.
+  const draftHidden = launching?.origin === 'suggested-work';
   const participants = [workspace.currentUser, ...selectedMembers];
   const participantSummary = participants.length <= 2
     ? participants.map((participant) => participant.name).join(', ')
@@ -372,7 +432,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   // that turn is a bubble of tiles rather than an empty one. Suggested work is
   // the only launch with no turn at all — its opening message is the agent's,
   // written from the expanded prompt, and nothing here could stand in for it.
-  const openingTurn: Message | null = launching && (launching.openingMessage || launching.attachments.length > 0)
+  const openingTurn: Message | null = launching?.origin === 'composer'
     ? {
       id: 'launching-opening-message',
       workstreamId: 'launching',
@@ -491,7 +551,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
           <ComposerInput
             api={api ?? undefined}
             ariaLabel="Opening work-stream message"
-            attachments={attachmentDraft.attachments}
+            attachments={draftHidden ? [] : attachmentDraft.attachments}
             autoFocus
             className="launch-composer"
             error={create.error?.message ?? attachmentDraft.error}
@@ -505,7 +565,11 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             onRemoveAttachment={attachmentDraft.removeAttachment}
             onRetryAttachment={attachmentDraft.retryAttachment}
             onSubmit={submit}
-            onValueChange={setMessage}
+            // Held back rather than merely hidden: the composer is controlled,
+            // so a keystroke during a suggested-work launch would otherwise
+            // write the empty value it is being shown back over the draft it is
+            // hiding, and lose it.
+            onValueChange={(value) => { if (!draftHidden) setMessage(value); }}
             placeholder="Describe a task or ask a question…"
             rows={2}
             submitDisabled={attachmentDraft.uploading || (!message.trim() && attachmentDraft.ready.length === 0) || launching !== null}
@@ -515,7 +579,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             // their way into a message.
             submitting={launching !== null}
             uploading={attachmentDraft.uploading}
-            value={message}
+            value={draftHidden ? '' : message}
           />
         </div>
         {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this work stream with yourself.</p>}
