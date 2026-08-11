@@ -179,6 +179,28 @@ describe("automation drafts", () => {
     });
   });
 
+  it("says a conversation it can no longer read is unavailable rather than failing", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft());
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Watch my blog." }],
+    }, "request-1");
+    // What a draft written by an earlier deploy looks like once the compiler's
+    // contract has moved on. Left to the route's own parse this is a 500, and
+    // a sidebar row that answers 500 forever cannot be opened or explained.
+    database.prepare(
+      "UPDATE automation_subscriptions SET draft_conversation_json = ? WHERE id = ?",
+    ).run('{"messages":[{"role":"user","content":"Watch my blog."}],"attachmentIds":[],"draft":{"name":"Blog monitor"}}', compiled.draftId);
+
+    await expect(service.draftState(compiled.draftId)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_draft_unavailable",
+    });
+    // Still listed, so it can still be archived.
+    expect((await service.list()).items.map((item) => item.id)).toEqual([compiled.draftId]);
+  });
+
   it("refuses to reopen the conversation behind an automation that already runs", async () => {
     const database = seededDatabase();
     compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
@@ -292,6 +314,27 @@ describe("automation drafts", () => {
     expect(ensureAutomationAddress).not.toHaveBeenCalled();
   });
 
+  it("refuses to share a draft as a workspace template", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft());
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Watch my blog." }],
+    }, "request-1");
+
+    // The draft's template is owned by whoever started the conversation, so the
+    // ownership check cannot stand in for this one. A published draft would put
+    // a half-written template in the gallery, and a subscriber would pin the
+    // very version row every later turn rewrites in place.
+    await expect(service.shareSubscription(compiled.draftId)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_not_created",
+    });
+    expect(database.prepare(
+      "SELECT sharing_state FROM automation_templates WHERE id = (SELECT template_id FROM automation_subscriptions WHERE id = ?)",
+    ).get(compiled.draftId)).toEqual({ sharing_state: "private" });
+  });
+
   it("deletes a draft without minting the address it never had", async () => {
     const database = seededDatabase();
     compileAutomationDraft.mockResolvedValue(draft());
@@ -331,6 +374,77 @@ describe("automation drafts", () => {
     await service.deleteAutomation(compiled.draftId);
 
     expect(ensureAutomationAddress).toHaveBeenCalled();
+  });
+
+  it("drops a compile turn that lands after the draft was created", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Report every day." }],
+    }, "request-1");
+    await service.create({
+      draftId: compiled.draftId,
+      draft: compiled.draft,
+      scope: "personal",
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      resourceIds: [],
+      deliveryTargets: [],
+    });
+
+    // A turn that began before the automation was created still finishes. It
+    // must not write through to the automation it has become: the row is no
+    // longer a draft, so its name, its instructions, and its emptied
+    // conversation all stay as creation left them.
+    compileAutomationDraft.mockResolvedValue(draft({ name: "Stale rewrite", instructions: "Do something else." }));
+    await service.compile({
+      draftId: compiled.draftId,
+      messages: [{ role: "user", content: "Actually, change it." }],
+    }, "request-2");
+
+    expect(database.prepare(
+      `SELECT t.name, v.instructions, s.status, s.draft_conversation_json
+       FROM automation_subscriptions s
+       JOIN automation_templates t ON t.id = s.template_id
+       JOIN automation_template_versions v ON v.id = s.template_version_id
+       WHERE s.id = ?`,
+    ).get(compiled.draftId)).toEqual({
+      name: "Blog monitor",
+      instructions: "Check the configured blog and report new posts.",
+      status: "active",
+      draft_conversation_json: null,
+    });
+  });
+
+  it("refuses a second creation of the same draft rather than scheduling it twice", async () => {
+    const database = seededDatabase();
+    compileAutomationDraft.mockResolvedValue(draft({ followUpQuestion: null, ready: true }));
+    const service = serviceFor(database);
+    const compiled = await service.compile({
+      messages: [{ role: "user", content: "Report every day." }],
+    }, "request-1");
+    const createInput = {
+      draftId: compiled.draftId,
+      draft: compiled.draft,
+      scope: "personal" as const,
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      resourceIds: [],
+      deliveryTargets: [],
+    };
+    await service.create(createInput);
+
+    // Nothing constrains a subscription to one schedule, so a second creation
+    // that got as far as the inserts would leave the automation firing twice
+    // for every trigger it has.
+    await expect(service.create(createInput)).rejects.toMatchObject({
+      status: 409,
+      code: "automation_already_created",
+    });
+    expect(Number((database.prepare(
+      "SELECT COUNT(*) AS count FROM schedules WHERE automation_subscription_id = ?",
+    ).get(compiled.draftId) as { count: number }).count)).toBe(1);
   });
 
   it("lists a draft alongside the automations that run, each with its own status", async () => {
