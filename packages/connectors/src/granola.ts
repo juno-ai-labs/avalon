@@ -921,6 +921,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
             return {
               ok: true,
               message: "Granola authorization is healthy, but its webhook endpoint is disabled and no notes will arrive until it is re-enabled",
+              warning: "Granola webhook endpoint is disabled; no notes will be delivered until it is re-enabled",
             };
           }
         } else {

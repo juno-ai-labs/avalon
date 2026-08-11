@@ -123,6 +123,19 @@ export function isProviderCredentialRejection(
 const REVOKED_GRANT_ERRORS = new Set(["invalid_grant", "expired_token", "invalid_token"]);
 
 /**
+ * Codes that say Avalon's configuration or request was wrong. None is fixed by
+ * a member reauthorizing an account that still works, so none marks a
+ * connection for reconnection.
+ */
+const CONFIGURATION_ERRORS = new Set([
+  "invalid_client",
+  "unauthorized_client",
+  "invalid_request",
+  "invalid_scope",
+  "unsupported_grant_type",
+]);
+
+/**
  * Whether a token-endpoint failure means the stored grant is dead.
  *
  * Classifying by status alone marks a connection `needs_reconnect` for any 400
@@ -136,7 +149,15 @@ const REVOKED_GRANT_ERRORS = new Set(["invalid_grant", "expired_token", "invalid
 export function isRevokedGrantError(error: unknown): error is ConnectorError {
   if (!(error instanceof ConnectorError) || !isRecord(error.details)) return false;
   const providerError = error.details.providerError;
-  if (typeof providerError === "string") return REVOKED_GRANT_ERRORS.has(providerError);
+  if (typeof providerError === "string") {
+    if (REVOKED_GRANT_ERRORS.has(providerError)) return true;
+    // Only a code we recognize as Avalon's own fault answers "no". An
+    // unrecognized code is not evidence of anything, and treating it as a
+    // denial of the question inverts the safe default below — a provider
+    // spelling a dead grant in a word this list has not learned would leave
+    // the connection healthy, failing every call, prompting nobody.
+    if (CONFIGURATION_ERRORS.has(providerError)) return false;
+  }
   // No code to read. Guessing wrong in this direction nags a member to reconnect
   // an account that works; guessing wrong in the other leaves a dead connection
   // reporting healthy while every call fails and nothing ever prompts them. The

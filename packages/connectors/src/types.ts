@@ -550,6 +550,15 @@ export interface ConnectorAdapter {
     ok: boolean;
     message: string;
     reconnectRequired?: boolean;
+    /**
+     * A condition worth acting on that does not make the connection unusable —
+     * provider-side state that has drifted, delivery that has stopped. The
+     * host logs it on the healthy path, so a connector that removes a repair
+     * from its health check still leaves a trail; without one, a degraded
+     * connection is indistinguishable from a well one until somebody thinks to
+     * press Test.
+     */
+    warning?: string;
   }>;
 }
 
