@@ -8,7 +8,7 @@
 //   node scripts/check-regional-health.mjs eu         # one region
 //   AVALON_GLOBAL_API_URL=... node scripts/check-regional-health.mjs global
 
-import { fileURLToPath } from "node:url";
+import { isEntryPoint } from "./entry-point.mjs";
 
 const DEFAULT_BASE_URLS = {
   global: "https://api.with-avalon.com",
@@ -108,7 +108,7 @@ export async function checkRegions(regions, options = {}) {
   return allHealthy;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryPoint(import.meta.url)) {
   try {
     const regions = parseRegions(process.argv.slice(2));
     process.exit((await checkRegions(regions)) ? 0 : 1);

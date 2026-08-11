@@ -18,6 +18,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isEntryPoint } from './entry-point.mjs';
 import { assertMinorReleaseVersion } from './release-lib.mjs';
 
 const desktopDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -76,7 +77,7 @@ async function main() {
   return outcome.changed;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryPoint(import.meta.url)) {
   main()
     .then(async (changed) => {
       // A re-run after a release that failed past the bump finds the manifests

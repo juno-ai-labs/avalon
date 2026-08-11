@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -116,6 +116,45 @@ test('a dispatch plans without reading the release record at all', () => {
         execFileSync(GIT, ['worktree', 'prune'], { cwd: repositoryRoot, stdio: 'ignore' });
       } catch { /* A stale registration outlives the run at worst. */ }
     }
+  }
+});
+
+test('the planner still runs when it is reached through a symlinked path', () => {
+  // The test above runs the script out of `os.tmpdir()`, and on macOS that is
+  // `/var/folders/…` where `/var` is a symlink to `/private/var` — so the
+  // script is reached through a symlink there and through a real directory on
+  // Linux, where `/tmp` is not one. An entry-point guard comparing
+  // `process.argv[1]` to `import.meta.url` raw sees those two spellings of one
+  // file as different modules, runs nothing, and exits 0 with empty stdout,
+  // which is a release plan step reporting success while emitting no outputs.
+  // The platform difference is the whole reason it reached the macOS release
+  // job: Linux CI runs this same suite and could not see it. Asserted directly,
+  // through a symlink built by hand, so it stays caught wherever this runs
+  // rather than only where the temporary directory happens to be one.
+  const enclosing = mkdtempSync(join(tmpdir(), 'plan-release-symlink-'));
+  try {
+    const linkedScripts = join(enclosing, 'scripts');
+    symlinkSync(resolve(repositoryRoot, 'apps/desktop/scripts'), linkedScripts);
+    const output = execFileSync(
+      process.execPath,
+      [join(linkedScripts, 'plan-release.mjs')],
+      {
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: '',
+          GITHUB_EVENT_NAME: 'workflow_dispatch',
+          RELEASE_INPUT_TAG: 'v9.9.0',
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    assert.match(output, /should_release=true/u);
+    assert.match(output, /tag=v9\.9\.0/u);
+  } finally {
+    // Removes the symlink itself rather than what it points at: `rmSync` does
+    // not follow one, so the checked-out scripts directory is never at risk.
+    rmSync(enclosing, { recursive: true, force: true });
   }
 });
 
