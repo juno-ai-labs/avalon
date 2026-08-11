@@ -1,5 +1,6 @@
 import {
   ActivateWorkspaceRequestSchema,
+  ClientFeatureFlagsSchema,
   CreateWorkspaceRequestSchema,
   IdSchema,
   OnboardingRegionRequestSchema,
@@ -68,6 +69,7 @@ import {
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
+import { DeveloperSettingsFlagController } from './developer-settings-flag';
 import { LockdownModeController } from './lockdown-mode';
 import {
   allowsTrustedAudioCapture,
@@ -242,6 +244,11 @@ function publicSession(value: WireSession): DesktopSession {
 function broadcastSessionChanged(value: WireSession | null): void {
   const exposed = value ? publicSession(value) : null;
   for (const window of avalonWindows()) window.webContents.send('session:changed', exposed);
+  // Whether Developer may be offered belongs to the signed-in account, so a
+  // sign-in asks again immediately rather than waiting out a poll interval, and
+  // a sign-out closes the section on the way past.
+  if (exposed) developerSettingsFlagController.start();
+  else developerSettingsFlagController.stop();
 }
 
 async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -398,10 +405,52 @@ const debugSettingsController = new DebugSettingsController({
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
 });
 
+const developerSettingsFlagController = new DeveloperSettingsFlagController({
+  read: readDeveloperSettingsFlag,
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+});
+
 function desktopApplicationSettings(
   lockdown: DesktopLockdownSettings = lockdownModeController.state(),
 ): DesktopApplicationSettings {
-  return { ...lockdown, debugEnabled: debugSettingsController.enabled() };
+  const developerSettingsAvailable = developerSettingsFlagController.enabled();
+  return {
+    ...lockdown,
+    developerSettingsAvailable,
+    // The effective preference, not the stored one. Debug enabled is a
+    // per-device choice inside a section the service decides exists at all, so
+    // a stored `true` grants nothing once the flag is off. Gating it here
+    // rather than at each reader means no surface can miss the second half:
+    // every window reads this one value. The stored bit is left alone, so the
+    // choice is still there when the flag comes back.
+    debugEnabled: debugSettingsController.enabled() && developerSettingsAvailable,
+  };
+}
+
+/**
+ * Asks the service whether Application → Developer may be offered. Rejects
+ * rather than answering `false` when the question could not be put — the
+ * controller keeps its last answer through an outage, and only a real answer
+ * moves it. No stored session is an answer, though: signed out is off.
+ */
+async function readDeveloperSettingsFlag(): Promise<boolean> {
+  const stored = await loadStoredAuth();
+  if (!stored) return false;
+  const apiBaseUrl = apiBaseForAuth(stored);
+  const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}/feature-flags`, {
+    headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
+  });
+  let response = await ask(stored.accessToken);
+  if (response.status === 401) {
+    // The poll runs on its own schedule, so it is often the first request to
+    // meet an expired access token. Renewing through the coalescing path shares
+    // whatever refresh a renderer already has in flight.
+    response = await ask((await coalescedRefreshSession()).accessToken);
+  }
+  if (!response.ok) throw await responseError(response);
+  const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
+  if (!parsed.success) throw new Error('Avalon returned an unreadable feature flag response');
+  return parsed.data.developerSettings;
 }
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
@@ -1822,7 +1871,11 @@ if (!singleInstanceLock) {
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
-    await loadStoredAuth();
+    const launchAuth = await loadStoredAuth();
+    // Launching with a credential already on disk broadcasts no session change,
+    // so the first poll is asked for here. Developer stays closed until it
+    // answers, which is why this does not block the first window.
+    if (launchAuth) developerSettingsFlagController.start();
     await installRendererProtocol();
     installContentSecurityPolicy();
     registerIpc();

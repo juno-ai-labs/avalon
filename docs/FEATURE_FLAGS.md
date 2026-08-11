@@ -1,20 +1,32 @@
 # Feature flags
 
 Avalon evaluates feature flags with [Cloudflare Flagship](https://developers.cloudflare.com/flagship/)
-through the `FLAGS` binding on both regional Workers. Today the binding owns one
-thing: which OpenRouter model each agent runs on. Read this document before
-adding a flag, changing an agent's models, or changing what happens when a flag
-cannot be evaluated. One thing overrides a flag rather than being one — a work
-stream pinned to a single model — and it has [its own
+through the `FLAGS` binding on both regional Workers. The binding owns two
+things: which OpenRouter model each agent runs on, and which client-visible
+features the desktop is allowed to offer. Read this document before adding a
+flag, changing an agent's models, or changing what happens when a flag cannot be
+evaluated. One thing overrides a flag rather than being one — a work stream
+pinned to a single model — and it has [its own
 section](#a-work-streams-own-model) below.
 
-`apps/api/src/services/agent-model-flags.ts` is the only module that reads the
-binding. Nothing else calls `env.FLAGS` directly, and it is also where the pin
-above is read and applied, so every answer to "which model does this run use"
-comes from one file.
-`apps/api/src/services/flag-targeting-attributes.ts` is its companion: it turns
-the ids a caller happens to hold into the attributes a targeting rule matches
-on, and it is where the line between a fact and a person's data is drawn.
+Two modules read the binding, one per kind, and nothing else calls `env.FLAGS`
+directly:
+
+| Module | Owns | Fails |
+| --- | --- | --- |
+| `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
+| `apps/api/src/services/client-feature-flags.ts` | The flags the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
+
+That difference in failure direction is the reason they are separate modules
+rather than one resolver with a parameter. A client flag that fell back the way
+a model flag does would ship an unreleased feature on the first Flagship outage.
+Because the pin lives with the model flags, every answer to "which model does
+this run use" still comes from one file.
+
+`apps/api/src/services/flag-targeting-attributes.ts` is the companion both of
+them evaluate through: it turns the ids a caller happens to hold into the
+attributes a targeting rule matches on, and it is where the line between a fact
+and a person's data is drawn.
 
 ## Why a flag rather than a Worker variable
 
@@ -301,6 +313,66 @@ to use, resolved from the same flag at schedule time — a flag changed between
 scheduling and execution makes that column an expectation rather than a
 guarantee. The inference ledger records what each attempt actually used.
 
+## Client-visible flags
+
+A client flag decides what the desktop is allowed to *offer*. There is one
+today:
+
+| Flag key | Type | Default | Decides |
+| --- | --- | --- | --- |
+| `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
+
+`GET /feature-flags` serves them all as one object — `{ "developerSettings":
+false }` — resolved for the signed-in person. It answers under *identity* auth
+rather than workspace auth: eligibility belongs to the account, and a device
+that has not chosen an organization yet still has to be told the feature is off
+rather than read a 403 as an outage.
+
+### Two gates, and why the domain is not one of them
+
+The Developer section is for Juno staff. That is enforced in **code**, before
+Flagship is called at all: `resolveDeveloperSettingsEnabled` reads the
+account's email, and an address outside `juno-labs.com`
+(`DEVELOPER_SETTINGS_EMAIL_DOMAIN`) returns off without an evaluation, so the
+address never enters an evaluation context and no targeting rule can reach the
+account. The flag is the second gate, and it only ever *narrows*: it can
+withdraw the section from staff, or stage it among them by `userId`, but it
+cannot hand it to a customer. A mis-scoped rule is therefore inert rather than a
+release.
+
+Everything that is not an explicit `true` resolves to off — no binding, a
+binding that throws, a flag that does not resolve, a non-boolean value, an
+unreadable account. `resolveClientFeatureFlags` never throws, so a Flagship
+outage cannot fail the poll; it just leaves the answer off.
+
+### The desktop half
+
+`DEVELOPER_SETTINGS_FLAG_POLL_INTERVAL_MS` in
+`apps/desktop/src/main/developer-settings-flag.ts` — one minute — is how long a
+flag change takes to reach a running app. The poll lives in the **main
+process**, not a renderer, because that is where `application-settings.json` and
+the session are, and because both windows then read one answer instead of each
+deciding for itself. It is a poll rather than a socket: the only realtime
+channel Avalon has is the per-work-stream room, which a device without a work
+stream open is not connected to, and a flag change is not worth a second
+channel. A sign-in re-asks immediately rather than waiting out the interval; a
+sign-out closes the section on the way past.
+
+The effective preference the renderer sees is the stored **Debug enabled**
+choice *and* the flag, computed once in `desktopApplicationSettings()`:
+
+- A `application-settings.json` that says `debugEnabled: true` grants nothing
+  while the flag is off. The stored bit is left alone rather than rewritten, so
+  the choice is still there when the flag comes back.
+- The Settings pane hides the whole section rather than disabling its toggle. A
+  section nobody outside Juno can turn on is not a control that happens to be
+  unavailable.
+- A poll that cannot reach the service leaves the last answer standing.
+  Revoking the section on a dropped connection would flicker it, and it crosses
+  no trust boundary — it reveals debugging affordances the renderer already
+  holds, per [`SECURITY.md`](SECURITY.md). Only an answer, a sign-out, or a
+  shutdown turns it off.
+
 ## Provisioning
 
 Both regional Workers bind the **one** `avalon-api` Flagship app
@@ -367,6 +439,31 @@ pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type 
 Repeat for every key in the table above. An agent whose flag does not exist
 keeps running on its Worker variables, so the flags may be created one at a
 time.
+
+Then the client flags, seeded **off**, which is what an absent flag already
+resolves to:
+
+```bash
+pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type boolean \
+  -V off=false -V on=true \
+  --default off \
+  -d "Application → Developer, Juno staff only"
+```
+
+Turning it on for everyone it can reach is a `set` — the email-domain gate in
+`client-feature-flags.ts` is what keeps that from meaning every account:
+
+```bash
+pnpm exec wrangler flagship flags set <APP_ID> developer-settings -V on
+```
+
+To stage it among staff instead, bucket by `userId`; there is no workspace worth
+keeping consistent here, because the section describes one person's device:
+
+```bash
+pnpm exec wrangler flagship flags rollout <APP_ID> developer-settings \
+  --to on --from off --percentage 50 --by userId
+```
 
 ## Changing an agent's models
 
@@ -443,13 +540,19 @@ To exercise a real flag locally you need Cloudflare credentials and
 
 ## Adding a flag
 
-1. Add the key and its typed value to `agent-model-flags.ts`, or to a new
-   module alongside it if the flag is not about model routing. Keep `env.FLAGS`
-   out of call sites.
+1. Add the key and its typed value to `agent-model-flags.ts` if it is about
+   model routing, to `client-feature-flags.ts` if a client reads it, or to a new
+   module alongside them otherwise. Keep `env.FLAGS` out of call sites.
 2. Give it a default that reproduces today's behavior, and hand that same
-   default to Flagship so an absent flag and an unreachable Flagship agree.
-3. Parse the served value with zod and reject it whole on failure.
-4. Add the flag to the table above and create it in the `avalon-api` app. There
+   default to Flagship so an absent flag and an unreachable Flagship agree. For
+   a client flag that means `false`: a feature nobody has been given yet is the
+   behavior an outage has to reproduce.
+3. Parse the served value with zod and reject it whole on failure. A boolean
+   flag is the degenerate case — anything that is not `true` is off.
+4. Put anything a flag must never be able to grant into code rather than into a
+   targeting rule, the way the staff email domain is. A rule is edited by
+   whoever holds Flagship write; an invariant should not be.
+5. Add the flag to the table above and create it in the `avalon-api` app. There
    is one app for both regions, so it is created once.
 
 ## Adding an attribute

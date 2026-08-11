@@ -20,6 +20,9 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   lockdownMode: false,
   lockdownAvailable: false,
   debugEnabled: false,
+  // The browser fallback has no main process to poll the service, so the
+  // Developer section is simply not on offer there.
+  developerSettingsAvailable: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();

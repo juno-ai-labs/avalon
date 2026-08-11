@@ -44,7 +44,13 @@ export interface DesktopLockdownSettings {
 }
 
 export interface DesktopApplicationSettings extends DesktopLockdownSettings {
+  /** The **effective** Developer → Debug enabled preference: the stored choice
+   * and the service's flag. A device whose flag is off reads `false` here
+   * however `application-settings.json` reads. */
   debugEnabled: boolean;
+  /** Whether the service allows this account the Developer section at all.
+   * Off until a poll says otherwise, and off again on sign-out. */
+  developerSettingsAvailable: boolean;
 }
 
 export interface DesktopWorkspaceSummary {
