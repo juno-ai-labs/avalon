@@ -251,6 +251,28 @@ and the app has one appearance. Every colour is the app's own token from
 several repaint a page that declares a light scheme, so the palette is stated on
 the elements themselves and `color-scheme: dark` is declared three ways.
 
+The canvas runs the height of the reading pane rather than stopping at the last
+line, so a short digest does not end in a hard edge with the client's own white
+below it. `height: 100%` on the document and on the body is the whole of it.
+
+A body background propagates to the canvas and paints the pane by itself, so in
+most clients this changes nothing. It exists for the one that paints its own
+background onto `html`: propagation happens only while the root element has none,
+so that client breaks it, and a full-height body paints the pane itself instead.
+
+The percentage is load-bearing and a viewport unit would be wrong. A webmail
+client strips `<body>` and injects the markup into its own page, where the
+percentage meets an auto-height ancestor and collapses — leaving the message the
+height of its content, which is what a thread card wants. `100vh` would measure
+the browser window there and hang a tall dark tail off the bottom of the card.
+Nothing carries a height on a layout table for the same reason: the Word engine
+reads that as a minimum against the page box.
+
+All three are worth checking when this changes, and `preview-digest-email.mjs`
+only shows the first. Injecting `html { background: #fff !important }` into the
+preview reproduces the second; rendering the body markup into a container inside
+a taller page reproduces the third.
+
 The structure is: preheader (what a phone shows beside the subject, leading with
 the count that decides whether this gets opened now), wordmark, title and
 occurrence, count pills with the "for you" pill in brand, the body, a primary
