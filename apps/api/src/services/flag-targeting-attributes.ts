@@ -84,6 +84,8 @@ const userCache = new Map<string, CacheEntry<UserFacts>>();
 const workstreamCache = new Map<string, CacheEntry<WorkstreamFacts>>();
 /** Namespaced `entity:key` → the moment that key may be read again after a failure. */
 const failureSuppression = new Map<string, number>();
+/** Namespaced `entity:key` → the read already in flight for it, if any. */
+const inFlightLoads = new Map<string, Promise<LoadOutcome<unknown>>>();
 
 /** Drops every cached fact. Exists for tests, which must not inherit each other's rows. */
 export function clearFlagTargetingAttributeCache(): void {
@@ -91,6 +93,7 @@ export function clearFlagTargetingAttributeCache(): void {
   userCache.clear();
   workstreamCache.clear();
   failureSuppression.clear();
+  inFlightLoads.clear();
 }
 
 /**
@@ -118,7 +121,19 @@ async function cached<T>(
     if (suppressedUntil > Date.now()) return null;
     failureSuppression.delete(suppressionKey);
   }
-  const outcome = await load();
+  // The cache is written when a read *resolves*, so two evaluations starting in
+  // the same tick would both miss and both read. That is not hypothetical: one
+  // request resolves several flags at once, and each resolver describes the same
+  // subject. Sharing the pending read means a cold isolate pays for one, and the
+  // entry is dropped as soon as it settles so nothing here outlives a request —
+  // this is a de-duplicator, not a second cache with its own staleness.
+  const inFlightKey = `${entity}:${key}`;
+  const pending = inFlightLoads.get(inFlightKey) as Promise<LoadOutcome<T>> | undefined;
+  const read = pending ?? load().finally(() => {
+    inFlightLoads.delete(inFlightKey);
+  });
+  if (!pending) inFlightLoads.set(inFlightKey, read as Promise<LoadOutcome<unknown>>);
+  const outcome = await read;
   if (outcome.failed) {
     failureSuppression.set(suppressionKey, Date.now() + FAILURE_SUPPRESSION_MS);
     return null;
