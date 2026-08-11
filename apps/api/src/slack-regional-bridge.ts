@@ -2,17 +2,32 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { SlackAgentService } from "./services/slack-agent-service";
 import { serializeSlackRpcResult } from "./services/slack-routing-service";
+import {
+  SlackCommandRpcInputSchema,
+  SlackEventRpcInputSchema,
+  SlackInteractionRpcInputSchema,
+  parseRpcInput,
+} from "./lib/rpc-contracts";
 
 export class SlackRegionalBridge extends WorkerEntrypoint<Env> {
-  processSlackEvent(input: { payload: unknown; bodyHash: string }) {
-    return serializeSlackRpcResult(() => new SlackAgentService(this.env).processEvent(input.payload, input.bodyHash));
+  processSlackEvent(input: unknown) {
+    return serializeSlackRpcResult(() => {
+      const parsed = parseRpcInput(SlackEventRpcInputSchema, input, "processSlackEvent");
+      return new SlackAgentService(this.env).processEvent(parsed.payload, parsed.bodyHash);
+    });
   }
 
-  processSlackInteraction(input: { payload: Record<string, unknown>; bodyHash: string }) {
-    return serializeSlackRpcResult(() => new SlackAgentService(this.env).processInteraction(input.payload, input.bodyHash));
+  processSlackInteraction(input: unknown) {
+    return serializeSlackRpcResult(() => {
+      const parsed = parseRpcInput(SlackInteractionRpcInputSchema, input, "processSlackInteraction");
+      return new SlackAgentService(this.env).processInteraction(parsed.payload, parsed.bodyHash);
+    });
   }
 
-  processSlackCommand(input: { form: Record<string, string>; bodyHash: string }) {
-    return serializeSlackRpcResult(() => new SlackAgentService(this.env).processCommand(input.form, input.bodyHash));
+  processSlackCommand(input: unknown) {
+    return serializeSlackRpcResult(() => {
+      const parsed = parseRpcInput(SlackCommandRpcInputSchema, input, "processSlackCommand");
+      return new SlackAgentService(this.env).processCommand(parsed.form, parsed.bodyHash);
+    });
   }
 }

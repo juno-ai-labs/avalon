@@ -1,5 +1,6 @@
 import { app } from "./app";
-import type { Env } from "./env";
+import { assertEnvContract, EnvContractError, type Env } from "./env";
+import { logStructuredEvent } from "./observability/logger";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
@@ -55,10 +56,38 @@ export { LinearRoutingBridge } from "./linear-routing-bridge";
 export { SlackRegionalBridge } from "./slack-regional-bridge";
 export { SlackRoutingBridge } from "./slack-routing-bridge";
 
+/**
+ * The environment is asserted here rather than inside `app`, so the check runs
+ * once per isolate against the real bindings while route tests can still build
+ * the partial `Env` they need. A misconfigured deployment fails on its first
+ * request with the offending keys named, instead of on whichever request first
+ * happened to read the missing one.
+ */
+function withEnvContract<TArgs extends [unknown, Env, ...unknown[]], TResult>(
+  handler: (...args: TArgs) => TResult,
+): (...args: TArgs) => TResult {
+  return (...args: TArgs) => {
+    assertEnvContract(args[1]);
+    return handler(...args);
+  };
+}
+
 export default {
-  fetch: app.fetch,
-  queue: consumeActivityQueue,
-  scheduled: (_controller, env, context) => {
+  fetch: (request, env, context) => {
+    try {
+      assertEnvContract(env);
+    } catch (error) {
+      if (!(error instanceof EnvContractError)) throw error;
+      logStructuredEvent(env, "error", "env_contract_failed", { keys: error.keys });
+      return Response.json(
+        { error: { code: "service_misconfigured", message: "The service is misconfigured", requestId: null } },
+        { status: 503 },
+      );
+    }
+    return app.fetch(request, env, context);
+  },
+  queue: withEnvContract(consumeActivityQueue),
+  scheduled: withEnvContract((_controller, env, context) => {
     context.waitUntil(Promise.all([
       reapExpiredHarnessAttempts(env),
       reapExpiredDraftAttachments(env),
@@ -73,5 +102,5 @@ export default {
       reapExpiredActivityEvents(env),
       reconcileDigestDefaults(env),
     ]));
-  },
+  }),
 } satisfies ExportedHandler<Env>;
