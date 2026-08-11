@@ -166,12 +166,6 @@ export async function launchWorkstreamHarness(
     supersedeActiveRun?: boolean;
     scheduledWakeupId?: string;
     digestDeliveryId?: string;
-    /**
-     * Hands the Workflows round trip to the request's `waitUntil` instead of
-     * making the caller wait for it. Supplied only where a person is waiting on
-     * the response; see the launch closure below for what that costs.
-     */
-    defer?: (promise: Promise<unknown>) => void;
   },
 ): Promise<string> {
   const id = newId();
@@ -228,64 +222,52 @@ export async function launchWorkstreamHarness(
       : {}),
     reason: input.origin,
   };
-  /**
-   * Everything past the run row: the Workflows round trip, and the status event
-   * that follows it.
-   *
-   * The row above already says `running` and already carries the id this
-   * function returns, so nothing the caller receives depends on the start having
-   * finished — which is what makes it deferrable. It is also the slowest step in
-   * a create, and the one a person who just pressed enter is waiting behind.
-   *
-   * A start that fails still records the failure on the run and now also
-   * publishes it, so a deferred failure reaches the client over the socket as a
-   * failed run it can retry, rather than as a 503 for a work stream that exists
-   * either way.
+  /*
+   * The Workflows round trip stays on the caller's path, and it is the slowest
+   * step in a create. Handing it to `waitUntil` was tried and reverted: the run
+   * row above already says `running` while `attempt_id` and `lease_expires_at`
+   * stay NULL until the Workflow admits the run, and nothing reaps that shape.
+   * A dropped deferral therefore left a work stream permanently "working" —
+   * `stop` only records a request a live workflow has to observe, `retry`
+   * refuses a `running` stream, and no screen offers either. Losing the start
+   * here instead fails loudly, in front of the person who asked for it.
    */
-  const start = async (): Promise<void> => {
-    try {
-      await startWorkstreamWorkflow(env, workflowInput);
-    } catch (error) {
-      const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
-      logStructuredEvent(env, "error", "workstream_harness_launch_failed", {
-        request_id: id,
-        workspace_id: input.workspaceId,
-        workstream_id: input.workstreamId,
-        origin: input.origin,
-        execution_principal_type: input.executionPrincipal.type,
-        error_name: error instanceof Error ? error.name : "UnknownError",
-        error_message: diagnosticMessage,
-      });
-      const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
-        ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
-      await env.DB.batch([
-        env.DB.prepare(
-          "UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?",
-        ).bind(nowIso(), JSON.stringify(memberSafeError), id),
-        env.DB.prepare(
-          "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
-        ).bind(nowIso(), input.workstreamId),
-      ]);
-      await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
-        type: "harness_status_changed",
-        status: "failed",
-      });
-      throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
-    }
+  try {
+    await startWorkstreamWorkflow(env, workflowInput);
+  } catch (error) {
+    const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
+    logStructuredEvent(env, "error", "workstream_harness_launch_failed", {
+      request_id: id,
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      origin: input.origin,
+      execution_principal_type: input.executionPrincipal.type,
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      error_message: diagnosticMessage,
+    });
+    const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
+      ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE harness_runs SET status = 'failed', completed_at = ?, error_json = ? WHERE id = ?",
+      ).bind(nowIso(), JSON.stringify(memberSafeError), id),
+      env.DB.prepare(
+        "UPDATE workstreams SET harness_status = 'failed', updated_at = ? WHERE id = ?",
+      ).bind(nowIso(), input.workstreamId),
+    ]);
+    // The work stream and its run exist whatever the caller does with the 503,
+    // so anyone already watching is told the run failed rather than left on a
+    // `running` row that nothing will move.
     await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
       type: "harness_status_changed",
-      status: "running",
+      status: "failed",
     });
-  };
-
-  if (!input.defer) {
-    await start();
-    return id;
+    throw new ApiError(503, "workflow_unavailable", "The Avalon harness could not be started");
   }
-  // Deferred, the rejection has already been recorded on the run and published
-  // to the client. Letting it escape into `waitUntil` would only fail a request
-  // that has already succeeded.
-  input.defer(start().catch(() => undefined));
+  await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
+    type: "harness_status_changed",
+    status: "running",
+  });
   return id;
 }
 
@@ -646,10 +628,17 @@ export class WorkstreamService {
     // They still run ahead of the reservation below: a create that is going to
     // be refused should not leave an email address reserved for a work stream
     // that never exists.
-    await Promise.all([
+    //
+    // Settled rather than raced, and rethrown in a fixed order: a request that
+    // violates both would otherwise get whichever 422 happened to reject first,
+    // so the code a client sees for one bad request would not be stable.
+    const preflight = await Promise.allSettled([
       this.assertMembersExist(input.participantUserIds),
       this.assertDraftAttachments(attachmentIds),
     ]);
+    for (const outcome of preflight) {
+      if (outcome.status === "rejected") throw outcome.reason;
+    }
     const objective = input.objective
       ?? (input.openingMessage.trim() || "Review the attached files");
     const title = input.title ?? provisionalWorkstreamTitle(objective, "New work stream");
@@ -681,17 +670,13 @@ export class WorkstreamService {
       // run this create starts already resolve to the pinned model.
       modelOverride: input.modelOverride ?? null,
     });
-    // Activation decides only whether inbound mail routes to the address the
-    // reservation already produced, so nothing in this response or in the run
-    // depends on it. Outside Global it is a second hop to the Global registry,
-    // which makes it the largest thing that can leave the create path without
-    // changing what the caller gets back. `list` reconciles any route that a
-    // failure here leaves inactive.
-    await this.offCriticalPath(
-      emailRouting.activateWorkstreamRoute(routeInput),
-      "workstream_email_route_activation_failed",
-      created.workstream.id,
-    );
+    // Deferring this was tried and reverted. It costs a second hop to the
+    // Global registry outside Global, but the create that would have saved it
+    // immediately invalidates the work-stream list, and `list` backfills every
+    // route that is not yet `active` — so the same hop was paid a moment later
+    // by the refresh, against extra D1 reads, with two activations of one route
+    // able to overlap and fail each other's reconcile.
+    await emailRouting.activateWorkstreamRoute(routeInput);
     const messages = await this.database.workstreams.listMessages(this.auth.workspaceId, created.workstream.id, 1);
     const message = messages[0];
     // Ahead of the harness launch below rather than beside it: both land in the
@@ -1740,30 +1725,6 @@ export class WorkstreamService {
     }
   }
 
-  /**
-   * Work the caller is not waiting on.
-   *
-   * A caller that supplied no deferral — Slack ingress, tests — gets it awaited
-   * instead of dropped, for the same reason `nameInBackground` does: an
-   * unawaited promise in a Worker is not guaranteed to finish once the response
-   * has gone out. Deferred, a failure is logged rather than thrown, because
-   * there is no longer a response for it to fail.
-   */
-  private async offCriticalPath(task: Promise<unknown>, event: string, workstreamId: string): Promise<void> {
-    if (!this.defer) {
-      await task;
-      return;
-    }
-    this.defer(task.catch((error: unknown) => {
-      logStructuredEvent(this.env, "error", event, {
-        workspace_id: this.auth.workspaceId,
-        workstream_id: workstreamId,
-        error_name: error instanceof Error ? error.name : "UnknownError",
-        error_message: error instanceof Error ? error.message : "Deferred work failed",
-      });
-    }));
-  }
-
   private async launchHarness(
     workstreamId: string,
     triggerMessageId: string | null,
@@ -1782,9 +1743,6 @@ export class WorkstreamService {
       ...(slackOrigin ? { slackOrigin } : {}),
       ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
       ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
-      // Present only on a service built for a request someone is waiting on,
-      // which today is the create route and nothing else.
-      ...(this.defer ? { defer: this.defer } : {}),
     });
   }
 
