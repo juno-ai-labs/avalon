@@ -481,18 +481,16 @@ resolves to:
 pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type boolean \
   -V off=false -V on=true \
   --default off \
-  -d "Application → Developer"
+  -d "Application → Developer in the desktop client. Staff-scoped by the rule below" \
+  --rule "serve=on; when=userEmailDomain equals juno-labs.com"
 ```
 
-**The staff scope is this rule, and it is the only thing holding it.** Nothing
-in the Worker narrows the flag, so a `developer-settings` served with no rule
-reaches every account it is evaluated for. Add the rule in the same sitting as
-the flag:
-
-```bash
-pnpm exec wrangler flagship flags update <APP_ID> developer-settings \
-  --add-rule "serve=on; when=userEmailDomain equals juno-labs.com"
-```
+**The staff scope is that `--rule`, and it is the only thing holding it.**
+Nothing in the Worker narrows the flag, so a `developer-settings` served with no
+rule reaches every account it is evaluated for. `create` takes rules, so give it
+one there rather than adding it afterwards with `update --add-rule`: a flag that
+exists for even a minute without its rule is a flag that is live and unscoped
+for that minute.
 
 Leave the default variation at `off` rather than promoting `on` with the rule
 attached: the default is what an account the rule does not match falls through
