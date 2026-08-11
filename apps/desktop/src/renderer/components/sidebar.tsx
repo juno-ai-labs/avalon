@@ -242,6 +242,7 @@ function WorkstreamRow({
                 </span>
               )}
             </span>
+            {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
@@ -264,6 +265,20 @@ function WorkstreamRow({
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
+  );
+}
+
+/**
+ * The one "only you can see this" marker in the sidebar. Notes wear it when
+ * their scope is personal; a system work stream wears it because nobody but its
+ * participant can open it. Same badge either way — a reader should not have to
+ * learn two ways of being told the same thing.
+ */
+function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
+  return (
+    <span aria-label={label} className="sidebar-note-privacy" role="img">
+      <IconLock aria-hidden="true" size={15} stroke={1.8} />
+    </span>
   );
 }
 
@@ -299,11 +314,7 @@ function NoteRow({
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{note.title}</span>
             </span>
-            {note.scope === 'personal' && (
-              <span aria-label="Private note" className="sidebar-note-privacy" role="img">
-                <IconLock aria-hidden="true" size={15} stroke={1.8} />
-              </span>
-            )}
+            {note.scope === 'personal' && <PrivacyMarker label="Private note" />}
           </NavLink>
         </div>
       </ContextMenu.Trigger>

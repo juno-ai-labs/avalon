@@ -107,15 +107,17 @@ describe("firing a digest occurrence", () => {
     expect(delivery.cursor_through).toBe(2);
   });
 
-  it("runs in a hidden work stream the recipient alone participates in", async () => {
+  it("runs in a private work stream the recipient alone participates in", async () => {
     const database = seededDatabase();
     const env = envFor(database);
     await recordEvent(env, "message:1");
 
     await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
 
-    // The loop needs a work stream; nobody's sidebar needs to show it.
-    expect(database.prepare("SELECT system_kind FROM workstreams").get()).toEqual({ system_kind: "digest" });
+    // Two declarations, two questions: private is who may read it, machinery is
+    // whether it is listed.
+    expect(database.prepare("SELECT system_kind, scope FROM workstreams").get())
+      .toEqual({ system_kind: "digest", scope: "personal" });
     expect(database.prepare(
       "SELECT user_id FROM workstream_participants WHERE removed_at IS NULL",
     ).all()).toEqual([{ user_id: OWNER }]);

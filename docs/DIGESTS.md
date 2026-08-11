@@ -172,17 +172,26 @@ and compaction, tool invocations, artifacts and the realtime room all key off
 and reusing that abstraction is the point: a digest run gets compaction, tool
 receipts, the realtime room and the transcript for free.
 
-`workstreams.system_kind` marks the ones that are machinery. `NULL` is ordinary
-work; any non-`NULL` value is a subsystem's own work stream. Two rules apply, and
-they are different questions:
+Two columns, answering two different questions. A digest's work stream carries
+both.
 
-- **Who may see it** — only an active participant. A digest's work stream has
-  exactly one, the recipient, which is also what makes every tool the run reaches
-  for resolve against their own access. Another member cannot open it even
-  knowing its id, because the brief inside is assembled from private activity.
-- **Whether it is shown** — off by default. `GET /workstreams?includeSystem=true`
-  asks for them, and the desktop sends it when Application → Developer → **Debug
-  enabled** is on. The flag widens what is listed, never who may read it.
+- **`scope` — who may read it.** `personal` means an active participant and
+  nobody else; `workspace` means anyone in the workspace. This is the same
+  column and the same vocabulary `notes.scope` uses, so "private" means one
+  thing in Avalon and is declared on the row rather than inferred by each
+  caller. A digest's work stream has exactly one participant, its recipient,
+  which is also what makes every tool the run reaches for resolve against their
+  own access. Another member cannot open it knowing its id, because the brief
+  inside is assembled from their private activity.
+- **`system_kind` — whether it is machinery.** This decides whether the row is
+  *listed*: off by default, and `GET /workstreams?includeSystem=true` asks for
+  it, which the desktop sends when Application → Developer → **Debug enabled**
+  is on. It widens what is shown, never who may read it. A private work stream
+  that is not machinery is protected exactly the same way.
+
+In the interface, `scope = 'personal'` renders the private marker — the Cloud and
+Lock badge a personal note already wears in the sidebar, plus a **Private** badge
+in the work-stream header.
 
 Shown, they render one level down: dimmed, with a small gear, full opacity on
 hover and while active — hierarchy should not cost legibility once you are in it.

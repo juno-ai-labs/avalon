@@ -74,6 +74,7 @@ function workstream(
     title,
     origin,
     harnessStatus,
+    scope: 'workspace' as const,
     latestAttentionSequenceNumber: 0,
     readThroughSequenceNumber: 0,
     manualUnreadFromSequenceNumber: null,
@@ -820,5 +821,46 @@ describe('Sidebar work-stream markers', () => {
 
     await waitFor(() => expect(onRenameWorkstream).toHaveBeenCalledWith(target, 'Launch planning'));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Rename work stream' })).not.toBeInTheDocument());
+  });
+});
+
+describe('private work streams', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderWith(streams: WorkstreamSummary[]): void {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar {...defaultActions} automations={[]} onSignOut={vi.fn()} workspace={workspace} workstreams={streams} />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('wears the same marker a private note does', () => {
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000021', 'Digest · Adam', 'completed'),
+      scope: 'personal',
+      systemKind: 'digest',
+    }]);
+
+    // One badge for "only you can see this", whatever kind of thing it is on.
+    expect(screen.getByLabelText('Private work stream')).toBeInTheDocument();
+  });
+
+  it('leaves an ordinary work stream unmarked', () => {
+    renderWith([workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed')]);
+
+    expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
   });
 });
