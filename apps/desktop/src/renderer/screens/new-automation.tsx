@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -499,10 +499,28 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const { api, session } = useAppSession();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const resumeDraftId = searchParams.get('draft');
+  // This screen also writes the draft into the URL once a turn compiles, and
+  // that write must not read back as "go and load this draft" — the
+  // conversation on screen is already the one it names, and loading it would
+  // replace it with the turn before. What separates the two is which *screen*
+  // wrote the URL, so the mark is held here and not in history state: a history
+  // entry outlives this component, and one that stayed marked would leave a
+  // remount — a back gesture, a restored window — with the resume permanently
+  // switched off, showing an empty builder for a draft that has a conversation.
+  const selfNamedDraftId = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const draftKey = newAutomationDraftKey(workspace.id);
+  // The conversation this screen's composer belongs to: the draft it was opened
+  // on, and afterwards only a draft it is switched to. Deliberately not the
+  // draft in the URL — this screen writes its own draft there once a turn
+  // compiles, and a key that moved with it would re-key the composer mid-turn
+  // and drop the sentence being typed into it. Keeping the cache per draft is
+  // what stops an unsent message, and the attachments staged with it, following
+  // the screen into somebody else's conversation.
+  const [composerDraftId, setComposerDraftId] = useState<string | null>(resumeDraftId);
+  const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
   const { text: input, setText: setInput } = useDraftText(draftKey);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
@@ -539,17 +557,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   // Opened from a draft in the sidebar. The conversation is fetched once and
   // applied once: after that the screen owns it again, so continuing the draft
   // is not undone by a refetch of the turn it was resumed at.
-  const resumeDraftId = searchParams.get('draft');
-  // This screen also writes the draft into the URL once a turn compiles, and
-  // that write must not read back as "go and load this draft" — the
-  // conversation on screen is already the one it names. Marking the navigation
-  // is what separates the two, since the value alone cannot.
-  const selfNamedDraft = (useLocation().state as { selfNamedDraft?: boolean } | null)?.selfNamedDraft === true;
   const [resumedDraftId, setResumedDraftId] = useState<string | null>(null);
   const resumedDraft = useQuery({
     queryKey: ['automation-draft', resumeDraftId],
     queryFn: ({ signal }) => api!.resumeAutomationDraft(resumeDraftId!, signal),
-    enabled: Boolean(api && resumeDraftId) && !selfNamedDraft && resumedDraftId !== resumeDraftId,
+    enabled: Boolean(api && resumeDraftId)
+      && resumeDraftId !== selfNamedDraftId.current
+      && resumedDraftId !== resumeDraftId,
     staleTime: Infinity,
     retry: false,
   });
@@ -560,11 +574,21 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   useEffect(() => {
     const previous = namedDraftId.current;
     namedDraftId.current = resumeDraftId;
+    // The mark only ever covers the URL this screen wrote, and it is stale as
+    // soon as the address bar names a different draft — left set, it would
+    // refuse to reopen that very draft later in the same screen. An address bar
+    // naming *nothing* is not that: this screen's own write reaches the router
+    // several renders after the state beside it, so a null here is usually the
+    // URL not having caught up yet, and clearing on it would re-key the
+    // composer under the typing hand.
+    if (resumeDraftId !== null && resumeDraftId !== selfNamedDraftId.current) selfNamedDraftId.current = null;
     if (resumeDraftId === null) {
       // New automation was chosen while a draft was on screen. The route did
       // not change, so nothing else clears it.
       if (previous !== null) {
+        selfNamedDraftId.current = null;
         setResumedDraftId(null);
+        setComposerDraftId(null);
         setDraft(null);
         setTurns([]);
       }
@@ -573,6 +597,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     const resumed = resumedDraft.data;
     if (!resumed || resumedDraftId === resumeDraftId) return;
     setResumedDraftId(resumeDraftId);
+    setComposerDraftId(resumeDraftId);
     setDraft(resumed.draft);
     setTurns(resumedTurns(resumed.messages, resumed.draft));
   }, [resumeDraftId, resumedDraft.data, resumedDraftId]);
@@ -765,9 +790,14 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // in the URL is what makes that row the active one and what lets this
       // screen be reopened on the conversation it is showing.
       if (resumeDraftId !== response.draftId) {
+        selfNamedDraftId.current = response.draftId;
         setResumedDraftId(response.draftId);
-        setSearchParams({ draft: response.draftId }, { replace: true, state: { selfNamedDraft: true } });
+        setSearchParams({ draft: response.draftId }, { replace: true });
       }
+      // The saved conversation just moved on. Dropping the cached copy is what
+      // makes reopening this draft later show the turn it is actually at
+      // rather than the one it was resumed from.
+      queryClient.removeQueries({ queryKey: ['automation-draft', response.draftId] });
       void queryClient.invalidateQueries({ queryKey: ['automations'] });
       const responseMessage = response.question
         ? automationQuestionMessage(response.assistantMessage, response.question)

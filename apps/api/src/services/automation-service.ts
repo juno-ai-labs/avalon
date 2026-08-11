@@ -645,6 +645,14 @@ export class AutomationService {
   async setPaused(id: string, paused: boolean): Promise<void> {
     const subscription = await this.loadSubscription(id);
     this.assertCanManageSubscription(subscription);
+    // Pausing and resuming move between two states an automation reaches only
+    // by being created. A draft has never had its scope, connector bindings, or
+    // activity sources validated — that happens in `create` — so arriving at
+    // 'active' through here would hand a half-written automation a live email
+    // route and a Run now, with nothing having checked what it would run as.
+    if (subscription.status === "draft") {
+      throw new ApiError(409, "automation_not_created", "Create this automation before pausing or resuming it");
+    }
     const at = nowIso();
     await this.env.DB.batch([
       this.env.DB.prepare("UPDATE automation_subscriptions SET status = ?, updated_at = ? WHERE id = ? AND workspace_id = ?")
@@ -755,7 +763,12 @@ export class AutomationService {
     ]);
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     try {
-      await emailRouting.ensureAutomationAddress(this.automationRouteInput(id));
+      // Only an automation that has an address has a route to close. A draft
+      // never took one, and reserving one here purely to disable it would mint
+      // a permanent tombstone for an automation that never existed.
+      if (subscription.email_address != null) {
+        await emailRouting.ensureAutomationAddress(this.automationRouteInput(id));
+      }
       for (const workstreamId of plannedWorkstreamIds) {
         await emailRouting.ensureWorkstreamAddress({
           region: this.env.AVALON_REGION,
