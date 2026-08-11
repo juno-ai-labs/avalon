@@ -392,7 +392,10 @@ const ResourceRowSchema = z.object({
   provider_resource_id: rowText.nullish(),
   // `resources.title` carries no length constraint, and `ResourceSchema` caps it.
   title: displayText(300),
-  mime_type: rowText.nullish(),
+  // Bounded for the same reason as `title`, and easier to miss: `mime_type` is
+  // written from a client-supplied header, so it is the one an ordinary member
+  // controls most directly.
+  mime_type: displayText(160).nullish(),
   canonical_url: rowText.nullish(),
   watch_enabled: rowFlag,
   watch_status: z.enum(["unsupported", "watching", "paused"]),
