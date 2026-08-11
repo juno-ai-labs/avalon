@@ -254,13 +254,17 @@ function WorkstreamRow({
 }
 
 function NoteRow({
+  debugEnabled,
   note,
   ownedByViewer,
+  scopePending,
   onArchive,
   onChangeScope,
 }: {
+  debugEnabled: boolean;
   note: NoteSummary;
   ownedByViewer: boolean;
+  scopePending: boolean;
   onArchive: (note: NoteSummary) => void;
   onChangeScope: (note: NoteSummary, scope: 'personal' | 'workspace') => void;
 }): React.JSX.Element {
@@ -297,17 +301,22 @@ function NoteRow({
               names the state it moves to rather than the current one. */}
           <ContextMenu.Item
             className="menu-item"
-            disabled={!ownedByViewer}
+            disabled={!ownedByViewer || scopePending}
             onSelect={() => onChangeScope(note, isPrivate ? 'workspace' : 'personal')}
           >
             {isPrivate
               ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
               : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
           </ContextMenu.Item>
+          {debugEnabled && <CopyResourceIdItem id={note.id} label="Copy note id" />}
           <ContextMenu.Separator className="menu-separator" />
+          {/* Archiving a note the meeting window is still recording into would
+              fail that window's next segment save — the recording continues
+              with nothing being persisted — so the action waits for the
+              recording to end. */}
           <ContextMenu.Item
             className="menu-item menu-item-danger"
-            disabled={!ownedByViewer}
+            disabled={!ownedByViewer || note.recordingStatus === 'recording'}
             onSelect={() => onArchive(note)}
           >
             <Archive aria-hidden="true" size={16} /> Archive note
@@ -348,6 +357,9 @@ export function Sidebar({
   // Both note actions apply straight from the menu, so a rejection has nowhere
   // to land unless it is raised here: the row simply stays as it was.
   const [noteError, setNoteError] = useState<{ copy: string; message: string; title: string } | null>(null);
+  const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
+  const [archiveNoteTarget, setArchiveNoteTarget] = useState<NoteSummary | null>(null);
+  const [archivingNote, setArchivingNote] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -398,6 +410,49 @@ export function Sidebar({
       setDeleteError(error instanceof Error ? error.message : 'The automation could not be deleted.');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const closeArchiveNote = (): void => {
+    if (archivingNote) return;
+    setArchiveNoteTarget(null);
+  };
+
+  // Archiving is not reversible from any surface yet, so it confirms and names
+  // its target the way deleting an automation does, rather than firing straight
+  // off a right-click that landed one row away from where it was aimed.
+  const submitArchiveNote = async (): Promise<void> => {
+    if (!archiveNoteTarget) return;
+    setArchivingNote(true);
+    try {
+      await onArchiveNote(archiveNoteTarget);
+      setArchiveNoteTarget(null);
+    } catch (error) {
+      setArchiveNoteTarget(null);
+      setNoteError({
+        title: 'Note could not be archived',
+        copy: 'The note is still in the sidebar. Try again in a moment.',
+        message: error instanceof Error ? error.message : 'The note could not be archived.',
+      });
+    } finally {
+      setArchivingNote(false);
+    }
+  };
+
+  const changeNoteScope = async (note: NoteSummary, scope: 'personal' | 'workspace'): Promise<void> => {
+    setScopePendingNoteId(note.id);
+    try {
+      await onChangeNoteScope(note, scope);
+    } catch (error) {
+      setNoteError({
+        title: 'Note visibility could not be changed',
+        copy: scope === 'workspace'
+          ? 'The note is still private. Try again in a moment.'
+          : 'The note is still public to the workspace. Try again in a moment.',
+        message: error instanceof Error ? error.message : 'The note could not be updated.',
+      });
+    } finally {
+      setScopePendingNoteId((current) => current === note.id ? null : current);
     }
   };
 
@@ -504,29 +559,13 @@ export function Sidebar({
                   <div className="sidebar-list">
                     {group.streams.map((item) => item.type === 'note' ? (
                       <NoteRow
+                        debugEnabled={debugEnabled}
                         key={item.id}
                         note={item.note}
-                        onArchive={(target) => {
-                          void onArchiveNote(target).catch((error: unknown) => {
-                            setNoteError({
-                              title: 'Note could not be archived',
-                              copy: 'The note is still in the sidebar. Try again in a moment.',
-                              message: error instanceof Error ? error.message : 'The note could not be archived.',
-                            });
-                          });
-                        }}
-                        onChangeScope={(target, scope) => {
-                          void onChangeNoteScope(target, scope).catch((error: unknown) => {
-                            setNoteError({
-                              title: 'Note visibility could not be changed',
-                              copy: scope === 'workspace'
-                                ? 'The note is still private. Try again in a moment.'
-                                : 'The note is still public to the workspace. Try again in a moment.',
-                              message: error instanceof Error ? error.message : 'The note could not be updated.',
-                            });
-                          });
-                        }}
+                        onArchive={setArchiveNoteTarget}
+                        onChangeScope={(target, scope) => void changeNoteScope(target, scope)}
                         ownedByViewer={item.note.ownerUserId === workspace.currentUser.id}
+                        scopePending={scopePendingNoteId === item.note.id}
                       />
                     ) : (
                       <WorkstreamRow
@@ -642,6 +681,27 @@ export function Sidebar({
       >
         <p className="modal-copy">The draft is still in the sidebar. Try again in a moment.</p>
         {archiveError && <InlineError>{archiveError}</InlineError>}
+      </Modal>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={archivingNote} onClick={closeArchiveNote}>Cancel</Button>
+            <Button className="button-danger" disabled={archivingNote} onClick={() => void submitArchiveNote()}>
+              Archive
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeArchiveNote();
+        }}
+        open={Boolean(archiveNoteTarget)}
+        title="Archive note"
+      >
+        <p className="modal-copy">
+          <strong>{archiveNoteTarget?.title}</strong> leaves the sidebar, stops being offered as a
+          resource, and stops reaching the agent. Its transcript is kept, but Avalon has no way to
+          bring the note back yet.
+        </p>
       </Modal>
       <Modal
         footer={<Button onClick={() => setNoteError(null)}>Close</Button>}

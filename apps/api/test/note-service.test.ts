@@ -576,6 +576,16 @@ describe("NoteService", () => {
       .rejects.toMatchObject({ status: 404, code: "note_not_found" });
     await expect(new NoteService(env, otherAuth).get(noteId)).resolves.toMatchObject({ id: noteId });
 
+    // Archiving underneath a live meeting window would 404 its next segment
+    // save while capture kept running, so a recording note refuses distinctly
+    // from one the caller may not touch at all.
+    await ownerService.update(noteId, { recordingStatus: "recording" });
+    await expect(ownerService.archive(noteId))
+      .rejects.toMatchObject({ status: 409, code: "note_recording" });
+    expect(database.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
+      .toEqual({ archived_at: null });
+    await ownerService.update(noteId, { recordingStatus: "complete" });
+
     await ownerService.archive(noteId);
 
     await expect(ownerService.list(250)).resolves.toEqual({ items: [] });
