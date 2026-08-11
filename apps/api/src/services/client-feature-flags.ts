@@ -84,7 +84,7 @@ function emailDomain(email: string): string | null {
  * | `appEnv` | `development`, `test`, `staging`, or `production` |
  *
  * The two identity attributes are separate because `users.id` and
- * `users.created_at` are **regional** — see [`REGIONALIZATION.md`]. One person
+ * `users.created_at` are **regional** — see `docs/REGIONALIZATION.md`. One person
  * with workspaces in both regions has two rows, so a rollout bucketed by the
  * regional id would put them in different buckets on each, and a tenure rule
  * would read the date they joined that region. `platform_user_id` is the

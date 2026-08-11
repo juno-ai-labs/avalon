@@ -245,9 +245,11 @@ function publicSession(value: WireSession): DesktopSession {
 }
 
 /** Who the flag poll is asking as. The endpoint is part of it because the same
- * person is a different regional account on each one. */
-function flagSessionIdentity(session: Pick<DesktopSession, 'apiBaseUrl' | 'user'>): string {
-  return `${session.user.id}@${session.apiBaseUrl}`;
+ * person is a different regional account on each one. Both callers derive it
+ * here: a stored credential and a live session have to agree on the identity or
+ * a launch would look like an account change and poll twice. */
+function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
+  return `${userId}@${apiBaseUrl}`;
 }
 
 function broadcastSessionChanged(value: WireSession | null): void {
@@ -259,7 +261,7 @@ function broadcastSessionChanged(value: WireSession | null): void {
   // that distinction: this also fires on every token refresh, which is the same
   // account and must not cost an extra poll, and an account swap must not be
   // answered by a request issued as the previous one.
-  if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed));
+  if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
   else developerSettingsFlagController.stop();
 }
 
@@ -423,8 +425,11 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
   // Once per outage rather than once per poll: a device that cannot reach the
   // service keeps its last answer, so a permanently broken poll would otherwise
   // be indistinguishable from a quiet, working one.
+  // Both edges warn, because both describe the same degraded state: the device
+  // is serving an answer it can no longer confirm, and then is not. A quieter
+  // level for the recovery would leave the warning that opened it unclosed.
   onAvailabilityChange: (reachable, error) => {
-    if (reachable) console.info('[avalon] the developer settings flag is readable again');
+    if (reachable) console.warn('[avalon] the developer settings flag is readable again');
     else console.warn('[avalon] could not read the developer settings flag', error);
   },
 });
@@ -1901,7 +1906,7 @@ if (!singleInstanceLock) {
     // answers, which is why this does not block the first window.
     if (launchAuth) {
       developerSettingsFlagController.observeSession(
-        `${launchAuth.binding.userId}@${apiBaseForAuth(launchAuth)}`,
+        flagSessionIdentity(launchAuth.binding.userId, apiBaseForAuth(launchAuth)),
       );
     }
     await installRendererProtocol();
