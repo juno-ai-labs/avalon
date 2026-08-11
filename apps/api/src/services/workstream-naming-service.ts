@@ -76,79 +76,125 @@ export interface WorkstreamNamingInput {
 /**
  * Name one work stream from the request that opened it, in the background.
  *
- * Never rejects and never throws: naming is cosmetic, it runs after the work
- * stream and its harness run already exist, and a failure has to leave the
- * provisional title standing rather than surface anywhere.
+ * Never rejects and never throws — the model call and the write alike. Some
+ * callers await this inline, having already created the work stream and
+ * launched its run, so a failure here that escaped would turn a creation that
+ * fully succeeded into an error at the caller. The title is cosmetic; the
+ * creation is not.
  */
 export async function nameWorkstream(env: Env, input: WorkstreamNamingInput): Promise<void> {
-  const title = await generateName(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    userId: input.userId,
-    objective: input.objective,
-    openingMessage: input.openingMessage,
+  await guarded(env, input.workspaceId, input.workstreamId, async () => {
+    const title = await generateName(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      userId: input.userId,
+      objective: input.objective,
+      openingMessage: input.openingMessage,
+    });
+    // Advanced either way. A work stream whose naming failed keeps its
+    // provisional title, and clients waiting on the name are told to stop
+    // waiting — a skeleton that never resolves is worse than a plain title.
+    await advanceTitle(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      from: "naming",
+      to: "automatic",
+      title,
+      standingTitle: input.provisionalTitle,
+    });
   });
-  // Advanced either way. A work stream whose naming failed keeps its
-  // provisional title, and clients waiting on the name are told to stop
-  // waiting — a skeleton that never resolves is worse than a plain title.
-  await advanceTitle(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    from: "naming",
-    to: "automatic",
-    title,
-    standingTitle: input.provisionalTitle,
-  });
+}
+
+/**
+ * Run one naming pass and swallow whatever it throws.
+ *
+ * Every caller of this module is somewhere a name is the least important thing
+ * happening: after a work stream is created, after a run has finished, beside a
+ * message that is already durable. None of them can be failed by a title, and
+ * the durable workflow step that calls the second pass would otherwise retry a
+ * model call on a transient D1 error.
+ */
+async function guarded(
+  env: Env,
+  workspaceId: string,
+  workstreamId: string,
+  pass: () => Promise<void>,
+): Promise<void> {
+  try {
+    await pass();
+  } catch (error) {
+    logStructuredEvent(env, "warn", "workstream_naming_failed", {
+      workspace_id: workspaceId,
+      workstream_id: workstreamId,
+      // The model half reports its own failure and still settles the title;
+      // reaching here means something else did — a read, the write, the row.
+      stage: "pass",
+      error_name: error instanceof Error ? error.name : "UnknownError",
+      error_message: error instanceof Error ? error.message : "Work-stream naming failed",
+    });
+  }
 }
 
 /**
  * Look at an Avalon-chosen name again once the work stream has become a
  * conversation, and replace it if the transcript says something better.
  *
- * Called wherever the transcript grows — a new message, the end of a run — and
- * cheap to call: it does one indexed count and stops unless this work stream is
- * both still carrying an automatic name and past the threshold. It runs at most
- * once, because a successful pass settles the title, and it never touches a
- * title a person set, because that title was settled when they set it.
+ * Called wherever the transcript grows — a new message, the end of a run — so
+ * the overwhelmingly common case is a work stream that will never be named
+ * again, and that case has to cost almost nothing. Two things keep it cheap:
+ * the status gate is in the `WHERE` clause, so a settled work stream never
+ * evaluates the count at all, and the count itself stops at the threshold
+ * rather than tallying a transcript thousands of messages long to learn it is
+ * larger than five.
+ *
+ * It runs at most once, because a successful pass settles the title, and it
+ * never touches a title a person set, because that title was settled when they
+ * set it. Never rejects: see {@link guarded}.
  */
 export async function refreshWorkstreamName(env: Env, input: {
   workspaceId: string;
   workstreamId: string;
   userId?: string | undefined;
 }): Promise<void> {
-  const row = await env.DB.prepare(
-    `SELECT w.title, w.title_status, w.objective,
-       (SELECT COUNT(*) FROM messages m
-         WHERE m.workspace_id = w.workspace_id AND m.workstream_id = w.id) AS message_count
-     FROM workstreams w WHERE w.id = ? AND w.workspace_id = ?`,
-  ).bind(input.workstreamId, input.workspaceId).first<{
-    title: string;
-    title_status: string;
-    objective: string;
-    message_count: number;
-  }>();
-  // `naming` is here as well as `automatic` because a first pass that never
-  // finished — the isolate went away mid-call — leaves the row in it. This
-  // pass is the one thing that comes along afterwards, so it repairs the row
-  // rather than stepping over it.
-  if (!row || (row.title_status !== "automatic" && row.title_status !== "naming")) return;
-  if (Number(row.message_count) < RENAME_AFTER_MESSAGE_COUNT) return;
+  await guarded(env, input.workspaceId, input.workstreamId, async () => {
+    // `naming` is eligible as well as `automatic` because a first pass that
+    // never finished — the isolate went away mid-call — leaves the row in it.
+    // This pass is the one thing that comes along afterwards, so it repairs the
+    // row rather than stepping over it.
+    const row = await env.DB.prepare(
+      `SELECT w.title, w.title_status, w.objective,
+         (SELECT COUNT(*) FROM (
+            SELECT 1 FROM messages m
+             WHERE m.workspace_id = w.workspace_id AND m.workstream_id = w.id
+             LIMIT ?
+          )) AS message_count
+       FROM workstreams w
+      WHERE w.id = ? AND w.workspace_id = ?
+        AND w.title_status IN ('naming', 'automatic')`,
+    ).bind(RENAME_AFTER_MESSAGE_COUNT, input.workstreamId, input.workspaceId).first<{
+      title: string;
+      title_status: "naming" | "automatic";
+      objective: string;
+      message_count: number;
+    }>();
+    if (!row || Number(row.message_count) < RENAME_AFTER_MESSAGE_COUNT) return;
 
-  const title = await generateName(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    userId: input.userId,
-    objective: row.objective,
-    openingMessage: "",
-    recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId),
-  });
-  await advanceTitle(env, {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-    from: row.title_status,
-    to: "settled",
-    title,
-    standingTitle: row.title,
+    const title = await generateName(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      userId: input.userId,
+      objective: row.objective,
+      openingMessage: "",
+      recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId),
+    });
+    await advanceTitle(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      from: row.title_status,
+      to: "settled",
+      title,
+      standingTitle: row.title,
+    });
   });
 }
 
@@ -222,6 +268,7 @@ async function generateName(env: Env, input: {
     logStructuredEvent(env, "warn", "workstream_naming_failed", {
       workspace_id: input.workspaceId,
       workstream_id: input.workstreamId,
+      stage: "model",
       error_name: error instanceof Error ? error.name : "UnknownError",
       error_message: error instanceof Error ? error.message : "Work-stream naming failed",
     });

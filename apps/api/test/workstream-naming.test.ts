@@ -247,6 +247,58 @@ describe("work-stream naming", () => {
     expect(title(database)).toBe("Mucker intro thread");
   });
 
+  it("never fails the creation or the run it was called from", async () => {
+    const database = seededDatabase();
+    stubOpenRouter([], "Avalon download link email to Danny");
+    // Both passes write; a database that refuses the write is the failure the
+    // callers cannot absorb — one awaits naming having already created the work
+    // stream and launched its run, and the other is a durable workflow step
+    // that would retry the model call and then fail a committed run.
+    const failing = {
+      ...environment(database, []),
+      DB: {
+        prepare: () => { throw new Error("D1_ERROR: network"); },
+      },
+    } as unknown as Env;
+
+    await expect(nameWorkstream(failing, {
+      workspaceId,
+      workstreamId,
+      objective,
+      openingMessage: objective,
+      provisionalTitle,
+    })).resolves.toBeUndefined();
+    await expect(refreshWorkstreamName(failing, { workspaceId, workstreamId }))
+      .resolves.toBeUndefined();
+  });
+
+  it("reads no more of a transcript than it takes to know the work stream is due", async () => {
+    const database = seededDatabase();
+    database.prepare("UPDATE workstreams SET title_status = 'settled' WHERE id = ?").run(workstreamId);
+    seedMessages(database, 40);
+    const counted: string[] = [];
+    const env = environment(database, []);
+    const settled = {
+      ...env,
+      DB: {
+        ...env.DB,
+        prepare: (sql: string) => {
+          counted.push(sql);
+          return env.DB.prepare(sql);
+        },
+      },
+    } as unknown as Env;
+
+    await refreshWorkstreamName(settled, { workspaceId, workstreamId });
+
+    // A settled work stream is the overwhelmingly common case, and this runs
+    // after every message and every run: the status has to be a `WHERE` clause
+    // rather than a check in JS after a transcript-wide count.
+    expect(counted).toHaveLength(1);
+    expect(counted[0]).toContain("title_status IN ('naming', 'automatic')");
+    expect(counted[0]).toContain("LIMIT ?");
+  });
+
   it("writes a name a person would read rather than whatever the model returned", () => {
     expect(normalizeGeneratedTitle('"Avalon download link email to Danny."'))
       .toBe("Avalon download link email to Danny");

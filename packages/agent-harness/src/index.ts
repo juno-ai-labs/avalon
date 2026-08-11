@@ -665,11 +665,6 @@ function renderExpectedJsonSchema(
 }
 
 /**
- * Keep strict provider enforcement and model-visible instructions in sync.
- * Medium-sized models are materially more reliable when the exact schema is
- * present in the conversation instead of existing only in response_format.
- */
-/**
  * The `reasoning` field for one structured request, or nothing at all.
  *
  * Omitting the field and disabling reasoning are different requests: omitting
@@ -684,6 +679,11 @@ function structuredReasoning(
   return effort === "none" ? { enabled: false } : { effort };
 }
 
+/**
+ * Keep strict provider enforcement and model-visible instructions in sync.
+ * Medium-sized models are materially more reliable when the exact schema is
+ * present in the conversation instead of existing only in response_format.
+ */
 function withExpectedJsonSchema(
   messages: ModelMessage[],
   schemaName: string,
