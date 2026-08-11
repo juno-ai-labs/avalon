@@ -78,6 +78,12 @@ describe("digest markdown rendering", () => {
     expect(html).toContain("color-scheme:dark");
     // The app's own canvas token, so the email and the product are one surface.
     expect(html).toContain("background:#111210");
+    // And it runs the height of the reading pane rather than ending in a hard
+    // edge above the client's own white, whichever way the client sized the
+    // document — with the content still pinned to the top of it.
+    expect(html).toContain("min-height:100vh");
+    expect(html).toContain('valign="top"');
+    expect(html).toMatch(/<body style="[^"]*height:100%/u);
   });
 
   it("singularizes the update count", () => {

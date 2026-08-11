@@ -7,7 +7,8 @@ import { escapeHtml } from "./resend";
  * app has one appearance. Every colour is the app's own token, written inline —
  * a mail client will strip a `<style>` block, and several rewrite a page that
  * declares a light scheme, so the palette is stated on the elements themselves
- * and stays put.
+ * and stays put. The canvas is also asked to fill the reading pane rather than
+ * stop at the last line — see `digestEmailHtml`.
  *
  * The Markdown renderer here is deliberately small rather than a library. Mail
  * clients ignore most of what a general renderer emits, and rendering raw HTML
@@ -190,8 +191,15 @@ export function digestEmailHtml(content: DigestEmailContent): string {
     ? `${content.highlightCount} need${content.highlightCount === 1 ? "s" : ""} you · ${items} in ${content.workspaceName}`
     : `${items} in ${content.workspaceName}`;
 
+  // The canvas runs the height of the reading pane, not just the height of the
+  // text: a short digest otherwise ends in a hard edge with the client's own
+  // white below it. `height:100%` carries the dark down a document the client
+  // sized itself, and `min-height:100vh` grows one it sized to the content — a
+  // client that supports neither renders exactly what it did before. The full
+  // height is why the cell states `valign="top"`; a table cell centres its
+  // contents otherwise, which would float the card in the middle of the pane.
   return `<!doctype html>
-<html lang="en" style="color-scheme:dark;supported-color-schemes:dark">
+<html lang="en" style="color-scheme:dark;supported-color-schemes:dark;height:100%;background:${COLOR.canvas}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -199,10 +207,10 @@ export function digestEmailHtml(content: DigestEmailContent): string {
     <meta name="supported-color-schemes" content="dark">
     <title>Your ${workspaceName} digest</title>
   </head>
-  <body style="margin:0;padding:0;width:100%;background:${COLOR.canvas};color:${COLOR.ink};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
+  <body style="margin:0;padding:0;width:100%;height:100%;background:${COLOR.canvas};color:${COLOR.ink};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased">
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${escapeHtml(preheader)}</div>
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:${COLOR.canvas};padding:36px 14px">
-      <tr><td align="center">
+    <table role="presentation" width="100%" height="100%" cellspacing="0" cellpadding="0" border="0" style="height:100%;min-height:100vh;background:${COLOR.canvas};padding:36px 14px">
+      <tr><td align="center" valign="top" style="vertical-align:top">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px">
 
           <tr><td style="padding:0 4px 14px">
