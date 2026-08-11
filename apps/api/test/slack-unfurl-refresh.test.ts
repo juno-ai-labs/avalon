@@ -131,14 +131,87 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(renderedStatus(database)).toBe("running");
   });
 
+  it("redacts a card when its channel goes externally shared, with no status change", async () => {
+    // The status is untouched, so only the audience clock selects this row.
+    // Without that clock the card would keep showing the work stream to Slack
+    // Connect participants until some unrelated status change happened to fire.
+    const database = await seed({
+      harnessStatus: "running",
+      renderedStatus: "running",
+      audienceCheckedAt: "2020-01-01T00:00:00.000Z",
+    });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls, { external: true }));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    const body = unfurlBody(calls);
+    expect(body).toContain("*Avalon*");
+    expect(body).not.toContain("Quarterly planning");
+    expect(renderedAnonymous(database)).toBe(1);
+  });
+
+  it("revalidates a due card without rewriting it when nothing actually changed", async () => {
+    const database = await seed({
+      harnessStatus: "running",
+      renderedStatus: "running",
+      audienceCheckedAt: "2020-01-01T00:00:00.000Z",
+    });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    // Checked, found unchanged, and left alone — rewriting an identical card
+    // would spend the workspace's chat.unfurl budget for no visible change.
+    expect(calls.filter((call) => call.method === "conversations.info")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+    expect(audienceCheckedAt(database) > "2021-01-01T00:00:00.000Z").toBe(true);
+  });
+
+  it("does not let one busy connection starve every other workspace", async () => {
+    // The per-connection cap has to be applied before the global one. Taking
+    // the global 100 first and trimming per connection afterwards lets the
+    // busiest workspace fill every slot, and a workspace that keeps producing
+    // stale cards would then starve the rest indefinitely.
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
+    for (let index = 0; index < 110; index += 1) {
+      database.prepare(
+        `INSERT INTO slack_unfurled_links
+         (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
+          rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
+         VALUES (?, 'CBUSY', ?, ?, ?, ?, 'running', 0, ?, ?, ?)`,
+      ).run(connectionId, `1700000${String(index).padStart(3, "0")}.000000`, url,
+        workspaceId, workstreamId, nowish(), nowish(), nowish());
+    }
+    const quiet = await addQuietWorkspace(database);
+    database.prepare(
+      `INSERT INTO slack_unfurled_links
+       (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
+        rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
+       VALUES (?, 'CQUIET', '1700000500.000000', ?, ?, ?, 'running', 0, ?, ?, ?)`,
+    ).run(quiet.connectionId, url, quiet.workspaceId, quiet.workstreamId,
+      nowish(), nowish(), nowish());
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    const unfurled = calls.filter((call) => call.method === "chat.unfurl");
+    const quietCalls = unfurled.filter((call) => call.body.channel === "CQUIET");
+    const busyCalls = unfurled.filter((call) => call.body.channel !== "CQUIET");
+    expect(quietCalls).toHaveLength(1);
+    expect(busyCalls.length).toBeLessThanOrEqual(20);
+  });
+
   it("checks the channel audience once per channel, not once per card", async () => {
     const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
     database.prepare(
       `INSERT INTO slack_unfurled_links
        (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-        rendered_status, shared_at, refreshed_at)
-       VALUES (?, 'CGENERAL', '1700000009.000000', ?, ?, ?, 'running', ?, ?)`,
-    ).run(connectionId, url, workspaceId, workstreamId, nowish(), nowish());
+        rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
+       VALUES (?, 'CGENERAL', '1700000009.000000', ?, ?, ?, 'running', 0, ?, ?, ?)`,
+    ).run(connectionId, url, workspaceId, workstreamId, nowish(), nowish(), nowish());
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
@@ -153,6 +226,18 @@ function nowish(): string {
   return new Date(Date.now() - 60_000).toISOString();
 }
 
+function renderedAnonymous(database: DatabaseSync): number {
+  return Number((database.prepare(
+    "SELECT rendered_anonymous FROM slack_unfurled_links LIMIT 1",
+  ).get() as { rendered_anonymous: number }).rendered_anonymous);
+}
+
+function audienceCheckedAt(database: DatabaseSync): string {
+  return String((database.prepare(
+    "SELECT audience_checked_at FROM slack_unfurled_links LIMIT 1",
+  ).get() as { audience_checked_at: string }).audience_checked_at);
+}
+
 function renderedStatus(database: DatabaseSync): string {
   return String((database.prepare(
     "SELECT rendered_status FROM slack_unfurled_links LIMIT 1",
@@ -165,10 +250,51 @@ function rowCount(database: DatabaseSync): number {
   ).get() as { count: number }).count);
 }
 
+/** A second Avalon workspace with its own Slack installation and work stream. */
+async function addQuietWorkspace(database: DatabaseSync): Promise<{
+  connectionId: string;
+  workspaceId: string;
+  workstreamId: string;
+}> {
+  const quiet = {
+    connectionId: "00000000-0000-7000-8000-000000000044",
+    workspaceId: "00000000-0000-7000-8000-000000000045",
+    workstreamId: "019fec70-fba0-7b0e-9f7a-3dd1ef565210",
+  };
+  const encrypted = await encryptString(JSON.stringify({
+    botAccessToken: "xoxb-refresh-test",
+    oauthScopes: [...SlackWorkspaceBotScopes],
+  }), credentialsKey, quiet.connectionId);
+  database.prepare(
+    `INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+     VALUES (?, 'Quiet', 'quiet', 'global', ?, '2026-01-01', '2026-01-01')`,
+  ).run(quiet.workspaceId, userId);
+  database.prepare(
+    `INSERT INTO connector_connections
+     (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+      display_name, encrypted_credentials, credential_iv, credential_key_version,
+      granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+      model_plugin_id)
+     VALUES (?, ?, 'slack', 'workspace', NULL, 'TQUIET', 'Slack', ?, ?, 1,
+             '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+             'plugin_slack_workspace')`,
+  ).run(quiet.connectionId, quiet.workspaceId, encrypted.ciphertext, encrypted.iv);
+  database.prepare(
+    `INSERT INTO workstreams
+     (id, workspace_id, title, objective, origin_type, created_by_user_id,
+      harness_status, last_activity_at, created_at, updated_at)
+     VALUES (?, ?, 'Quiet planning', '', 'ad_hoc', ?, 'completed',
+             '2026-08-10T11:00:00.000Z', '2026-01-01', '2026-01-01')`,
+  ).run(quiet.workstreamId, quiet.workspaceId, userId);
+  return quiet;
+}
+
 async function seed(input: {
   harnessStatus: string;
   renderedStatus: string;
   sharedAt?: string;
+  renderedAnonymous?: number;
+  audienceCheckedAt?: string;
 }): Promise<DatabaseSync> {
   const database = migratedDatabase();
   const encrypted = await encryptString(JSON.stringify({
@@ -203,14 +329,16 @@ async function seed(input: {
   database.prepare(
     `INSERT INTO slack_unfurled_links
      (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-      rendered_status, shared_at, refreshed_at)
-     VALUES (?, 'CGENERAL', '1700000000.000000', ?, ?, ?, ?, ?, ?)`,
+      rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
+     VALUES (?, 'CGENERAL', '1700000000.000000', ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     connectionId,
     url,
     workspaceId,
     workstreamId,
     input.renderedStatus,
+    input.renderedAnonymous ?? 0,
+    input.audienceCheckedAt ?? nowish(),
     input.sharedAt ?? nowish(),
     input.sharedAt ?? nowish(),
   );
