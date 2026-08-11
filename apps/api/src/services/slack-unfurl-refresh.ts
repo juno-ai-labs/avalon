@@ -1,4 +1,4 @@
-import { ConnectorError, slackApi } from "@avalon/connectors";
+import { slackApi } from "@avalon/connectors";
 import { workstreamCanonicalUrl } from "@avalon/contracts";
 import { nowIso } from "@avalon/db";
 import { z } from "zod";
@@ -8,9 +8,11 @@ import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
+  TERMINAL_UNFURL_REASONS,
   WORKSTREAM_UNFURL_COLUMNS,
   WORKSTREAM_UNFURL_JOINS,
   slackChannelIsExternallyShared,
+  slackUnfurlErrorReason,
   workstreamUnfurlBlocks,
   workstreamUnfurlSummary,
 } from "./slack-workstream-card";
@@ -48,17 +50,6 @@ const MAX_REFRESHES_PER_CONNECTION = 20;
  * externally shared has to be redacted whether or not the work stream moved.
  */
 const AUDIENCE_REVALIDATION_HOURS = 24;
-
-/** Slack errors that mean this row can never be unfurled again. */
-const TERMINAL_UNFURL_REASONS = new Set([
-  "cannot_unfurl_url",
-  "cannot_find_message",
-  "message_not_found",
-  "channel_not_found",
-  "is_archived",
-  "not_in_channel",
-  "cannot_parse_attachment",
-]);
 
 const StaleUnfurlRowSchema = z.object({
   connection_id: z.string(),
@@ -105,8 +96,10 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
               ) AS connection_rank
          FROM slack_unfurled_links l
          JOIN workstreams w ON w.id = l.workstream_id AND w.workspace_id = l.workspace_id
+         JOIN connector_connections c ON c.id = l.connection_id AND c.status = 'healthy'
          ${WORKSTREAM_UNFURL_JOINS}
         WHERE l.shared_at >= ?1
+          AND w.archived_at IS NULL
           AND (w.harness_status <> l.rendered_status OR l.audience_checked_at < ?2)
      )
      WHERE connection_rank <= ?3
@@ -164,7 +157,7 @@ async function refreshConnectionUnfurls(
   // One audience check per channel per sweep, not per card. Re-checking is also
   // the redaction path: a channel that became externally shared after the card
   // was posted is rewritten back to the anonymous form.
-  const externalByChannel = new Map<string, boolean>();
+  const externalByChannel = new Map<string, boolean | null>();
   const at = nowIso();
 
   for (const raw of rows) {
@@ -176,6 +169,17 @@ async function refreshConnectionUnfurls(
     if (external === undefined) {
       external = await slackChannelIsExternallyShared(token, row.slack_channel_id);
       externalByChannel.set(row.slack_channel_id, external);
+    }
+    // Unlike posting a new card, an unconfirmed audience must not redact an
+    // existing one. Fail-closed here would let a five-second timeout rewrite a
+    // correct card to the anonymous form and then persist that as the truth.
+    // Leave the row entirely untouched so the next sweep retries.
+    if (external === null) {
+      console.warn("Slack unfurl refresh deferred; audience could not be confirmed", {
+        connection_id: connectionId,
+        channel_id: row.slack_channel_id,
+      });
+      continue;
     }
 
     // A row selected only by the audience clock usually has nothing to say.
@@ -244,17 +248,6 @@ async function markAudienceChecked(
     `UPDATE slack_unfurled_links SET audience_checked_at = ?
       WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
   ).bind(at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
-}
-
-function slackUnfurlErrorReason(error: unknown): string {
-  if (error instanceof ConnectorError) {
-    const details = error.details;
-    if (details && typeof details === "object" && typeof (details as { error?: unknown }).error === "string") {
-      return String((details as { error: string }).error);
-    }
-    return error.code;
-  }
-  return "unknown";
 }
 
 async function workspaceBotToken(env: Env, connection: SlackUnfurlConnection): Promise<string> {

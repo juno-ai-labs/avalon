@@ -21,6 +21,25 @@ export interface WorkstreamUnfurlSummary {
 /** Slack sends at most a handful of links per message; bound the batch anyway. */
 export const SLACK_UNFURL_MAX_LINKS = 10;
 
+/**
+ * Slack errors that mean this message can never carry an unfurl. Retrying is
+ * pointless on both paths: the sweep deletes the row, and the live handler acks
+ * the ingress job rather than burning its retry budget on an unfixable state.
+ */
+export const TERMINAL_UNFURL_REASONS = new Set([
+  "cannot_unfurl_url",
+  "cannot_find_message",
+  "message_not_found",
+  "channel_not_found",
+  "is_archived",
+  "not_in_channel",
+  "cannot_parse_attachment",
+]);
+
+export function slackUnfurlErrorReason(error: unknown): string {
+  return slackErrorReason(error);
+}
+
 /** Columns every summary query must project, so both callers stay in step. */
 export const WORKSTREAM_UNFURL_COLUMNS =
   `w.title, w.harness_status, w.last_activity_at, w.origin_type, t.name AS automation_name`;
@@ -67,25 +86,34 @@ function slackErrorReason(error: unknown): string {
 }
 
 /**
- * True when Slack has put another company in this conversation — an externally
- * shared channel or a Slack Connect DM. A lookup that fails is treated as
- * external: the unfurl still posts, without the work stream's details.
+ * Whether Slack has put another company in this conversation — an externally
+ * shared channel or a Slack Connect DM.
+ *
+ * Returns `null` when the lookup itself failed, which callers must distinguish
+ * from a confirmed `true`. Posting a new card should fail closed and withhold
+ * detail; *rewriting* an existing one must not, because a five-second timeout
+ * would otherwise redact a correct card and persist that as the truth.
+ *
+ * A 1:1 DM is a real case here, not an edge one: Slack omits `is_private` from
+ * an `im` response, so this call only survives because the schema treats that
+ * field as optional. Do not short-circuit on a `D` channel id — a Slack Connect
+ * DM has one too, and it is exactly the case worth catching.
  */
 export async function slackChannelIsExternallyShared(
   token: string,
   channelId: string,
-): Promise<boolean> {
+): Promise<boolean | null> {
   try {
     const result = await slackApi(token, "conversations.info", {
       channel: channelId,
     }, AbortSignal.timeout(5_000));
     return result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true;
   } catch (error) {
-    console.warn("Slack unfurl audience lookup failed; withholding work-stream detail", {
+    console.warn("Slack unfurl audience lookup failed", {
       channel_id: channelId,
       reason: slackErrorReason(error),
     });
-    return true;
+    return null;
   }
 }
 

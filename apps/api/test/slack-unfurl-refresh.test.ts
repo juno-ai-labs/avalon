@@ -25,7 +25,7 @@ interface SlackCall { method: string; body: Record<string, unknown> }
 
 function slackFixture(
   calls: SlackCall[],
-  overrides: { external?: boolean; unfurlError?: string } = {},
+  overrides: { external?: boolean; unfurlError?: string; infoError?: string } = {},
 ): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     // Slack reads some methods over GET, so the arguments arrive as query
@@ -37,6 +37,7 @@ function slackFixture(
       : Object.fromEntries(requested.searchParams) as Record<string, unknown>;
     calls.push({ method, body });
     if (method === "conversations.info") {
+      if (overrides.infoError) return json({ ok: false, error: overrides.infoError });
       return json({ ok: true, channel: { id: body.channel, is_private: false, is_ext_shared: overrides.external === true } });
     }
     if (method === "chat.unfurl" && overrides.unfurlError) {
@@ -167,6 +168,48 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(calls.filter((call) => call.method === "conversations.info")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
     expect(audienceCheckedAt(database) > "2021-01-01T00:00:00.000Z").toBe(true);
+  });
+
+  it("leaves a card untouched when the audience lookup itself fails", async () => {
+    // Fail-closed is right when posting a new card and wrong when rewriting
+    // one: a five-second timeout must not trade a correct summary card for the
+    // anonymous form and then persist that as the truth.
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls, { infoError: "ratelimited" }));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+    // Still drifted, so the next sweep retries rather than believing it is current.
+    expect(renderedStatus(database)).toBe("running");
+    expect(renderedAnonymous(database)).toBe(0);
+  });
+
+  it("ignores a card whose work stream has been archived", async () => {
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
+    database.prepare("UPDATE workstreams SET archived_at = ? WHERE id = ?")
+      .run("2026-08-10T13:00:00.000Z", workstreamId);
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+  });
+
+  it("ignores rows on a connection that is no longer healthy", async () => {
+    // Otherwise they match the predicate again on every sweep for 30 days,
+    // spending budget that can never produce a posted card.
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
+    database.prepare("UPDATE connector_connections SET status = 'needs_reconnect' WHERE id = ?")
+      .run(connectionId);
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls).toHaveLength(0);
   });
 
   it("does not let one busy connection starve every other workspace", async () => {
