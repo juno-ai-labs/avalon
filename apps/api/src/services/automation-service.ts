@@ -69,12 +69,12 @@ export class AutomationService {
   async list() {
     const result = await this.env.DB.prepare(
       `SELECT s.id, s.email_address, s.email_route_status, t.name, t.description, s.scope, s.status,
-         s.next_run_at, s.last_run_at,
+         s.next_run_at, s.last_run_at, s.updated_at,
          CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
        FROM automation_subscriptions s
        JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.archived_at IS NULL
+       WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.lifecycle_state = 'visible'
          AND (s.scope = 'workspace' OR s.owner_user_id = ?)
        ORDER BY t.name COLLATE NOCASE`,
     ).bind(this.auth.workspaceId, this.auth.userId).all<Record<string, unknown>>();
@@ -101,6 +101,7 @@ export class AutomationService {
       status: String(row.status),
       nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
       lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
+      updatedAt: String(row.updated_at),
       updateAvailable: Number(row.update_available) === 1,
     })) };
   }
@@ -328,6 +329,7 @@ export class AutomationService {
     return {
       id: String(row.id), name: String(row.name), description: String(row.description), emailAddress, scope: String(row.scope), status: String(row.status),
       nextRunAt: row.next_run_at == null ? null : String(row.next_run_at), lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
+      updatedAt: String(row.updated_at),
       updateAvailable, templateId: String(row.template_id), templateVersionId: String(row.template_version_id),
       versionNumber: Number(row.version_number), overview: String(row.overview ?? ""), instructions: String(row.instructions), triggers: parseJson(row.trigger_definitions_json, []),
       requiredCapabilities: parseJson(row.required_capabilities_json, []), expectedOutputs: parseJson(row.expected_outputs_json, []),
@@ -492,18 +494,46 @@ export class AutomationService {
 
   /** Hides an abandoned draft from the automation list. A draft holds no enabled
    * schedule and no active email route, so archiving one stops nothing that was
-   * running; an active or paused automation is paused instead. */
+   * running; a finished automation is paused or deleted instead. */
   async archiveDraft(id: string): Promise<void> {
     const subscription = await this.loadSubscription(id);
     this.assertCanManageSubscription(subscription);
     if (subscription.status !== "draft") {
       throw new ApiError(409, "automation_not_draft", "Only a draft automation can be archived");
     }
-    const at = nowIso();
     await this.env.DB.prepare(
-      `UPDATE automation_subscriptions SET archived_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
-    ).bind(at, at, id, this.auth.workspaceId).run();
+      `UPDATE automation_subscriptions SET lifecycle_state = 'archived', updated_at = ?
+       WHERE id = ? AND workspace_id = ? AND lifecycle_state = 'visible'`,
+    ).bind(nowIso(), id, this.auth.workspaceId).run();
+  }
+
+  /** Removes an automation for good. The row stays so its runs, work streams,
+   * memory scope, and permanent email tombstone keep their referent, but every
+   * trigger path is closed: the schedules are disabled, the address stops
+   * accepting mail, and nothing lists or reads it again. */
+  async deleteAutomation(id: string): Promise<void> {
+    const subscription = await this.loadSubscription(id);
+    this.assertCanManageSubscription(subscription);
+    const at = nowIso();
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `UPDATE automation_subscriptions SET lifecycle_state = 'deleted', updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND lifecycle_state = 'visible'`,
+      ).bind(at, id, this.auth.workspaceId),
+      this.env.DB.prepare(
+        "UPDATE schedules SET enabled = 0, updated_at = ?, version = version + 1 WHERE automation_subscription_id = ?",
+      ).bind(at, id),
+    ]);
+    try {
+      await new WorkstreamEmailRoutingService(this.env)
+        .ensureAutomationAddress(this.automationRouteInput(id));
+    } catch (error) {
+      if (!isRecoverableEmailRouteTransition(error)) throw error;
+      // The Global lifecycle marker stays stale rather than replaying the
+      // deletion. Inbound mail is rejected regardless: ingestion requires a
+      // visible, active subscription.
+    }
+    await this.refreshScheduler();
   }
 
   async runs(id: string, limit = 50) {
@@ -1269,7 +1299,7 @@ export class AutomationService {
        , t.owner_user_id AS template_owner_user_id
        FROM automation_subscriptions s JOIN automation_templates t ON t.id = s.template_id
        JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.id = ? AND s.workspace_id = ? AND s.archived_at IS NULL
+       WHERE s.id = ? AND s.workspace_id = ? AND s.lifecycle_state = 'visible'
          AND (s.scope = 'workspace' OR s.owner_user_id = ?) AND t.archived_at IS NULL`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
     if (!row) throw new ApiError(404, "automation_not_found", "Automation not found");

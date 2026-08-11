@@ -459,7 +459,7 @@ async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<
        FROM automation_subscriptions s
        JOIN automation_template_versions tv ON tv.id = s.template_version_id
        JOIN automation_templates t ON t.id = s.template_id
-      WHERE s.workspace_id = ?1 AND s.status = 'active'`
+      WHERE s.workspace_id = ?1 AND s.status = 'active' AND s.lifecycle_state = 'visible'`
   )
     .bind(activity.workspace_id)
     .all<SubscriptionRow>();

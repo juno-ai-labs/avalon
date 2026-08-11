@@ -643,12 +643,12 @@ export function createDatabase(db: D1DatabaseLike) {
       const result = await db
         .prepare(
           `SELECT s.id, s.email_address, t.name, t.description, s.scope, s.status,
-             s.next_run_at, s.last_run_at,
+             s.next_run_at, s.last_run_at, s.updated_at,
              CASE WHEN t.latest_version_number > v.version_number THEN 1 ELSE 0 END AS update_available
            FROM automation_subscriptions s
            JOIN automation_templates t ON t.id = s.template_id
            JOIN automation_template_versions v ON v.id = s.template_version_id
-           WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.archived_at IS NULL
+           WHERE s.workspace_id = ? AND t.archived_at IS NULL AND s.lifecycle_state = 'visible'
            ORDER BY t.name COLLATE NOCASE`
         )
         .bind(workspaceId)
@@ -662,6 +662,7 @@ export function createDatabase(db: D1DatabaseLike) {
         status: String(row.status) as AutomationSummary["status"],
         nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
         lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
+        updatedAt: String(row.updated_at),
         updateAvailable: Number(row.update_available) === 1
       }));
     }

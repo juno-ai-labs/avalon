@@ -64,6 +64,12 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           await queryClient.invalidateQueries({ queryKey: ['automations'] });
           if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
         }}
+        onDeleteAutomation={async (automation) => {
+          if (!api) return;
+          await api.deleteAutomation(automation.id);
+          await queryClient.invalidateQueries({ queryKey: ['automations'] });
+          if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
+        }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);

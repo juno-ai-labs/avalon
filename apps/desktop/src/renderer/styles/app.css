@@ -212,6 +212,22 @@ pre {
   background: #22231f;
 }
 
+/* The confirming half of a destructive dialog. It carries the same weight as
+   the primary button so the choice is legible, in the warning color rather than
+   the brand one. */
+.button-danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #17100f;
+  font-weight: 590;
+}
+
+.button-danger:hover:not(:disabled) {
+  background: #e28c86;
+  border-color: #e28c86;
+  color: #17100f;
+}
+
 .button-quiet {
   background: transparent;
   border-color: transparent;
