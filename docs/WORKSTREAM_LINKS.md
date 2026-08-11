@@ -181,7 +181,7 @@ gone — deletes the row rather than retrying forever; anything else leaves
 | Make the dynamic path resolve | `apps/site/public/_redirects` |
 | Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts` |
 | Slack blocks, DMs, and mention email | `slack-agent-service.ts`, `slack-mention-service.ts`, `mention-email-service.ts` |
-| Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx` |
+| Copy work-stream link | `apps/desktop/src/renderer/screens/workstream.tsx`, `apps/desktop/src/renderer/components/sidebar.tsx` |
 | Open the deep link | `emitDeepLink` in `apps/desktop/src/main/index.ts`, `apps/desktop/src/renderer/lib/app-session.tsx` |
 
 No asset can exist per work-stream id, so the site — a pure static-assets

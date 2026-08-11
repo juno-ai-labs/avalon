@@ -1,5 +1,5 @@
 import type { HarnessEvent } from "@avalon/agent-harness";
-import type { ConnectorConnectionContext } from "@avalon/connectors";
+import { authorizedConnection } from "@avalon/connectors";
 import { describe, expect, it } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
@@ -54,7 +54,7 @@ describe("Bind tool failure persistence", () => {
   });
 
   it("passes the provider idempotency key into connector execution context", () => {
-    const connection: ConnectorConnectionContext = {
+    const connection = authorizedConnection({
       id: "connection-1",
       workspaceId: "workspace-1",
       scope: "workspace",
@@ -63,7 +63,7 @@ describe("Bind tool failure persistence", () => {
       credentials: {},
       cursor: {},
       config: {},
-    };
+    });
     const signal = new AbortController().signal;
 
     expect(__integrationTesting.createConnectorToolContext(

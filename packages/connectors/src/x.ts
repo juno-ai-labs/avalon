@@ -190,7 +190,10 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       displayName: "X",
       supportedScopes: ["workspace"],
       oauthRequired: false,
-      activityTriggers: defineConnectorActivityTriggers("X", []),
+      // X is read-only through a shared account and ingests no activity at all,
+      // so both lists are empty rather than one being omitted — a connector
+      // that later starts emitting activity states which kind it is then.
+      activityTriggers: defineConnectorActivityTriggers("X", { digestible: [], operational: [] }),
       resourceTypes: [],
       tools: xTools,
       supportsWatches: false,
@@ -250,9 +253,9 @@ export function createXConnector(config: XConnectorConfig): ConnectorAdapter {
       throw new ConnectorError("unsupported_capability", `Unsupported X tool: ${name}`);
     },
 
-    async healthCheck() {
+    async healthCheck(_connection, callerSignal) {
       try {
-        const payload = await request("/oapi/my/info", {}, AbortSignal.timeout(15_000));
+        const payload = await request("/oapi/my/info", {}, callerSignal ?? AbortSignal.timeout(15_000));
         return typeof payload.recharge_credits !== "number"
           ? { ok: false, message: "TwitterAPI.io did not return account information" }
           : payload.recharge_credits > 0

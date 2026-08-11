@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BUILT_IN_SKILLS,
   DEEP_RESEARCH_SKILL,
+  SCHEDULING_A_CALENDAR_EVENT_SKILL,
+  WRITING_AN_EMAIL_SKILL,
   runHarness,
   type HarnessPlugin,
   type HarnessSkill,
@@ -438,6 +440,25 @@ describe("built-in skills", () => {
       expect(skill.body.trim().length).toBeGreaterThan(200);
     }
     expect(new Set(BUILT_IN_SKILLS.map((skill) => skill.name)).size).toBe(BUILT_IN_SKILLS.length);
+  });
+
+  it("keeps the outbound-write skills provider-agnostic and cross-referenced", () => {
+    const outbound = [WRITING_AN_EMAIL_SKILL, SCHEDULING_A_CALENDAR_EVENT_SKILL];
+    for (const skill of outbound) {
+      // A body that names a provider's tools is a body that breaks silently on
+      // the next connector, and these procedures are the same for all of them.
+      expect(skill.body).not.toMatch(/\b(?:gmail|calendar|drive|docs|sheets)[_.][a-z_]+/u);
+      expect(skill.body).not.toMatch(/\bGmail\b|\bGoogle\b|\bOutlook\b/u);
+      // The load-bearing rule in both: never confirm a write the result did not.
+      // Matched without the trailing words, which wrap across a line in one body.
+      expect(skill.body).toContain("unless the tool result");
+      expect(skill.body).toContain("## Anti-patterns");
+    }
+    // Each points at the other rather than restating it.
+    expect(WRITING_AN_EMAIL_SKILL.body).toContain(SCHEDULING_A_CALENDAR_EVENT_SKILL.name);
+    expect(SCHEDULING_A_CALENDAR_EVENT_SKILL.body).toContain(WRITING_AN_EMAIL_SKILL.name);
+    // Neither may imply that loading it granted the connection it describes.
+    for (const skill of outbound) expect(skill.ownerPlugin).toBeUndefined();
   });
 
   it("loads through the ordinary path with no special casing", async () => {
