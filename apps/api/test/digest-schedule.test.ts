@@ -89,13 +89,29 @@ describe("digest recurrence", () => {
 });
 
 describe("digest schedule", () => {
-  it("offers an unsaved weekday default in the reader's own timezone", async () => {
+  // Read in the window between joining and the cron tick that writes the row,
+  // so it has to describe what the reconciler is about to create rather than
+  // something quieter.
+  it("shows the on-by-default weekday schedule in the reader's own timezone", async () => {
     const schedule = await new DigestService(envFor(seededDatabase()), auth).get();
 
-    expect(schedule.enabled).toBe(false);
+    expect(schedule.enabled).toBe(true);
     expect(schedule.days).toEqual([1, 2, 3, 4, 5]);
+    expect(schedule.times).toEqual([9 * 60]);
     // Mirrored from the account, never stored a second time.
     expect(schedule.timezone).toBe("Europe/London");
+    expect(schedule.deliveryTargets).toMatchObject([
+      { type: "email", connectionId: null, displayName: "owner@example.com" },
+    ]);
+  });
+
+  it("stays off before it is saved when the account has no address to send to", async () => {
+    const database = seededDatabase();
+    database.exec(`UPDATE users SET email = '' WHERE id = '${OWNER}'`);
+
+    const schedule = await new DigestService(envFor(database), auth).get();
+
+    expect(schedule.enabled).toBe(false);
     expect(schedule.deliveryTargets).toEqual([]);
   });
 
@@ -114,9 +130,7 @@ describe("digest schedule", () => {
     expect(before.timezone).toBe("Europe/London");
 
     database.exec(`UPDATE users SET timezone = 'Asia/Tokyo' WHERE id = '${OWNER}'`);
-    await rebuildDigestSchedulesForTimezone(env, {
-      workspaceId: WORKSPACE, userId: OWNER, timezone: "Asia/Tokyo",
-    });
+    await rebuildDigestSchedulesForTimezone(env, { userId: OWNER, timezone: "Asia/Tokyo" });
 
     const after = database.prepare(
       "SELECT timezone, next_run_at FROM schedules WHERE digest_schedule_id IS NOT NULL",

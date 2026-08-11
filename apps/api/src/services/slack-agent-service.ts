@@ -2239,10 +2239,13 @@ export class SlackAgentService {
     } else {
       const [tasks, automations, personalSlack] = await Promise.all([
         this.env.DB.prepare(
+          // `system_kind` is machinery — a digest run's transcript, say. The
+          // owner participates in it, so the join alone would list it here, and
+          // Slack has no equivalent of the desktop's Debug enabled to hide it.
           `SELECT w.id, w.title, w.harness_status FROM workstreams w
            JOIN workstream_participants p ON p.workstream_id = w.id
            WHERE w.workspace_id = ? AND p.user_id = ? AND p.removed_at IS NULL
-             AND w.archived_at IS NULL
+             AND w.archived_at IS NULL AND w.system_kind IS NULL
            ORDER BY CASE w.harness_status WHEN 'needs_input' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
              w.last_activity_at DESC LIMIT 6`,
         ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),

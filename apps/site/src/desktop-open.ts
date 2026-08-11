@@ -11,7 +11,7 @@ function allowedTarget(value: string | null): value is string {
     const url = new URL(value);
     if (url.protocol !== 'avalon:' || url.search || url.hash || url.username || url.password || url.port) return false;
     if (url.hostname === 'workstreams') return /^\/[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(url.pathname);
-    if (url.hostname === 'settings') return url.pathname === '/connections';
+    if (url.hostname === 'settings') return url.pathname === '/connections' || url.pathname === '/digest';
     return url.hostname === 'automations' && url.pathname === '/new';
   } catch {
     return false;

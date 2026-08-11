@@ -39,11 +39,19 @@ const DEFAULT_DB = join(
 
 export function parseArguments(argv) {
   const options = { db: null, sql: null, out: "/tmp/digest-preview" };
+  const keys = { "--db": "db", "--sql": "sql", "--out": "out" };
   for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index];
-    if (flag === "--db") options.db = argv[index + 1] ?? null;
-    if (flag === "--sql") options.sql = argv[index + 1] ?? null;
-    if (flag === "--out") options.out = argv[index + 1] ?? options.out;
+    const key = keys[argv[index]];
+    if (!key) continue;
+    const value = argv[index + 1];
+    // A missing value is an error rather than a silent default: `--sql --out x`
+    // would otherwise read a dump from a file named `--out`, and `--db` alone
+    // would fall back to the local database the flag was passed to replace.
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${argv[index]} needs a value.`);
+    }
+    options[key] = value;
+    index += 1;
   }
   return options;
 }

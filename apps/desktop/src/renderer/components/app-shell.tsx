@@ -4,8 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
-import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useUiStore } from '../lib/ui-store';
+import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { NoteDetail, NoteSummary, Workspace, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { Sidebar } from './sidebar';
 
@@ -72,17 +72,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enabled: Boolean(api),
     staleTime: 20_000,
   });
-  // Debugging widens the sidebar to include system work streams — a digest
-  // run's transcript and anything like it. The flag is part of the query key so
-  // toggling the preference refetches rather than serving the narrower list.
-  const debugEnabled = useDebugEnabled();
-  const workstreams = useQuery({
-    queryKey: ['workstreams', debugEnabled],
-    queryFn: ({ signal }) => api!.getWorkstreams(signal, debugEnabled),
-    enabled: Boolean(api),
-    staleTime: 10_000,
-    refetchInterval: 15_000,
-  });
+  const workstreams = useWorkstreamsQuery();
   const notes = useQuery({
     queryKey: ['notes'],
     queryFn: ({ signal }) => api!.getNotes(signal),
@@ -171,14 +161,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // so the work-stream list is stale too, not just the automation list.
           await Promise.all([
             queryClient.invalidateQueries({ queryKey: ['automations'] }),
-            queryClient.invalidateQueries({ queryKey: ['workstreams'] }),
+            queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           ]);
           if (location.pathname === `/automations/${automation.id}`) void navigate('/workstreams/new');
         }}
         onMarkWorkstreamUnread={async (workstream) => {
           if (!api) return;
           const updated = await api.markWorkstreamUnread(workstream.id);
-          queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+          queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
             current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
           );
           queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
@@ -189,7 +179,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onRenameWorkstream={async (workstream, title) => {
           if (!api) return;
           const updated = await api.renameWorkstream(workstream.id, title);
-          queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+          queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
             current?.map((item) => item.id === updated.id ? { ...item, ...updated } : item),
           );
           queryClient.setQueryData<WorkstreamDetail>(['workstream', updated.id], (current) =>
@@ -199,7 +189,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onRunAutomation={async (automation) => {
           if (!api) return;
           const workstream = await api.runAutomation(automation.id);
-          await queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+          await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
           void navigate(`/workstreams/${workstream.id}`);
         }}
         onOpenMeetingNotes={() => desktopBridge().openMeetingNotes()}

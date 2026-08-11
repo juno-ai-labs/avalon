@@ -314,11 +314,7 @@ INSERT INTO schedules_with_digests (
 SELECT id, workspace_id, automation_subscription_id, connector_connection_id,
        NULL, schedule_type, rrule, interval_seconds, timezone,
        next_run_at, last_run_at, enabled, version, created_at, updated_at
-FROM schedules
--- The old CHECK allowed both target columns to be set at once. Nothing writes
--- that, but the new CHECK forbids it, so a stray row would fail the copy rather
--- than the migration silently dropping it.
-WHERE (automation_subscription_id IS NOT NULL) + (connector_connection_id IS NOT NULL) = 1;
+FROM schedules;
 
 DROP TABLE schedules;
 
