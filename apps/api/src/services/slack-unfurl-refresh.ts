@@ -78,11 +78,17 @@ const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).l
 export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   const since = new Date(Date.now() - REFRESH_WINDOW_DAYS * 86_400_000).toISOString();
   const audienceCutoff = new Date(Date.now() - AUDIENCE_REVALIDATION_HOURS * 3_600_000).toISOString();
-  // Two independent reasons to look at a card. Status drift is the common one;
-  // comparing last activity instead would mark almost every row stale on every
-  // sweep, since any message bumps it. The audience clock is the other: a
-  // channel can become externally shared while the work stream sits perfectly
-  // still, and that card has to be redacted even though nothing drifted.
+  // Three independent reasons to look at a card, none of which subsumes the
+  // others. Status drift is the common one; comparing last activity instead
+  // would mark almost every row stale on every sweep, since any message bumps
+  // it. An edit to the work stream itself is the second — a rename changes the
+  // card without touching its status, and `updated_at` moves only on a real
+  // edit. The audience clock is the third: a channel can become externally
+  // shared while the work stream sits perfectly still, and that card has to be
+  // redacted even though nothing drifted.
+  //
+  // Selecting a row is not the same as rewriting it — the hash decides that —
+  // so an edit that does not change the card costs a comparison, not a post.
   //
   // The per-connection cap is applied by ROW_NUMBER *before* the global limit.
   // Taking the global 100 first and trimming per connection afterwards lets one
@@ -103,6 +109,7 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
         WHERE l.shared_at >= ?1
           AND w.archived_at IS NULL
           AND (w.harness_status <> l.rendered_status
+               OR w.updated_at > l.refreshed_at
                OR l.audience_checked_at < ?2
                OR l.rendered_hash IS NULL)
      )
@@ -252,9 +259,12 @@ async function refreshConnectionUnfurls(
 
 /**
  * Record that the posted card is already correct, without touching Slack.
- * Advancing `rendered_status` matters even though nothing was posted: leaving
- * it behind would re-select the row on every sweep for as long as the raw
- * status differs from it, even though the card itself needs no change.
+ *
+ * Every field the selection query reads has to advance here, or a row that
+ * needs no rewrite is re-selected on every sweep forever. `rendered_status`
+ * covers status drift and `refreshed_at` covers an edit to the work stream
+ * that does not reach the card — changing the objective, say, which `updated_at`
+ * bumps but the card never shows. Both are cheap; neither posts to Slack.
  */
 async function markCardCurrent(
   env: Env,
@@ -265,9 +275,9 @@ async function markCardCurrent(
 ): Promise<void> {
   await env.DB.prepare(
     `UPDATE slack_unfurled_links
-        SET rendered_status = ?, rendered_hash = ?, audience_checked_at = ?
+        SET rendered_status = ?, rendered_hash = ?, audience_checked_at = ?, refreshed_at = ?
       WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
-  ).bind(row.harness_status, hash, at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
+  ).bind(row.harness_status, hash, at, at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
 }
 
 async function workspaceBotToken(env: Env, connection: SlackUnfurlConnection): Promise<string> {
