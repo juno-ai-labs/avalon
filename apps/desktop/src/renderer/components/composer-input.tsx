@@ -8,13 +8,23 @@ import {
   type ReactNode,
   type Ref,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import type { AvalonApi } from '../lib/api';
+import {
+  AGENT_MODEL_GROUPS,
+  UNPINNED_AGENT_MODEL,
+  UNPINNED_AGENT_MODEL_LABEL,
+  agentModelLabel,
+  agentModelTriggerLabel,
+  type AgentModelOverride,
+} from '../lib/agent-models';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
 import { useFilePaste } from '../lib/use-file-paste';
@@ -36,6 +46,23 @@ interface ComposerInputProps {
   mentionLabel?: string;
   /** Labels of the resources an `@` can name here; typing one highlights it in the draft. */
   mentionLabels?: readonly string[];
+  /**
+   * Offers the model this composer's work will run on, pinning it ahead of the
+   * `agent-model-workstream` flag. Composers that pass nothing show no selector;
+   * those that do still only show it while Application → Developer → **Debug
+   * enabled** is on, because choosing a model is a developer's question rather
+   * than part of describing work.
+   *
+   * `value` is `null` until something is chosen, which is what keeps an
+   * untouched composer on the flag rather than silently pinning every work
+   * stream a developer starts. That state is shown as **Default** rather than
+   * as a model name: which model it resolves to is the flag's answer, and this
+   * process cannot see the served variation.
+   */
+  modelOverride?: {
+    value: AgentModelOverride | null;
+    onChange: (model: AgentModelOverride | null) => void;
+  };
   onAttach: (files: FileList | File[]) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   onMention: () => void;
@@ -81,6 +108,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   mentionDisabled = false,
   mentionLabel = 'Mention a participant or connection',
   mentionLabels = NO_MENTION_LABELS,
+  modelOverride,
   onAttach,
   onKeyDown,
   onMention,
@@ -106,7 +134,17 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   const attachFiles = useCallback((files: FileList | File[]): void => {
     if (!submitting) onAttach(files);
   }, [onAttach, submitting]);
+  const debugEnabled = useDebugEnabled();
   const drop = useFileDrop((files) => attachFiles(files), submitting);
+  // Turning Debug enabled off takes the control away; it has to take the choice
+  // with it. A pin left behind in the parent's state would keep pinning every
+  // work stream started from this screen with nothing on screen saying so, and
+  // no way to clear it.
+  const releaseModelOverride = modelOverride?.onChange;
+  const modelOverrideValue = modelOverride?.value ?? null;
+  useEffect(() => {
+    if (!debugEnabled && modelOverrideValue !== null) releaseModelOverride?.(null);
+  }, [debugEnabled, modelOverrideValue, releaseModelOverride]);
   const paste = useFilePaste(attachFiles, submitting);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.
@@ -319,6 +357,53 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             </div>
+            {modelOverride && debugEnabled && (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton
+                    className={clsx('model-selector-trigger', !modelOverride.value && 'is-unpinned')}
+                    disabled={submitting}
+                    label={agentModelTriggerLabel(modelOverride.value)}
+                  >
+                    <span>{agentModelLabel(modelOverride.value)}</span>
+                    <ChevronDown aria-hidden="true" size={13} />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content align="start" className="menu-content model-selector-menu" sideOffset={8}>
+                    <DropdownMenu.Label className="menu-label">Model</DropdownMenu.Label>
+                    {/* Unpinned is its own value rather than the first model:
+                        the flag decides which model it resolves to, and naming
+                        one here would be a claim the renderer cannot make. */}
+                    <DropdownMenu.RadioGroup
+                      onValueChange={(model) =>
+                        modelOverride.onChange(model === UNPINNED_AGENT_MODEL ? null : model as AgentModelOverride)}
+                      value={modelOverride.value ?? UNPINNED_AGENT_MODEL}
+                    >
+                      <DropdownMenu.RadioItem className="menu-item model-selector-item" value={UNPINNED_AGENT_MODEL}>
+                        <span>{UNPINNED_AGENT_MODEL_LABEL}</span>
+                        <DropdownMenu.ItemIndicator asChild>
+                          <Check aria-hidden="true" size={15} />
+                        </DropdownMenu.ItemIndicator>
+                      </DropdownMenu.RadioItem>
+                      {AGENT_MODEL_GROUPS.map((group) => (
+                        <Fragment key={group.provider}>
+                          <DropdownMenu.Label className="menu-label model-selector-provider">{group.provider}</DropdownMenu.Label>
+                          {group.models.map((choice) => (
+                            <DropdownMenu.RadioItem className="menu-item model-selector-item" key={choice.id} value={choice.id}>
+                              <span>{choice.label}</span>
+                              <DropdownMenu.ItemIndicator asChild>
+                                <Check aria-hidden="true" size={15} />
+                              </DropdownMenu.ItemIndicator>
+                            </DropdownMenu.RadioItem>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </DropdownMenu.RadioGroup>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            )}
           </div>
           {footerHint && <span className="composer-hint">{footerHint}</span>}
           <div className="composer-submit-area">

@@ -78,7 +78,7 @@ import {
 } from "../lib/firecrawl";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
-import { resolveAgentModelRouting } from "./agent-model-flags";
+import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import {
@@ -1557,10 +1557,17 @@ export async function runWorkstreamHarness(
     await publishEvent(event);
   };
 
-  const modelRouting = await resolveAgentModelRouting(env, hyperSightRun ? "hypersight" : "workstream", {
-    workspaceId: input.workspaceId,
-    workstreamId: input.workstreamId,
-  });
+  // A HyperSight block is configured with its own model and never inherits the
+  // work stream's; only the work-stream agent itself honours an override.
+  const modelRouting = hyperSightRun
+    ? await resolveAgentModelRouting(env, "hypersight", {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+    })
+    : await resolveWorkstreamModelRouting(env, {
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+    });
 
   if (await isHarnessStopped(env, input.harnessRunId)) stopController.abort("stopped_by_user");
 

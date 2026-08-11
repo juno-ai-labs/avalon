@@ -1,10 +1,15 @@
 import type {
+  AgentModelOverride,
   AutomationPluginActivity,
   NoteDetail as ContractNoteDetail,
   NoteSummary as ContractNoteSummary,
   NoteTranscriptSegment as ContractNoteTranscriptSegment,
   Scope as ContractScope,
 } from '@avalon/contracts';
+
+/** The OpenRouter model ids a composer may pin work to. Re-exported so the
+ *  renderer keeps one import site for the shapes it speaks to the API in. */
+export type { AgentModelOverride };
 
 export type Region = 'global' | 'eu';
 /** How a connection or automation is owned, in the words the UI uses for it. */
@@ -437,6 +442,11 @@ export interface AutomationCreateOptions {
   /** Overrides the scope Avalon suggested for the draft. */
   scope?: AutomationScope;
   delivery?: AutomationDeliveryChoice;
+  /**
+   * Pins the work stream each run of this automation creates to one OpenRouter
+   * model, ahead of the `agent-model-workstream` flag.
+   */
+  modelOverride?: AgentModelOverride;
 }
 
 export type AutomationScope = 'you' | 'workspace';

@@ -74,6 +74,17 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 9. Stop and immediately restart while the first permission or ticket request is still pending. Resolve the older request last and confirm it cannot reopen a microphone, socket, or overwrite the new draft.
 10. After Stop, deliver a transcript delta followed by a corrected completion event. Confirm the partial remains visible and Avalon waits for the completion before closing. While it waits, edit the draft or activate **Cancel dictation** and confirm the pending finalization ends immediately without overwriting the edit. Switch work streams during recording and confirm the old capture stops instead of writing into the new draft.
 
+## Desktop model-selector acceptance
+
+1. With Application → Developer → **Debug enabled** off, open **New work stream** and **New automation** and confirm neither composer shows a model control. Confirm an existing work stream's composer never shows one in either state.
+2. Turn Debug enabled on in the Settings window and confirm the control appears in both composers, immediately to the right of the microphone's arrow menu, without reopening either screen. It reads **Default**, and its tooltip says that state follows the `agent-model-workstream` flag rather than naming a model.
+3. Open the menu and confirm **Default** leads, the nine models are grouped below it under xAI, Google, OpenAI, and DeepSeek, the check sits on **Default**, and the checked entry is exposed as the checked radio item to assistive technology.
+4. Without touching the selector, create a work stream. Confirm its `harness_runs.model` is what `agent-model-workstream` serves and `workstreams.model_override` is `NULL`.
+5. Choose a different model, confirm the trigger and tooltip both take its name, then create a work stream. Confirm `workstreams.model_override` holds the chosen id, the run's `harness_runs.model` matches it, and the inference ledger records that model with no fallbacks.
+6. Point `agent-model-workstream` at a variation other than the Worker-variable default, then confirm an untouched selector still reads **Default** rather than claiming a model — the served variation is not visible to the client and must not be guessed at.
+7. Pin explicitly to the first listed model, confirm the trigger changes from **Default** to **Grok 4.3**, and confirm the created work stream carries that id — an explicit pin to the flag's own default must be distinguishable from never having touched the control. Then choose **Default** again and confirm the next work stream is created with no override.
+8. Repeat in **New automation**: choose a model and create the automation. Exercise all three run paths — **Run now**, a scheduled run fired by the workspace scheduler, and a run triggered by matching connector activity — and confirm each one's work stream carries the override and each run uses it. Only the first goes through `AutomationService.createRun`; the other two build the work stream themselves. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
+
 ## PRD flow 1 — ad hoc collaboration
 
 Use a test workspace with two members, Adam and Samantha.
