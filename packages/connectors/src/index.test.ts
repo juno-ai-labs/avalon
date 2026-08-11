@@ -11,7 +11,8 @@ import {
   defineConnectorActivityTriggers,
   pollCheckpointedActivityStreams,
   verifyGenericWebhook,
-  type ConnectorConnectionContext
+  authorizedConnection,
+  type AuthorizedConnectorConnection
 } from "./index";
 
 describe("connectors", () => {
@@ -1957,8 +1958,8 @@ function googleAdapter(fetcher: typeof fetch) {
 function googleConnection(
   grantedScopes: string[],
   cursor: Record<string, unknown> = {}
-): ConnectorConnectionContext {
-  return {
+): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: TEST_CONNECTION_ID,
     workspaceId: TEST_WORKSPACE_ID,
     scope: "personal",
@@ -1967,7 +1968,7 @@ function googleConnection(
     credentials: { accessToken: "google-access-token" },
     cursor,
     config: { region: "global", pollIntervalSeconds: 300 }
-  };
+  });
 }
 
 function requestUrl(input: RequestInfo | URL): URL {
