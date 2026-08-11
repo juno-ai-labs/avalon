@@ -198,6 +198,32 @@ describe("agent model flags", () => {
     seeded.close();
   });
 
+  // The field answers "which facts did this evaluation actually have?", so the
+  // identity keys — present on every evaluation — would only bury the answer.
+  it("logs the loaded attributes it resolved on, not the identity every run sends", async () => {
+    const debugged: string[] = [];
+    const debug = vi.spyOn(console, "debug").mockImplementation((entry: unknown) => {
+      debugged.push(JSON.stringify(entry));
+    });
+    const seeded = seededEnv({
+      ...envWithFlags(serving({ model: "anthropic/claude-opus-4.6", fallbackModels: [] })),
+      LOG_LEVEL: "debug",
+    } as Env);
+
+    await resolveAgentModelRouting(seeded.env, "workstream", { workspaceId: "ws-1" });
+
+    const resolved = debugged.find((entry) => entry.includes("agent_model_flag_resolved"));
+    const attributes = (JSON.parse(resolved ?? "{}") as { attributes?: string }).attributes ?? "";
+    expect(attributes.split(",")).toEqual([
+      "workspaceAgeDays",
+      "workspaceMemberCount",
+      "workspaceOwnerEmailDomain",
+      "workspaceSlug",
+    ]);
+    debug.mockRestore();
+    seeded.close();
+  });
+
   it("uses the flag's OpenRouter model ids when the flag is served", async () => {
     const env = envWithFlags(serving({
       model: "anthropic/claude-opus-4.6",

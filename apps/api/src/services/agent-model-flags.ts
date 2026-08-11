@@ -3,6 +3,7 @@ import { HYPERSIGHT_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {
   loadFlagTargetingAttributes,
+  type FlagTargetingAttributes,
   type FlagTargetingSubject,
 } from "./flag-targeting-attributes";
 
@@ -126,15 +127,16 @@ function unreachableFlagLevel(env: Env): "debug" | "warn" {
   return env.APP_ENV === "development" || env.APP_ENV === "test" ? "debug" : "warn";
 }
 
-async function evaluationContext(
+function evaluationContext(
   env: Env,
   role: AgentModelRole,
   context: AgentModelFlagContext,
-): Promise<FlagshipEvaluationContext> {
+  attributes: FlagTargetingAttributes,
+): FlagshipEvaluationContext {
   // Attributes are spread first so a loaded fact can never shadow the run's own
   // identity: `agent`, `region`, and the ids are what bucketing depends on.
   return {
-    ...(await loadFlagTargetingAttributes(env, context)),
+    ...attributes,
     agent: role,
     region: env.AVALON_REGION,
     appEnv: env.APP_ENV,
@@ -160,10 +162,14 @@ export async function resolveAgentModelRouting(
   if (!flags) return fallback;
   const flagKey = AGENT_MODEL_FLAG_KEYS[role];
   let details: FlagshipEvaluationDetails<AgentModelRouting>;
-  let evaluation: FlagshipEvaluationContext;
+  let attributes: FlagTargetingAttributes;
   try {
-    evaluation = await evaluationContext(env, role, context);
-    details = await flags.getObjectDetails(flagKey, fallback, evaluation);
+    attributes = await loadFlagTargetingAttributes(env, context);
+    details = await flags.getObjectDetails(
+      flagKey,
+      fallback,
+      evaluationContext(env, role, context, attributes),
+    );
   } catch (error) {
     // `wrangler dev --local` binds an always-remote binding as an object whose
     // every call throws `Binding FLAGS needs to be run remotely`, so this path
@@ -210,16 +216,18 @@ export async function resolveAgentModelRouting(
   }
   // The variant and reason are what confirm a staged rollout actually reached
   // this run; the inference ledger records only the model that resulted. The
-  // attribute *names* say which targeting rules could even have applied — a
-  // rule on an attribute that was never sent silently never matches — while
-  // their values stay out of the logs.
+  // loaded attributes' *names* say which targeting rules could even have
+  // applied — a rule on an attribute that was never sent silently never
+  // matches — while their values stay out of the logs. The identity keys are
+  // deliberately not in this list: they are on every evaluation, so including
+  // them would bury the one thing the field exists to answer.
   logStructuredEvent(env, "debug", "agent_model_flag_resolved", {
     agent: role,
     flag_key: flagKey,
     workspace_id: context.workspaceId,
     variant: details.variant,
     reason: details.reason,
-    attributes: Object.keys(evaluation).sort().join(","),
+    attributes: Object.keys(attributes).sort().join(","),
     model: parsed.data.model,
   });
   if (NO_FALLBACK_ROLES.has(role) && parsed.data.fallbackModels.length > 0) {
