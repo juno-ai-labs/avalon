@@ -42,9 +42,20 @@ export function sqliteD1(database: DatabaseSync): D1Database {
   };
   return {
     prepare,
+    // D1 runs a batch as one transaction, and code under test relies on that:
+    // a pair written to be all-or-nothing is only all-or-nothing here if the
+    // shim rolls back too. Replaying the statements in a loop would let a test
+    // pass over a half-applied batch that production would never produce.
     async batch<T>(statements: D1PreparedStatement[]) {
       const results: D1Result<unknown>[] = [];
-      for (const statement of statements) results.push(await statement.run());
+      database.exec("BEGIN");
+      try {
+        for (const statement of statements) results.push(await statement.run());
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
       return results as D1Result<T>[];
     },
   } as unknown as D1Database;
