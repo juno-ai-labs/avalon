@@ -5,6 +5,7 @@ import {
   AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
@@ -34,6 +35,7 @@ import {
   type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
+  type ClientFeatureFlags,
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
@@ -1076,14 +1078,35 @@ export class AvalonApi {
     });
   }
 
+  /**
+   * The server-decided values this device is allowed to see, for the signed-in
+   * person. The main process polls the same route for Application → Developer;
+   * a renderer asks directly for a value only it acts on, rather than adding an
+   * IPC hop and a second reader of the same answer.
+   */
+  clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
+    return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
+  }
+
+  /**
+   * `refreshSeconds` is the cadence this meeting settled on. It travels with
+   * the request so the briefing is written for the schedule the client is
+   * actually keeping, rather than for whatever the flag says when the server
+   * happens to read it.
+   */
   generateNoteNotes(
     id: string,
     mode: 'live' | 'final' = 'live',
     transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
+    refreshSeconds?: number,
   ): Promise<NoteDetail> {
     return this.request(`/notes/${encodeURIComponent(id)}/generate`, {
       method: 'POST',
-      body: { mode, transcriptStatus },
+      body: {
+        mode,
+        transcriptStatus,
+        ...(refreshSeconds === undefined ? {} : { refreshSeconds }),
+      },
       schema: WireNoteDetailSchema,
     });
   }

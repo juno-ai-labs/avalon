@@ -152,14 +152,43 @@ export const AcceptWorkspaceInvitationRequestSchema = z.object({
 });
 
 /**
+ * How often Control Tower rewrites its briefing while a meeting records, in
+ * seconds. One definition for the three places that need it: the flag resolver
+ * that clamps what Flagship serves, the response schema below, and the desktop
+ * timer that falls back to it.
+ *
+ * The bounds are what makes a served cadence safe to act on. Every refresh is
+ * an inference, so a mistyped flag at the low end is a bill and a rate limit;
+ * at the high end it is a briefing so stale the feature stops being live. The
+ * default reproduces the behavior of a client that never asked.
+ */
+export const CONTROL_TOWER_REFRESH_SECONDS = {
+  default: 60,
+  minimum: 15,
+  maximum: 600
+} as const;
+
+/**
  * Every server-decided feature flag a client is allowed to see, resolved for
- * the signed-in person. Each field defaults to the closed state so a response
- * from an older service — or one whose flag provider was unreachable — leaves
- * the feature off rather than absent.
+ * the signed-in person. Each field defaults to the answer an unreachable flag
+ * provider — or a response from an older service that does not know the field —
+ * has to reproduce: off for a feature, and today's behavior for a setting that
+ * has no off.
  */
 export const ClientFeatureFlagsSchema = z.object({
   /** Whether Application → Developer may be offered on this device. */
-  developerSettings: z.boolean().default(false)
+  developerSettings: z.boolean().default(false),
+  /**
+   * Control Tower's refresh cadence in seconds. `catch` rather than a bare
+   * bound: a value outside the range is a provisioning mistake, and degrading
+   * it to the default keeps one bad flag from failing the whole response and
+   * taking every other flag down with it.
+   */
+  controlTowerRefreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .catch(CONTROL_TOWER_REFRESH_SECONDS.default)
+    .default(CONTROL_TOWER_REFRESH_SECONDS.default)
 });
 
 export const ParticipantSchema = z.object({
@@ -376,6 +405,18 @@ export const AppendNoteTranscriptSegmentRequestSchema = z.object({
 export const GenerateNoteNotesRequestSchema = z.object({
   mode: z.enum(["live", "final"]).default("live"),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /**
+   * The refresh cadence the client is actually keeping, in seconds, so the live
+   * briefing can be written for it. The client asks for the served cadence once
+   * per meeting and holds it; the server would otherwise re-resolve the flag on
+   * every pass and describe a schedule nobody is on for the rest of any meeting
+   * the flag moved under. Omitted by a client that does not know it, which
+   * leaves the server resolving the flag as before.
+   */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .optional(),
 }).strict();
 
 // Every run is always delivered to its Avalon work stream. These are the
@@ -1318,6 +1359,12 @@ export const GenerateMeetingNotesRequestSchema = z.object({
   startedAt: TimestampSchema.nullable().default(null),
   endedAt: TimestampSchema.nullable().default(null),
   transcriptStatus: z.enum(["complete", "partial"]).default("partial"),
+  /** The cadence the client is keeping; null means resolve the flag instead. */
+  refreshSeconds: z.number().int()
+    .min(CONTROL_TOWER_REFRESH_SECONDS.minimum)
+    .max(CONTROL_TOWER_REFRESH_SECONDS.maximum)
+    .nullable()
+    .default(null),
 }).strict();
 
 export const MeetingNotesResponseSchema = z.object({
