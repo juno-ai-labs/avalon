@@ -63,13 +63,27 @@ version did not finish:
 | --- | --- | --- |
 | `MAX_RANK_CANDIDATES` / `MAX_RANK_CHARACTERS` | 12 / 80k | A group too large for one call |
 | `MAX_RANK_ROUNDS` | 10 | A tournament that will not converge |
-| `RANK_BUDGET_MS` | 4 min | A tournament that converges too slowly to matter |
+| `RANK_BUDGET_MS` | 2 min | A tournament that converges too slowly to matter |
+| `SCHEDULER_BUDGET_MS` | 4 min | A whole pass overrunning the cron it lives in |
 
-On exhausting the budget it keeps the finalists it has, in tournament order, and
-writes them. **A ranking must always write something.** A member with nothing
-stored gets the recency order written first, against an empty fingerprint, so
-they see four suggestions immediately and the next pass still treats the real
-ranking as outstanding.
+`SCHEDULER_BUDGET_MS` is the one that has to be safe. The pass runs inside the
+scheduled handler's `waitUntil`, on a five-minute cron, beside eleven other jobs
+and under a fifteen-minute ceiling; bounding only the per-member budget left a
+pass free to cost `MAX_RANKINGS_PER_TICK` times that in sequence. With the pass
+bounded by time, the per-tick count is a ceiling rather than the throughput
+limit — it is region-wide across every workspace, and the hourly impression
+trigger alone wants one ranking per active member per hour.
+
+On exhausting the budget a tournament keeps the finalists it has, in tournament
+order, and writes them. **A ranking must always write something, and never an
+empty something while candidates exist.** `orderedOpportunityIds` has a maximum
+and no minimum, and ids the model invents are filtered out, so a ranking can
+select nothing; storing that against the real fingerprint creates a set the read
+path calls unranked and the scheduler declines to re-rank, and the two do that to
+each other indefinitely. An empty selection therefore falls back to recency
+order. A member with nothing stored also gets recency order written first,
+against an *empty* fingerprint, so they see four suggestions immediately while
+the real ranking stays outstanding.
 
 ## Freshness
 
@@ -117,16 +131,40 @@ expired. Note the second is about a gap, not an absence — a member with no
 eligible opportunities has an empty set as their steady state, and asking for a
 ranking on that would cost a write and a scheduler claim on every read forever.
 
-Setting a due time never delays one already outstanding — `MIN` wins. Answering
-one is the scheduler's job alone, and it answers **only the request it claimed**:
-`settleRankingRequest` compares `due_at` against the value it claimed, so a
-dismissal arriving during a four-minute tournament survives it. Clearing matters
-as much as setting: a due time left behind is re-claimed on every pass forever.
+A hole is also topped up from the recency fallback for the read that finds it,
+rather than rendering a short list until the next pass. The inline ranking this
+replaced always returned four, and a home screen quietly losing a row for minutes
+is a regression the member can see.
+
+Setting a due time never delays one already outstanding — `MIN` wins.
+
+Which is exactly why a request is identified by **`request_seq`, not by
+`due_at`**. Every ask increments the counter; the scheduler records the value it
+claimed and clears the request only if that value is still current. Comparing
+due times instead does not work, and the reason is subtle enough to be worth
+stating: an admission landing mid-tournament debounces two minutes out, which is
+*later* than the request being ranked, so `MIN` keeps the existing value and the
+column does not move at all. A request that leaves the row byte-identical is
+indistinguishable from no request, and the completed run clears it on the way
+out — the member keeps a set that was out of date before it was written.
+
+The scheduler claims on the same counter, so a request withdrawn or superseded
+between the scan and the claim is declined rather than answered. Clearing
+matters as much as setting: a due time left behind is re-claimed on every pass
+forever.
 
 ### What the scheduler will not do
 
 - **Rank a dormant member.** Their request stays outstanding and is served on the
   first pass after the auth middleware records them again.
+- **Starve the less-active tier.** A request waiting longer than
+  `RANK_STARVATION_MS` is promoted to the top tier, so a handful of members who
+  are always due cannot hold the queue indefinitely.
+- **Record a failed settle as a failed ranking.** The settle sits outside the
+  catch that marks `status = 'failed'`; a lease left to expire costs one re-rank,
+  where marking a good set failed costs the member their suggestions.
+- **Push a newer request out on failure.** The retry delay applies only when
+  `request_seq` still matches the attempt that failed.
 - **Overwrite `status` when it claims.** Claiming is lease-only. `status` is the
   record of how the last ranking ended, and the fingerprint cache reads it — a
   claim that clobbered it would guarantee a full tournament every time.
