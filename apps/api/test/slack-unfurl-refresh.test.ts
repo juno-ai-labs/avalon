@@ -85,6 +85,33 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
 
+  it("does not rewrite a card when the status moved but the badge did not", async () => {
+    // completed -> idle drifts the row, but both render without a badge, so
+    // posting would spend a chat.unfurl rewriting the card into itself. The
+    // row still has to advance or it re-matches on every sweep for 30 days.
+    const database = await seed({ harnessStatus: "idle", renderedStatus: "completed" });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+    expect(renderedStatus(database)).toBe("idle");
+  });
+
+  it("rewrites a card when the work stream settles out of a badged state", async () => {
+    const database = await seed({ harnessStatus: "completed", renderedStatus: "needs_input" });
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+
+    const body = unfurlBody(calls);
+    expect(body).toContain("Quarterly planning");
+    expect(body).not.toContain("Needs input");
+    expect(body).not.toContain("warning");
+  });
+
   it("redacts a card whose channel became externally shared after it was posted", async () => {
     const database = await seed({ harnessStatus: "completed", renderedStatus: "running" });
     const calls: SlackCall[] = [];
