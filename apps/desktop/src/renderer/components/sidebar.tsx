@@ -20,6 +20,7 @@ import {
   NotebookText,
   Pencil,
   Pin,
+  PinOff,
   Play,
   Plus,
   Settings,
@@ -47,6 +48,10 @@ interface SidebarProps {
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
+  /** Pin or unpin for the signed-in person, on every device they use. */
+  onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<void>;
+  /** The pinned list's new order, in full, after a drag or a keyboard move. */
+  onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onOpenMeetingNotes: (noteId?: string) => Promise<void>;
@@ -59,6 +64,9 @@ type RecentSidebarItem =
 
 /** How close the pointer comes to the navigation's edge before its pill shows. */
 const EDGE_REVEAL_DISTANCE = 20;
+
+/** The one element carrying the keyboard-reorder instruction for the section. */
+const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
 
 const onboardingItems = [
   {
@@ -229,22 +237,46 @@ function AutomationRow({
   );
 }
 
+/**
+ * The drag behaviour a pinned row carries, supplied only in the Pinned section.
+ * Absent everywhere else, which is what keeps a row in the recent list — sorted
+ * by activity, where a manual order would be overwritten by the next
+ * message — from being draggable at all.
+ */
+interface PinnedRowDrag {
+  dragging: boolean;
+  /** `cancelled` is a drag backed out of rather than dropped on the list. */
+  onDragEnd: (cancelled: boolean) => void;
+  onDragOver: (workstream: WorkstreamSummary) => void;
+  onDragStart: (workstream: WorkstreamSummary) => void;
+  /** Keyboard equivalent of a drag: one step toward the top or the bottom. */
+  onMove: (workstream: WorkstreamSummary, direction: -1 | 1) => void;
+  position: string;
+}
+
 function WorkstreamRow({
   debugEnabled,
+  drag,
   workstream,
+  pinPending,
   scopePending,
   onChangeScope,
   onMarkUnread,
   onRename,
+  onTogglePin,
 }: {
   debugEnabled: boolean;
+  drag?: PinnedRowDrag;
   workstream: WorkstreamSummary;
+  pinPending: boolean;
   scopePending: boolean;
   onChangeScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => void;
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
+  onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
 }): React.JSX.Element {
   const isPrivate = workstream.scope === 'personal';
+  const isPinned = workstream.pinPosition !== null;
   // Two kinds of row take their audience from something other than this
   // column, so offering the toggle on them would describe a change that does
   // not happen: a subsystem's own work stream is machinery, and one an
@@ -254,7 +286,52 @@ function WorkstreamRow({
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <div className="sidebar-context-target">
+        <div
+          className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
+          draggable={drag !== undefined}
+          onDragEnd={drag
+            // A drag nothing accepted reports `none`. Treated as cancelled when
+            // the browser gives no `dataTransfer` at all, because a drop this
+            // list handled always leaves one behind.
+            ? (event) => drag.onDragEnd((event.dataTransfer?.dropEffect ?? 'none') === 'none')
+            : undefined}
+          onDragOver={drag
+            ? (event) => {
+              // `preventDefault` is what makes this a drop target at all, and
+              // the effect is what a release here reports back to `dragend`;
+              // without it a finished drag is indistinguishable from an
+              // abandoned one. The reorder happens here rather than on `drop`
+              // so the list settles under the pointer as it moves instead of
+              // jumping once at the end.
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              drag.onDragOver(workstream);
+            }
+            : undefined}
+          onDragStart={drag
+            ? (event) => {
+              // Chromium refuses to start a drag with an empty payload, and the
+              // id is the payload every other surface would want anyway. The
+              // order itself is tracked in the sidebar's own state: reading it
+              // back out of `dataTransfer` is only possible on `drop`, which is
+              // too late to move anything under the pointer.
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', workstream.id);
+              drag.onDragStart(workstream);
+            }
+            : undefined}
+          onDrop={drag ? (event) => event.preventDefault() : undefined}
+          onKeyDown={drag
+            ? (event) => {
+              // Alt rather than a bare arrow: the arrows move focus through the
+              // sidebar, and a pinned row must stay reachable by someone who is
+              // reading rather than rearranging.
+              if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+              event.preventDefault();
+              drag.onMove(workstream, event.key === 'ArrowUp' ? -1 : 1);
+            }
+            : undefined}
+        >
           <NavLink
             className={({ isActive }) => clsx(
               'sidebar-row workstream-row',
@@ -265,6 +342,10 @@ function WorkstreamRow({
               // without adding another thing to decode.
               workstream.systemKind && 'is-system',
             )}
+            // The anchor would otherwise be the drag source and drag its own
+            // href, leaving the wrapper's handlers to fire on a link drag that
+            // the sidebar has no way to reorder.
+            draggable={false}
             to={`/workstreams/${workstream.id}`}
           >
             <span className="sidebar-row-icon">
@@ -285,14 +366,29 @@ function WorkstreamRow({
                 </span>
               )}
             </span>
+            {/* The manual order is the whole point of the section, and a
+                pointer-only affordance leaves it unreadable to anyone not
+                looking at it. The position — and only the position — rides on
+                the row, because it is the part that differs per row; how to
+                change it is said once, on the section. */}
+            {drag && <span className="sr-only">{drag.position}</span>}
             {workstream.scope === 'personal' && <PrivacyMarker label="Private work stream" />}
           </NavLink>
         </div>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="menu-content sidebar-context-menu" collisionPadding={8}>
-          <ContextMenu.Item className="menu-item">
-            <Pin aria-hidden="true" size={16} /> Pin
+          {/* Named for the state it moves to, like every other toggle in these
+              menus. A pin is this reader's own and follows them to their other
+              devices; it changes nothing for anyone else in the work stream. */}
+          <ContextMenu.Item
+            className="menu-item"
+            disabled={pinPending}
+            onSelect={() => onTogglePin(workstream, !isPinned)}
+          >
+            {isPinned
+              ? <><PinOff aria-hidden="true" size={16} /> Unpin</>
+              : <><Pin aria-hidden="true" size={16} /> Pin</>}
           </ContextMenu.Item>
           <ContextMenu.Item className="menu-item" onSelect={() => onMarkUnread(workstream)}>
             <EyeOff aria-hidden="true" size={16} /> Mark as unread
@@ -409,6 +505,42 @@ function NoteRow({
   );
 }
 
+/**
+ * The pinned work streams, in the order to render them.
+ *
+ * `pinPosition` is the server's answer and the only order that survives a
+ * reload. `dragOrder` is the arrangement a drag is currently building, and wins
+ * while it exists so rows move under the pointer rather than after the round
+ * trip. Ids in `dragOrder` that are no longer pinned — unpinned in another
+ * window mid-drag — drop out, and anything pinned that the drag never saw is
+ * appended, so the section always shows every pin exactly once.
+ */
+export function orderPinnedWorkstreams(
+  workstreams: WorkstreamSummary[],
+  dragOrder: string[] | null,
+): WorkstreamSummary[] {
+  const pinned = workstreams
+    .filter((workstream) => workstream.pinPosition !== null)
+    // The id breaks a tie the way both server readers do. Positions are unique
+    // today, so this cannot fire — it is here because "readers of this list
+    // agree on the order" is stated as an invariant, and a third reader that
+    // fell back to arrival order would be the one place it was not true.
+    .sort((left, right) =>
+      (left.pinPosition ?? 0) - (right.pinPosition ?? 0) || left.id.localeCompare(right.id));
+  if (dragOrder === null) return pinned;
+  const byId = new Map(pinned.map((workstream) => [workstream.id, workstream]));
+  const dragged = dragOrder.flatMap((id) => byId.get(id) ?? []);
+  const seen = new Set(dragged.map((workstream) => workstream.id));
+  return [...dragged, ...pinned.filter((workstream) => !seen.has(workstream.id))];
+}
+
+/** `ids` with `id` lifted out and reinserted at `index`. */
+function moveWithin(ids: string[], id: string, index: number): string[] {
+  const without = ids.filter((candidate) => candidate !== id);
+  const bounded = Math.max(0, Math.min(index, without.length));
+  return [...without.slice(0, bounded), id, ...without.slice(bounded)];
+}
+
 export function Sidebar({
   workspace,
   automations,
@@ -421,6 +553,8 @@ export function Sidebar({
   onChangeWorkstreamScope,
   onDeleteAutomation,
   onMarkWorkstreamUnread,
+  onPinWorkstream,
+  onReorderPinnedWorkstreams,
   onRenameWorkstream,
   onRunAutomation,
   onOpenMeetingNotes,
@@ -449,6 +583,13 @@ export function Sidebar({
   const [menuError, setMenuError] = useState<{ copy: string; message: string; title: string } | null>(null);
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
+  const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
+  // The arrangement being dragged, held only for as long as the drag lasts.
+  // The list renders from it while it exists, so rows move under the pointer
+  // before anything is sent; the server's answer replaces it when the drag
+  // ends. `null` means the pinned list is showing what the server last said.
+  const [dragOrder, setDragOrder] = useState<string[] | null>(null);
+  const draggingWorkstreamId = useRef<string | null>(null);
   const [archiveNoteTarget, setArchiveNoteTarget] = useState<NoteSummary | null>(null);
   const [archivingNote, setArchivingNote] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
@@ -463,8 +604,18 @@ export function Sidebar({
       .filter((automation) => automation.status === 'draft')
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
   ];
+  // A pinned work stream leaves the recent list entirely rather than appearing
+  // twice: the section it moves to is the one whose order the reader controls,
+  // and a row in both places would take its order from whichever they saw last.
+  // Two orders, and the difference between them is what a drop commits: the
+  // one the server last confirmed, and the one the pointer is building on top
+  // of it. Comparing a finished drag against the second would compare it with
+  // itself and conclude nothing moved.
+  const storedPinnedWorkstreams = orderPinnedWorkstreams(workstreams, null);
+  const pinnedWorkstreams = orderPinnedWorkstreams(workstreams, dragOrder);
+  const unpinnedWorkstreams = workstreams.filter((workstream) => workstream.pinPosition === null);
   const groups = groupActivityItems<RecentSidebarItem>([
-    ...workstreams.map((workstream) => ({
+    ...unpinnedWorkstreams.map((workstream) => ({
       type: 'workstream' as const,
       id: `workstream:${workstream.id}`,
       lastActivityAt: workstream.lastActivityAt,
@@ -566,6 +717,87 @@ export function Sidebar({
       setScopePendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
   };
+
+  const togglePin = async (workstream: WorkstreamSummary, pinned: boolean): Promise<void> => {
+    setPinPendingWorkstreamId(workstream.id);
+    try {
+      await onPinWorkstream(workstream, pinned);
+    } catch (error) {
+      setMenuError({
+        title: pinned ? 'Work stream could not be pinned' : 'Work stream could not be unpinned',
+        copy: pinned
+          ? 'The work stream is still in the recent list. Try again in a moment.'
+          : 'The work stream is still pinned. Try again in a moment.',
+        message: error instanceof Error ? error.message : 'The work stream could not be updated.',
+      });
+    } finally {
+      setPinPendingWorkstreamId((current) => current === workstream.id ? null : current);
+    }
+  };
+
+  // A dropped arrangement is sent whole. If the server refuses it, the local
+  // order is dropped rather than kept: the section then shows what the server
+  // actually holds, which is the order the reader's other devices are showing.
+  const commitPinnedOrder = async (order: string[]): Promise<void> => {
+    setDragOrder(order);
+    try {
+      await onReorderPinnedWorkstreams(order);
+    } catch (error) {
+      setMenuError({
+        title: 'Pinned work streams could not be reordered',
+        copy: 'The pinned list is back in the order it was in. Try again in a moment.',
+        message: error instanceof Error ? error.message : 'The pinned order could not be saved.',
+      });
+    } finally {
+      // Only if this call's arrangement is still the one on screen. Two moves
+      // in quick succession overlap, and clearing unconditionally would let the
+      // first response snap the list back to an order the second has already
+      // moved past — visibly, and for as long as the second request takes.
+      setDragOrder((current) => current === order ? null : current);
+    }
+  };
+
+  const pinnedRowDrag = (workstream: WorkstreamSummary, index: number): PinnedRowDrag => ({
+    dragging: draggingWorkstreamId.current === workstream.id && dragOrder !== null,
+    position: `Pinned, ${index + 1} of ${pinnedWorkstreams.length}.`,
+    onDragStart: (target) => {
+      draggingWorkstreamId.current = target.id;
+      setDragOrder(pinnedWorkstreams.map((pinned) => pinned.id));
+    },
+    onDragOver: (target) => {
+      const draggingId = draggingWorkstreamId.current;
+      if (draggingId === null || draggingId === target.id) return;
+      setDragOrder((current) => {
+        const order = current ?? pinnedWorkstreams.map((pinned) => pinned.id);
+        const targetIndex = order.indexOf(target.id);
+        if (targetIndex < 0 || order.indexOf(draggingId) === targetIndex) return order;
+        return moveWithin(order, draggingId, targetIndex);
+      });
+    },
+    onDragEnd: (cancelled) => {
+      const order = dragOrder;
+      draggingWorkstreamId.current = null;
+      if (order === null) return;
+      // `dragend` fires whatever ended the drag. Escape, or a release outside
+      // the pinned list, leaves `dropEffect` at `none` — and the arrangement
+      // built while the pointer passed over other rows must be abandoned, not
+      // saved, or backing out of a drag becomes the same thing as finishing it.
+      // An unchanged arrangement is likewise not worth rewriting every position
+      // for.
+      if (cancelled || order.join() === storedPinnedWorkstreams.map((pinned) => pinned.id).join()) {
+        setDragOrder(null);
+        return;
+      }
+      void commitPinnedOrder(order);
+    },
+    onMove: (target, direction) => {
+      const order = pinnedWorkstreams.map((pinned) => pinned.id);
+      const from = order.indexOf(target.id);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= order.length) return;
+      void commitPinnedOrder(moveWithin(order, target.id, to));
+    },
+  });
 
   const closeRename = (): void => {
     if (renaming) return;
@@ -672,11 +904,63 @@ export function Sidebar({
             )}
           </section>
 
+          {/* Only when something is pinned. An empty heading would be a
+              standing invitation to a feature the reader has not used, sitting
+              above the work they came here for. */}
+          {pinnedWorkstreams.length > 0 && (
+            // The whole section is the drop target, heading included. A release
+            // anywhere a reader would call "inside the list they are arranging"
+            // has to count as a drop: `dragend` reads a release nothing accepted
+            // as a cancellation, so a gap between two rows — or the strip of
+            // heading a few pixels above the first one — would silently throw
+            // the arrangement away.
+            <section
+              aria-describedby={PINNED_DRAG_HINT_ID}
+              aria-labelledby="pinned-heading"
+              className="sidebar-section pinned-section"
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={(event) => event.preventDefault()}
+            >
+              <div className="sidebar-section-heading">
+                <h2 id="pinned-heading">Pinned</h2>
+              </div>
+              {/* Said once for the section rather than repeated on every row:
+                  as a per-row description it lands inside each link's
+                  accessible name, so somebody arrowing through the list hears
+                  the whole instruction again before every title. */}
+              <p className="sr-only" id={PINNED_DRAG_HINT_ID}>
+                Hold Alt and press the up or down arrow to move a pinned work stream.
+              </p>
+              <div className="sidebar-list">
+                {pinnedWorkstreams.map((pinned, index) => (
+                  <WorkstreamRow
+                    debugEnabled={debugEnabled}
+                    drag={pinnedRowDrag(pinned, index)}
+                    key={pinned.id}
+                    onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
+                    onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
+                    onRename={openRename}
+                    onTogglePin={(target, pin) => void togglePin(target, pin)}
+                    pinPending={pinPendingWorkstreamId === pinned.id}
+                    scopePending={scopePendingWorkstreamId === pinned.id}
+                    workstream={pinned}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           <section aria-label="Work streams" className="sidebar-section workstreams-section">
             {loading && workstreams.length === 0 && notes.length === 0 ? (
               <div className="sidebar-skeleton tall" aria-label="Loading work streams" />
             ) : groups.length === 0 ? (
-              <p className="sidebar-empty">No work streams or notes yet</p>
+              // Pinned work streams are work streams, so the empty line only
+              // holds when nothing is pinned either; with everything pinned the
+              // section has nothing left to say and says nothing.
+              pinnedWorkstreams.length === 0 && <p className="sidebar-empty">No work streams or notes yet</p>
             ) : (
               groups.map((group) => (
                 <div className="sidebar-group" key={group.label}>
@@ -699,6 +983,8 @@ export function Sidebar({
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                         onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
+                        onTogglePin={(target, pin) => void togglePin(target, pin)}
+                        pinPending={pinPendingWorkstreamId === item.workstream.id}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />
