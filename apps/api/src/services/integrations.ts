@@ -3722,7 +3722,7 @@ function connectorPluginPresentation(
           "Use only the Google Mail and Calendar tools exposed by this credential plugin.",
           "For newest, latest, recent, unread, sender, subject, or inbox questions, use the Gmail search tool first, then read the selected thread or message when its details are needed; do not substitute public web search for authorized mailbox search.",
           "Search with Gmail's operators, such as from:, to:, subject:, newer_than:, and has:attachment, rather than bare keywords; a search result already carries each hit's sender, recipients, subject, date, and RFC Message-ID, so read a message only when you need its body.",
-          "Resolve an unknown recipient address with the Gmail contact-finding tool before addressing a draft or a message, and reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId.",
+          "Resolve an unknown recipient address with the Gmail contact-finding tool before addressing a draft or a message, read the connected account's own address with the Gmail profile tool rather than inferring it from a signature or a header, and reply in thread by passing a hit's RFC Message-ID as inReplyTo alongside its threadId.",
           ...(granted.has("calendar.write")
             ? ["State an attendee change rather than the resulting list: addAttendeeEmails and removeAttendeeEmails are applied to the guest list the event already has, while replaceAllAttendeeEmails sets it outright and removes anyone omitted. Either way everyone remaining on the event is emailed about the change."]
             : []),

@@ -765,6 +765,50 @@ describe("connectors", () => {
     expect(requested).toHaveLength(callsBeforePdf);
   });
 
+  it("reads the connected Gmail account's own address rather than leaving it to be inferred", async () => {
+    const requests: URL[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(requestUrl(input));
+      return googleJson({
+        emailAddress: "adam@example.com",
+        messagesTotal: 42_000,
+        threadsTotal: 9_000,
+        historyId: "998877"
+      });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.read_profile",
+      {},
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(requests[0]?.pathname).toBe("/gmail/v1/users/me/profile");
+    expect(result.output).toMatchObject({
+      resourceType: "gmail_profile",
+      emailAddress: "adam@example.com",
+      messagesTotal: 42_000,
+      threadsTotal: 9_000,
+      historyId: "998877"
+    });
+    expect(result.summary).toContain("adam@example.com");
+  });
+
+  it("refuses the account profile to a connection that was not granted Gmail read", async () => {
+    const fetcher: typeof fetch = async () => googleJson({ emailAddress: "adam@example.com" });
+    await expect(googleAdapter(fetcher).executeTool(
+      "gmail.read_profile",
+      {},
+      {
+        connection: googleConnection(["calendar.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({ code: "unsupported_capability" });
+  });
+
   it("returns sender, recipients, subject, and snippet with every Gmail search hit", async () => {
     const fetcher: typeof fetch = async (input) => {
       const url = requestUrl(input);
