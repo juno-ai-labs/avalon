@@ -1,12 +1,14 @@
 import { createRef } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MentionIdentity } from '../lib/api';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import type { PendingAttachment } from '../lib/use-file-attachments';
+import { clearAllDrafts } from '../lib/draft-cache';
 import { WorkstreamComposer } from './workstream-composer';
 
+beforeEach(() => clearAllDrafts());
 afterEach(() => vi.unstubAllGlobals());
 
 const creator: WorkspaceMember = { id: 'user-1', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' };
@@ -324,5 +326,34 @@ describe('WorkstreamComposer mention confirmation', () => {
 
     fireEvent.compositionEnd(textarea);
     expect(composer).not.toHaveClass('is-composing');
+  });
+});
+
+describe('WorkstreamComposer draft caching', () => {
+  it('brings a half-written message and its mention back to the same work stream', async () => {
+    renderComposer();
+    const textarea = screen.getByLabelText('Message the work stream');
+    fireEvent.change(textarea, { target: { value: 'Ask @Bob' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Bob Builder/u }));
+    await waitFor(() => expect(textarea).toHaveValue('Ask @Bob Builder '));
+    cleanup();
+
+    renderComposer();
+
+    await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toHaveValue('Ask @Bob Builder '));
+  });
+
+  it('forgets the draft once the message is sent', async () => {
+    const onSend = vi.fn(async () => undefined);
+    renderComposer(onSend);
+    const textarea = screen.getByLabelText('Message the work stream');
+    fireEvent.change(textarea, { target: { value: 'Ship it' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('Ship it', []));
+    cleanup();
+
+    renderComposer();
+
+    await waitFor(() => expect(screen.getByLabelText('Message the work stream')).toHaveValue(''));
   });
 });

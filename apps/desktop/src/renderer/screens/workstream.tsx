@@ -31,6 +31,7 @@ import { useAppSession } from '../lib/app-session';
 import { ApiError, backgroundTasksFromMessages, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
+import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import { createTextMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -485,7 +486,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const activeWorkstreamIdRef = useRef(id);
   const pendingSendCount = useRef(0);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
-  const attachmentDraft = useFileAttachments(api);
+  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(id));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
   // The composer does not take focus when a work stream opens, so a paste that
