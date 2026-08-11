@@ -403,9 +403,11 @@ applies migrations before it deploys the Workers, so between `0063` landing at
 `18:56:00` and the Global Worker going live at `18:56:23`, the *previous* Worker
 inserted six `activity_events` rows without naming `digestible`. They took the
 column default of `1` and are marked digestible although every one of them —
-two `check_run.completed`, a `pull_request.edited`, two `email.updated`, a
-`sheets.spreadsheet_changed` — is operational under the manifests that shipped
-in the same commit. The default was chosen to leave pre-existing rows alone,
+two `github.check_run.completed`, one `github.pull_request.edited`, two
+`google.email.updated` and one `google.sheets.spreadsheet_changed`, stored in
+`activity_events.event_type` under the `connector.<provider>.` prefix the
+consumer adds — is operational under the manifests that shipped in the same
+commit. The default was chosen to leave pre-existing rows alone,
 which the migration's own backfill then overrode anyway; nobody asked what the
 old code would write through it, and for twenty-three seconds that was the only
 thing the default governed.
@@ -440,7 +442,7 @@ as drift. The general rule this produced now lives in the runbook, where the
 next person adding a `NOT NULL` column to a hot table will meet it before they
 pick a default rather than twenty seconds after.
 
-Shipped on `claude/empty-digest-investigation-qicglw`.
+Shipped in #104.
 
 ### 2026-08-11 — A digest run is handed its window, and only hears about what a connector confirmed is worth hearing
 
@@ -488,4 +490,4 @@ trigger; a transcript row is not a channel to the model. The reasoning behind
 everything in this document before this entry is not recorded, and was not
 reconstructed.
 
-Shipped on `claude/empty-digest-investigation-qicglw`.
+Shipped in #93.
