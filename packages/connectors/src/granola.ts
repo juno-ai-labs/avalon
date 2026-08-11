@@ -857,6 +857,34 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       );
       return { output: boundGranolaValue(output), summary: `Read Granola with ${name}` };
     },
+    async repair(connection, signal) {
+      // Granola stops delivering when its webhook endpoint is disabled, and
+      // re-enabling it is the one provider write Avalon can make on a
+      // connection's behalf without being asked for anything. It runs from an
+      // explicit connection test, never from a health check: reauthorization
+      // calls that on every activation, and a read-shaped check must not
+      // repeatedly mutate provider state as a side effect.
+      if (connection.scope !== "workspace") return { repaired: false };
+      const apiKey = requireWorkspaceApiKey(connection);
+      const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
+      if (!webhookEndpointId) return { repaired: false };
+      const endpoints = await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/webhook-endpoints", {}, signal);
+      const endpoint = recordArray(endpoints, "webhook_endpoints")
+        .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
+      if (!endpoint || endpoint.enabled === true) return { repaired: false };
+      await providerJson(
+        fetcher,
+        new URL(`/v1/webhook-endpoints/${encodeURIComponent(webhookEndpointId)}`, apiBaseUrl),
+        {
+          method: "PATCH",
+          headers: jsonHeaders(apiKey),
+          body: JSON.stringify({ enabled: true }),
+          signal,
+        },
+        GRANOLA_RESPONSE_BYTES,
+      );
+      return { repaired: true, message: "Re-enabled the Granola webhook endpoint" };
+    },
     async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Granola connector configuration is available" };
       const signal = callerSignal ?? AbortSignal.timeout(15_000);
@@ -879,19 +907,9 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           const endpoint = recordArray(endpoints, "webhook_endpoints")
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
           if (!endpoint) throw new ConnectorError("provider_error", "Granola webhook endpoint no longer exists");
-          if (endpoint.enabled !== true) {
-            await providerJson(
-              fetcher,
-              new URL(`/v1/webhook-endpoints/${encodeURIComponent(webhookEndpointId)}`, apiBaseUrl),
-              {
-                method: "PATCH",
-                headers: jsonHeaders(apiKey),
-                body: JSON.stringify({ enabled: true }),
-                signal,
-              },
-              GRANOLA_RESPONSE_BYTES,
-            );
-          }
+          // A disabled endpoint is a delivery problem, not an authorization
+          // one, and re-enabling it is a write. `repair` owns that; this asks
+          // the provider a question and reports the answer.
         } else {
           const accountResult = await reauthorizingMcpCall(
             connection,

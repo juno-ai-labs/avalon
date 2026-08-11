@@ -38,6 +38,7 @@ import {
   type HarnessTool,
   type ModelMessage,
   type PluginAuthorization,
+  type PluginAuthorizationOccasion,
   type StructuredModelDiagnostic,
   toolActivityName,
 } from "@avalon/agent-harness";
@@ -1639,7 +1640,7 @@ export async function runWorkstreamHarness(
     async (pluginId) => {
       const frozen = harnessTools.frozenConnections.get(pluginId);
       return frozen
-        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal)
+        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal, "activation")
         : builtinPluginAuthorization(pluginId, harnessTools);
     },
     async (pluginId) => {
@@ -1783,7 +1784,7 @@ export async function runWorkstreamHarness(
       activationHints,
       includeWebSearch: false,
       signal: harnessSignal,
-      reauthorizePlugin: async (pluginId) => {
+      reauthorizePlugin: async (pluginId, occasion) => {
         const frozen = harnessTools.frozenConnections.get(pluginId);
         if (!frozen) return builtinPluginAuthorization(pluginId, harnessTools);
         // Cancellable: this runs inside the bind loop's Workflow step, so an
@@ -1794,7 +1795,7 @@ export async function runWorkstreamHarness(
           numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         );
         try {
-          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal);
+          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal, occasion);
         } finally {
           deadline.dispose();
         }
@@ -2806,6 +2807,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childInput,
                   frozen,
                   childSignal,
+                  "activation",
                   assertChildOwned,
                 )
               : builtinPluginAuthorization(pluginId, childHarnessTools);
@@ -2867,7 +2869,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           activationHints,
           includeWebSearch: false,
           signal: childSignal,
-          reauthorizePlugin: async (pluginId) => {
+          reauthorizePlugin: async (pluginId, occasion) => {
             await assertChildOwned();
             const frozen = childFrozenConnections.get(pluginId);
             return frozen
@@ -2876,6 +2878,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childInput,
                   frozen,
                   childSignal,
+                  occasion,
                   assertChildOwned,
                 )
               : builtinPluginAuthorization(pluginId, childHarnessTools);
@@ -4395,10 +4398,24 @@ async function reauthorizeFrozenPlugin(
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
   signal: AbortSignal,
+  occasion: PluginAuthorizationOccasion,
   ownershipGuard?: () => Promise<void>,
 ): Promise<PluginAuthorization> {
   try {
     await ownershipGuard?.();
+    if (occasion === "continuation") {
+      // Between turns, authority is exactly what Avalon's own records say: the
+      // principal, the work stream, the automation authority, the connection's
+      // identity, scope, owner, grants, and stored health. This check runs
+      // before every inference, so re-asking the provider would spend a round
+      // trip per active plugin per turn — up to eight rounds a run — to
+      // rediscover something already known here, and would decrypt credentials
+      // nothing is about to use. A provider that has since refused the
+      // credential still surfaces on the next tool call, which recovers.
+      await assertFrozenConnectionAuthorized(env, input, frozen);
+      await ownershipGuard?.();
+      return "authorized";
+    }
     const { connection, adapter } = await loadAuthorizedConnectionContext(
       env,
       input,
@@ -6005,6 +6022,7 @@ export const __integrationTesting = {
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
+  reauthorizeFrozenPlugin,
   createStreamDeltaBatcher,
   classifyHarnessToolFailure,
   createConnectorToolContext,

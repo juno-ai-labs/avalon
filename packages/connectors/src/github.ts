@@ -11,6 +11,7 @@ import {
   sha256Hex,
   stringValue,
   truncateText,
+  refreshExpiringCredentials,
   verifyHmacSha256,
   withProviderReauthorization,
   type FetchLike,
@@ -580,7 +581,11 @@ export async function canGitHubPersonalConnectionAccessRepository(
     !stringValue(connection.credentials, "accessToken")
     || (expiration && Date.parse(expiration) <= (config.now?.() ?? Date.now()) + TOKEN_EXPIRY_SKEW_MS)
   ) {
-    connection.credentials = await refreshGitHubUserCredentials(config, connection, signal);
+    connection.credentials = await refreshExpiringCredentials(
+      connection,
+      (candidate, refreshSignal) => refreshGitHubUserCredentials(config, candidate, refreshSignal),
+      signal,
+    );
   }
   try {
     // Through the shared helper so a rejection here rotates under the host's
@@ -705,7 +710,7 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       !stringValue(connection.credentials, "accessToken")
       || (expiration && Date.parse(expiration) <= now() + TOKEN_EXPIRY_SKEW_MS)
     ) {
-      connection.credentials = await refresh(connection, signal);
+      connection.credentials = await refreshExpiringCredentials(connection, refresh, signal);
     }
     // Through the shared helper rather than a private retry: it prefers the
     // host's lease-serialized rotation, so two calls refused at once cannot

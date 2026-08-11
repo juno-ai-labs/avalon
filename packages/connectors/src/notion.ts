@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   base64,
   isRecord,
+  isRevokedGrantError,
   jsonHeaders,
   numberValue,
   providerJson,
@@ -948,11 +949,9 @@ function isProviderUnauthorized(error: unknown): boolean {
     && error.details.status === 401;
 }
 
-function isRefreshRejected(error: unknown): error is ConnectorError {
-  return error instanceof ConnectorError
-    && isRecord(error.details)
-    && [400, 401, 403].includes(Number(error.details.status));
-}
+// Classified by the provider's own error code rather than by status: a token
+// endpoint answers both a dead grant and our own malformed request with 400.
+const isRefreshRejected = isRevokedGrantError;
 
 function requiredString(record: Record<string, unknown>, key: string, message: string): string {
   const value = stringValue(record, key);

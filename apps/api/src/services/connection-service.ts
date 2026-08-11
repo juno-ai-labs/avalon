@@ -1019,7 +1019,25 @@ export class ConnectionService {
           signal: AbortSignal.timeout(10_000),
           connectionStatus: String(connection.status),
         },
-        (authorized) => adapter.healthCheck(authorized, AbortSignal.timeout(10_000)),
+        async (authorized) => {
+          // Testing a connection is the one moment somebody has asked Avalon to
+          // put it right, so this is where a provider-side repair belongs — not
+          // in the health check, which reauthorization runs on every plugin
+          // activation. A repair that fails must not fail the test: the check
+          // below is still the answer being asked for.
+          if (adapter.repair) {
+            try {
+              await adapter.repair(authorized, AbortSignal.timeout(10_000));
+            } catch (repairError) {
+              logWarn(this.env, "connector_repair_failed", {
+                connection_id: connection.id,
+                connector_type: connection.connector_type,
+                reason: repairError instanceof Error ? repairError.message : String(repairError),
+              });
+            }
+          }
+          return adapter.healthCheck(authorized, AbortSignal.timeout(10_000));
+        },
       );
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
