@@ -212,6 +212,92 @@ describe("work-stream naming", () => {
     expect(published).toHaveLength(1);
   });
 
+  it("keeps its one retry when the model cannot be reached at the five-message mark", async () => {
+    const database = seededDatabase();
+    database.prepare("UPDATE workstreams SET title = ?, title_status = 'automatic' WHERE id = ?")
+      .run("Invoice export totals", workstreamId);
+    seedMessages(database, 5);
+    const published: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connection reset"); }));
+    const env = environment(database, published);
+
+    await refreshWorkstreamName(env, { workspaceId, workstreamId });
+
+    // Nothing is waiting on this pass — `automatic` and `settled` render the
+    // same — so a model that happened to be unreachable must not spend the one
+    // second look this work stream gets, or publish a rename of nothing.
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Invoice export totals",
+      title_status: "automatic",
+    });
+    expect(published).toEqual([]);
+
+    const requests: Array<Record<string, unknown>> = [];
+    stubOpenRouter(requests, "Invoice INV-2291 VAT totals");
+    await refreshWorkstreamName(env, { workspaceId, workstreamId });
+
+    expect(workstreamRow(database)).toMatchObject({
+      title: "Invoice INV-2291 VAT totals",
+      title_status: "settled",
+    });
+  });
+
+  it("still resolves a stalled first pass when the model cannot be reached", async () => {
+    const database = seededDatabase();
+    seedMessages(database, 5);
+    const published: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("connection reset"); }));
+    const env = environment(database, published);
+
+    await refreshWorkstreamName(env, { workspaceId, workstreamId });
+
+    // The exception to the rule above: this row is a first pass that never
+    // finished, and something on screen is waiting for it to end.
+    expect(workstreamRow(database)).toMatchObject({
+      title: provisionalTitle,
+      title_status: "automatic",
+    });
+    expect(published).toEqual([{
+      type: "workstream_renamed",
+      title: provisionalTitle,
+      titleStatus: "automatic",
+    }]);
+  });
+
+  it("counts what the work stream said, not what the harness wrote down", async () => {
+    const database = seededDatabase();
+    database.prepare("UPDATE workstreams SET title_status = 'automatic' WHERE id = ?").run(workstreamId);
+    // An opening request, one reply, and three tool calls. A run ends where
+    // tool rows accumulate, and that is one of the two places the second pass
+    // is called from — counting them would name this from what the first pass
+    // already saw.
+    seedMessages(database, 2);
+    for (const [index, kind] of (["tool", "tool", "tool"] as const).entries()) {
+      database.prepare(
+        `INSERT INTO messages
+         (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
+          text_content, sequence_number, created_at)
+         VALUES (?, ?, ?, ?, 'agent', ?, '', ?, ?)`,
+      ).run(
+        `00000000-0000-7000-8000-00000000d0${String(index).padStart(2, "0")}`,
+        `tool-${index}`,
+        workspaceId,
+        workstreamId,
+        kind,
+        20 + index,
+        at,
+      );
+    }
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const env = environment(database, []);
+
+    await refreshWorkstreamName(env, { workspaceId, workstreamId });
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(workstreamRow(database)).toMatchObject({ title_status: "automatic" });
+  });
+
   it("names a work stream again only once, however often the transcript grows", async () => {
     const database = seededDatabase();
     database.prepare("UPDATE workstreams SET title_status = 'automatic' WHERE id = ?").run(workstreamId);

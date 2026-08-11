@@ -161,11 +161,18 @@ export async function refreshWorkstreamName(env: Env, input: {
     // never finished — the isolate went away mid-call — leaves the row in it.
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
+    // The count is over exactly the rows the naming context reads. `messages`
+    // also holds a row per tool call, per artifact, per elicitation — and a run
+    // ends where those accumulate, which is one of the two places this is
+    // called from. Counting them would trip the threshold on a work stream that
+    // has said two things, and name it from what the first pass already saw.
     const row = await env.DB.prepare(
       `SELECT w.title, w.title_status, w.objective,
          (SELECT COUNT(*) FROM (
             SELECT 1 FROM messages m
              WHERE m.workspace_id = w.workspace_id AND m.workstream_id = w.id
+               AND m.message_type = 'text'
+               AND m.text_content IS NOT NULL AND m.text_content != ''
              LIMIT ?
           )) AS message_count
        FROM workstreams w
@@ -187,11 +194,19 @@ export async function refreshWorkstreamName(env: Env, input: {
       openingMessage: "",
       recentMessages: await loadNamingContext(env, input.workspaceId, input.workstreamId),
     });
+    // Where the two passes differ. The first settles on a failure because a
+    // skeleton is on screen waiting for it; here nothing is waiting — an
+    // `automatic` title and a `settled` one render identically — so settling
+    // would spend the one retry this work stream gets on a model that happened
+    // to be unreachable. Left alone, the next message or run tries again. A row
+    // still in `naming` is the exception: it is the first pass that never
+    // finished, and its promise is the one that has to be kept.
+    if (title === null && row.title_status === "automatic") return;
     await advanceTitle(env, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
       from: row.title_status,
-      to: "settled",
+      to: title === null ? "automatic" : "settled",
       title,
       standingTitle: row.title,
     });

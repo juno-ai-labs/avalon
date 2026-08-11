@@ -506,7 +506,7 @@ export function useWorkstreamSocket(
         const renamed = { title: event.title, titleStatus: event.titleStatus };
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
           current ? { ...current, ...renamed } : current);
-        queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+        queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
           current?.map((workstream) => workstream.id === workstreamId
             ? { ...workstream, ...renamed }
             : workstream));
