@@ -30,6 +30,13 @@ mac:
         - "*.icns"
     - from: native/set-application-icon.js
       to: native/set-application-icon.js
+    # Both renditions ship: `nativeImage` resolves the `@2x` sibling by name at
+    # runtime, so a bundle carrying only the 1x file gives a blurry status item
+    # on every Retina Mac.
+    - from: resources/menu-bar
+      to: menu-bar
+      filter:
+        - "*.png"
     - from: .native-build/system-audio-tap.node
       to: native/system-audio-tap.node
   category: public.app-category.productivity
