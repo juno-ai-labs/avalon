@@ -104,7 +104,7 @@ Run this only in provider test accounts after enabling the five Google APIs and 
 
 ### Mail + Calendar preset
 
-1. In Settings, choose **Google Mail + Calendar** and confirm the Avalon authorization request contains only `gmail.read`, `gmail.draft`, `gmail.send`, `calendar.read`, and `calendar.write` plus identity scopes. It must not request Drive, Docs, or Sheets capabilities.
+1. In Settings, choose **Google Mail + Calendar** and confirm the Avalon authorization request contains only `gmail.modify`, `calendar.readonly`, and `calendar.events` plus identity scopes. It must not request Drive, Docs, or Sheets scopes.
 2. Exercise `google_gmail_search`, `google_gmail_read_thread` or `google_gmail_read_message`, and `google_gmail_create_draft`. Confirm the draft is present in the provider account, the tool event stores a provider operation reference, and the returned content is bounded/redacted. Do not call `google_gmail_send` during a production smoke test.
 3. Exercise `google_calendar_list_calendars`, then use an explicit returned calendar ID with `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event` against a clearly named disposable event.
 4. Establish Gmail and Calendar poll baselines, then create a new test message and modify the test event. Run the owning connector poll and confirm normalized `email.received`/`email.updated` and `calendar.event_changed` activity is persisted and queued before its cursor advances.
@@ -112,10 +112,10 @@ Run this only in provider test accounts after enabling the five Google APIs and 
 
 ### Drive + Docs + Sheets preset
 
-1. In Settings, choose **Google Drive + Docs + Sheets** and confirm the Avalon authorization request contains only `drive.read`, `docs.read`, `docs.write`, `sheets.read`, and `sheets.write` plus identity scopes. It must not request Gmail or Calendar capabilities.
-2. Exercise `google_drive_search` and `google_drive_get_metadata` against a disposable fixture; also verify one bounded `google_drive_download` or `google_drive_export` result.
-3. Exercise the native Docs tools: create a document with `google_docs_create_document`, read it with `google_docs_read_document`, append text with `google_docs_append_text`, and replace an exact fixture string with `google_docs_replace_text`.
-4. Exercise the native Sheets tools: create a spreadsheet with `google_sheets_create_spreadsheet`, inspect it with `google_sheets_read_spreadsheet`, write an explicit A1 range with `google_sheets_update_values`, append rows with `google_sheets_append_values`, and read the result with `google_sheets_read_values`.
+1. In Settings, choose **Google Drive + Docs + Sheets** and confirm the Avalon authorization request contains only `drive.readonly` and `drive.file` plus identity scopes. It must not request Gmail or Calendar scopes.
+2. Exercise `google_drive_search` and `google_drive_get_metadata` against both an Avalon-created file and an arbitrary existing file. Confirm `isAppAuthorized`, `canEdit`, and `writableByAvalon` distinguish per-file write access correctly; also verify one bounded `google_drive_download` or `google_drive_export` result.
+3. Exercise the native Docs tools against an Avalon-created file: create a document with `google_docs_create_document`, read it with `google_docs_read_document`, append text with `google_docs_append_text`, and replace an exact fixture string with `google_docs_replace_text`. Confirm an arbitrary existing Doc found only through Drive search is readable but not writable without a separate per-file grant.
+4. Exercise the native Sheets tools against an Avalon-created file: create a spreadsheet with `google_sheets_create_spreadsheet`, inspect it with `google_sheets_read_spreadsheet`, write an explicit A1 range with `google_sheets_update_values`, append rows with `google_sheets_append_values`, and read the result with `google_sheets_read_values`. Confirm an arbitrary existing Sheet found only through Drive search is readable but not writable without a separate per-file grant.
 5. Establish the Drive change-token baseline before editing the Doc and Sheet. After both edits, run the connector poll and confirm the same Drive poll emits `docs.document_changed` and `sheets.spreadsheet_changed`, persists/queues them once, and then advances the Drive cursor. No Google webhook or push delivery should be involved.
 6. Bind an automation to this connection and confirm Gmail and Calendar tools are rejected because the connection does not hold those capabilities.
 
