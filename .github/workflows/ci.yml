@@ -17,9 +17,36 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
+  checks:
+    name: verify / ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: lint
+            command: pnpm lint
+          - name: typecheck-and-build-invariants
+            command: >-
+              pnpm typecheck &&
+              pnpm --filter @avalon/api build &&
+              pnpm --filter @avalon/api build:eu &&
+              pnpm --filter @avalon/desktop test:release
+          - name: desktop-tests-1-of-2
+            command: pnpm --filter @avalon/desktop exec vitest run --shard=1/2
+          - name: desktop-tests-2-of-2
+            command: pnpm --filter @avalon/desktop exec vitest run --shard=2/2
+          - name: api-tests-1-of-2
+            command: pnpm --filter @avalon/api exec vitest run --shard=1/2
+          - name: api-tests-2-of-2
+            command: >-
+              pnpm --filter @avalon/api exec vitest run --shard=2/2 &&
+              pnpm --filter @avalon/api exec vitest run --config vitest.workers.config.ts
+          - name: remaining-tests
+            command: >-
+              pnpm --filter '!@avalon/desktop' --filter '!@avalon/api' --recursive --if-present test &&
+              pnpm test:scripts
     steps:
       - name: Check out the revision
         uses: actions/checkout@v5
@@ -39,29 +66,23 @@ jobs:
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
-        run: pnpm lint
+      - name: Run ${{ matrix.name }}
+        run: ${{ matrix.command }}
 
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm test
-
-      # Workspace `test` does not reach the repository-root release scripts.
-      - name: Test the release and deployment scripts
-        run: pnpm test:scripts
-
-      # The same dry-run validation the deployment workflow runs, so a broken
-      # Worker configuration fails on the pull request instead of at release.
-      - name: Validate both Wrangler configurations with dry-run builds
-        run: |
-          set -euo pipefail
-          pnpm --filter @avalon/api build
-          pnpm --filter @avalon/api build:eu
-
-      - name: Check the desktop release invariants
-        run: pnpm --filter @avalon/desktop test:release
+  # Keep one stable required check while the expensive work fans out above.
+  # `always()` makes this job report a failure instead of being skipped when a
+  # matrix lane fails or is cancelled.
+  verify:
+    name: verify
+    needs: checks
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every verification lane to pass
+        env:
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: test "$CHECKS_RESULT" = success
 
   secrets:
     runs-on: ubuntu-latest
