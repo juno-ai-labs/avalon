@@ -12,6 +12,7 @@ import { ApiError } from "../lib/api-error";
 import { publishWorkstreamEvent } from "./integrations";
 import { launchWorkstreamHarness } from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
+import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 
 const OpenElicitationRowSchema = z.object({
   id: z.string().min(1),
@@ -59,9 +60,7 @@ export class SlackWorkspaceWorkstreamService {
     creatorUserId?: string | null;
   }) {
     const actor = ExternalActorSchema.parse(input.actor);
-    const title = input.title
-      ?? input.objective.split(/\r?\n/u)[0]?.trim().slice(0, 180)
-      ?? "Slack task";
+    const title = input.title ?? provisionalWorkstreamTitle(input.objective, "Slack task");
     const workstreamId = newId();
     const routeInput = {
       region: this.env.AVALON_REGION,
@@ -74,6 +73,7 @@ export class SlackWorkspaceWorkstreamService {
       id: workstreamId,
       workspaceId: this.workspaceId,
       title,
+      titleStatus: input.title == null ? "naming" : "settled",
       objective: input.objective,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: input.creatorUserId ?? null,
@@ -112,6 +112,18 @@ export class SlackWorkspaceWorkstreamService {
         ? { slackSearchAuthorization: input.slackSearchAuthorization }
         : {}),
     });
+    // Slack ingress already runs inside the acknowledgement's `waitUntil`, so
+    // naming is awaited here rather than deferred again — the run has started
+    // and nothing downstream is waiting on the title.
+    if (input.title == null) {
+      await nameWorkstream(this.env, {
+        workspaceId: this.workspaceId,
+        workstreamId: created.workstream.id,
+        objective: input.objective,
+        openingMessage: input.text,
+        provisionalTitle: title,
+      });
+    }
     return { ...created, harnessRunId };
   }
 

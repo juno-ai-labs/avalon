@@ -5,4 +5,5 @@ export * from "./semantic-trigger";
 export * from "./types";
 export * from "./workstream";
 export * from "./workstream-description";
+export * from "./workstream-name";
 export * from "./work-opportunity";

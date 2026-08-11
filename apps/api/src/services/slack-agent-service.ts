@@ -1596,9 +1596,11 @@ export class SlackAgentService {
     slackOrigin: SlackOriginContext;
     slackSearchAuthorization?: SlackSearchAuthorization;
   }): Promise<SlackSessionRow> {
+    // Neither branch passes a title. Both derive the same provisional one from
+    // the objective, and leaving it to them is what lets the naming agent
+    // replace it — a title supplied here would read as a deliberate choice.
     const created = input.identity
       ? await new WorkstreamService(this.env, input.identity.auth).create({
-          title: slackTaskTitle(input.prompt),
           objective: input.prompt.slice(0, 4_000),
           participantUserIds: [],
           openingMessage: input.prompt,
@@ -1607,7 +1609,6 @@ export class SlackAgentService {
         }, input.slackOrigin, input.slackSearchAuthorization)
       : await new SlackWorkspaceWorkstreamService(this.env, input.connection.workspace_id).create({
           actor: ExternalActorSchema.parse(input.actor),
-          title: slackTaskTitle(input.prompt),
           objective: input.prompt.slice(0, 4_000),
           text: input.prompt,
           clientMessageId: input.clientMessageId.slice(0, 120),
@@ -2860,10 +2861,6 @@ function modalPromptSource(value: unknown): SlackPromptSource | null {
     }
   }
   return null;
-}
-
-function slackTaskTitle(prompt: string): string {
-  return prompt.split(/\r?\n/u)[0]?.trim().slice(0, 180) || "Slack task";
 }
 
 function validSlackHuman(

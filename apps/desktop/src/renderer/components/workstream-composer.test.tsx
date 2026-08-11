@@ -18,6 +18,7 @@ const cara: WorkspaceMember = { id: 'user-3', name: 'Cara Chen', email: 'cara@ex
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Investigate the release',
+  titleStatus: 'settled' as const,
   origin: 'ad_hoc',
   harnessStatus: 'completed',
   scope: 'workspace' as const,

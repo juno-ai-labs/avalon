@@ -220,7 +220,13 @@ export class OpenRouterClient {
     jsonSchema: Record<string, unknown>;
     parse: (value: unknown) => T;
     model?: string;
-    reasoningEffort?: "low" | "medium" | "high";
+    /**
+     * `"none"` turns reasoning off explicitly rather than leaving it to the
+     * model's default, which differs by model: a route change that moves a
+     * mechanical one-shot call onto a thinking-by-default model would
+     * otherwise start paying for reasoning nobody asked for.
+     */
+    reasoningEffort?: "none" | "low" | "medium" | "high";
     signal?: AbortSignal | undefined;
     onDiagnostic?: (event: StructuredModelDiagnostic) => void | Promise<void>;
   }): Promise<T> {
@@ -264,7 +270,7 @@ export class OpenRouterClient {
                 }
               },
               plugins: [{ id: "response-healing" }],
-              reasoning: input.reasoningEffort ? { effort: input.reasoningEffort } : undefined,
+              reasoning: structuredReasoning(input.reasoningEffort),
             }),
             ...(input.signal ? { signal: input.signal } : {})
           });
@@ -656,6 +662,21 @@ function renderExpectedJsonSchema(
     JSON.stringify(jsonSchema, null, 2),
     "```",
   ].join("\n");
+}
+
+/**
+ * The `reasoning` field for one structured request, or nothing at all.
+ *
+ * Omitting the field and disabling reasoning are different requests: omitting
+ * it accepts whatever the selected model does by default, while `enabled:
+ * false` is the provider's own switch for turning thinking off on a model that
+ * would otherwise do it.
+ */
+function structuredReasoning(
+  effort: "none" | "low" | "medium" | "high" | undefined,
+): Record<string, unknown> | undefined {
+  if (effort === undefined) return undefined;
+  return effort === "none" ? { enabled: false } : { effort };
 }
 
 /**

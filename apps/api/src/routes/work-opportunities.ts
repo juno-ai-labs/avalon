@@ -6,6 +6,7 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { zValidator } from "../middleware/validation";
 import { WorkOpportunityService } from "../services/work-opportunity-service";
@@ -39,7 +40,7 @@ workOpportunityRoutes.post(
   zValidator("json", StartWorkOpportunityRequestSchema),
   async (c) => {
     const input = c.req.valid("json");
-    return c.json(await new WorkOpportunityService(c.env, getAuth(c)).start(
+    return c.json(await new WorkOpportunityService(c.env, getAuth(c), requestDeferral(c)).start(
       c.req.valid("param").id,
       input.version,
       input.idempotencyKey,

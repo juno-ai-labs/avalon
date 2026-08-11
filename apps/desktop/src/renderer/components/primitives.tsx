@@ -167,6 +167,29 @@ export function Badge({ children, className, ...props }: PropsWithChildren<HTMLA
   );
 }
 
+/**
+ * Stands in for a work stream's title while Avalon is choosing one.
+ *
+ * The title a work stream is created with is the first line of the request,
+ * which is a placeholder rather than a name — showing it and swapping it a
+ * second later reads as a glitch, while a skeleton reads as what it is.
+ *
+ * The label is text rather than an `aria-label`, because what needs a name
+ * here is the heading or the row this sits inside, and an `aria-label` on a
+ * bare span does not reliably reach either. It carries no live region of its
+ * own: the sidebar renders one of these per unnamed row, and a list that
+ * announces itself once per row is worse than one that says nothing. Where an
+ * arriving name is worth announcing — the header of the work stream someone is
+ * reading — the title line around it is the live region.
+ */
+export function TitleSkeleton({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <span className={clsx('title-skeleton', className)}>
+      <span className="sr-only">Avalon is naming this work stream</span>
+    </span>
+  );
+}
+
 export interface DropdownOption {
   value: string;
   label: string;

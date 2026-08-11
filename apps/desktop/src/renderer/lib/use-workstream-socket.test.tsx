@@ -253,6 +253,7 @@ describe('useWorkstreamSocket', () => {
     const summary: WorkstreamSummary = {
       id: workstreamId,
       title: 'Watched activity',
+      titleStatus: 'settled' as const,
       origin: 'ad_hoc',
       harnessStatus: 'completed',
       scope: 'workspace',
@@ -891,6 +892,50 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
     expect(queryClient.getQueryState(['hypersight', workstreamId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['hypersight-preference', workstreamId])?.isInvalidated).toBe(true);
+  });
+
+  it('shows the name Avalon gives a work stream in its header and its sidebar row', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000401';
+    const provisional = 'Create an email draft to Danny from Mucker that shares the avalon download link';
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      title: provisional,
+      titleStatus: 'naming',
+      harnessStatus: 'running',
+    } as WorkstreamDetail);
+    queryClient.setQueryData(['workstreams'], [
+      { id: workstreamId, title: provisional, titleStatus: 'naming' },
+      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
+    ] as WorkstreamSummary[]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'workstream_renamed',
+      sequence: 1,
+      occurredAt: '2026-08-11T09:00:01.000Z',
+      title: 'Avalon download link email to Danny',
+      titleStatus: 'automatic',
+    }));
+
+    // The event settles the skeleton as well as the text: `automatic` is a
+    // name, just one a later pass may still improve on.
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
+      .toMatchObject({ title: 'Avalon download link email to Danny', titleStatus: 'automatic' });
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
+      { id: workstreamId, title: 'Avalon download link email to Danny', titleStatus: 'automatic' },
+      { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
+    ]);
   });
 
   it('refreshes run metadata when a new run starts in another client', async () => {
