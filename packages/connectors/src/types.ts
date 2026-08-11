@@ -514,17 +514,34 @@ export interface ConnectorAdapter {
   hydrateResource?(connection: AuthorizedConnectorConnection, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
   /**
+   * Restores provider-side state a connection needs but that has drifted —
+   * a disabled webhook endpoint, a lapsed subscription.
+   *
+   * Separate from `healthCheck` because it writes. A health check runs on every
+   * plugin activation, and a read-shaped call that quietly mutates provider
+   * state on that cadence is a surprise; this runs only when someone explicitly
+   * tests a connection.
+   */
+  repair?(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+  ): Promise<{ repaired: boolean; message?: string }>;
+  /**
    * `reconnectRequired` separates the two ways a check fails: the provider
    * refused this authorization, or the check could not be completed at all.
    * A caller deciding whether authority was withdrawn must not read an
-   * unreachable provider as a revoked grant.
-   */
-  /**
+   * unreachable provider as a revoked grant — the host maps the first to a
+   * denial that marks the connection, and the second to an indeterminate
+   * verdict that leaves it alone.
+   *
    * `signal` is threaded from the caller rather than timed internally.
    * Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout`
    * created here is not disposable — it keeps the invocation alive until it
    * fires, long after the check returned. An adapter falls back to its own
    * timeout only when a caller supplies none.
+   *
+   * A health check must not write. State that needs restoring belongs in
+   * `repair`.
    */
   healthCheck(
     connection?: AuthorizedConnectorConnection,
@@ -533,6 +550,15 @@ export interface ConnectorAdapter {
     ok: boolean;
     message: string;
     reconnectRequired?: boolean;
+    /**
+     * A condition worth acting on that does not make the connection unusable —
+     * provider-side state that has drifted, delivery that has stopped. The
+     * host logs it on the healthy path, so a connector that removes a repair
+     * from its health check still leaves a trail; without one, a degraded
+     * connection is indistinguishable from a well one until somebody thinks to
+     * press Test.
+     */
+    warning?: string;
   }>;
 }
 

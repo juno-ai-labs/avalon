@@ -1,5 +1,6 @@
 import {
   ConnectorError,
+  isRevokedGrantError,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
@@ -96,12 +97,46 @@ export async function ensureFreshConnectorCredentials(
       return;
     } catch (error) {
       await releaseLease(env.DB, connection, leaseId);
-      if (error instanceof ConnectorError && error.code === "unauthorized") {
-        await markNeedsReconnect(env.DB, connection);
-      }
+      // Only a refusal that says so. `unauthorized` alone is what a token
+      // endpoint yields for `invalid_client` or a malformed request of ours —
+      // Avalon's configuration being wrong, which no member can fix by
+      // reconnecting an account that still works. Adapters mark a genuinely
+      // dead grant with `reconnectRequired`, matching what the credential door
+      // already required.
+      if (isReconnectRequired(error)) await markNeedsReconnect(env.DB, connection);
       throw error;
     }
   }
+}
+
+/**
+ * Whether the provider said the grant itself is gone, not merely that a call
+ * failed.
+ *
+ * An adapter that classified the failure itself is believed outright — that is
+ * the contract, and it is the only thing that can read a provider's private
+ * vocabulary (Slack answers a refused refresh with HTTP 200 and
+ * `{ok: false, error: "token_revoked"}`, which no status test can see).
+ *
+ * When an adapter states nothing, the fallback is deliberately *not* silence.
+ * Requiring the flag makes forgetting it strand a connection: the row stays
+ * `healthy`, every run drops the plugin, and nobody is ever prompted — a
+ * failure that is invisible until someone happens to test the connection.
+ * `isRevokedGrantError` reads the provider's own OAuth code instead, so a named
+ * `invalid_client` or `invalid_request` — Avalon's configuration being wrong,
+ * which no member can fix by reconnecting a working account — still declines to
+ * mark, while an unclassifiable 400/401/403 from a token endpoint does.
+ */
+function isReconnectRequired(error: unknown): boolean {
+  if (!(error instanceof ConnectorError) || error.code !== "unauthorized") return false;
+  if (
+    typeof error.details === "object"
+    && error.details !== null
+    && "reconnectRequired" in error.details
+  ) {
+    return error.details.reconnectRequired === true;
+  }
+  return isRevokedGrantError(error);
 }
 
 /**
@@ -194,9 +229,7 @@ export async function rotateConnectorCredentials(
       return refreshed;
     } catch (error) {
       await releaseLease(env.DB, connection, leaseId);
-      if (error instanceof ConnectorError && error.code === "unauthorized") {
-        await markNeedsReconnect(env.DB, connection);
-      }
+      if (isReconnectRequired(error)) await markNeedsReconnect(env.DB, connection);
       throw error;
     }
   }
