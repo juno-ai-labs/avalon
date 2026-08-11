@@ -63,6 +63,7 @@ const detail = {
     displayName: 'Google Drive',
     grantedCapabilities: ['search'],
     status: 'needs_reconnect' as const,
+    userDelivery: null,
     lastSyncAt: null,
     createdAt: timestamp,
   }],

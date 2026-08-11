@@ -21,6 +21,7 @@ import {
   publishHyperSightRun,
   type HyperSightBlockRunRow,
 } from "../services/hypersight-service";
+import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { SlackAgentService } from "../services/slack-agent-service";
 
 const HarnessWorkflowOutcomeSchema = z.object({
@@ -159,7 +160,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         });
         if (cancellationReason !== "superseded_by_follow_up") {
           await step.do("deliver-slack-cancelled-before-start", SlackDeliveryRetryConfig, async () => {
-            await this.deliverSlackDurably(input, outcome);
+            await this.deliverResultsDurably(input, outcome);
           });
         }
         return outcome;
@@ -185,7 +186,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         return outcome;
       }
       await step.do("deliver-slack-admission-timeout", SlackDeliveryRetryConfig, async () => {
-        await this.deliverSlackDurably(input, outcome);
+        await this.deliverResultsDurably(input, outcome);
       });
       return outcome;
     }
@@ -260,7 +261,7 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     }
     if (stopState.reason !== "superseded_by_follow_up") {
       await step.do("deliver-slack-terminal-outcome", SlackDeliveryRetryConfig, async () => {
-        await this.deliverSlackDurably(input, effectiveOutcome);
+        await this.deliverResultsDurably(input, effectiveOutcome);
       });
     }
 
@@ -279,7 +280,9 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     return effectiveOutcome;
   }
 
-  private async deliverSlackDurably(
+  // The `deliver-slack-*` step names are durable workflow step identities and
+  // stay as they are; the step itself now covers every frozen delivery target.
+  private async deliverResultsDurably(
     input: WorkstreamWorkflowInput,
     outcome: HarnessWorkflowOutcome,
   ): Promise<void> {
@@ -305,14 +308,30 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
          JOIN automation_templates t ON t.id = s.template_id
          WHERE s.id = ? AND s.workspace_id = ?`,
       ).bind(input.automationSubscriptionId, input.workspaceId).first<{ name: string }>();
-      await slack.deliverAutomationResult({
+      const result = {
         workspaceId: input.workspaceId,
         automationSubscriptionId: input.automationSubscriptionId,
         workstreamId: input.workstreamId,
         title: automation?.name ?? "Avalon automation result",
         text,
         outcomeStatus: outcome.status,
-      });
+      };
+      // Each destination records its own delivery, so a failure in one is
+      // retried by this step without holding back the other.
+      const failures = (await Promise.allSettled([
+        slack.deliverAutomationResult(result),
+        deliverAutomationResultEmail(this.env, result),
+      ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
+      // Only the first is rethrown, so the rest would otherwise be lost — and
+      // which one that is depends on settle order rather than on severity.
+      for (const failure of failures) {
+        console.warn("Automation result delivery failed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          reason: failure instanceof Error ? failure.message : "unknown",
+        });
+      }
+      if (failures.length > 0) throw failures[0];
     }
   }
 

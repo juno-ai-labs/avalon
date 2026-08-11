@@ -17,7 +17,12 @@ const api = vi.hoisted(() => ({
 }));
 const copyText = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
+const session = vi.hoisted(() => ({
+  user: { id: 'user-1', email: 'adam@juno-labs.com', name: 'Morgan Ellis' },
+  workspace: { id: 'workspace-1', name: 'Juno Labs', region: 'global', role: 'owner' },
+}));
+
+vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session }) }));
 vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ paused = false, state }: { paused?: boolean; state: string }) => (
@@ -45,6 +50,9 @@ function renderScreen(): void {
 describe('New automation composer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Restored here rather than at the end of the one test that changes it, so
+    // a failure there cannot leak the role into every later test.
+    session.workspace.role = 'owner';
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
     api.compileAutomation.mockResolvedValue({
@@ -288,16 +296,27 @@ describe('New automation composer', () => {
     expect(screen.getAllByText(example)).toHaveLength(1);
   });
 
-  it('suggests optional default plugins without requiring a locked connection', async () => {
-    api.getConnections.mockResolvedValue([{
-      id: 'connection-linear',
-      modelPluginId: 'plugin_linear',
-      connectorType: 'linear',
-      displayName: 'Linear',
-      scope: 'workspace',
-      status: 'healthy',
-      capabilities: ['linear.read'],
-    }]);
+  it('preloads Avalon’s plugin picks without a Default plugins section', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-linear',
+        modelPluginId: 'plugin_linear',
+        connectorType: 'linear',
+        displayName: 'Linear',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['linear.read'],
+      },
+      {
+        id: 'connection-github',
+        modelPluginId: 'plugin_github',
+        connectorType: 'github',
+        displayName: 'GitHub',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['github.read'],
+      },
+    ]);
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-linear-personal',
       assistantMessage: 'Ready to create.',
@@ -322,13 +341,18 @@ describe('New automation composer', () => {
       target: { value: 'Check my Linear issues every hour' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByRole('region', { name: 'Default plugins' })).toBeInTheDocument();
-    expect(screen.getByText('Recommended')).toBeInTheDocument();
-    expect(screen.getByText('Suggested tools: linear_search_issues')).toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Create automation' });
+    expect(screen.queryByRole('region', { name: 'Default plugins' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Suggested tools: linear_search_issues')).not.toBeInTheDocument();
     expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-linear-personal', ['plugin_linear'], {}, []));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
+      'draft-linear-personal',
+      ['plugin_linear'],
+      {},
+      { scope: 'you', delivery: {} },
+    ));
   });
 
   it('binds an activity source slot to the exact suggested connector', async () => {
@@ -384,7 +408,7 @@ describe('New automation composer', () => {
       'draft-merged-pr',
       [],
       { github_source: 'plugin_github_acme' },
-      [],
+      { scope: 'you', delivery: {} },
     ));
   });
 
@@ -394,19 +418,21 @@ describe('New automation composer', () => {
         id: 'connection-slack-acme',
         modelPluginId: 'plugin_slack_acme',
         connectorType: 'slack',
-        displayName: 'Slack · Acme',
+        displayName: 'Acme',
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
       },
       {
         id: 'connection-slack-juno',
         modelPluginId: 'plugin_slack_juno',
         connectorType: 'slack',
-        displayName: 'Slack · Juno',
+        displayName: 'Juno',
         scope: 'workspace',
         status: 'healthy',
         capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
       },
     ]);
     api.compileAutomation.mockResolvedValue({
@@ -431,41 +457,65 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     const createButton = await screen.findByRole('button', { name: 'Create automation' });
-    const delivery = screen.getByRole('combobox', { name: /^Deliver results/ });
-    expect(delivery).toHaveValue('');
+    const delivery = screen.getByRole('region', { name: 'Deliver results' });
+    const avalon = screen.getByRole('checkbox', { name: /^Avalon/ });
+    expect(avalon).toBeChecked();
+    expect(avalon).toBeDisabled();
+    expect(delivery).toHaveTextContent('Slack DM · Acme');
+    expect(screen.getByRole('checkbox', { name: /Slack DM · Acme/ })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Slack DM · Juno/ })).not.toBeChecked();
     expect(createButton).toBeEnabled();
     fireEvent.click(createButton);
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-slack-digest', [], {}, []));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
+      'draft-slack-digest',
+      [],
+      {},
+      { scope: 'you', delivery: {} },
+    ));
   });
 
-  it('attaches selected note resources to the created automation', async () => {
-    api.getNotes.mockResolvedValue([{
-      id: '00000000-0000-4000-8000-000000000301',
-      workspaceId: '00000000-0000-4000-8000-000000000302',
-      resourceId: '00000000-0000-4000-8000-000000000303',
-      ownerUserId: '00000000-0000-4000-8000-000000000304',
-      scope: 'personal',
-      title: 'Customer interview',
-      recordingStatus: 'complete',
-      recordedMs: 90_000,
-      startedAt: '2026-08-07T18:00:00.000Z',
-      endedAt: '2026-08-07T18:01:30.000Z',
-      generatedAt: null,
-      lastActivityAt: '2026-08-07T18:01:30.000Z',
-      createdAt: '2026-08-07T18:00:00.000Z',
-      updatedAt: '2026-08-07T18:01:30.000Z',
-      archivedAt: null,
-    }]);
+  it('freezes one Slack destination at a time alongside email', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-slack-acme',
+        modelPluginId: 'plugin_slack_acme',
+        connectorType: 'slack',
+        displayName: 'Acme',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+      },
+      {
+        id: 'connection-slack-unlinked',
+        modelPluginId: 'plugin_slack_unlinked',
+        connectorType: 'slack',
+        displayName: 'Unlinked',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+      },
+      {
+        id: 'connection-slack-juno',
+        modelPluginId: 'plugin_slack_juno',
+        connectorType: 'slack',
+        displayName: 'Juno',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: ['slack.agent'],
+        userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Avalon Agent DM in this Slack workspace.' },
+      },
+    ]);
     api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-with-note',
+      draftId: 'draft-delivery',
       assistantMessage: 'Ready to create.',
       summary: {
-        name: 'Customer follow-up',
-        description: 'Uses the interview as context.',
-        overview: 'Prepares a follow-up from the attached customer note.',
+        name: 'Morning briefing',
+        description: 'Summarizes the day ahead.',
+        overview: 'Runs every morning.',
         recommendedPlugins: [],
         scope: 'you',
-        triggerSummary: 'Manual',
+        triggerSummary: 'Every day at 9:00 AM',
         capabilities: [],
         requiresSlackDelivery: false,
       },
@@ -473,19 +523,182 @@ describe('New automation composer', () => {
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
-      target: { value: 'Prepare a customer follow-up' },
+      target: { value: 'Brief me every morning' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    const resourceSection = await screen.findByRole('region', { name: 'Note resources' });
-    fireEvent.click(resourceSection.querySelector('label')!);
-    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
 
+    const email = await screen.findByRole('checkbox', { name: /^Email/ });
+    expect(email).toHaveAccessibleName(expect.stringContaining('adam@juno-labs.com'));
+    fireEvent.click(email);
+    // A Slack installation the user has not linked is not a personal destination.
+    expect(screen.queryByRole('checkbox', { name: /Unlinked/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Slack DM · Acme/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: /Slack DM · Juno/ }));
+
+    expect(screen.getByRole('checkbox', { name: /Slack DM · Acme/ })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /Slack DM · Juno/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-delivery', [], {}, {
+      scope: 'you',
+      delivery: {
+        connection: { id: 'connection-slack-juno', targetType: 'slack_agent_dm' },
+        email: true,
+      },
+    }));
+  });
+
+  it('defaults Runs as to Avalon’s suggestion and creates under the chosen scope', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-linear',
+        modelPluginId: 'plugin_linear',
+        connectorType: 'linear',
+        displayName: 'Linear',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-gmail',
+        modelPluginId: 'plugin_gmail',
+        connectorType: 'google',
+        displayName: 'Gmail',
+        scope: 'personal',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-scope',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Weekly changelog',
+        description: 'Summarizes merged work.',
+        overview: 'Runs every Friday.',
+        recommendedPlugins: [
+          { pluginId: 'plugin_linear', recommendedTools: [], reason: 'Reads the merged issues.' },
+          { pluginId: 'plugin_gmail', recommendedTools: [], reason: 'Reads the release thread.' },
+        ],
+        scope: 'you',
+        triggerSummary: 'Every Friday',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Prepare a weekly changelog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const runsAs = await screen.findByRole('combobox', { name: 'Runs as' });
+    expect(runsAs).toHaveValue('you');
+    expect(screen.getByRole('checkbox', { name: /^Email/ })).toBeInTheDocument();
+
+    fireEvent.change(runsAs, { target: { value: 'workspace' } });
+
+    // A workspace automation drops the personal plugin and its personal destinations.
+    expect(screen.queryByRole('checkbox', { name: /^Email/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-scope', ['plugin_linear'], {}, {
+      scope: 'workspace',
+      delivery: {},
+    }));
+
+  });
+
+  it('restores the personal plugin preloads when Runs as returns to You', async () => {
+    api.getConnections.mockResolvedValue([
+      {
+        id: 'connection-linear',
+        modelPluginId: 'plugin_linear',
+        connectorType: 'linear',
+        displayName: 'Linear',
+        scope: 'workspace',
+        status: 'healthy',
+        capabilities: [],
+      },
+      {
+        id: 'connection-gmail',
+        modelPluginId: 'plugin_gmail',
+        connectorType: 'google',
+        displayName: 'Gmail',
+        scope: 'personal',
+        status: 'healthy',
+        capabilities: [],
+      },
+    ]);
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-scope-restored',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Weekly changelog',
+        description: 'Summarizes merged work.',
+        overview: 'Runs every Friday.',
+        recommendedPlugins: [
+          { pluginId: 'plugin_linear', recommendedTools: [], reason: 'Reads the merged issues.' },
+          { pluginId: 'plugin_gmail', recommendedTools: [], reason: 'Reads the release thread.' },
+        ],
+        scope: 'you',
+        triggerSummary: 'Every Friday',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Prepare a weekly changelog' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const runsAs = await screen.findByRole('combobox', { name: 'Runs as' });
+    fireEvent.change(runsAs, { target: { value: 'workspace' } });
+    expect(screen.queryByRole('checkbox', { name: /^Email/ })).not.toBeInTheDocument();
+
+    // Going back restores the personal pick the workspace scope dropped. The
+    // creator has no plugin control left to recover it by hand.
+    fireEvent.change(runsAs, { target: { value: 'you' } });
+    expect(await screen.findByRole('checkbox', { name: /^Email/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
-      'draft-with-note',
-      [],
+      'draft-scope-restored',
+      ['plugin_linear', 'plugin_gmail'],
       {},
-      ['00000000-0000-4000-8000-000000000303'],
+      { scope: 'you', delivery: {} },
     ));
+  });
+
+  it('keeps Runs as read-only for a member who cannot create workspace automations', async () => {
+    session.workspace.role = 'member';
+    api.compileAutomation.mockResolvedValue({
+      draftId: 'draft-member',
+      assistantMessage: 'Ready to create.',
+      summary: {
+        name: 'Personal digest',
+        description: 'Summarizes my day.',
+        overview: 'Runs each morning.',
+        recommendedPlugins: [],
+        scope: 'you',
+        triggerSummary: 'Every day at 9:00 AM',
+        capabilities: [],
+        requiresSlackDelivery: false,
+      },
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Summarize my day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Runs as')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Runs as' })).not.toBeInTheDocument();
+    // No orphan label: with no select to point at, it is plain text.
+    expect(document.querySelector('label[for="automation-scope"]')).toBeNull();
   });
 
   it('reuses one elicitation identity and preserves answer-response order', async () => {
