@@ -1824,28 +1824,25 @@ describe("connectors", () => {
       }
       return googleJson({ error: { code: 404, message: "Requested entity was not found." } }, 404);
     };
+    const context = {
+      connection: googleConnection(["docs.read", "drive.read", "sheets.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
     await expect(googleAdapter(fetcher).executeTool(
       "docs.read_document",
       { documentId: "actually-a-sheet" },
-      {
-        connection: googleConnection(["docs.read", "drive.read"]),
-        principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
-      }
+      context
     )).rejects.toMatchObject({
       code: "invalid_payload",
-      details: { reason: "wrong_id_family", expected: "spreadsheet" }
+      details: { reason: "wrong_id_family", field: "documentId", expected: "document", actual: "spreadsheet" }
     });
     // The remedy names the tool to call, not a description of it: the caller
     // can match `sheets.read_spreadsheet` against its own prefixed wire name.
     await expect(googleAdapter(fetcher).executeTool(
       "docs.read_document",
       { documentId: "actually-a-sheet" },
-      {
-        connection: googleConnection(["docs.read", "drive.read"]),
-        principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
-      }
+      context
     )).rejects.toThrow(/sheets\.read_spreadsheet/u);
   });
 
@@ -1874,8 +1871,82 @@ describe("connectors", () => {
     ];
     for (const [tool, args] of calls) {
       await expect(googleAdapter(fetcher).executeTool(tool, args, context))
-        .rejects.toMatchObject({ details: { reason: "wrong_id_family", expected: "document" } });
+        .rejects.toMatchObject({
+          details: { reason: "wrong_id_family", expected: "spreadsheet", actual: "document" }
+        });
     }
+  });
+
+  it("names the family on a write before the writability verdict hides it", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      // The realistic case: an arbitrary Drive result is not app-authorized, so
+      // the writability preflight would otherwise refuse it as read-only and
+      // never say it is the wrong kind of file.
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({
+          mimeType: "application/vnd.google-apps.spreadsheet",
+          isAppAuthorized: false,
+          capabilities: { canEdit: false }
+        });
+      }
+      return googleJson({ documentId: "doc" });
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.append_text",
+      { documentId: "actually-a-sheet", text: "hello" },
+      {
+        connection: googleConnection(["drive.read", "docs.write", "sheets.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", expected: "document", actual: "spreadsheet" }
+    });
+  });
+
+  it("does not point a connection at a tool it was never granted", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({ mimeType: "application/vnd.google-apps.spreadsheet" });
+      }
+      return googleJson({ error: { code: 404 } }, 404);
+    };
+    // No sheets.read, so naming the Sheets reader would be advice this
+    // connection cannot follow.
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      {
+        connection: googleConnection(["docs.read", "drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toThrow(/^That id is a spreadsheet, not a document\.$/u);
+  });
+
+  it("browses Drive by type and recency without a search term", async () => {
+    let query = "";
+    const fetcher: typeof fetch = async (input) => {
+      query = requestUrl(input).searchParams.get("q") ?? "";
+      return googleJson({ files: [] });
+    };
+    await googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { fileType: "spreadsheet", orderBy: "modified" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    // "The most recently modified spreadsheet" has no search term, and an empty
+    // one would have built `contains ''`.
+    expect(query).not.toContain("contains ''");
+    expect(query).toContain("mimeType = 'application/vnd.google-apps.spreadsheet'");
+    expect(query).toContain("trashed = false");
   });
 
   it("declares the same Drive file types it parses", () => {

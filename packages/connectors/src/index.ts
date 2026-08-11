@@ -263,23 +263,57 @@ const GOOGLE_DRIVE_FILE_TYPE_MIME: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[numbe
 };
 
 /**
- * Which tool reads each file type, so a rejection names the way forward.
+ * Which tool reads each file type, and the capability that tool needs.
  *
  * Named by canonical tool, the way the plugin system message already refers to
  * them: a connector cannot know the wire prefix its connection was given, and
  * `docs.read_document` is a name the caller can match against
  * `google_docs_read_document` where "the Docs document reader" is a phrase it
- * has to resolve on its own.
+ * has to resolve on its own. The capability is carried alongside because
+ * pointing a connection at a tool it was never granted is worse than saying
+ * nothing — each entry is a clause completing "That id is an X, not a Y."
  */
-const GOOGLE_DRIVE_FILE_TYPE_TOOL: Record<(typeof GOOGLE_DRIVE_FILE_TYPES)[number], string> = {
-  document: "Read it with docs.read_document.",
-  spreadsheet: "Read it with sheets.read_spreadsheet, or sheets.read_values for a range of cells.",
-  presentation: "Presentations have no dedicated reader; use drive.export to get its text.",
-  form: "Forms have no dedicated reader; drive.get_metadata is all this connection can see of one.",
-  drawing: "Drawings have no dedicated reader; use drive.export.",
-  folder: "That id is a folder rather than a file. Use drive.search to find what is inside it.",
-  pdf: "Read it with drive.download, which returns bounded text.",
+const GOOGLE_DRIVE_FILE_TYPE_TOOL: Record<
+  (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
+  { remedy: string; capability: string } | null
+> = {
+  document: { remedy: "Read it with docs.read_document.", capability: "docs.read" },
+  spreadsheet: {
+    remedy: "Read it with sheets.read_spreadsheet, or sheets.read_values for a range of cells.",
+    capability: "sheets.read"
+  },
+  presentation: { remedy: "Use drive.export to get its text.", capability: "drive.read" },
+  form: { remedy: "Only drive.get_metadata can see anything of a form.", capability: "drive.read" },
+  drawing: { remedy: "Use drive.export to get its contents.", capability: "drive.read" },
+  // Deliberately no remedy: Drive search has no folder filter, so pointing a
+  // caller at it would be advice that cannot be followed.
+  folder: null,
+  pdf: { remedy: "Read it with drive.download, which returns bounded text.", capability: "drive.read" },
 };
+
+/**
+ * The failure for an id that addresses a different kind of file than the tool
+ * takes.
+ *
+ * `expected` names the field's own family and `actual` the one that was found.
+ * Carrying the discovered family under `expected` would make the structured
+ * half say the opposite of the message beside it, and disagree with the sibling
+ * `assertGoogleIdFamily`, which is the only other producer of this reason.
+ */
+function googleFileFamilyError(
+  expected: (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
+  actual: (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
+  field: string,
+  grantedScopes: readonly string[]
+): ConnectorError {
+  const remedy = GOOGLE_DRIVE_FILE_TYPE_TOOL[actual];
+  const advice = remedy && grantedScopes.includes(remedy.capability) ? ` ${remedy.remedy}` : "";
+  return new ConnectorError(
+    "invalid_payload",
+    `That id is a ${actual}, not a ${expected}.${advice}`,
+    { reason: "wrong_id_family", field, expected, actual }
+  );
+}
 
 export const GoogleFileWriteAuthorizationGuidance =
   "Only files with writableByAvalon=true are eligible for Docs or Sheets write tools; files created through this connection are writable, but an arbitrary Drive search result might be read-only under Google's per-file authorization.";
@@ -465,7 +499,8 @@ export const googleTools: ToolDefinition[] = [
       properties: {
         query: {
           type: "string",
-          description: "Plain text matched against file names and file contents.",
+          minLength: 1,
+          description: "Plain text matched against file names and file contents. Omit it to browse by fileType, modifiedAfter, and orderBy alone — for example the most recently modified spreadsheet.",
         },
         fileType: {
           type: "string",
@@ -484,8 +519,7 @@ export const googleTools: ToolDefinition[] = [
         },
         maxResults: { type: "integer", minimum: 1, maximum: 100 },
         pageToken: { type: "string", minLength: 1, maxLength: 2_000 }
-      },
-      required: ["query"]
+      }
     }
   },
   {
@@ -1266,11 +1300,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       if (!context.connection.grantedScopes.includes("drive.read")) throw error;
       const actual = await googleDriveFileType(context, fileId);
       if (!actual || actual === expected) throw error;
-      throw new ConnectorError(
-        "invalid_payload",
-        `That id is a ${actual}, not a ${expected}. ${GOOGLE_DRIVE_FILE_TYPE_TOOL[actual]}`,
-        { reason: "wrong_id_family", field: `${expected}Id`, expected: actual }
-      );
+      throw googleFileFamilyError(expected, actual, `${expected}Id`, context.connection.grantedScopes);
     }
   }
 
@@ -2336,7 +2366,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           tabId: z.string().min(1).max(500).optional(),
           text: z.string().min(1).max(100_000)
         }).strict().parse(rawArgs);
-        await assertGoogleDriveFileWritable(api, context.connection, args.documentId, context.signal);
+        await assertGoogleDriveFileWritable(api, context.connection, args.documentId, "document", context.signal);
         const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
           updateGoogleDocument(api, context.connection, args.documentId, [{
           insertText: {
@@ -2361,7 +2391,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           replace: z.string().max(100_000),
           matchCase: z.boolean().default(true)
         }).strict().parse(rawArgs);
-        await assertGoogleDriveFileWritable(api, context.connection, args.documentId, context.signal);
+        await assertGoogleDriveFileWritable(api, context.connection, args.documentId, "document", context.signal);
         const payload = await withGoogleFileFamilyHint(context, args.documentId, "document", () =>
           updateGoogleDocument(api, context.connection, args.documentId, [{
             replaceAllText: {
@@ -2446,7 +2476,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const args = SheetValuesWriteArgsSchema.parse(rawArgs);
         const append = name === "sheets.append_values";
         const action = append ? "append" : "update";
-        await assertGoogleDriveFileWritable(api, context.connection, args.spreadsheetId, context.signal);
+        await assertGoogleDriveFileWritable(api, context.connection, args.spreadsheetId, "spreadsheet", context.signal);
         const url = new URL(
           `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(args.spreadsheetId)}/values/${encodeURIComponent(args.range)}:${action}`
         );
@@ -2470,7 +2500,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       }
       if (name === "drive.search") {
         const args = z.object({
-          query: z.string().max(1_000),
+          query: z.string().min(1).max(1_000).optional(),
           fileType: z.enum(GOOGLE_DRIVE_FILE_TYPES).optional(),
           modifiedAfter: z.string().datetime({ offset: true }).optional(),
           orderBy: z.enum(["relevance", "modified"]).default("relevance"),
@@ -2480,9 +2510,14 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const url = new URL("https://www.googleapis.com/drive/v3/files");
         // Names *and* contents. Matching names alone made a search for what a
         // document says come back empty, which the plugin message then licensed
-        // the caller to report as the content not existing.
-        const term = escapeDriveQuery(args.query);
-        const clauses = [`(name contains '${term}' or fullText contains '${term}')`, "trashed = false"];
+        // the caller to report as the content not existing. An absent term is
+        // omitted rather than matched as an empty string, so browsing by type
+        // and date — which is what orderBy was added for — is expressible.
+        const clauses = ["trashed = false"];
+        if (args.query) {
+          const term = escapeDriveQuery(args.query);
+          clauses.unshift(`(name contains '${term}' or fullText contains '${term}')`);
+        }
         if (args.fileType) clauses.push(`mimeType = '${GOOGLE_DRIVE_FILE_TYPE_MIME[args.fileType]}'`);
         if (args.modifiedAfter) clauses.push(`modifiedTime > '${escapeDriveQuery(args.modifiedAfter)}'`);
         url.searchParams.set("q", clauses.join(" and "));
@@ -3515,7 +3550,7 @@ function sanitizeGoogleDocument(payload: Record<string, unknown>): Record<string
     tabs: sanitizeGoogleDocumentTabs(recordArray(payload, "tabs")),
     textContent: extracted.text,
     textTruncated: extracted.truncated,
-    url: readString(payload, "documentId")
+    webUrl: readString(payload, "documentId")
       ? `https://docs.google.com/document/d/${encodeURIComponent(requiredString(payload, "documentId", "Missing document ID"))}/edit`
       : null
   };
@@ -3695,15 +3730,28 @@ function googleDriveMetadataUrl(fileId: string): URL {
   return url;
 }
 
+/**
+ * @param expected The file family the calling tool edits. The family is settled
+ * here rather than after the write is attempted, because this preflight already
+ * holds the MIME type and an arbitrary Drive result is usually not
+ * app-authorized — so a wrong-family id would otherwise fail as "read-only for
+ * Avalon", which is true, unhelpful, and not the actual problem.
+ */
 async function assertGoogleDriveFileWritable(
   api: GoogleApiRequester,
   connection: ConnectorConnectionContext,
   fileId: string,
+  expected: (typeof GOOGLE_DRIVE_FILE_TYPES)[number],
   signal: AbortSignal
 ): Promise<void> {
   const response = await api(connection, googleDriveMetadataUrl(fileId).toString(), { signal }, [404]);
   if (response.status === 404) throw googleDriveFileNotWritableError(fileId, false, false);
   const metadata = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+  const mimeType = readString(metadata, "mimeType");
+  const actual = GOOGLE_DRIVE_FILE_TYPES.find((type) => GOOGLE_DRIVE_FILE_TYPE_MIME[type] === mimeType);
+  if (actual && actual !== expected) {
+    throw googleFileFamilyError(expected, actual, `${expected}Id`, connection.grantedScopes);
+  }
   const capabilities = readRecord(metadata, "capabilities");
   const isAppAuthorized = readBoolean(metadata, "isAppAuthorized") === true;
   const canEdit = capabilities ? readBoolean(capabilities, "canEdit") === true : false;
