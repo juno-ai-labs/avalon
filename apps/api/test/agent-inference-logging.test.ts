@@ -139,4 +139,79 @@ describe("agent inference logging", () => {
     const update = statements.find((statement) => statement.sql.includes("UPDATE agent_inference_payload_logs"));
     expect(update?.values).toEqual(expect.arrayContaining([42_000, 800, 42_800, 300, 20_000, 12_500, 4096]));
   });
+
+  it("records a provider rejection even while the payload ledger is off", async () => {
+    const { env, objects, statements } = fixture(false);
+    env.LOG_LEVEL = "info";
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      workstreamId: "workstream-1",
+      requestId: "run-1",
+      source: "workstream",
+    });
+
+    await logger.onAttempt({
+      inferenceRequestId: request.inferenceRequestId,
+      success: false,
+      turnId: request.turnId,
+      model: request.model,
+      provider: request.provider,
+      cursor: { ...request.cursor, endpointAttempt: 1 },
+      latencyMs: 340,
+      disposition: "fallback",
+      failureKind: "api",
+      providerError: { code: 400, message: "Provider returned error", providerName: "xAI" },
+    });
+
+    // The opt-in ledger stays off — no R2 object, no payload row.
+    expect(objects.size).toBe(0);
+    expect(statements.some((statement) => statement.sql.includes("UPDATE"))).toBe(false);
+    // The rejection itself is operational and is always recorded; without this a
+    // model call that OpenRouter refused left no trace in any channel.
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(logged.mock.calls[0]![0]).toMatchObject({
+      level: "warn",
+      event: "agent_inference_attempt_failed",
+      workspace_id: "workspace-1",
+      model: "x-ai/grok-4.3",
+      disposition: "fallback",
+      failure_kind: "api",
+      provider_error_code: 400,
+      provider_error_provider: "xAI",
+    });
+    // The provider's free text is deliberately absent. Some upstreams quote the
+    // request back inside it, and this line is written for every workspace into
+    // Workers Logs and 90-day Logpush storage, where the key-based redactor has
+    // no way to recognise it.
+    const entry = logged.mock.calls[0]![0] as Record<string, unknown>;
+    expect(entry).not.toHaveProperty("provider_error_message");
+    expect(JSON.stringify(entry)).not.toContain("Provider returned error");
+    logged.mockRestore();
+  });
+
+  it("stays quiet when a run is cancelled", async () => {
+    const { env } = fixture(false);
+    env.LOG_LEVEL = "info";
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = createAgentInferenceLogger(env, {
+      workspaceId: "workspace-1",
+      requestId: "run-1",
+      source: "workstream",
+    });
+
+    await logger.onAttempt({
+      inferenceRequestId: request.inferenceRequestId,
+      success: false,
+      turnId: request.turnId,
+      model: request.model,
+      provider: request.provider,
+      cursor: request.cursor,
+      latencyMs: 12,
+      disposition: "cancelled",
+    });
+
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
 });

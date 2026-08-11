@@ -2,17 +2,24 @@ import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
+  ActivitySuggestionSchema,
   AddParticipantRequestSchema,
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
+  ElicitationSchema,
   IdSchema,
   HyperSightPreferenceSchema,
   HyperSightSchema,
+  MessageSchema,
+  ParticipantSchema,
+  ResourceSchema,
   UpdateHyperSightPreferenceRequestSchema,
   UpdateHyperSightRequestSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamContextSchema,
   WorkstreamDetailSchema,
+  WorkstreamSchema,
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -45,27 +52,63 @@ const messageQuery = z.object({
 );
 const resourceBody = z.object({ resourceId: IdSchema });
 
+/**
+ * Response contracts for the shapes this route composes itself. The single
+ * entities come straight from `@avalon/contracts`; these are the envelopes
+ * around them, and they are what the desktop client parses on arrival.
+ */
+const WorkstreamPageSchema = z.object({
+  items: z.array(WorkstreamSchema),
+  nextCursor: z.string().nullable(),
+});
+const MessagePageSchema = z.object({
+  items: z.array(MessageSchema),
+  nextCursor: z.string().nullable(),
+  newerCursor: z.string().nullable(),
+});
+const CreatedWorkstreamSchema = z.object({
+  workstream: WorkstreamSchema,
+  messageId: IdSchema,
+  harnessRunId: IdSchema.nullable(),
+});
+const CreatedMessageSchema = z.object({
+  message: MessageSchema,
+  agentInvoked: z.boolean(),
+  harnessRunId: IdSchema.nullable(),
+});
+const AnsweredElicitationSchema = z.object({
+  elicitation: ElicitationSchema.optional(),
+  harnessRunId: IdSchema.nullable(),
+});
+const ResolvedSuggestionSchema = z.object({
+  suggestion: ActivitySuggestionSchema.optional(),
+  resourceId: IdSchema.nullable(),
+});
+const RetriedRunSchema = z.object({ harnessRunId: IdSchema });
+const SocketTicketSchema = z.object({ url: z.string().min(1), ticket: z.string().min(1) });
+
 export const workstreamRoutes = new Hono<HonoAppEnv>();
 
 workstreamRoutes.get("/", zValidator("query", listQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).list(
+  return c.json(WorkstreamPageSchema.parse(await new WorkstreamService(c.env, getAuth(c)).list(
     query.limit,
     query.before,
     query.includeSystem === "true",
-  ));
+  )));
 });
 workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), async (c) => {
   const body = c.req.valid("json");
   // This is the one create path where a person is at a keyboard, so it is the
   // only one that can claim an objective was authored rather than derived.
-  return c.json(await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).create({
+  return c.json(CreatedWorkstreamSchema.parse(await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).create({
     ...body,
     descriptionSource: body.objective ? "authored" : "derived",
-  }), 201);
+  })), 201);
 });
 workstreamRoutes.get("/:id/context", zValidator("param", idParam), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id)),
+  c.json(WorkstreamContextSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).context(c.req.valid("param").id))),
 );
 workstreamRoutes.get("/:id/hypersight", zValidator("param", idParam), async (c) =>
   c.json(HyperSightSchema.parse(await new HyperSightService(c.env, getAuth(c)).get(c.req.valid("param").id))),
@@ -97,31 +140,34 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   return c.json(WorkstreamDetailSchema.parse(detail));
 });
 workstreamRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", UpdateWorkstreamRequestSchema), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json"))),
+  c.json(WorkstreamSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).update(c.req.valid("param").id, c.req.valid("json")))),
 );
 workstreamRoutes.patch("/:id/read-state", zValidator("param", idParam), zValidator("json", AcknowledgeWorkstreamReadRequestSchema), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).acknowledgeRead(c.req.valid("param").id, c.req.valid("json"))),
+  c.json(WorkstreamSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).acknowledgeRead(c.req.valid("param").id, c.req.valid("json")))),
 );
 workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).markUnread(c.req.valid("param").id)),
+  c.json(WorkstreamSchema.parse(await new WorkstreamService(c.env, getAuth(c)).markUnread(c.req.valid("param").id))),
 );
 workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("query", messageQuery), async (c) => {
   const query = c.req.valid("query");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).messages(
+  return c.json(MessagePageSchema.parse(await new WorkstreamService(c.env, getAuth(c)).messages(
     c.req.valid("param").id,
     query.limit,
     query.before,
     query.after,
     query.around,
-  ));
+  )));
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
   const result = await new WorkstreamService(c.env, getAuth(c), requestDeferral(c))
     .createMessage(c.req.valid("param").id, c.req.valid("json"));
-  return c.json(result, 201);
+  return c.json(CreatedMessageSchema.parse(result), 201);
 });
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).addParticipant(c.req.valid("param").id, c.req.valid("json").userId), 201),
+  c.json(ParticipantSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).addParticipant(c.req.valid("param").id, c.req.valid("json").userId)), 201),
 );
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");
@@ -129,7 +175,8 @@ workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", partici
   return c.body(null, 204);
 });
 workstreamRoutes.post("/:id/resources", zValidator("param", idParam), zValidator("json", resourceBody), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).attachResource(c.req.valid("param").id, c.req.valid("json").resourceId), 201),
+  c.json(ResourceSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).attachResource(c.req.valid("param").id, c.req.valid("json").resourceId)), 201),
 );
 workstreamRoutes.delete("/:id/resources/:resourceId", zValidator("param", resourceParam), async (c) => {
   const param = c.req.valid("param");
@@ -138,25 +185,28 @@ workstreamRoutes.delete("/:id/resources/:resourceId", zValidator("param", resour
 });
 workstreamRoutes.post("/:id/elicitations/:elicitationId/answer", zValidator("param", elicitationParam), zValidator("json", AnswerElicitationRequestSchema), async (c) => {
   const param = c.req.valid("param");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).answerElicitation(param.id, param.elicitationId, c.req.valid("json")));
+  return c.json(AnsweredElicitationSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).answerElicitation(param.id, param.elicitationId, c.req.valid("json"))));
 });
 workstreamRoutes.post("/:id/activities/:suggestionId/accept", zValidator("param", suggestionParam), async (c) => {
   const param = c.req.valid("param");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).resolveSuggestion(param.id, param.suggestionId, "accepted"));
+  return c.json(ResolvedSuggestionSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).resolveSuggestion(param.id, param.suggestionId, "accepted")));
 });
 workstreamRoutes.post("/:id/activities/:suggestionId/dismiss", zValidator("param", suggestionParam), async (c) => {
   const param = c.req.valid("param");
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).resolveSuggestion(param.id, param.suggestionId, "dismissed"));
+  return c.json(ResolvedSuggestionSchema.parse(
+    await new WorkstreamService(c.env, getAuth(c)).resolveSuggestion(param.id, param.suggestionId, "dismissed")));
 });
 workstreamRoutes.post("/:id/stop", zValidator("param", idParam), async (c) => {
   await new WorkstreamService(c.env, getAuth(c)).stop(c.req.valid("param").id);
   return c.body(null, 204);
 });
 workstreamRoutes.post("/:id/retry", zValidator("param", idParam), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).retry(c.req.valid("param").id), 202),
+  c.json(RetriedRunSchema.parse(await new WorkstreamService(c.env, getAuth(c)).retry(c.req.valid("param").id)), 202),
 );
 workstreamRoutes.get("/:id/socket", zValidator("param", idParam), async (c) =>
-  c.json(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id)),
+  c.json(SocketTicketSchema.parse(await new WorkstreamService(c.env, getAuth(c)).socketTicket(c.req.valid("param").id))),
 );
 workstreamRoutes.get("/:id/artifacts/:artifactId/content", zValidator("param", artifactParam), async (c) => {
   const param = c.req.valid("param");

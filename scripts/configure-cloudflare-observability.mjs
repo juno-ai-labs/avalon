@@ -89,6 +89,29 @@ export const SAVED_QUERY_DEFINITIONS = Object.freeze([
       filter("event", "eq", "string", "connector_poll_failed"),
     ])],
   ),
+  savedQuery(
+    "Avalon · Rejected model calls",
+    "OpenRouter calls the provider refused, with its own rejection classification.",
+    // Both conditions, not either: `provider_error_code` on its own would match
+    // any future event that happens to carry the field, and an attempt that
+    // failed without a provider classification is a transport failure rather
+    // than a refusal, which is what this view is named for.
+    [
+      group("or", [
+        filter("event", "eq", "string", "agent_inference_attempt_failed"),
+        filter("event", "eq", "string", "structured_inference"),
+      ]),
+      filter("provider_error_code", "exists", "string"),
+    ],
+  ),
+  savedQuery(
+    "Avalon · Broken response contracts",
+    "Responses that failed their own schema before leaving the Worker.",
+    [
+      filter("event", "eq", "string", "request_failed"),
+      filter("error_name", "eq", "string", "ZodError"),
+    ],
+  ),
 ]);
 
 function sortObject(value) {

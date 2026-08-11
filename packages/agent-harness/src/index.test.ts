@@ -9,6 +9,7 @@ import {
   composeBeforeToolCallHooks,
   memberSafeHarnessFailureMessage,
   OpenRouterClient,
+  openRouterProviderError,
   rejectToolModesBeforeCall,
   renderAddressingMessages,
   runHarness,
@@ -1009,6 +1010,71 @@ describe("agent harness", () => {
       expect.objectContaining({ stage: "complete", model: "test/model", attempt: 0, failureKind: "server_error" }),
       expect.objectContaining({ stage: "complete", model: "test/model", attempt: 1, failureKind: "server_error" }),
     ]);
+  });
+
+  it("carries the provider's rejection classification into the structured diagnostic", async () => {
+    const diagnostics: StructuredModelDiagnostic[] = [];
+    const fetcher = vi.fn(async () => Response.json({
+      error: {
+        code: 400,
+        message: "Provider returned error",
+        metadata: { provider_name: "Google", raw: "verbatim echo of the rejected prompt" },
+      },
+    }, { status: 400 })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.structured({
+      messages: [{ role: "user", content: "test" }],
+      schemaName: "provider_rejection",
+      jsonSchema: { type: "object" },
+      parse: (value) => value,
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
+    })).rejects.toMatchObject({ name: "OpenRouterError", status: 400 });
+
+    const failure = diagnostics.find((diagnostic) => diagnostic.success === false);
+    expect(failure?.providerError).toEqual({
+      code: 400,
+      message: "Provider returned error",
+      providerName: "Google",
+    });
+    // The envelope's classification is kept; the provider's echo of the request
+    // that was rejected is not.
+    expect(JSON.stringify(failure)).not.toContain("verbatim echo");
+  });
+
+  it("bounds a padded provider error message", () => {
+    expect(openRouterProviderError({ error: { message: "x".repeat(5_000) } })?.message).toHaveLength(300);
+    expect(openRouterProviderError({ error: { message: 12 } })).toBeUndefined();
+    expect(openRouterProviderError("not an envelope")).toBeUndefined();
+    expect(openRouterProviderError({ choices: [] })).toBeUndefined();
+  });
+
+  it("carries the provider's rejection classification off a failed stream", async () => {
+    const fetcher = vi.fn(async () => Response.json({
+      error: { code: "model_not_found", message: "No endpoints found", metadata: { provider_name: "xAI" } },
+    }, { status: 400 })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/model",
+      sameModelRetries: 0,
+      fetch: fetcher,
+    });
+
+    await expect(client.stream({ messages: [{ role: "user", content: "test" }] }, () => {}))
+      .rejects.toMatchObject({
+        name: "OpenRouterError",
+        status: 400,
+        details: {
+          providerError: { code: "model_not_found", message: "No endpoints found", providerName: "xAI" },
+        },
+      });
   });
 
   it("retries transient stream failures on the same model before fallback", async () => {
