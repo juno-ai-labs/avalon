@@ -815,6 +815,21 @@ describe('Avalon API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ title: 'Launch planning' });
   });
 
+  it('changes who may read a work stream through the same update endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, scope: 'personal' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.setWorkstreamScope(workstreamId, 'personal')).resolves.toMatchObject({
+      id: workstreamId,
+      scope: 'personal',
+    });
+
+    // Only the scope travels: a PATCH that also resubmitted the description
+    // would be read as somebody having authored it.
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ scope: 'personal' });
+  });
+
   it('creates an attachment-only work stream with its draft resource IDs', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,

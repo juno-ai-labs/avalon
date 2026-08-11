@@ -43,6 +43,7 @@ interface SidebarProps {
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onChangeNoteScope: (note: NoteSummary, scope: 'personal' | 'workspace') => Promise<void>;
+  onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
@@ -205,14 +206,25 @@ function AutomationRow({
 function WorkstreamRow({
   debugEnabled,
   workstream,
+  scopePending,
+  onChangeScope,
   onMarkUnread,
   onRename,
 }: {
   debugEnabled: boolean;
   workstream: WorkstreamSummary;
+  scopePending: boolean;
+  onChangeScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => void;
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
 }): React.JSX.Element {
+  const isPrivate = workstream.scope === 'personal';
+  // Two kinds of row take their audience from something other than this
+  // column, so offering the toggle on them would describe a change that does
+  // not happen: a subsystem's own work stream is machinery, and one an
+  // automation generated is visible to whoever that automation is visible to.
+  // The API refuses both; the menu simply does not raise the question.
+  const scopeIsThisRowsToDecide = !workstream.systemKind && !workstream.automationSubscriptionId;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -262,6 +274,20 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
+          {/* Named for the state it moves to, the way the note item is. Private
+              is not ownership: everyone left in the work stream can still read
+              it, write to it, and bring somebody else in. */}
+          {scopeIsThisRowsToDecide && (
+            <ContextMenu.Item
+              className="menu-item"
+              disabled={scopePending}
+              onSelect={() => onChangeScope(workstream, isPrivate ? 'workspace' : 'personal')}
+            >
+              {isPrivate
+                ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
+                : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
+            </ContextMenu.Item>
+          )}
           {debugEnabled && <CopyResourceIdItem id={workstream.id} label="Copy work stream id" />}
           <ContextMenu.Separator className="menu-separator" />
           <ContextMenu.Item className="menu-item menu-item-danger">
@@ -366,6 +392,7 @@ export function Sidebar({
   onArchiveDraftAutomation,
   onArchiveNote,
   onChangeNoteScope,
+  onChangeWorkstreamScope,
   onDeleteAutomation,
   onMarkWorkstreamUnread,
   onRenameWorkstream,
@@ -390,10 +417,12 @@ export function Sidebar({
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [archiveError, setArchiveError] = useState<string | null>(null);
-  // Both note actions apply straight from the menu, so a rejection has nowhere
-  // to land unless it is raised here: the row simply stays as it was.
-  const [noteError, setNoteError] = useState<{ copy: string; message: string; title: string } | null>(null);
+  // The note actions and a work stream's visibility apply straight from the
+  // menu, so a rejection has nowhere to land unless it is raised here: the row
+  // simply stays as it was.
+  const [menuError, setMenuError] = useState<{ copy: string; message: string; title: string } | null>(null);
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
+  const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [archiveNoteTarget, setArchiveNoteTarget] = useState<NoteSummary | null>(null);
   const [archivingNote, setArchivingNote] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
@@ -465,7 +494,7 @@ export function Sidebar({
       setArchiveNoteTarget(null);
     } catch (error) {
       setArchiveNoteTarget(null);
-      setNoteError({
+      setMenuError({
         title: 'Note could not be archived',
         copy: 'The note is still in the sidebar. Try again in a moment.',
         message: error instanceof Error ? error.message : 'The note could not be archived.',
@@ -480,7 +509,7 @@ export function Sidebar({
     try {
       await onChangeNoteScope(note, scope);
     } catch (error) {
-      setNoteError({
+      setMenuError({
         title: 'Note visibility could not be changed',
         copy: scope === 'workspace'
           ? 'The note is still private. Try again in a moment.'
@@ -489,6 +518,26 @@ export function Sidebar({
       });
     } finally {
       setScopePendingNoteId((current) => current === note.id ? null : current);
+    }
+  };
+
+  const changeWorkstreamScope = async (
+    workstream: WorkstreamSummary,
+    scope: 'personal' | 'workspace',
+  ): Promise<void> => {
+    setScopePendingWorkstreamId(workstream.id);
+    try {
+      await onChangeWorkstreamScope(workstream, scope);
+    } catch (error) {
+      setMenuError({
+        title: 'Work stream visibility could not be changed',
+        copy: scope === 'workspace'
+          ? 'The work stream is still private. Try again in a moment.'
+          : 'The work stream is still visible to the workspace. Try again in a moment.',
+        message: error instanceof Error ? error.message : 'The work stream could not be updated.',
+      });
+    } finally {
+      setScopePendingWorkstreamId((current) => current === workstream.id ? null : current);
     }
   };
 
@@ -621,8 +670,10 @@ export function Sidebar({
                       <WorkstreamRow
                         debugEnabled={debugEnabled}
                         key={item.id}
+                        onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                         onMarkUnread={(target) => void onMarkWorkstreamUnread(target).catch(() => undefined)}
                         onRename={openRename}
+                        scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />
                     ))}
@@ -757,15 +808,15 @@ export function Sidebar({
         </p>
       </Modal>
       <Modal
-        footer={<Button onClick={() => setNoteError(null)}>Close</Button>}
+        footer={<Button onClick={() => setMenuError(null)}>Close</Button>}
         onOpenChange={(open) => {
-          if (!open) setNoteError(null);
+          if (!open) setMenuError(null);
         }}
-        open={Boolean(noteError)}
-        title={noteError?.title ?? 'Note could not be updated'}
+        open={Boolean(menuError)}
+        title={menuError?.title ?? 'That could not be updated'}
       >
-        <p className="modal-copy">{noteError?.copy}</p>
-        {noteError && <InlineError>{noteError.message}</InlineError>}
+        <p className="modal-copy">{menuError?.copy}</p>
+        {menuError && <InlineError>{menuError.message}</InlineError>}
       </Modal>
       <Modal
         footer={(

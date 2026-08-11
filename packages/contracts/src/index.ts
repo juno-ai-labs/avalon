@@ -1053,7 +1053,14 @@ export const StartWorkOpportunityRequestSchema = z.object({
 export const UpdateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(4000).optional(),
-  archived: z.boolean().optional()
+  archived: z.boolean().optional(),
+  /**
+   * Who may read it from now on. `personal` narrows the work stream to the
+   * people already in it, `workspace` opens it to every member. Anyone who can
+   * read a work stream may move it either way, because a private work stream is
+   * shared work with a smaller room rather than one person's property.
+   */
+  scope: ScopeSchema.optional()
 });
 
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
@@ -1150,6 +1157,21 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   /** Monotonic within one turn epoch; distinct from the room event sequence. */
   streamSeq: z.number().int().nonnegative()
 });
+/**
+ * The close code the work-stream room uses when it disconnects a socket whose
+ * reader may no longer see the work stream.
+ *
+ * It is `1008` (policy violation) rather than an application code because the
+ * close frame is the whole message — there is no event body to carry a reason
+ * to somebody who is no longer allowed one. The client distinguishes it from
+ * every other close: an ordinary close reconnects, this one must not, because
+ * the reconnect would 404 forever with a transcript still on screen.
+ *
+ * The room deliberately uses `1011` when it cannot *establish* who may stay, so
+ * that case still reconnects and is re-authorized rather than dead-ending.
+ */
+export const WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE = 1008;
+
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
@@ -1159,6 +1181,16 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     type: z.literal("workstream_renamed"),
     title: z.string().min(1).max(180),
     titleStatus: z.enum(["automatic", "settled"])
+  }),
+  /**
+   * Who may read this work stream changed. Everyone still in the room learns
+   * the new state so the lock on their sidebar row and the header they are
+   * reading agree with it; those the change just excluded are disconnected by
+   * the room rather than told.
+   */
+  ServerEventBaseSchema.extend({
+    type: z.literal("workstream_scope_changed"),
+    scope: ScopeSchema
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),

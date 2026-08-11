@@ -322,6 +322,9 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     origin: workstream.originType,
     ...(workstream.originLabel ? { automationName: workstream.originLabel } : {}),
+    ...(workstream.automationSubscriptionId
+      ? { automationSubscriptionId: workstream.automationSubscriptionId }
+      : {}),
     harnessStatus: normalizeHarnessStatus(workstream.harnessStatus),
     latestAttentionSequenceNumber: workstream.latestAttentionSequenceNumber,
     readThroughSequenceNumber: workstream.readThroughSequenceNumber,
@@ -1085,6 +1088,21 @@ export class AvalonApi {
     const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: { title },
+      schema: WireWorkstreamSchema,
+    });
+    return mapWorkstreamSummary(workstream);
+  }
+
+  /**
+   * Narrow a work stream to the people in it, or open it to the workspace.
+   *
+   * `personal` keeps the work stream readable to its participants — who may
+   * still add anyone else in the workspace to it — and to nobody else.
+   */
+  async setWorkstreamScope(id: string, scope: 'personal' | 'workspace'): Promise<WorkstreamSummary> {
+    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { scope },
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);

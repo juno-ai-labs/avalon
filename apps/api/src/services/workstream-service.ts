@@ -1,4 +1,4 @@
-import { buildMessageAttachmentStatements, createDatabase, newId, nowIso } from "@avalon/db";
+import { buildMessageAttachmentStatements, buildParticipantUpsertStatement, createDatabase, newId, nowIso } from "@avalon/db";
 import { memberSafeHarnessFailureMessage } from "@avalon/agent-harness";
 import { HarnessFailureCodeSchema, WorkstreamDetailSchema, workstreamCanonicalUrl } from "@avalon/contracts";
 import type {
@@ -674,10 +674,27 @@ export class WorkstreamService {
   async update(id: string, input: UpdateWorkstreamInput) {
     const before = await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
+    const previousScope = before.scope === "personal" ? "personal" : "workspace";
+    const scopeChanged = input.scope != null && input.scope !== previousScope;
+    if (scopeChanged) this.assertScopeIsThisRowsToDecide(before);
+    // Whoever makes a work stream private has to stay in the room they just
+    // closed, and `personal` is enforced as "an active participant, and nobody
+    // else" — so this is what stops the change from being the one action in
+    // Avalon that locks its author out of its own result. It goes in the same
+    // batch as the scope itself: a work stream that went private while the
+    // upsert failed would be one nobody may read, and a participant added to a
+    // work stream whose scope write then failed would be a permanent stray.
+    const joining = scopeChanged && input.scope === "personal";
+    // Whether the upsert will actually add them, rather than land on the row
+    // they already have. Someone who has been in this work stream for weeks is
+    // not joining it by closing it, and announcing that they were would refresh
+    // every reader's participant list and HyperSight for nothing.
+    const joined = joining && !(await this.isActiveParticipant(id, this.auth.userId));
     const at = nowIso();
     const write = this.env.DB.prepare(
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
+       scope = COALESCE(?, scope),
        description_source = CASE WHEN ? IS NULL OR ? = objective THEN description_source ELSE 'authored' END,
        -- A person naming a work stream settles it: a naming pass still in
        -- flight must not overwrite what they chose.
@@ -690,6 +707,7 @@ export class WorkstreamService {
       .bind(
         input.title ?? null,
         input.objective ?? null,
+        input.scope ?? null,
         input.objective ?? null,
         input.objective ?? null,
         input.title ?? null,
@@ -711,19 +729,30 @@ export class WorkstreamService {
     // anyone having said anything.
     const previousDescription = String(before.objective ?? "");
     const authored = input.objective != null && input.objective !== previousDescription;
-    if (authored) {
-      await this.env.DB.batch([
-        write,
-        await describeAuthoredDescriptionStatement(this.env, {
-          workspaceId: this.auth.workspaceId,
-          workstreamId: id,
-          description: input.objective!,
-          previousDescription,
-        }),
-      ]);
-    } else {
-      await write.run();
-    }
+    // The participant upsert comes first so that, batch or not, no reader can
+    // observe the narrowed scope ahead of the person it has to keep.
+    const statements = [
+      ...(joining
+        ? [buildParticipantUpsertStatement(this.env.DB, {
+            workspaceId: this.auth.workspaceId,
+            workstreamId: id,
+            userId: this.auth.userId,
+            addedByUserId: this.auth.userId,
+            reason: "explicit",
+          })]
+        : []),
+      write,
+      ...(authored
+        ? [await describeAuthoredDescriptionStatement(this.env, {
+            workspaceId: this.auth.workspaceId,
+            workstreamId: id,
+            description: input.objective!,
+            previousDescription,
+          })]
+        : []),
+    ];
+    if (statements.length > 1) await this.env.DB.batch(statements);
+    else await write.run();
     if (input.archived != null) {
       await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
         region: this.env.AVALON_REGION,
@@ -742,7 +771,74 @@ export class WorkstreamService {
         titleStatus: "settled",
       });
     }
+    // Joining is a real membership change, not bookkeeping: without the event
+    // the actor is a participant in D1 and absent from the right rail — their
+    // own included — until something forces a reload, and nothing does.
+    if (joined) {
+      const participant = (await this.loadParticipants(id)).find((item) => item.user.id === this.auth.userId);
+      if (participant) {
+        await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+          type: "participant_added",
+          participant,
+        });
+      }
+    }
+    // The room is the only thing that knows who is reading this work stream
+    // right now. It applies the new state to the people who may stay and closes
+    // the sockets of those this change just excluded — a member who had it open
+    // when it went private would otherwise keep receiving its transcript.
+    if (scopeChanged) {
+      const delivered = await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+        type: "workstream_scope_changed",
+        scope: updated.scope,
+      });
+      // For every other event this publisher's silence is fine. Here it is the
+      // difference between an eviction that happened and one that did not, and
+      // the caller has already been told the work stream is closed. The room
+      // re-checks its own connected set within the interval either way, so this
+      // is a delay to alert on rather than a failure to undo — but it must not
+      // be invisible.
+      if (!delivered && updated.scope === "personal") {
+        logStructuredEvent(this.env, "error", "workstream_scope_retraction_undelivered", {
+          workspace_id: this.auth.workspaceId,
+          workstream_id: id,
+        });
+      }
+    }
     return updated;
+  }
+
+  /**
+   * Whether `scope` is the rule that actually decides who reads this row.
+   *
+   * For an ordinary work stream it is, and both directions mean what the menu
+   * says. Two kinds of row are governed by something else, and moving their
+   * scope would either do nothing or do harm:
+   *
+   * - **A subsystem's own work stream** (`system_kind`) is machinery. A digest
+   *   is assembled from one person's private activity, so publishing it to the
+   *   workspace would hand that activity to everyone.
+   * - **A work stream an automation generated** takes its audience from that
+   *   automation's scope, which is checked separately and independently of this
+   *   column. Opening it would broaden nothing, and closing it would hide the
+   *   row from the automation's owner, who is reached by that separate rule
+   *   rather than by being a participant.
+   */
+  private assertScopeIsThisRowsToDecide(row: Record<string, unknown>): void {
+    if (row.system_kind != null) {
+      throw new ApiError(
+        422,
+        "scope_change_unsupported",
+        "This work stream belongs to Avalon itself, so its visibility cannot be changed",
+      );
+    }
+    if (row.automation_subscription_id != null) {
+      throw new ApiError(
+        422,
+        "scope_change_unsupported",
+        "This work stream is visible to whoever the automation that created it is visible to",
+      );
+    }
   }
 
   async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
@@ -1461,6 +1557,14 @@ export class WorkstreamService {
       ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
       ...(parentHarnessRunId ? { parentHarnessRunId } : {}),
     });
+  }
+
+  private async isActiveParticipant(workstreamId: string, userId: string): Promise<boolean> {
+    const row = await this.env.DB.prepare(
+      `SELECT 1 FROM workstream_participants
+        WHERE workstream_id = ? AND user_id = ? AND removed_at IS NULL LIMIT 1`,
+    ).bind(workstreamId, userId).first();
+    return row != null;
   }
 
   private async assertMembersExist(ids: string[]): Promise<void> {
