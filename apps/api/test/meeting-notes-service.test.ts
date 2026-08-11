@@ -58,6 +58,7 @@ describe("MeetingNotesService", () => {
       startedAt: "2026-08-07T18:00:00.000Z",
       endedAt: null,
       transcriptStatus: "partial",
+      refreshSeconds: null,
     }, "request-1")).resolves.toMatchObject({
       notes: "## Summary\n\nThe team approved the launch.",
       generatedAt: expect.any(String),
@@ -126,11 +127,46 @@ describe("MeetingNotesService", () => {
       startedAt: "2026-08-07T18:00:00.000Z",
       endedAt: null,
       transcriptStatus: "partial",
+      refreshSeconds: null,
     }, "request-cadence");
 
     const request = String(captured!.messages.at(-1)!.content);
     expect(request).toContain("You refresh every 120 seconds");
     expect(request).not.toContain("60 seconds");
+  });
+
+  it("describes the cadence the client is keeping rather than the one the flag now serves", async () => {
+    let captured: RunHarnessInput | undefined;
+    const runner = vi.fn(async (input: RunHarnessInput) => {
+      captured = input;
+      return completed("## Right now\n\n- Still discussing launch timing.");
+    });
+    const resolver = vi.fn(async (flagKey: string) => ({
+      flagKey,
+      value: 300,
+      variant: "slower",
+      reason: "TARGETING_MATCH",
+    }));
+    const flaggedEnv = { ...env, FLAGS: { getNumberDetails: resolver } } as unknown as Env;
+
+    await new MeetingNotesService(flaggedEnv, auth, runner).generate({
+      mode: "live",
+      meetingTitle: "Launch readiness",
+      previousNotes: "",
+      userNotes: "",
+      transcript: "[00:00:00–00:00:10] We approved launching Tuesday.",
+      recentTranscript: "[00:00:00–00:00:10] We approved launching Tuesday.",
+      startedAt: "2026-08-07T18:00:00.000Z",
+      endedAt: null,
+      transcriptStatus: "partial",
+      // The meeting settled on 30 seconds before the flag moved to 300. The
+      // client is still keeping 30, so that is the schedule the briefing has to
+      // be written for — and the flag is not worth resolving at all.
+      refreshSeconds: 30,
+    }, "request-client-cadence");
+
+    expect(String(captured!.messages.at(-1)!.content)).toContain("You refresh every 30 seconds");
+    expect(resolver).not.toHaveBeenCalled();
   });
 
   it("uses a distinct whole-transcript final-summary pass without prior Control Tower prose", async () => {
@@ -151,6 +187,7 @@ describe("MeetingNotesService", () => {
       startedAt: "2026-08-07T18:00:00.000Z",
       endedAt: "2026-08-07T18:30:00.000Z",
       transcriptStatus: "complete",
+      refreshSeconds: null,
     }, "request-final");
 
     expect(captured!.config).toMatchObject({ reasoningEffort: "medium", maxWallClockMs: 120_000 });
@@ -187,6 +224,7 @@ describe("MeetingNotesService", () => {
       startedAt: null,
       endedAt: null,
       transcriptStatus: "partial",
+      refreshSeconds: null,
     }, "request-2")).rejects.toMatchObject({
       status: 502,
       code: "meeting_notes_generation_failed",

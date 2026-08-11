@@ -305,8 +305,10 @@ export class NoteService {
     requestId: string,
     mode: "live" | "final" = "live",
     transcriptStatus: "complete" | "partial" = mode === "final" ? "complete" : "partial",
+    /** The cadence the client is keeping, when it knows it. */
+    refreshSeconds: number | null = null,
   ): Promise<NoteDetail> {
-    return this.generateAttempt(id, requestId, mode, transcriptStatus, false);
+    return this.generateAttempt(id, requestId, mode, transcriptStatus, refreshSeconds, false);
   }
 
   private async generateAttempt(
@@ -314,6 +316,7 @@ export class NoteService {
     requestId: string,
     mode: "live" | "final",
     transcriptStatus: "complete" | "partial",
+    refreshSeconds: number | null,
     retriedFinalConflict: boolean,
   ): Promise<NoteDetail> {
     const note = await this.requireNote(id, true);
@@ -341,6 +344,7 @@ export class NoteService {
       startedAt: note.started_at,
       endedAt: mode === "final" ? note.ended_at ?? nowIso() : note.ended_at,
       transcriptStatus: completeTranscript.omitted ? "partial" : transcriptStatus,
+      refreshSeconds: mode === "live" ? refreshSeconds : null,
     }, requestId);
     const throughSequence = Number(allSegments.at(-1)!.sequence_number);
     const update = await this.env.DB.prepare(
@@ -371,7 +375,7 @@ export class NoteService {
       // Control Tower refresh. Re-read the complete transcript and retry once;
       // a second conflict means another result is newer and should win.
       if (mode === "final" && !retriedFinalConflict) {
-        return this.generateAttempt(id, requestId, mode, transcriptStatus, true);
+        return this.generateAttempt(id, requestId, mode, transcriptStatus, refreshSeconds, true);
       }
       await this.materialize(id);
       return this.get(id);

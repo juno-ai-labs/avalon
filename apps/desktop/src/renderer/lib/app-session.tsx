@@ -359,7 +359,14 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // Sent by the main process when a meeting window closes, so that the
         // recording a person just ended hands them to the note it produced.
         const noteId = deepLink.pathname.slice(1);
-        if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
+        // Two different problems, and telling them apart is the difference
+        // between an instruction someone can act on and one that cannot help:
+        // signing in again does nothing about a link that names no note.
+        if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
+          setDeepLinkError('Avalon could not open that note link.');
+          return;
+        }
+        if (!session?.workspace) {
           setDeepLinkError('Sign in before opening this note.');
           return;
         }

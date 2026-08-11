@@ -312,6 +312,28 @@ describe("flag targeting attributes", () => {
     expect(prepare).toHaveBeenCalledTimes(2);
   });
 
+  // One request resolves several flags at once — the model an agent runs on and
+  // Control Tower's cadence are two evaluations of the same person — and the
+  // cache is only written when a read resolves. Without sharing the pending
+  // read, every cold isolate and every expiry would pay for the same rows twice.
+  it("shares one read between evaluations that describe the same subject at once", async () => {
+    const d1 = sqliteD1(database);
+    const prepare = vi.spyOn(d1, "prepare");
+    const env = envWith(d1);
+
+    const [first, second] = await Promise.all([
+      loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID }),
+      loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID }),
+    ]);
+
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(first).toEqual(second);
+    // And the shared read is not left behind as a second cache: the next
+    // evaluation is served by the real one.
+    await loadFlagTargetingAttributes(env, { workspaceId: WORKSPACE_ID, userId: OWNER_ID });
+    expect(prepare).toHaveBeenCalledTimes(2);
+  });
+
   // The automation paths resolve a model for a work stream id one statement
   // before they insert it, so remembering the miss would leave those work
   // streams unattributed for as long as the cache holds.
