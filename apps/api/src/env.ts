@@ -1,3 +1,5 @@
+import { AvalonUrlSchema, HttpUrlSchema } from "@avalon/contracts/url-schemas";
+import { z } from "zod";
 import type { Region } from "@avalon/contracts";
 import type { RegionalIdentityBridgeRpcBinding } from "./services/platform-onboarding-service";
 import type { GitHubRegionalBridgeRpcBinding, GlobalGitHubRouterRpcBinding } from "./services/github-routing-service";
@@ -152,6 +154,148 @@ export type HonoAppEnv = {
   Bindings: Env;
   Variables: AppVariables;
 };
+
+/**
+ * The runtime contract for `Env`.
+ *
+ * `Env` above is erased at build time, so nothing checks that a deployed Worker
+ * actually received what it declares. A missing variable surfaces as a
+ * `TypeError` deep in whichever request first reads it, and a malformed numeric
+ * one never surfaces at all: `numericEnv` silently substitutes its fallback, so
+ * a ceiling typed as `"3O000"` reads as the default forever.
+ *
+ * This schema asserts, at the entrypoints, exactly what the interface already
+ * claims — no more. Two deliberate exceptions are gated on `APP_ENV` rather than
+ * required outright, because local development runs without them today; see
+ * `productionOnlySecrets`.
+ */
+const binding = <T>() => z.custom<T>((value) => value != null && typeof value === "object");
+
+/** A variable Wrangler carries as a string but the code reads as a number. */
+const numericString = z
+  .string()
+  .regex(/^\d+$/u, "must be a base-10 positive integer")
+  .refine((value) => Number.parseInt(value, 10) > 0, "must be greater than zero");
+
+const EnvContractSchema = z.object({
+  DB: binding<D1Database>(),
+  PAYLOADS: binding<R2Bucket>(),
+  IMAGES: binding<ImagesBinding>(),
+  AI: binding<Ai>(),
+  MEMORY_INDEX: binding<VectorizeIndex>(),
+  WORKSTREAM_ROOMS: binding<DurableObjectNamespace>(),
+  WORKSPACE_SCHEDULERS: binding<DurableObjectNamespace>(),
+  ACTIVITY_QUEUE: binding<Queue>(),
+  WORKSTREAM_LOOP_WORKFLOW: binding<Workflow>(),
+  CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
+
+  APP_ENV: z.enum(["development", "test", "staging", "production"]),
+  AVALON_REGION: z.enum(["global", "eu"]),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]),
+  PUBLIC_API_BASE_URL: HttpUrlSchema,
+  PUBLIC_WEB_BASE_URL: HttpUrlSchema,
+  ALLOWED_ORIGINS: z.string().min(1),
+  DESKTOP_DEEP_LINK_URI: AvalonUrlSchema,
+
+  OPENROUTER_API_KEY: z.string().min(1),
+  OPENROUTER_PRIMARY_MODEL: z.string().min(1),
+  OPENROUTER_FALLBACK_MODELS: z.string(),
+  OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
+  OPENROUTER_STRUCTURED_MODEL: z.string().min(1),
+  OPENROUTER_AUTOMATION_MODEL: z.string().min(1),
+
+  SESSION_SIGNING_KEY: z.string().min(1),
+  OAUTH_STATE_ENCRYPTION_KEY: z.string().min(1),
+  CONNECTOR_CREDENTIALS_KEY: z.string().min(1),
+  CONNECTOR_CREDENTIALS_KEY_VERSION: numericString,
+
+  // Required by the interface, so required here.
+  HARNESS_MAX_MODEL_ITERATIONS: numericString,
+  HARNESS_MAX_TOOL_CALLS: numericString,
+  HARNESS_MAX_WALL_CLOCK_MS: numericString,
+  TOOL_DEFAULT_TIMEOUT_MS: numericString,
+  WEB_SEARCH_MAX_RESULTS: numericString,
+  WEB_FETCH_MAX_BYTES: numericString,
+  MAX_ATTACHMENT_BYTES: numericString,
+  WEBHOOK_REPLAY_WINDOW_SECONDS: numericString,
+
+  // Optional, but a value that is present must be readable. This is the half
+  // `numericEnv` cannot express: absent legitimately means "use the default",
+  // while unparseable means someone typed it wrong and nobody found out.
+  HARNESS_MAX_COST_CENTS: numericString.optional(),
+  HARNESS_MAX_PLUGIN_CATALOG_TOKENS: numericString.optional(),
+  HARNESS_REQUEST_ESTABLISHMENT_TIMEOUT_MS: numericString.optional(),
+  HARNESS_TTFT_TIMEOUT_MS: numericString.optional(),
+  HARNESS_STREAM_IDLE_TIMEOUT_MS: numericString.optional(),
+  HARNESS_CHILD_MAX_MODEL_ITERATIONS: numericString.optional(),
+  HARNESS_CHILD_MAX_TOOL_CALLS: numericString.optional(),
+  HARNESS_CHILD_MAX_WALL_CLOCK_MS: numericString.optional(),
+  HARNESS_CHILD_MAX_COST_CENTS: numericString.optional(),
+  HARNESS_CHILD_MAX_CHAIN_RUNS: numericString.optional(),
+  HARNESS_CHILD_MAX_ACTIVE_WORKSPACE_RUNS: numericString.optional(),
+  HARNESS_CHILD_MAX_DEPTH: numericString.optional(),
+  CONNECTOR_POLL_TIMEOUT_MS: numericString.optional(),
+  PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
+  INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
+  INBOUND_EMAIL_PROCESSING_LEASE_SECONDS: numericString.optional(),
+  AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR: numericString.optional(),
+
+  EU_PUBLIC_API_BASE_URL: HttpUrlSchema.optional(),
+  GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  LINEAR_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+  SLACK_INGRESS_BASE_URL: HttpUrlSchema.optional(),
+});
+
+/**
+ * Typed required on `Env`, but absent from `.dev.vars`, so local development
+ * has always run without them. Requiring them outright would break `pnpm
+ * dev:api:local` rather than catch a real misconfiguration, so they are
+ * enforced only where their absence is genuinely a deployment fault.
+ */
+const productionOnlySecrets = ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"] as const;
+
+/**
+ * Drift guard. If a key is required by the schema but optional on `Env` — or
+ * carries a different type — this assignment stops compiling. The schema cannot
+ * quietly outrun the interface it mirrors.
+ */
+const _envMatchesItsContract: (env: Env) => z.infer<typeof EnvContractSchema> = (env) => env;
+void _envMatchesItsContract;
+
+export class EnvContractError extends Error {
+  constructor(readonly keys: string[]) {
+    super(`The Worker environment is misconfigured: ${keys.join(", ")}`);
+    this.name = "EnvContractError";
+  }
+}
+
+const validated = new WeakSet<object>();
+
+/**
+ * Assert the environment once per isolate, at the entrypoints.
+ *
+ * Only key names and rule names reach the error — never a value, since almost
+ * every key here is a secret.
+ */
+export function assertEnvContract(env: Env): void {
+  if (validated.has(env)) return;
+  const result = EnvContractSchema.safeParse(env);
+  const missingSecrets = env.APP_ENV === "production" || env.APP_ENV === "staging"
+    ? productionOnlySecrets.filter((key) => !env[key])
+    : [];
+  if (result.success && missingSecrets.length === 0) {
+    validated.add(env);
+    return;
+  }
+  const keys = [
+    ...(result.success ? [] : result.error.issues.map((issue) => {
+      const key = issue.path.map(String).join(".") || "(root)";
+      return `${key} ${issue.code === "invalid_type" && issue.input === undefined ? "is missing" : "is invalid"}`;
+    })),
+    ...missingSecrets.map((key) => `${key} is missing`),
+  ];
+  throw new EnvContractError([...new Set(keys)].sort());
+}
 
 export function numericEnv(
   env: Env,
