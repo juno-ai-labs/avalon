@@ -1689,7 +1689,7 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
       // raised while this was running is somebody waiting on a change they just
       // made, and pushing it five minutes out to punish an unrelated failure is
       // the opposite of what it deserves.
-      console.warn("Suggested-work ranking failed", {
+      logWarn(env, "suggested_work_ranking_failed", {
         workspace_id: row.workspace_id,
         user_id: row.user_id,
         reason: error instanceof Error ? error.message : "unknown",
@@ -1712,7 +1712,7 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
       // raised while the tournament ran survives and is served on a later pass.
       await settleRankingRequest(env, row.workspace_id, row.user_id, leaseId, row.request_seq);
     } catch (error) {
-      console.warn("Could not settle a suggested-work ranking request", {
+      logWarn(env, "suggested_work_ranking_settle_failed", {
         workspace_id: row.workspace_id,
         user_id: row.user_id,
         reason: error instanceof Error ? error.message : "unknown",
@@ -1777,7 +1777,7 @@ export class WorkOpportunityService {
         const request = markSuggestedWorkDue(
           this.env, this.auth.workspaceId, [this.auth.userId], unranked ? 0 : DUE_DEBOUNCE_MS,
         ).catch((error: unknown) => {
-          console.warn("Could not schedule a suggested-work ranking", {
+          logWarn(this.env, "suggested_work_ranking_schedule_failed", {
             workspace_id: this.auth.workspaceId,
             user_id: this.auth.userId,
             reason: error instanceof Error ? error.message : "unknown",
@@ -2023,9 +2023,10 @@ export class WorkOpportunityService {
     // the time they come back from the work stream they just started.
     await markSuggestedWorkDue(this.env, this.auth.workspaceId, [this.auth.userId], 0)
       .catch((error: unknown) => {
-        console.warn("Could not schedule a suggested-work ranking after a start", {
+        logWarn(this.env, "suggested_work_ranking_schedule_failed", {
           workspace_id: this.auth.workspaceId,
           opportunity_id: opportunityId,
+          trigger: "start",
           reason: error instanceof Error ? error.message : "unknown",
         });
       });
