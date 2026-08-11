@@ -4,10 +4,14 @@ Avalon evaluates feature flags with [Cloudflare Flagship](https://developers.clo
 through the `FLAGS` binding on both regional Workers. Today the binding owns one
 thing: which OpenRouter model each agent runs on. Read this document before
 adding a flag, changing an agent's models, or changing what happens when a flag
-cannot be evaluated.
+cannot be evaluated. One thing overrides a flag rather than being one — a work
+stream pinned to a single model — and it has [its own
+section](#a-work-streams-own-model) below.
 
 `apps/api/src/services/agent-model-flags.ts` is the only module that reads the
-binding. Nothing else calls `env.FLAGS` directly.
+binding. Nothing else calls `env.FLAGS` directly, and it is also where the pin
+above is read and applied, so every answer to "which model does this run use"
+comes from one file.
 `apps/api/src/services/flag-targeting-attributes.ts` is its companion: it turns
 the ids a caller happens to hold into the attributes a targeting rule matches
 on, and it is where the line between a fact and a person's data is drawn.
@@ -102,6 +106,57 @@ The default model and its fallbacks live in **one** flag value rather than two
 flags on purpose. A route plan is only meaningful as a whole, so a variation
 change is atomic: an agent can never end up serving a new default model against
 the previous generation's fallbacks.
+
+## A work stream's own model
+
+One thing sits above the flags: a work stream may be pinned to a single model,
+recorded in `workstreams.model_override`. The pin wins, and the flag is not
+consulted at all.
+
+The two answer different questions. A flag is a fleet-wide default, rolled out
+per workspace, identical for every work stream in it. A pin is somebody asking
+what *this* piece of work looks like on some other model — decided once, when
+the work stream is created, and not something to stage a rollout for. Precedence
+follows from that: a rollout reaching the workspace must not quietly take the
+pinned work stream with it.
+
+A pin comes from one place — the model selector in the composers that start work,
+which appears only while Application → Developer → **Debug enabled** is on. A new
+work stream carries the choice directly; a new automation holds it on the
+subscription, and **every** path that creates a run copies it onto that run's
+work stream, so a run resolves its model from its own row like every other work
+stream. There are three such paths and they are easy to miss: `createRun` in
+`automation-service.ts` (manual runs and inbound email), `startAutomation` in
+the workspace scheduler (scheduled runs), and `startActivityAutomation` in the
+activity queue consumer (connector-activity runs). The last two build the work
+stream row inline rather than going through the service, so a new column on it
+has to be added to each by hand — a pin that reaches only `createRun` looks
+correct under **Run now** and is silently ignored by every scheduled run, which
+is how this shipped in review.
+
+Nothing else writes the column, and choosing nothing writes nothing, so an
+ordinary work stream is unpinned and reads exactly as this document describes
+above. The selector says so plainly: unpinned is its own menu entry, labelled
+**Default** and described as following this flag, rather than named after a
+model the renderer cannot know is being served.
+
+The pin carries **no fallbacks**. It is a request to observe one specific model,
+and routing onward would answer a question nobody asked — the same reasoning
+that keeps HyperSight pinned rather than routed.
+
+It reaches only the work-stream agent. The inline subagent, the automation
+architect that drafts the automation, and HyperSight keep their own flags: each
+is a distinct agent, and the whole point of giving it a flag was that it can be
+moved on its own.
+
+The set of ids a pin may name is closed — `AGENT_MODEL_OVERRIDES` in
+`@avalon/contracts` — because a pin bypasses the rollout, so what it can reach
+is a reviewed product decision rather than whatever string a client sends. The
+API validates it on write and again on read, which is what lets a model be
+retired from the list without a migration: the work streams still naming it log
+`workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
+is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
+about flags.
 
 ## Evaluation
 

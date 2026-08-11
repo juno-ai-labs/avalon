@@ -35,6 +35,36 @@ export const HarnessFailureCodeSchema = z.enum([
   "ambiguous_external_write"
 ]);
 export type HarnessFailureCode = z.infer<typeof HarnessFailureCodeSchema>;
+
+/**
+ * The OpenRouter models a creator may pin a work stream to from the composer's
+ * developer-mode model selector, in the order the selector lists them. The
+ * first is the one the selector shows before anything is chosen, so it should
+ * stay the model `agent-model-workstream` serves by default.
+ *
+ * This is a *closed* list rather than a free-text model id on purpose: an
+ * override bypasses the Flagship rollout for the work stream it is attached to,
+ * so the set of models that can be reached that way is a product decision
+ * reviewed here rather than whatever string a client sends. Removing a model
+ * from it stops new overrides naming it; work streams already pinned to it fall
+ * back to the flag, because the API re-validates the stored value on read.
+ *
+ * See `docs/FEATURE_FLAGS.md` for how an override composes with the flags.
+ */
+export const AGENT_MODEL_OVERRIDES = [
+  "x-ai/grok-4.3",
+  "x-ai/grok-4.5",
+  "google/gemini-3.6-flash",
+  "google/gemini-3.5-flash",
+  "google/gemini-3-flash-preview",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash-0731",
+] as const;
+export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
+export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
+
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
 export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
   try {
@@ -980,6 +1010,13 @@ export const CreateWorkstreamRequestSchema = z.object({
   openingMessage: z.string().max(50000),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),
+  /**
+   * Pins every run of this work stream to one OpenRouter model, ahead of the
+   * `agent-model-workstream` flag. Sent only by the composer's developer-mode
+   * selector; omitted means the flag decides, which is what every other create
+   * path does.
+   */
+  modelOverride: AgentModelOverrideSchema.optional(),
 }).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0, {
   message: "An opening message must include text or an attachment",
 });
@@ -1045,6 +1082,12 @@ export const CreateAutomationRequestSchema = z.object({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema.default({}),
   resourceIds: z.array(IdSchema).max(20).default([]),
   deliveryTargets: z.array(AutomationDeliveryTargetInputSchema).max(2).default([]),
+  /**
+   * Pins the work stream each run of this automation creates to one OpenRouter
+   * model. Same developer-mode selector as a new work stream, held on the
+   * subscription because the runs it applies to do not exist yet.
+   */
+  modelOverride: AgentModelOverrideSchema.optional(),
 }).superRefine((input, context) => {
   if (input.deliveryTargets.length > 0 && input.scope !== "personal") {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["deliveryTargets"], message: "Result delivery outside Avalon requires a personal automation" });
