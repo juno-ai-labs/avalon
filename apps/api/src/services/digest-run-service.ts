@@ -315,6 +315,16 @@ async function appendDigestBriefMessage(
  * carries its canonical link so the digest can point at the real thing instead
  * of describing it.
  *
+ * The window is the only thing it is told to write from. An earlier version
+ * asked the model to skip what a previous digest had already sent and to cover
+ * again what one had not, judged by a delivery note in the transcript — but that
+ * note is a `system` row, and the protocol projector drops those, so from the
+ * second occurrence onward every earlier digest would read as undelivered and be
+ * restated. The rule was also unnecessary: `cursor_from` already guarantees the
+ * windows do not overlap, and a delivery that failed leaves its window
+ * unconsumed, so its events are in *this* brief rather than only in the older
+ * summary. Nothing has to be inferred from the transcript.
+ *
  * The output contract is Markdown rather than a structured schema, because the
  * run is the ordinary agent loop and its product is a message. The instructions
  * name the small subset the email renderer styles richly — `##` sections,
@@ -362,7 +372,7 @@ export function renderDigestBrief(
     "- Where an item below carries a `link:`, link its name with `[name](url)` the first time it appears in that section. Never invent a URL.",
     "- Lead a bullet with a single emoji only where it earns its place — a decision needed, a blocker, something shipped. Most bullets take none.",
     "- Bold the few phrases that carry the decision. Use `> ` for a quote worth reading verbatim.",
-    "- Summarize only what is new. Earlier digests in this work stream that were actually sent are marked as delivered; do not restate those. A summary with no delivery note never reached them, so cover it again.",
+    "- Write this digest from the source material below and nothing else. Earlier digests are above it in this transcript; they are there for continuity of voice and detail, never to be copied forward or summarized again.",
     "- If an item below is only a fragment and the detail matters, use your tools to read the full context before summarizing it.",
     "- No sign-off, no restating these instructions, no commentary about being an assistant.",
     "",

@@ -933,6 +933,43 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("does not tell an automation author whether an event type is digestible", () => {
+    const plugin = {
+      pluginId: "plugin_github",
+      displayName: "GitHub",
+      icon: "brand-github" as const,
+      description: "Read GitHub.",
+      scope: "workspace" as const,
+      searchAliases: ["git"],
+      systemMessage: "Use GitHub tools.",
+      activityTriggers: [{
+        eventType: "github.check_run.completed",
+        label: "Check run completed",
+        description: "A check run finished.",
+        filterFields: [],
+        digestible: false,
+      }],
+      tools: [],
+    };
+
+    const inspected = __testing.executeAutomationCreatorDiscoveryTool(
+      "plugin_inspect",
+      { pluginId: "plugin_github" },
+      [plugin],
+    ) as { plugin: { activityTriggers: Array<Record<string, unknown>> } };
+
+    // `digestible` answers a question about scheduled digests. It says nothing
+    // about whether an automation may trigger on the event, and it reads
+    // `false` on two thirds of GitHub's triggers — a model building an
+    // automation would reasonably take that as "not available to me".
+    expect(inspected.plugin.activityTriggers[0]).toEqual({
+      eventType: "github.check_run.completed",
+      label: "Check run completed",
+      description: "A check run finished.",
+      filterFields: [],
+    });
+  });
+
   it("canonicalizes tool inputs for stable hashes", () => {
     expect(__testing.canonicalJson({ b: 2, a: { z: 1, y: 0 } })).toBe(
       '{"a":{"y":0,"z":1},"b":2}'
