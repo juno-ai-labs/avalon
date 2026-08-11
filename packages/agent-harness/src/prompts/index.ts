@@ -4,4 +4,5 @@ export * from "./automation-compiler";
 export * from "./semantic-trigger";
 export * from "./types";
 export * from "./workstream";
+export * from "./workstream-description";
 export * from "./work-opportunity";
