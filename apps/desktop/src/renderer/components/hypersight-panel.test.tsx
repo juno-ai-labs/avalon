@@ -106,6 +106,25 @@ describe('HyperSightRail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss HyperSight' }));
     expect(onClose).toHaveBeenCalledTimes(3);
   });
+
+  it('leaves the sidebar open when the block prompt is dismissed with Escape', async () => {
+    const onClose = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <HyperSightRail blockCount={2} onClose={onClose}>
+          <HyperSightPanel hypersight={hypersight} onChange={vi.fn(async () => {})} pending={false} />
+        </HyperSightRail>
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Edit HyperSight prompt' })[0]!);
+    fireEvent.keyDown(await screen.findByRole('textbox', { name: 'Prompt' }), { key: 'Escape' });
+
+    // The dialog is portalled out of the sidebar, but its synthetic events still
+    // reach the sidebar through the React tree; closing HyperSight here would
+    // persist it off for the work stream.
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });
 
 describe('HyperSightPanel', () => {

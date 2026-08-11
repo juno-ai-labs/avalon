@@ -38,6 +38,7 @@ const workstream: WorkstreamDetail = {
 function renderComposer(
   onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void> = vi.fn(async () => undefined),
   sending = false,
+  onAttach: (files: FileList | File[]) => void = vi.fn(),
 ): ReturnType<typeof render> {
   vi.stubGlobal('ResizeObserver', class {
     observe(): void {}
@@ -50,7 +51,7 @@ function renderComposer(
         attachments={[]}
         fileInputRef={createRef<HTMLInputElement>()}
         members={[creator, bob, cara]}
-        onAttach={async () => undefined}
+        onAttach={onAttach}
         onOpenAttachment={() => undefined}
         onRemoveAttachment={() => undefined}
         onRetryAttachment={() => undefined}
@@ -289,6 +290,26 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(marks).toEqual(['@Bob Builder']);
     expect(textarea).toHaveValue('ask @Bob Builder about @nobody');
     expect(highlight).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('attaches an image pasted into the composer without disturbing the draft', () => {
+    const onAttach = vi.fn();
+    renderComposer(undefined, false, onAttach);
+    const textarea = screen.getByLabelText('Message the work stream');
+    fireEvent.change(textarea, { target: { value: 'The crash looks like this:' } });
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [new File(['png'], 'image.png', { type: 'image/png' })],
+        getData: () => '',
+        types: ['Files'],
+      },
+    });
+
+    const [pasted] = onAttach.mock.calls[0]![0] as File[];
+    expect(pasted!.type).toBe('image/png');
+    expect(pasted!.name).toMatch(/^Pasted image \d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.\d{2}\.png$/u);
+    expect(textarea).toHaveValue('The crash looks like this:');
   });
 
   it('hands the draft back to the textarea while an IME composition is open', () => {

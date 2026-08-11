@@ -555,7 +555,15 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         style={{ width: displayedWidth }}
         tabIndex={-1}
       >
-        <RailResizeHandle label="Resize inspector" onResize={setRailWidth} width={displayedWidth} />
+        {/* The keys step the stored width, never the expanded floor: stepping
+            from what is on screen would write the expanded 520 back over the
+            width this person chose the moment they pressed a key. */}
+        <RailResizeHandle
+          displayedWidth={displayedWidth}
+          label="Resize inspector"
+          onResize={setRailWidth}
+          width={railWidth}
+        />
         <header className="rail-header window-drag">
           <div className="rail-title window-no-drag">
             {inspector && <IconButton label="Back to context" onClick={() => inspect(null)}><ArrowLeft size={15} /></IconButton>}
