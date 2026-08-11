@@ -218,6 +218,13 @@ export interface CreateWorkstreamInput {
   workspaceId: string;
   title: string;
   objective: string;
+  /**
+   * Whether a person wrote `objective` or it was derived at creation. Defaults
+   * to `derived`, which is what every path that infers it from an opening
+   * message or a generated prompt produces; only a caller carrying text a
+   * person typed passes `authored`.
+   */
+  descriptionSource?: "authored" | "derived";
   emailAddress: string;
   creatorUserId: string | null;
   openingAuthor:
@@ -317,16 +324,17 @@ export function createDatabase(db: D1DatabaseLike) {
         db
           .prepare(
             `INSERT INTO workstreams
-             (id, workspace_id, title, objective, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
+             (id, workspace_id, title, objective, description_source, email_address, email_route_status, origin_type, created_by_user_id, harness_status,
               next_sequence_number, latest_attention_sequence_number, last_activity_at, created_at, updated_at,
               created_from_opportunity_id, opportunity_version, opportunity_display_prompt_hash, opportunity_execution_prompt_hash)
-             VALUES (?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?)`
+             VALUES (?, ?, ?, ?, ?, ?, 'reserved', 'ad_hoc', ?, 'running', 2, 1, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             workstreamId,
             input.workspaceId,
             input.title,
             input.objective,
+            input.descriptionSource ?? "derived",
             input.emailAddress,
             input.creatorUserId,
             at,

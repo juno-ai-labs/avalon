@@ -26,6 +26,7 @@ export const AGENT_MODEL_ROLES = [
   "activity_structured",
   "work_opportunity_admission",
   "work_opportunity_ranking",
+  "workstream_description",
 ] as const;
 
 export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
@@ -41,6 +42,7 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   activity_structured: "agent-model-activity-structured",
   work_opportunity_admission: "agent-model-work-opportunity-admission",
   work_opportunity_ranking: "agent-model-work-opportunity-ranking",
+  workstream_description: "agent-model-workstream-description",
 };
 
 /** One agent's OpenRouter route plan: the default model, then its fallbacks in order. */
@@ -102,6 +104,7 @@ export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentM
     case "activity_structured":
     case "work_opportunity_admission":
     case "work_opportunity_ranking":
+    case "workstream_description":
       return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     case "hypersight":
       // HyperSight blocks pin one model and never route onward, so a refreshed

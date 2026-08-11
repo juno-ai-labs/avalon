@@ -23,6 +23,7 @@ import {
 } from "../services/hypersight-service";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { SlackAgentService } from "../services/slack-agent-service";
+import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -276,6 +277,19 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     await this.publishBestEffort(input, {
       type: "harness_status_changed",
       status: currentStatus,
+    });
+
+    // The description-refresh loop rides on finished work rather than on an
+    // alarm of its own: a work stream's purpose only moves when something
+    // happens in it, and this is the moment after something did. It throttles
+    // itself, so running it here on every terminal run costs a read on most of
+    // them. It never throws — a description that could not be re-evaluated is
+    // the description the work stream already had.
+    await step.do("refresh-workstream-description", async () => {
+      await refreshWorkstreamDescription(this.env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+      });
     });
     return effectiveOutcome;
   }
