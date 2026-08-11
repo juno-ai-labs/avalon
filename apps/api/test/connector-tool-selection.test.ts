@@ -651,6 +651,12 @@ describe("connector tools selected for harness runs", () => {
     // is platform policy and lives in the work-stream system prompt.
     expect(mail?.systemMessage).toContain("Resolve an unknown recipient address");
     expect(mail?.systemMessage).not.toContain("plausible placeholder");
+    // Worked examples name this connection's own tools, and only the ones its
+    // grants can actually call.
+    expect(mail?.systemMessage).toContain("Worked examples:");
+    expect(mail?.systemMessage).toContain("google_gmail_find_contacts {\"name\"");
+    expect(mail?.systemMessage).toContain("google_calendar_update_event");
+    expect(mail?.systemMessage).toContain("removes everyone else and emails them about it");
     expect(mail?.tools.map((tool) => tool.definition.name)).toEqual([
       "gmail.search",
       "gmail.find_contacts",

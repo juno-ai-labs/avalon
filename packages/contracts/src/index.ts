@@ -1704,3 +1704,30 @@ export type ConnectorActivityTriggerDescriptor = z.infer<typeof ConnectorActivit
 /** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */
 export type ConnectorManifestInput = z.input<typeof ConnectorManifestSchema>;
 export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;
+
+/**
+ * The machine-readable half of a thrown tool failure.
+ *
+ * A tool that throws reaches the model through the harness as a single string,
+ * so any code or remediation it attached — which family of identifier was
+ * expected, that a connection needs reconnecting, what values were available —
+ * is lost exactly where the caller needs it to recover. Reading the shape here
+ * rather than importing a connector's error class keeps the harness free of a
+ * dependency on any one provider package while still surfacing what they all
+ * already carry.
+ */
+export interface StructuredFailureDetail {
+  code: string;
+  details?: Record<string, unknown>;
+}
+
+export function readStructuredFailure(error: unknown): StructuredFailureDetail | null {
+  if (!error || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== "string" || !code) return null;
+  const raw = (error as { details?: unknown }).details;
+  const details = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : undefined;
+  return details ? { code, details } : { code };
+}
