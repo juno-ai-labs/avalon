@@ -448,8 +448,8 @@ const developerSettingsFlagController = new DeveloperSettingsFlagController({
   // is serving an answer it can no longer confirm, and then is not. A quieter
   // level for the recovery would leave the warning that opened it unclosed.
   onAvailabilityChange: (reachable, error) => {
-    if (reachable) console.warn('[avalon] the developer settings flag is readable again');
-    else console.warn('[avalon] could not read the developer settings flag', error);
+    if (reachable) logWarn('avalon', 'the developer settings flag is readable again');
+    else logWarn('avalon', 'could not read the developer settings flag', error);
   },
 });
 
