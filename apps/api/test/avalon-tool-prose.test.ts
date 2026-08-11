@@ -25,6 +25,7 @@ describe("Avalon tool prose coverage", () => {
     const plugins = [
       ...__integrationTesting.createWorkstreamCorePlugins(tools),
       __integrationTesting.createAvalonWorkstreamPlugin(tools),
+      __integrationTesting.createAvalonPeoplePlugin(tools),
       __integrationTesting.createAvalonWebPlugin(tools),
     ].filter((plugin) => plugin !== null);
 

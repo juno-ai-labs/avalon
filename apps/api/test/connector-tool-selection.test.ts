@@ -476,7 +476,7 @@ describe("connector tools selected for harness runs", () => {
       FIRECRAWL_API_KEY: "firecrawl-test-key",
     } as Env;
     const parentTools = await __integrationTesting.loadHarnessTools(runtimeEnv, parentInput);
-    expect(parentTools.plugins).toHaveLength(4);
+    expect(parentTools.plugins).toHaveLength(5);
     expect(parentTools.plugins.flatMap((plugin) => plugin.tools)
       .some((tool) => tool.definition.mode === "write")).toBe(true);
 
@@ -491,14 +491,16 @@ describe("connector tools selected for harness runs", () => {
 
     expect(childTools.plugins.map((plugin) => plugin.canonicalId)).toEqual([
       "avalon:workstream",
+      "avalon:people",
       "avalon:web",
       `connection:${WORKSPACE_CONNECTION_ID}`,
     ]);
     expect(childTools.plugins[0]).toMatchObject({ preload: true, explicit: true });
     expect(childTools.plugins[1]).toMatchObject({ preload: false, explicit: false });
-    expect(childTools.plugins[2]).toMatchObject({ preload: true, explicit: true });
+    expect(childTools.plugins[2]).toMatchObject({ preload: false, explicit: false });
+    expect(childTools.plugins[3]).toMatchObject({ preload: true, explicit: true });
     expect(childTools.tools.every((tool) => tool.definition.mode === "read")).toBe(true);
-    expect(childTools.plugins[2]?.tools.map((tool) => tool.definition.name)).toEqual([
+    expect(childTools.plugins[3]?.tools.map((tool) => tool.definition.name)).toEqual([
       "drive.search",
       "drive.get_metadata",
       "drive.download",
@@ -513,6 +515,9 @@ describe("connector tools selected for harness runs", () => {
       "search",
       "fetch",
       "read_resource",
+      "current_user",
+      "search_users",
+      "list_users",
     ]);
     expect(childTools.coreTools.some((tool) => tool.definition.capability.startsWith("memory.")))
       .toBe(false);
@@ -526,7 +531,7 @@ describe("connector tools selected for harness runs", () => {
       childTools.plugins,
       childTools.frozenConnections,
     )).toEqual({
-      [WORKSPACE_CONNECTION_ID]: childTools.plugins[2]?.tools.map((tool) =>
+      [WORKSPACE_CONNECTION_ID]: childTools.plugins[3]?.tools.map((tool) =>
         tool.definition.capability),
     });
   });
@@ -554,6 +559,9 @@ describe("connector tools selected for harness runs", () => {
       "current_time",
       "read",
       "read_resource",
+      "current_user",
+      "search_users",
+      "list_users",
     ]);
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("search");
     expect(childTools.tools.map((tool) => tool.definition.name)).not.toContain("fetch");

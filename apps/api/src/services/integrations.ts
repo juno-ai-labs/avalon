@@ -3,6 +3,7 @@ import {
   AVALON_CORE_PLUGIN_ID,
   AVALON_DISCOVERY_PLUGIN_ID,
   AVALON_MEMORY_PLUGIN_ID,
+  AVALON_PEOPLE_PLUGIN_ID,
   AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
   AVALON_TABLES_PLUGIN_ID,
   AVALON_WEB_PLUGIN_ID,
@@ -132,6 +133,7 @@ import {
   createMemoryTableTools,
   loadAutomationMemoryTableContext,
 } from "./memory-table-service";
+import { createPeopleTools } from "./people-service";
 
 const BIND_ROUTING_POLICY_VERSION = "bind-10-openrouter-v1";
 const WORKSTREAM_PROMPT_VERSION = "workstream-v6-explicit-execution-authority";
@@ -2247,8 +2249,9 @@ async function createInlineChildHarnessSurface(options: {
     }));
   const childCorePlugins = createWorkstreamCorePlugins(childCoreTools);
   const childWorkstreamPlugin = createAvalonWorkstreamPlugin(childCoreTools);
+  const childPeoplePlugin = createAvalonPeoplePlugin(childCoreTools);
   const childWebPlugin = createAvalonWebPlugin(childCoreTools);
-  const childBuiltinPlugins = [childWorkstreamPlugin, childWebPlugin].filter(
+  const childBuiltinPlugins = [childWorkstreamPlugin, childPeoplePlugin, childWebPlugin].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const childPlugins: HarnessPlugin[] = [...childBuiltinPlugins];
@@ -2337,7 +2340,8 @@ async function createInlineChildHarnessSurface(options: {
       ...childCoreTools,
       ...childPlugins
         .filter((plugin) =>
-          ![AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID].includes(plugin.canonicalId))
+          ![AVALON_PEOPLE_PLUGIN_ID, AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID]
+            .includes(plugin.canonicalId))
         .flatMap((plugin) => plugin.tools),
     ],
     plugins: childPlugins,
@@ -3377,12 +3381,13 @@ async function loadHarnessTools(
   const coreTools = createAvalonTools(env, input);
   const corePlugins = createWorkstreamCorePlugins(coreTools);
   const workstreamPlugin = createAvalonWorkstreamPlugin(coreTools);
+  const peoplePlugin = createAvalonPeoplePlugin(coreTools);
   const webPlugin = createAvalonWebPlugin(coreTools);
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.
   const tools: HarnessTool[] = [...coreTools];
-  const builtinPlugins = [workstreamPlugin, webPlugin].filter(
+  const builtinPlugins = [workstreamPlugin, peoplePlugin, webPlugin].filter(
     (plugin): plugin is HarnessPlugin => plugin !== null,
   );
   const plugins: HarnessPlugin[] = [...builtinPlugins];
@@ -4090,7 +4095,7 @@ function isLoadableBuiltinHarnessPlugin(
   pluginId: string,
   harnessTools: Awaited<ReturnType<typeof loadHarnessTools>>,
 ): boolean {
-  return [AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID].includes(pluginId)
+  return [AVALON_PEOPLE_PLUGIN_ID, AVALON_WEB_PLUGIN_ID, AVALON_WORKSTREAM_PLUGIN_ID].includes(pluginId)
     && harnessTools.plugins.some((plugin) => plugin.canonicalId === pluginId);
 }
 
@@ -4391,6 +4396,28 @@ function createAvalonWorkstreamPlugin(tools: HarnessTool[]): HarnessPlugin | nul
     tools: workstreamTools,
     preload: true,
     explicit: true,
+  };
+}
+
+function createAvalonPeoplePlugin(tools: HarnessTool[]): HarnessPlugin | null {
+  const peopleTools = tools.filter((tool) => tool.definition.capability.startsWith("people."));
+  if (peopleTools.length === 0) return null;
+  return {
+    canonicalId: AVALON_PEOPLE_PLUGIN_ID,
+    modelId: "avalon_people",
+    shortWireName: "people",
+    displayName: "People",
+    searchAliases: ["users", "members", "teammates", "colleagues", "directory", "profile", "account", "who"],
+    description: "Look up who this run is acting for and who else belongs to this Avalon workspace.",
+    systemMessage: [
+      "Use people_current_user when the work depends on who this run is acting for — their name, email, timezone, workspace role, or current workload — instead of inferring it from the transcript.",
+      "Resolve a person named in the request with people_search_users before using their identity. No match and several matches are both answers: name the candidates or ask, and never address a plausible-looking substitute.",
+      "Mention someone as [@Display Name](person:<userId>) using the exact userId these tools returned; the ID is the identity, not the visible label.",
+      "These tools cover Avalon accounts in this workspace only. They are not a connector address book, and a person who is absent here may still exist in a connected system.",
+    ].join(" "),
+    tools: peopleTools,
+    preload: false,
+    explicit: false,
   };
 }
 
@@ -4936,6 +4963,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
   if (input.reason !== "inbound_email") {
     tools.splice(2, 0, ...createFirecrawlWebTools(env));
   }
+  tools.push(...createPeopleTools(env, input));
   tools.push(...createMemoryTools(env, input));
   tools.push(...createMemoryTableTools(env, input));
   return tools;
@@ -5622,6 +5650,7 @@ export const __integrationTesting = {
   assertRunAuthorityStillValid,
   assertSafePublicUrl,
   createAvalonWorkstreamPlugin,
+  createAvalonPeoplePlugin,
   createAvalonWebPlugin,
   createAvalonTools,
   createInlineChildHarnessSurface,

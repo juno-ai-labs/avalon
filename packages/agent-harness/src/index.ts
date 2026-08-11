@@ -1955,6 +1955,7 @@ export function rejectToolModesBeforeCall(
 export const AVALON_DISCOVERY_PLUGIN_ID = "avalon:discovery";
 export const AVALON_CORE_PLUGIN_ID = "avalon:core";
 export const AVALON_MEMORY_PLUGIN_ID = "avalon:memory";
+export const AVALON_PEOPLE_PLUGIN_ID = "avalon:people";
 export const AVALON_TABLES_PLUGIN_ID = "avalon:tables";
 export const AVALON_WEB_PLUGIN_ID = "avalon:web";
 export const AVALON_WORKSTREAM_PLUGIN_ID = "avalon:workstream";

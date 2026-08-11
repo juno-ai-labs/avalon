@@ -52,6 +52,21 @@ const AVALON_TOOL_PROSE: Record<string, { started: string; settled: string; fail
     settled: "Created an artifact",
     failed: "Could not create an artifact",
   },
+  people_current_user: {
+    started: "Checking who this is for",
+    settled: "Checked who this is for",
+    failed: "Could not check who this is for",
+  },
+  people_search_users: {
+    started: "Searching workspace members",
+    settled: "Searched workspace members",
+    failed: "Could not search workspace members",
+  },
+  people_list_users: {
+    started: "Listing workspace members",
+    settled: "Listed workspace members",
+    failed: "Could not list workspace members",
+  },
   memory_search: {
     started: "Searching memory",
     settled: "Searched memory",
