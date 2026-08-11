@@ -264,6 +264,15 @@ Shipped in #412. Design: `docs/PRDs/2026-08-10_composer-drafts/prd.md`.
 Close with a trailer naming the pull request, and the PRD or issue where one
 exists. One line, no heading.
 
+The entry is written and committed before the pull request exists, so its number
+is not knowable at the time. **Adding or correcting that trailer once the pull
+request is open is the one edit the append-only rule permits** — it is about
+finding the change, not about restating why it was made, which is the same
+carve-out [`prds.md`](prds.md#completed-prds-are-frozen) makes for a frozen PRD.
+Write the four fields on the branch, and land the link either by amending before
+the push or in the next commit on the same branch. Nothing above the trailer
+changes.
+
 ### What earns an entry
 
 Not every commit. The test: **would a competent engineer, seeing this code fresh,
@@ -295,7 +304,9 @@ any change that leaves the module's behavior and reasoning exactly as they were.
 - **Append-only.** Never rewrite or delete an entry, and never edit an old one to
   agree with a newer decision. An entry that turned out to be wrong is still the
   true record of what was believed, and knowing that a design was tried and
-  failed is worth as much as knowing what replaced it.
+  failed is worth as much as knowing what replaced it. The trailer is the sole
+  exception, and only to fill in a link that could not exist yet — see
+  [The shape of an entry](#the-shape-of-an-entry).
 - **A reversal is a new entry**, dated the day it was reversed, naming the entry
   it overturns and saying why the first answer did not hold.
 - **Never invent a why.** When you change a module whose reasoning you do not
