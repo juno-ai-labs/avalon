@@ -184,7 +184,7 @@ export interface ResendRegionalEmailServiceOptions {
     workspaceId: string,
     workstreamId: string,
     event: Record<string, unknown>,
-  ) => Promise<void>;
+  ) => Promise<unknown>;
 }
 
 /**
