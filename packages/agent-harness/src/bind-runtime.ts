@@ -627,14 +627,18 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           // dropping it here leaves the model a prose sentence where the fix
           // was structured: which identifier family was expected, whether the
           // connection needs reconnecting, what values were available.
+          //
+          // It travels in `data`, which is the failure variant's declared slot
+          // for "structured recovery context safe to expose to the model".
+          // Excess keys on the result object are silently discarded by
+          // `toolResultMessage`, which a spread would not have revealed.
           const structured = readStructuredFailure(error);
           return {
             toolMessage: toolResultMessage(toolCall.id, {
               success: false,
               kind: "external",
               error: message,
-              ...(structured ? { code: structured.code } : {}),
-              ...(structured?.details ? { details: structured.details } : {}),
+              ...(structured ? { data: structured } : {}),
             }),
           };
         }
