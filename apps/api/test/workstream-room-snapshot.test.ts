@@ -84,6 +84,40 @@ describe("work-stream room snapshot", () => {
     });
   });
 
+  // A `scheduled` run is inserted with a NULL `started_at`, and SQLite sorts
+  // NULLs last under DESC. Ordering by it would hand a subscriber the previous,
+  // finished run — and because a snapshot replaces the whole detail, that wrong
+  // answer would overwrite the right one the client already had.
+  it("reports the newest run even when it has not started yet", async () => {
+    const database = seededDatabase();
+    const insert = database.prepare(
+      `INSERT INTO harness_runs
+       (id, workspace_id, workstream_id, origin, execution_principal_json, status, started_at, completed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insert.run(
+      "00000000-0000-7000-8000-0000000000c1", workspaceId, workstreamId, "opening_message",
+      JSON.stringify({ type: "user", userId: readerId }), "completed",
+      "2026-08-11T09:00:00.000Z", "2026-08-11T09:00:30.000Z", "2026-08-11T09:00:00.000Z",
+    );
+    insert.run(
+      "00000000-0000-7000-8000-0000000000c2", workspaceId, workstreamId, "automation_run",
+      JSON.stringify({ type: "user", userId: readerId }), "scheduled",
+      null, null, "2026-08-11T10:00:00.000Z",
+    );
+    const env = { DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" } as unknown as Env;
+
+    const snapshot = await loadWorkstreamRoomSnapshot(env, {
+      workspaceId,
+      workstreamId,
+      viewerUserId: readerId,
+      viewers: [],
+    });
+
+    expect(snapshot.latestHarnessRunId).toBe("00000000-0000-7000-8000-0000000000c2");
+    expect(snapshot.latestHarnessRun).toMatchObject({ status: "scheduled", startedAt: null });
+  });
+
   it("stops reporting a work stream as being named long after anything could be", async () => {
     const database = seededDatabase();
     database.prepare("UPDATE workstreams SET title_status = 'naming', created_at = ? WHERE id = ?")

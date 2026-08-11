@@ -17,7 +17,7 @@ attempt at the opposite that the changelog records.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, the create mutation, and `useHomeHandOff`. |
+| `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, both create mutations, `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built — and `useHomeHandOff`. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
@@ -81,25 +81,46 @@ own-turn treatment. The header shows `TitleSkeleton` — the same skeleton the c
 the header does not change hands at the swap; it is already waiting for the same
 name.
 
-Suggested work opens onto the same surface **without** an opening turn: that one
-is written by the agent from the expanded prompt, and there is nothing on the
-client that could stand in for it without inventing what it says.
+Suggested work opens onto the same surface **without** an opening turn, and with
+an empty composer, and seeds its destination the same way. That work stream's opening message is the agent's, written
+from the expanded prompt, and there is nothing on the client that could stand in
+for it without inventing what it says; and anything sitting in the composer is a
+draft for a work stream nobody has started, so showing it beside one that has
+just been started would attach it to the wrong thing. The draft is held back
+rather than discarded — `LaunchingWorkstream.origin` is what distinguishes the
+two launchers — and it returns the moment the launch ends, either way.
 
 ### The room snapshot has to describe the run
 
 A work stream's socket sends a `snapshot` on subscribe, and the client replaces
 its whole cached detail with it. The snapshot therefore has to carry everything
 `GET /workstreams/:id` carries, and it now describes the latest harness run
-rather than naming only its id — both read the same columns and map them through
-the same `memberSafeHarnessError`.
+rather than naming only its id — both read the same columns, in the same order,
+and map them through the same `memberSafeHarnessError`.
+
+The order matters as much as the columns. A `scheduled` run is inserted with a
+NULL `started_at`, and SQLite sorts NULLs last under `DESC`, so ordering by it
+would select an *older* run — and a snapshot does not merge, it replaces, so that
+wrong answer would overwrite the right one the client already held. Both queries
+order by `created_at`.
 
 ### The swap
 
-On success the existing seeding runs — the synthesized `WorkstreamDetail`, the
-opening message, and a null message cursor are written into the query cache
-before `navigate`. The work-stream screen therefore never shows its
-`Opening work stream…` state for a stream that was just created: it paints
-immediately, with the same turn in the same place, at the same geometry.
+On success the destination is seeded before `navigate`: a `WorkstreamDetail`
+built by `launchedWorkstreamDetail`, the transcript, and a null message cursor.
+The work-stream screen shows its full-screen `Opening work stream…` state
+whenever *either* of those two queries is loading, so seeding one is not enough —
+both launchers write both, and a work stream that was just created therefore
+never shows it. It paints immediately, with the same turn in the same place, at
+the same geometry.
+
+The two launchers differ only in the transcript. A typed create authored its
+opening turn and seeds it. Suggested work's is the agent's, expanded server-side
+from the prompt, so it seeds an empty transcript and lets the refetch bring the
+real turn a moment later — and the work-stream screen withholds its
+`Ready to begin` empty state while a run is active, because inviting someone to
+start a work stream an agent is already working on contradicts the timer beside
+it.
 
 ### What the server makes you wait for
 
@@ -153,8 +174,16 @@ than whichever rejection landed first.
 - **The pre-flight checks run ahead of the reservation.** A create that is going
   to be refused must not leave an address reserved for a work stream that never
   exists.
+- **Both launchers seed both queries, through `launchedWorkstreamDetail`.** The
+  work-stream screen loads on either query being absent, so seeding one of the
+  two still lands on the full-screen orb; and two hand-built details would drift
+  into one path quietly losing its work timer at the navigation.
 - **Concurrent refusals are reported in a fixed order.** The pre-flight pair is
   settled and rethrown in order, so one bad request always gets the same code.
+- **The room snapshot answers exactly what `GET /workstreams/:id` answers.** Same
+  columns, same ordering, same error mapping. A snapshot replaces the client's
+  whole detail rather than merging into it, so any field the two disagree on is a
+  field where the socket overwrites the truth with something else.
 
 ## Boundary
 
@@ -171,7 +200,8 @@ contract, not this one's. Draft text and attachments belong to
 submit and restores it on failure, and changes nothing else about it. Address
 allocation and delivery belong to
 [`WORKSTREAM_EMAIL_ADDRESSES.md`](WORKSTREAM_EMAIL_ADDRESSES.md); this module
-only decides that activation happens after the response. Run admission, leases,
+only decides that activation stays on the create path, ahead of the response.
+Run admission, leases,
 and scope belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
 
 ## Failure modes and limits
@@ -215,9 +245,13 @@ and scope belong to [`AGENT_HARNESS.md`](AGENT_HARNESS.md).
   snapshot describes the latest run rather than naming its id. The snapshot
   replaces the client's whole detail, so a field dropped there is invisible until
   something notices a missing timer.
-- These are component and service tests, so neither sees the transition. **A
-  change to the animation or to either state's geometry has to be looked at in a
-  real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
+- `apps/desktop/src/renderer/styles/app.css.node.test.ts` — guards the one thing
+  a component test cannot see: that the launching state states no geometry of its
+  own. It reads the stylesheet from disk, so it is typed by `tsconfig.node.json`
+  and named `.node.test.ts` to keep `node:fs` out of the renderer program.
+- These are component, stylesheet, and service tests, so none of them sees the
+  transition. **A change to the animation or to either state's geometry still has
+  to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Regional impact
 

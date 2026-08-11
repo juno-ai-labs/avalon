@@ -1387,7 +1387,12 @@ export function WorkstreamScreen(): React.JSX.Element {
             </div>
           )}
           {olderMessagesError && <InlineError>{olderMessagesError}</InlineError>}
-          {visibleTranscript.length === 0 && !activeElicitation ? (
+          {/* Not while a run is going. A work stream opened the instant it was
+              created has an empty transcript and an agent already working on
+              it, and inviting the person to start it is both wrong and the
+              opposite of what the timer below says. The turn arrives moments
+              later; until then the timer is the whole of the state. */}
+          {visibleTranscript.length === 0 && !activeElicitation && !runTiming?.active ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
             <div
