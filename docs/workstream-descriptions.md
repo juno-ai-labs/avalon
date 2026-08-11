@@ -199,7 +199,7 @@ both look identical by the time the loop reads them, and a line someone wrote
 deliberately would be as easy to overwrite as a first message that got copied
 into the field.
 
-Migration `0057` backfills `authored` for the ad-hoc work streams that can still
+Migration `0058` backfills `authored` for the ad-hoc work streams that can still
 be shown to have been authored: those whose description is not simply their
 opening message. It runs once and cannot be re-run, so it also excludes the two
 shapes where "differs from the opening message" is not evidence of a person — an
