@@ -2330,6 +2330,14 @@ pre {
 .automation-plugin-copy p { color: #aaa9a2; font-size: 9.5px; margin: 5px 0 0; }
 .automation-plugin-tools { color: #85847d; font-size: 8.5px; margin-top: 3px; }
 .automation-plugin-empty { color: var(--muted); font-size: 9.5px; margin: 0; }
+.automation-plugin-empty svg { margin-right: 4px; vertical-align: -2px; }
+.automation-system-prompt > header { align-items: center; }
+.automation-system-prompt > header .button-quiet { flex: 0 0 auto; margin: -4px -6px -4px 12px; }
+.automation-system-prompt-body { background: #181916; border: 1px solid #343530; border-radius: 7px; color: #aaa9a2; font-family: var(--mono); font-size: 9.5px; line-height: 1.6; margin: 0; max-height: 320px; overflow: auto; padding: 10px; white-space: pre-wrap; word-break: break-word; }
+.automation-system-prompt-body:focus-visible { border-color: rgba(206, 220, 0, .45); outline: none; }
+.automation-system-prompt-actions { align-items: center; display: flex; justify-content: space-between; margin-top: 7px; }
+.automation-system-prompt-actions small { color: var(--muted); font-size: 9px; }
+.automation-system-prompt-actions .button-quiet { margin: -4px -6px; }
 .template-subscribe-card { background: #22231f; border: 1px solid #3d3e38; border-radius: 10px; margin: auto; max-width: 620px; padding: 22px; width: 100%; }
 .template-subscribe-card > .button-quiet { margin: -8px 0 22px -8px; }
 .template-subscribe-card > .template-icon { margin-bottom: 14px; }

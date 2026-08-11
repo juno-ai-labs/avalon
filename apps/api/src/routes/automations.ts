@@ -13,6 +13,7 @@ import {
   CreateAutomationRequestSchema,
   IdSchema,
   ModelPluginIdSchema,
+  ScopeSchema,
   TimestampSchema,
   WorkstreamSchema,
 } from "@avalon/contracts";
@@ -21,6 +22,7 @@ import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { getAuth } from "../middleware/auth";
 import { logEvent } from "../observability/logger";
+import { renderAutomationDraftSystemPrompt } from "../services/automation-draft-system-prompt";
 import { AutomationService } from "../services/automation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -54,6 +56,8 @@ const TemplatePageSchema = z.object({
     activitySources: z.array(ConnectorActivityTriggerDescriptorSchema),
   })),
 });
+const DraftSystemPromptRequestSchema = z.object({ draft: AutomationDraftSchema, scope: ScopeSchema });
+const DraftSystemPromptSchema = z.object({ systemPrompt: z.string().min(1) });
 const PublishedTemplateSchema = z.object({ templateId: IdSchema, latestVersionId: IdSchema });
 const SharedSubscriptionSchema = z.object({ templateId: IdSchema });
 const TemplateVersionSchema = z.object({ id: IdSchema, versionNumber: z.number().int().positive() });
@@ -110,6 +114,20 @@ automationRoutes.post("/draft", zValidator("json", CompileAutomationRequestSchem
   return c.json(AutomationDraftSchema.parse(
     await new AutomationService(c.env, getAuth(c)).compile(input, c.get("requestId"))));
 });
+/**
+ * The system prompt a run of this draft would start from, for the create
+ * screen's developer-mode viewer. It reads nothing and writes nothing: the
+ * draft travels in the request the way it does to `POST /automations`, because
+ * a draft lives in the client until it is created.
+ *
+ * Deliberately not gated on `assertScopeAllowed`. The architect can suggest a
+ * workspace automation to a member who may not create one, and refusing to
+ * render their own draft's prompt would take the viewer away from exactly the
+ * person looking at that suggestion. Nothing here is privileged: the response
+ * is the caller's own draft rendered into standing policy text.
+ */
+automationRoutes.post("/draft/system-prompt", zValidator("json", DraftSystemPromptRequestSchema), (c) =>
+  c.json(DraftSystemPromptSchema.parse({ systemPrompt: renderAutomationDraftSystemPrompt(c.req.valid("json")) })));
 automationRoutes.post("/", zValidator("json", CreateAutomationRequestSchema), async (c) =>
   c.json(AutomationDetailSchema.parse(await new AutomationService(c.env, getAuth(c)).create(c.req.valid("json"))), 201));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
