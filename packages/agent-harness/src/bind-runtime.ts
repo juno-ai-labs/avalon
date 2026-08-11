@@ -54,6 +54,8 @@ import {
   type HarnessToolResult,
   type ModelMessage,
   type OpenRouterProviderError,
+  type PluginAuthorization,
+  type PluginAuthorizationOccasion,
   type RunHarnessInput,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
@@ -1083,6 +1085,13 @@ async function createPluginRuntime(
     if (!registry) throw new Error("Plugin registry is not initialized");
     return registry;
   };
+  // A host that supplies no port authorizes everything it made eligible.
+  const reauthorize = async (
+    id: string,
+    occasion: PluginAuthorizationOccasion,
+  ): Promise<PluginAuthorization> =>
+    await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id, occasion))
+      ?? "authorized";
   const discovery = buildPlugin({
     canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
     modelId: "avalon_discovery",
@@ -1091,7 +1100,7 @@ async function createPluginRuntime(
     // ordinary plugin receives its short name through stableWireToolName.
     shortWireName: "",
     description: "Discover and activate plugins available to this run.",
-    systemMessage: "Plugins are groups of related tools available to this run. When a request needs an inactive capability, load the relevant available plugin before answering. Before claiming that a capability or its data is unavailable, inspect the compact catalog and, when needed, use list_plugins or search_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
+    systemMessage: "Plugins are groups of related tools available to this run. When a request needs an inactive capability, load the relevant available plugin before answering. Asking a person for something counts as answering: a capability listed in the catalog is available to this run whether or not it is loaded, so a fact one of those plugins could look up is not a fact you are missing. Before claiming that a capability or its data is unavailable, or requesting it from a person, inspect the compact catalog and, when needed, use list_plugins or search_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
     preload: true,
     explicit: true,
     tools: AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
@@ -1124,8 +1133,18 @@ async function createPluginRuntime(
         if (!eligibleIds.has(id) || activeRegistry.isCoreName(id)) {
           return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
         }
-        if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
+        const authorization = await reauthorize(id, "activation");
+        if (authorization === "denied") {
           return { output: { error: "plugin_not_authorized" }, summary: "Plugin is no longer authorized" };
+        }
+        if (authorization === "indeterminate") {
+          // The host could not reach an authorization decision. Reporting that
+          // as a revoked grant would send the run off to explain a permission
+          // problem that may not exist, so the transient outcome says so.
+          return {
+            output: { error: "plugin_authorization_unavailable" },
+            summary: "Plugin authorization could not be verified",
+          };
         }
         await requiredPort("Plugin activation persistence failed", () => input.persistActivation?.(id));
         const plugin = activeRegistry.get(id)!;
@@ -1233,9 +1252,10 @@ async function createPluginRuntime(
     canonicalizeName: registry.canonicalizeName,
     resolve: async (id) => {
       if (!eligibleIds.has(id)) return "unknown";
-      return await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false
-        ? "unreachable"
-        : true;
+      // Bind's rehydration vocabulary has one drop reason, so a denial and an
+      // unverifiable plugin both land on `unreachable`; the host distinguishes
+      // them in its own log when it produces the verdict.
+      return await reauthorize(id, "activation") === "authorized" ? true : "unreachable";
     },
   });
   for (const id of restored.active) active.add(id);
@@ -1254,7 +1274,7 @@ async function createPluginRuntime(
   const reauthorizeActive = async () => {
     for (const id of [...active]) {
       if (registry.isCoreName(id)) continue;
-      if (await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id)) === false) {
+      if (await reauthorize(id, "continuation") !== "authorized") {
         active.delete(id);
         await input.onActivationDropped?.({ name: id, reason: "unreachable" });
       }
@@ -1467,7 +1487,7 @@ function renderStableSystemPrompt(
     maxCatalogTokens: catalogTokens,
   });
   const pluginSection = pluginCatalog
-    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available plugin, call load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority.\n\n${pluginCatalog}`
+    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available plugin, call load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority. An available plugin is part of this run's capability, not a suggestion: read this list before concluding that something cannot be looked up, because the tools you can see right now are only the ones already loaded.\n\n${pluginCatalog}`
     : "";
   const activeInstructions = activeSections.length
     ? `# Active Plugin Instructions\n${activeSections.join("\n\n")}`

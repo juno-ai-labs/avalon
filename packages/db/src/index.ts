@@ -211,7 +211,10 @@ function toWorkstream(row: Record<string, unknown>): Workstream {
     updatedAt: String(row.updated_at),
     archivedAt: row.archived_at == null ? null : String(row.archived_at),
     scope: row.scope === "personal" ? "personal" : "workspace",
-    systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest")
+    systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
+    // Nothing is pinned at the moment it is created, and this mapper has no
+    // viewer to ask anyway — the per-viewer read is in `mappers/workstream.ts`.
+    pinPosition: null
   };
 }
 

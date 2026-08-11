@@ -1,5 +1,6 @@
 import {
   ConnectorError,
+  isRevokedGrantError,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
@@ -8,6 +9,9 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+
+/** Waits before a rotation gives up rather than spinning to the caller's deadline. */
+const ROTATION_WAIT_ATTEMPTS = 8;
 
 const CredentialRowSchema = z.object({
   encrypted_credentials: z.string().min(1),
@@ -93,25 +97,166 @@ export async function ensureFreshConnectorCredentials(
       return;
     } catch (error) {
       await releaseLease(env.DB, connection, leaseId);
-      if (error instanceof ConnectorError && error.code === "unauthorized") {
-        await env.DB.prepare(
-          `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
-        ).bind(
-          JSON.stringify({
-            code: "connector_reauthorization_required",
-            message: "Reconnect this connector account",
-            reconnectRequired: true,
-            reason: "authorization_failed",
-          }),
-          nowIso(),
-          connection.id,
-          connection.workspaceId,
-        ).run();
-      }
+      // Only a refusal that says so. `unauthorized` alone is what a token
+      // endpoint yields for `invalid_client` or a malformed request of ours —
+      // Avalon's configuration being wrong, which no member can fix by
+      // reconnecting an account that still works. Adapters mark a genuinely
+      // dead grant with `reconnectRequired`, matching what the credential door
+      // already required.
+      if (isReconnectRequired(error)) await markNeedsReconnect(env.DB, connection);
       throw error;
     }
   }
+}
+
+/**
+ * Whether the provider said the grant itself is gone, not merely that a call
+ * failed.
+ *
+ * An adapter that classified the failure itself is believed outright — that is
+ * the contract, and it is the only thing that can read a provider's private
+ * vocabulary (Slack answers a refused refresh with HTTP 200 and
+ * `{ok: false, error: "token_revoked"}`, which no status test can see).
+ *
+ * When an adapter states nothing, the fallback is deliberately *not* silence.
+ * Requiring the flag makes forgetting it strand a connection: the row stays
+ * `healthy`, every run drops the plugin, and nobody is ever prompted — a
+ * failure that is invisible until someone happens to test the connection.
+ * `isRevokedGrantError` reads the provider's own OAuth code instead, so a named
+ * `invalid_client` or `invalid_request` — Avalon's configuration being wrong,
+ * which no member can fix by reconnecting a working account — still declines to
+ * mark, while an unclassifiable 400/401/403 from a token endpoint does.
+ */
+function isReconnectRequired(error: unknown): boolean {
+  if (!(error instanceof ConnectorError) || error.code !== "unauthorized") return false;
+  if (
+    typeof error.details === "object"
+    && error.details !== null
+    && "reconnectRequired" in error.details
+  ) {
+    return error.details.reconnectRequired === true;
+  }
+  return isRevokedGrantError(error);
+}
+
+/**
+ * Rotates a credential the provider has just refused, under the same lease
+ * that serializes expiry-driven refreshes.
+ *
+ * A rotating refresh token is single-use. Two calls that are in flight together
+ * and are both refused would otherwise each redeem the stored one, and the
+ * loser's `invalid_grant` would mark a connection `needs_reconnect` that had in
+ * fact just been rotated successfully by its sibling. Serializing through the
+ * lease makes the second caller wait and then discover the sibling's result:
+ * credentials that differ from the ones that were refused are the sibling's
+ * rotation, and are adopted rather than redeemed over.
+ */
+export async function rotateConnectorCredentials(
+  env: CredentialEnv,
+  connection: ConnectorConnectionContext,
+  adapter: ResolvedConnectorAdapter,
+  signal: AbortSignal,
+  refused: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!adapter.refreshCredentials) {
+    throw new ConnectorError("unauthorized", "This connector cannot rotate its credentials");
+  }
+  let attempt = 0;
+  while (true) {
+    signal.throwIfAborted();
+    const leaseId = crypto.randomUUID();
+    const claimed = await env.DB.prepare(
+      `UPDATE connector_connections SET
+         credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?
+       WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+         AND (credential_refresh_lease_id IS NULL OR credential_refresh_lease_expires_at < ?)
+       RETURNING encrypted_credentials, credential_iv, credential_key_version`,
+    ).bind(
+      leaseId,
+      new Date(Date.now() + 2 * 60_000).toISOString(),
+      connection.id,
+      connection.workspaceId,
+      nowIso(),
+    ).first<Record<string, unknown>>();
+
+    if (!claimed) {
+      const current = await loadCredentials(env, connection);
+      if (!sameCredentials(current, refused)) return current;
+      // Bounded and backed off. A waiter polling flat out re-reads D1 ~300
+      // times under the default tool deadline, and a lease a crashed sibling
+      // left behind pushes that to its two-minute expiry with the waiter
+      // spinning throughout. This path is reached on rejection, where several
+      // in-flight calls are likelier to pile onto one connection than they are
+      // on the expiry route.
+      attempt += 1;
+      if (attempt > ROTATION_WAIT_ATTEMPTS) {
+        throw new ConnectorError("provider_error", "Connector credentials are still being rotated by another request");
+      }
+      await abortableDelay(Math.min(100 * 2 ** (attempt - 1), 2_000), signal);
+      continue;
+    }
+
+    try {
+      const current = await decryptCredentials(env, connection.id, CredentialRowSchema.parse(claimed));
+      if (!sameCredentials(current, refused)) {
+        await releaseLease(env.DB, connection, leaseId);
+        return current;
+      }
+      const refreshed = await adapter.refreshCredentials({ ...connection, credentials: current }, signal);
+      const encrypted = await encryptString(
+        JSON.stringify(refreshed),
+        env.CONNECTOR_CREDENTIALS_KEY,
+        connection.id,
+      );
+      const persisted = await env.DB.prepare(
+        `UPDATE connector_connections SET
+           encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
+           credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL,
+           updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+           AND credential_refresh_lease_id = ?
+         RETURNING id`,
+      ).bind(
+        encrypted.ciphertext,
+        encrypted.iv,
+        Number(env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+        nowIso(),
+        connection.id,
+        connection.workspaceId,
+        leaseId,
+      ).first<{ id: string }>();
+      if (!persisted) throw new ConnectorError("provider_error", "Connector credentials changed while they were being rotated");
+      return refreshed;
+    } catch (error) {
+      await releaseLease(env.DB, connection, leaseId);
+      if (isReconnectRequired(error)) await markNeedsReconnect(env.DB, connection);
+      throw error;
+    }
+  }
+}
+
+function sameCredentials(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function markNeedsReconnect(
+  database: D1Database,
+  connection: Pick<ConnectorConnectionContext, "id" | "workspaceId">,
+): Promise<void> {
+  await database.prepare(
+    `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
+     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+  ).bind(
+    JSON.stringify({
+      code: "connector_reauthorization_required",
+      message: "Reconnect this connector account",
+      reconnectRequired: true,
+      reason: "authorization_failed",
+    }),
+    nowIso(),
+    connection.id,
+    connection.workspaceId,
+  ).run();
 }
 
 function needsRefresh(credentials: Record<string, unknown>, minimumValidityMs: number): boolean {

@@ -1,5 +1,10 @@
 import {
   ConnectorError,
+  GoogleCapabilityScopes,
+  GranolaCapabilities,
+  LinearCapabilityScopes,
+  SlackCapabilityScopes,
+  SlackWorkspaceCapabilities,
   assertGitHubCapabilitiesGranted,
   connectorCapabilitySupportsScope,
   createGranolaWebhookEndpoint,
@@ -7,14 +12,11 @@ import {
   deleteGranolaWebhookEndpoint,
   discoverGitHubConnectionRepositories,
   getGitHubInstallation,
-  GoogleCapabilityScopes,
-  GranolaCapabilities,
-  LinearCapabilityScopes,
-  SlackCapabilityScopes,
-  SlackWorkspaceCapabilities,
+  type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
   type GitHubWebhookResourceDiscovery,
   type GitHubWebhookResourceHint,
+  type ResolvedConnectorAdapter,
   type VerifiedGranolaWebhook,
 } from "@avalon/connectors";
 import type {
@@ -36,7 +38,7 @@ import { encryptString, openString, randomToken, sealString, sha256 } from "../l
 import { connectorAttemptTarget, normalizeConnectorOAuthErrorCode } from "../lib/desktop-handoff";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
 import { createGitHubInstallState } from "../lib/github-install-state";
-import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -111,6 +113,36 @@ const providerCapabilityScopes: Record<OAuthConnectorProvider, Record<string, re
   },
   slack: SlackCapabilityScopes,
 };
+
+/**
+ * Runs an adapter's repair before its health check, and reports what happened.
+ *
+ * A repair never fails the test: the health check is the answer being asked
+ * for, and a connection that could not be repaired still has a state worth
+ * reporting. But the outcome is returned rather than only logged — a connection
+ * whose delivery is still broken must not read the same as one just fixed.
+ */
+async function attemptConnectorRepair(
+  env: Env,
+  adapter: { repair?: ResolvedConnectorAdapter["repair"] },
+  connection: AuthorizedConnectorConnection,
+  identity: { connectionId: string; connectorType: string },
+): Promise<string | null> {
+  if (!adapter.repair) return null;
+  try {
+    const repair = await adapter.repair(connection, AbortSignal.timeout(10_000));
+    return repair.repaired ? repair.message ?? "Repaired the connection" : null;
+  } catch (error) {
+    logWarn(env, "connector_repair_failed", {
+      connection_id: identity.connectionId,
+      connector_type: identity.connectorType,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return error instanceof Error
+      ? `A repair was attempted and failed: ${error.message}`
+      : "A repair was attempted and failed";
+  }
+}
 
 export class ConnectionService {
   constructor(private readonly env: Env, private readonly auth?: AuthContext) {}
@@ -1008,21 +1040,31 @@ export class ConnectionService {
     const connection = await this.loadAuthorized(id);
     const context = await this.context(connection);
     const adapter = this.registry().get(connection.connector_type);
-    let before = JSON.stringify(context.credentials);
+    const before = JSON.stringify(context.credentials);
     let result: { ok: boolean; message: string; reconnectRequired?: boolean };
+    let repairOutcome: string | null = null;
     try {
-      if (connection.status === "healthy") {
-        await ensureFreshConnectorCredentials(
-          this.env,
-          context,
+      result = await withAuthorizedConnection(
+        this.env,
+        {
+          connection: context,
           adapter,
-          AbortSignal.timeout(10_000),
-        );
-        // The refresh coordinator persists rotating credentials itself. Only
-        // persist mutations made by the health check below a second time.
-        before = JSON.stringify(context.credentials);
-      }
-      result = await adapter.healthCheck(context);
+          signal: AbortSignal.timeout(10_000),
+          connectionStatus: String(connection.status),
+        },
+        async (authorized) => {
+          // Testing a connection is the one moment somebody has asked Avalon to
+          // put it right, so this is where a provider-side repair belongs — not
+          // in the health check, which reauthorization runs on every plugin
+          // activation. A repair that fails must not fail the test: the check
+          // below is still the answer being asked for.
+          repairOutcome = await attemptConnectorRepair(this.env, adapter, authorized, {
+            connectionId: String(connection.id),
+            connectorType: String(connection.connector_type),
+          });
+          return adapter.healthCheck(authorized, AbortSignal.timeout(10_000));
+        },
+      );
     } catch (error) {
       if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
       result = { ok: false, message: error.message, reconnectRequired: true };
@@ -1063,7 +1105,13 @@ export class ConnectionService {
         }
       }
     }
-    if (JSON.stringify(context.credentials) !== before) {
+    // The door persists what it and the health check changed, but only for a
+    // connection D1 still holds as healthy. A probe that revives a
+    // `needs_reconnect` connection is the case that write skips, so the
+    // identity a successful check recovered is stored here instead — and only
+    // for that case, or a healthy connection would be encrypted and written
+    // twice for one test.
+    if (connection.status !== "healthy" && JSON.stringify(context.credentials) !== before) {
       await this.persistCredentials(connection, context.credentials);
     }
     if (result.ok && connection.connector_type === "granola" && connection.scope === "personal") {
@@ -1091,6 +1139,7 @@ export class ConnectionService {
         ).run();
       }
     }
+    if (repairOutcome) result = { ...result, message: `${result.message}. ${repairOutcome}` };
     await this.env.DB.prepare(
       `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
     ).bind(
@@ -1112,7 +1161,17 @@ export class ConnectionService {
     let remoteRevocation: "skipped" | "succeeded" | "failed" = "skipped";
     try {
       if (mayRevokeRemotely && adapter.revoke) {
-        await adapter.revoke(await this.context(connection), AbortSignal.timeout(15_000));
+        const signal = AbortSignal.timeout(15_000);
+        await withAuthorizedConnection(
+          this.env,
+          {
+            connection: await this.context(connection),
+            adapter,
+            signal,
+            connectionStatus: String(connection.status),
+          },
+          (authorized) => adapter.revoke!(authorized, signal),
+        );
         remoteRevocation = "succeeded";
       }
     } catch {
@@ -1343,16 +1402,11 @@ export class ConnectionService {
       );
     }
 
-    const health = await adapter.healthCheck({
-      id: "x-installation-probe",
-      workspaceId: auth.workspaceId,
-      scope: "workspace",
-      ownerUserId: null,
-      grantedScopes: capabilities,
-      credentials: {},
-      cursor: {},
-      config: { region: this.env.AVALON_REGION },
-    });
+    // No connection exists yet, and X authenticates with the regional
+    // TwitterAPI.io key rather than per-connection credentials. The
+    // connectionless health check is the accurate probe here; a synthetic
+    // context would only be claiming a freshness nothing established.
+    const health = await adapter.healthCheck();
     if (!health.ok) throw new ApiError(503, "x_connector_unhealthy", health.message);
 
     const id = newId();
@@ -2464,6 +2518,7 @@ function assertLinearNativeAgentCapabilityEnabled(
 }
 
 export const __connectionServiceTesting = {
+  attemptConnectorRepair,
   reconcileGoogleAccount,
   googleConnectionDisplayName,
   googleProviderScopesForCapabilities,

@@ -169,11 +169,23 @@ const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string;
   post: { started: "Posting", settled: "Posted", preposition: "to" },
   reply: { started: "Replying", settled: "Replied", preposition: "in" },
   comment: { started: "Commenting", settled: "Commented", preposition: "in" },
-  // The key is a tool's last name segment, which is usually its verb but not
-  // always. `gmail.find_contacts` ends in its object, and leaving it to the
-  // generic fallback would label a contact lookup with the same "Reviewed
-  // <connector>" row every other unrecognized call gets.
-  contacts: { started: "Looking up contacts in", settled: "Looked up contacts in" },
+};
+
+/**
+ * Tools whose name ends in their object rather than their verb, keyed by the
+ * whole action path.
+ *
+ * A leaf key cannot express these: `gmail.read_profile` and Slack's
+ * `read_user_profile` both end in `profile`, so a leaf-keyed entry for one
+ * labels the other — reading a colleague's Slack profile as "the connected
+ * account". The leaf map above is verbs, which collide harmlessly because they
+ * mean the same thing wherever they appear; anything named for its object has
+ * to carry the surface it belongs to.
+ */
+const CONNECTOR_TOOL_PROSE: Record<string, { started: string; settled: string; preposition?: string }> = {
+  gmail_find_contacts: { started: "Looking up contacts in", settled: "Looked up contacts in" },
+  gmail_read_profile: { started: "Checking the connected account on", settled: "Checked the connected account on" },
+  gmail_create_draft: { started: "Drafting in", settled: "Drafted in" },
 };
 
 /**
@@ -181,12 +193,13 @@ const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string;
  * prefix is derived from the model plugin id, so the action is recoverable
  * without a registry lookup on the read path.
  */
-function connectorActionKey(toolName: string, pluginId: string): string {
+function connectorActionPath(toolName: string, pluginId: string): string {
   const prefix = pluginId.replace(/^plugin_/u, "").slice(0, 48);
-  const leaf = prefix && toolName.startsWith(`${prefix}_`)
-    ? toolName.slice(prefix.length + 1)
-    : toolName;
-  const segments = leaf.split("_").filter(Boolean);
+  return prefix && toolName.startsWith(`${prefix}_`) ? toolName.slice(prefix.length + 1) : toolName;
+}
+
+function connectorActionKey(toolName: string, pluginId: string): string {
+  const segments = connectorActionPath(toolName, pluginId).split("_").filter(Boolean);
   return segments[segments.length - 1] ?? "";
 }
 
@@ -225,7 +238,9 @@ export function toolActivityName(input: {
     // One wording for both modes on failure: the call did not reach the
     // provider, so saying what it would have done there would overstate it.
     if (input.status === "failed") return `Could not reach ${owner}`;
-    const action = CONNECTOR_ACTION_PROSE[connectorActionKey(input.toolName, input.plugin?.pluginId ?? "")];
+    const pluginId = input.plugin?.pluginId ?? "";
+    const action = CONNECTOR_TOOL_PROSE[connectorActionPath(input.toolName, pluginId)]
+      ?? CONNECTOR_ACTION_PROSE[connectorActionKey(input.toolName, pluginId)];
     if (!action) return input.status === "started" ? `Reviewing ${owner}` : `Reviewed ${owner}`;
     const verb = input.status === "started" ? action.started : action.settled;
     return action.preposition ? `${verb} ${action.preposition} ${owner}` : `${verb} ${owner}`;

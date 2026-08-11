@@ -30,6 +30,7 @@ import { newId, nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { linearNativeAgentEnabled, numericEnv } from "../env";
 import { encryptString, timingSafeEqualText } from "../lib/crypto";
+import { withAuthorizedConnection } from "./connector-connection-access";
 import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector-registry";
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
 
@@ -977,17 +978,23 @@ export class ProviderWebhookService {
       // Repository activity must never fan out solely because two users share
       // an installation. Prove access with the personal user token first.
       if (!repositoryFullName || !config) continue;
-      const before = JSON.stringify(connection.credentials);
       try {
-        const hasAccess = await canGitHubPersonalConnectionAccessRepository(
-          config,
-          connection,
-          repositoryFullName,
-          AbortSignal.timeout(15_000),
+        // Through the credential door: this probe refreshes a near-expiry
+        // token, and several deliveries for one connection can be in flight at
+        // once. Without the door's serialized rotation each would redeem the
+        // same single-use refresh token privately. The door also persists what
+        // it rotated, which is what the manual write here used to do.
+        const signal = AbortSignal.timeout(15_000);
+        const hasAccess = await withAuthorizedConnection(
+          this.env,
+          { connection, adapter: connectorRegistryForEnv(this.env).get("github"), signal },
+          (authorized) => canGitHubPersonalConnectionAccessRepository(
+            config,
+            authorized,
+            repositoryFullName,
+            signal,
+          ),
         );
-        if (JSON.stringify(connection.credentials) !== before) {
-          await this.persistConnectionCredentials(connection);
-        }
         if (hasAccess) accepted.push(connection);
       } catch (error) {
         if (!(error instanceof ConnectorError) || error.code !== "unauthorized") throw error;
