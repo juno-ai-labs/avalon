@@ -1096,7 +1096,7 @@ async function createPluginRuntime(
     // ordinary plugin receives its short name through stableWireToolName.
     shortWireName: "",
     description: "Discover and activate plugins available to this run.",
-    systemMessage: "Plugins are groups of related tools available to this run. When a request needs an inactive capability, load the relevant available plugin before answering. Before claiming that a capability or its data is unavailable, inspect the compact catalog and, when needed, use list_plugins or search_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
+    systemMessage: "Plugins are groups of related tools available to this run. When a request needs an inactive capability, load the relevant available plugin before answering. Asking a person for something counts as answering: a capability listed in the catalog is available to this run whether or not it is loaded, so a fact one of those plugins could look up is not a fact you are missing. Before claiming that a capability or its data is unavailable, or requesting it from a person, inspect the compact catalog and, when needed, use list_plugins or search_plugins and attempt to load the matching plugin. Once loaded, its tools are available on the next model turn. Loading a plugin never expands the run's original authority.",
     preload: true,
     explicit: true,
     tools: AVALON_DISCOVERY_TOOL_DEFINITIONS.map((definition): HarnessTool => ({
@@ -1483,7 +1483,7 @@ function renderStableSystemPrompt(
     maxCatalogTokens: catalogTokens,
   });
   const pluginSection = pluginCatalog
-    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available plugin, call load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority.\n\n${pluginCatalog}`
+    ? `# Plugins\nPlugins are groups of related typed tools. Currently active plugins are ready to use. To activate an available plugin, call load_plugin with the exact plugin id. Once loaded, its tools are available on the next model turn. Loading never expands this run's original authority. An available plugin is part of this run's capability, not a suggestion: read this list before concluding that something cannot be looked up, because the tools you can see right now are only the ones already loaded.\n\n${pluginCatalog}`
     : "";
   const activeInstructions = activeSections.length
     ? `# Active Plugin Instructions\n${activeSections.join("\n\n")}`
