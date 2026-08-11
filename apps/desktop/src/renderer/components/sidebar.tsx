@@ -307,6 +307,9 @@ function WorkstreamRow({
       <ContextMenu.Trigger asChild>
         <div
           className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
+          // How the sidebar finds this row again after pinning has moved it to
+          // a different section — see `revealWorkstreamId`.
+          data-workstream-id={workstream.id}
           draggable={drag !== undefined}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
@@ -604,6 +607,12 @@ export function Sidebar({
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
+  // The work stream a pin or unpin has just moved, and which side of the
+  // sidebar it was moved to, held until the list re-renders carrying that
+  // change. Cleared the moment it is honoured, so a later render for any other
+  // reason does not scroll the reader again.
+  const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
+  const scrollRef = useRef<HTMLElement | null>(null);
   // The arrangement being dragged, held only for as long as the drag lasts.
   // The list renders from it while it exists, so rows move under the pointer
   // before anything is sent; the server's answer replaces it when the drag
@@ -742,6 +751,11 @@ export function Sidebar({
     setPinPendingWorkstreamId(workstream.id);
     try {
       await onPinWorkstream(workstream, pinned);
+      // The row has just moved to a different section, which is off screen
+      // whenever the reader had scrolled down to reach it — the ordinary case,
+      // since being tired of hunting for something is why anyone pins it. Left
+      // alone, the action reads as the row vanishing under the cursor.
+      setReveal({ id: workstream.id, pinned });
     } catch (error) {
       setMenuError({
         title: pinned ? 'Work stream could not be pinned' : 'Work stream could not be unpinned',
@@ -867,6 +881,37 @@ export function Sidebar({
     };
   }, [resizing, setSidebarWidth]);
 
+  // Waits for the list itself to carry the change before chasing the row.
+  //
+  // The request resolving is not the row moving: the cache write that follows
+  // it reaches this component through React Query's own scheduler, a tick or
+  // more after the state set here. Scrolling on the first render after the
+  // await therefore finds the row still sitting in the section it is leaving,
+  // scrolls to *that*, and is left pointing at empty space the moment the real
+  // update lands — which is exactly the failure this whole effect exists to
+  // prevent, reintroduced one render earlier. Comparing against the pinned-ness
+  // the action asked for is what makes "has the list caught up yet" answerable.
+  useEffect(() => {
+    if (reveal === null) return;
+    const row = workstreams.find((workstream) => workstream.id === reveal.id);
+    if (row === undefined || (row.pinPosition !== null) !== reveal.pinned) return;
+    setReveal(null);
+    const rendered = [...scrollRef.current?.querySelectorAll('[data-workstream-id]') ?? []]
+      .find((candidate) => candidate.getAttribute('data-workstream-id') === reveal.id);
+    // Unpinning something the recent list does not carry leaves nothing to
+    // scroll to, which is a no-op rather than a case to handle.
+    rendered?.scrollIntoView?.({
+      // `nearest` is what keeps this from being an interruption: a row already
+      // on screen — a short sidebar, or a pin made from near the top — is not
+      // scrolled at all.
+      block: 'nearest',
+      // Motion is the point, since it is what lets the reader follow the row to
+      // its new section rather than hunt for it, so it is dropped only for
+      // someone who has asked for less of it.
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  }, [reveal, workstreams]);
+
   return (
     <>
       <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
@@ -880,7 +925,7 @@ export function Sidebar({
           </IconButton>
         </div>
 
-        <nav className="sidebar-scroll" onClick={() => setSidebarOpen(false)}>
+        <nav className="sidebar-scroll" onClick={() => setSidebarOpen(false)} ref={scrollRef}>
           <div className="sidebar-primary-actions">
             <NavLink className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')} to="/workstreams/new">
               <MessageSquarePlus aria-hidden="true" size={15} />

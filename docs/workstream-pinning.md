@@ -83,6 +83,25 @@ means Escape, or a release outside the pinned list, and the arrangement built
 while the pointer passed over other rows is abandoned. The pinned list is itself
 a drop target, so a release in the gap between two rows still counts as a drop.
 
+### Following the row
+
+Pinning and unpinning both move a row between two sections that can be a whole
+screen apart, so the sidebar scrolls it back into view afterwards — otherwise the
+action reads as the row vanishing from under the cursor, which is the likely case
+rather than the exotic one: somebody pins a work stream *because* they were tired
+of hunting for it, which means they were scrolled down when they did it.
+
+Two details carry the behaviour. `scrollIntoView({ block: 'nearest' })` scrolls
+the least it can, so a row already on screen is not moved at all, and the motion
+is `smooth` unless the reader has asked for reduced motion. And the scroll waits
+for the *list* to carry the change rather than for the request to resolve: the
+reveal records which side of the sidebar the row was moved to, and the effect
+does nothing until the work stream it is holding actually reports that
+`pinPosition`. The cache write reaches the component through React Query's
+scheduler a tick or more after the action resolves, so a scroll on the first
+render after the await lands on the row's *old* position and is left pointing at
+empty space — the same failure, one render earlier.
+
 ## Invariants
 
 - **A pin is per person.** Nothing about `workstream_pins` is readable by, or
@@ -184,6 +203,40 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-11 — Pinning scrolls the row it moved back into view
+
+**What changed:** After a pin or an unpin, the sidebar scrolls the row into view
+in its new section. `block: 'nearest'` means a row already on screen is not
+moved; the scroll waits for the work-stream list to report the new
+`pinPosition` rather than firing when the request resolves.
+
+**Why:** The row was simply disappearing. Pinning moves it from the recency list
+to a section above, and the scroll position did not follow — so a pin made from
+anywhere below the fold looked like the row had been deleted. That is the
+ordinary case rather than the edge one, because being tired of hunting for
+something down the list is the reason to pin it. The same is true in reverse for
+unpinning, which drops the row into whatever date group its `lastActivityAt`
+puts it in, potentially far below.
+
+This was not caught when the feature shipped because the seeded workspace holds
+two work streams, so the sidebar never scrolled in any of the manual passes. The
+gap was in the fixture, not just the feature.
+
+**Considered and rejected:** Scrolling on the render immediately after the
+request resolved — the obvious implementation, and it is wrong. React Query
+delivers the cache write through its own scheduler, a tick or more later, so
+that render still has the row in the section it is leaving: the scroll lands on
+the old position and is left pointing at empty space once the real update
+arrives. It was measured doing exactly that in a real window before the fix, and
+an instant `behavior` did not help, which ruled out the animation as the cause.
+
+**Consequences:** The reveal is keyed to a `{ id, pinned }` pair rather than an
+id, because "has the list caught up yet" is only answerable against the state
+the action asked for. Any future path that moves a row between these sections —
+a bulk pin, an unpin triggered by archiving — has to set that pair or the row
+will move without being followed. Rows carry `data-workstream-id` so the sidebar
+can find one after re-rendering; it is a hook for this, not a test seam.
 
 ### 2026-08-11 — There is no limit on how many work streams a person may pin
 
