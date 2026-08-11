@@ -65,6 +65,18 @@ export function appendMeetingSegment(committed: string, segment: string): string
   return committed.trim() ? `${committed.trimEnd()}\n\n${next}` : next;
 }
 
+/**
+ * How the refresh cadence is described to the person waiting for a briefing.
+ * The number is served, so the copy cannot name one: promising a briefing every
+ * minute on a five-minute cadence is worse than saying nothing.
+ */
+export function meetingRefreshCadenceLabel(intervalMs: number): string {
+  const seconds = Math.max(1, Math.round(intervalMs / 1_000));
+  if (seconds % 60 !== 0) return `every ${seconds} seconds`;
+  const minutes = seconds / 60;
+  return minutes === 1 ? 'every minute' : `every ${minutes} minutes`;
+}
+
 export function meetingRecordedMs(recordedBeforeActiveMs: number, activeStartedAtMs: number | null, nowMs: number): number {
   return recordedBeforeActiveMs + (
     activeStartedAtMs === null ? 0 : Math.max(0, nowMs - activeStartedAtMs)
@@ -136,8 +148,9 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const activeRecordingStartedAtRef = useRef<number | null>(null);
   const currentSegmentStartedOffsetRef = useRef(0);
   const segmentBoundaryOffsetRef = useRef<number | null>(null);
-  const finalizationInFlightRef = useRef<Promise<void> | undefined>(undefined);
-  const generationTailRef = useRef<Promise<void>>(Promise.resolve());
+  const finalizationInFlightRef = useRef<Promise<boolean> | undefined>(undefined);
+  const generationTailRef = useRef<Promise<unknown>>(Promise.resolve());
+  const liveGenerationRef = useRef<Promise<boolean> | null>(null);
   const persistenceTailRef = useRef<Promise<void>>(Promise.resolve());
   const notesBodyRef = useRef<HTMLDivElement | null>(null);
   const transcriptBodyRef = useRef<HTMLDivElement | null>(null);
@@ -330,12 +343,22 @@ export function MeetingNotesScreen(): React.JSX.Element {
     return recordedMsRef.current;
   }, []);
 
+  /** Resolves to whether the briefing was written; a failure resolves `false`. */
   const generateNotes = useCallback(
     (
       mode: 'live' | 'final' = 'live',
       transcriptStatus: 'complete' | 'partial' = mode === 'final' ? 'complete' : 'partial',
-    ): Promise<void> => {
-      if (!api || !noteRef.current || readOnly) return Promise.resolve();
+    ): Promise<boolean> => {
+      if (!api || !noteRef.current || readOnly) return Promise.resolve(false);
+      // A live briefing replaces the last one rather than adding to it, so a
+      // refresh raised while one is still running has nothing of its own to
+      // contribute: its segments are already durable, and the pass in flight —
+      // or the next one — summarizes the transcript through its newest segment
+      // either way. Coalescing rather than queueing is what keeps a pass slower
+      // than the cadence from building a backlog of inferences that also has to
+      // drain before finalization can start. A final pass never coalesces: it
+      // is the one summary that must run over the completed transcript.
+      if (mode === 'live' && liveGenerationRef.current) return liveGenerationRef.current;
       setNotesPending(true);
       setNotesError(undefined);
       const operation = generationTailRef.current.catch(() => undefined).then(async () => {
@@ -345,16 +368,20 @@ export function MeetingNotesScreen(): React.JSX.Element {
         await persistenceTailRef.current.catch(() => undefined);
         const updated = await api.generateNoteNotes(noteId, mode, transcriptStatus);
         applyGeneratedNote(updated);
+        return true;
       }).catch((error: unknown) => {
         setNotesError(error instanceof Error
           ? error.message
           : mode === 'final'
             ? 'Avalon could not create the final meeting summary.'
             : 'Avalon could not update Control Tower.');
+        return false;
       }).finally(() => {
         if (generationTailRef.current === operation) setNotesPending(false);
+        if (liveGenerationRef.current === operation) liveGenerationRef.current = null;
       });
       generationTailRef.current = operation;
+      if (mode === 'live') liveGenerationRef.current = operation;
       return operation;
     }, [api, applyGeneratedNote, noteId, readOnly]);
 
@@ -461,17 +488,26 @@ export function MeetingNotesScreen(): React.JSX.Element {
     void startRecording();
   }, [loading, note, readOnly, startRecording]);
 
-  const finalizeRecording = useCallback((): Promise<void> => {
+  /**
+   * Resolves to whether the meeting finished cleanly — the transcript closed,
+   * the final summary written, and the note marked complete. Anything less
+   * still finishes as much as it can, but the answer is `false`, because the
+   * caller that closes this window has to know whether it would be closing over
+   * an error nothing else reports.
+   */
+  const finalizeRecording = useCallback((): Promise<boolean> => {
     if (finalizationInFlightRef.current) return finalizationInFlightRef.current;
-    if (!api || !noteRef.current || readOnly) return Promise.resolve();
+    if (!api || !noteRef.current || readOnly) return Promise.resolve(false);
     recordingIntentRef.current = false;
     const finalRecordedMs = stopRecordingClock();
     setRecording(false);
     setFinalizing(true);
     setSavePending(true);
     setSaveError(undefined);
-    const operation = (async (): Promise<void> => {
+    const operation = (async (): Promise<boolean> => {
+      let complete = true;
       let transcriptStatus: 'complete' | 'partial' = dictation.state === 'error' ? 'partial' : 'complete';
+      if (dictation.state === 'error') complete = false;
       if (dictation.state !== 'idle' && dictation.state !== 'error') {
         try {
           await dictation.stop();
@@ -479,6 +515,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
           // Keep the best partial transcript visible and persist it below. The
           // recording has already stopped, so retrying capture cannot recover
           // audio that the provider failed to finalize.
+          complete = false;
           transcriptStatus = 'partial';
           setSaveError(error instanceof Error ? error.message : 'Avalon could not finalize the transcript.');
         }
@@ -489,16 +526,22 @@ export function MeetingNotesScreen(): React.JSX.Element {
         // Earlier segments are already durable and still useful for the final
         // summary. Keep the visible save error, mark the transcript partial,
         // and finish the note instead of abandoning all finalization work.
+        complete = false;
         transcriptStatus = 'partial';
       }
       segmentBoundaryOffsetRef.current = null;
-      await generateNotes('final', transcriptStatus);
+      // A failed summary sets its own visible error and does not reject, so it
+      // is only reported here — and it is the failure most worth keeping a
+      // window open for, since nothing in the note screen can ask for the
+      // summary again.
+      if (!await generateNotes('final', transcriptStatus)) complete = false;
       const patch = {
         recordingStatus: 'complete',
         recordedMs: finalRecordedMs,
         endedAt: new Date().toISOString(),
       } as const;
       applyNotePatch(await api.updateNote(noteId, patch), patch);
+      return complete;
     })().catch((error: unknown) => {
       setSaveError(error instanceof Error ? error.message : 'Avalon could not finish saving this note.');
       throw error;
@@ -535,13 +578,15 @@ export function MeetingNotesScreen(): React.JSX.Element {
   }, [dictation.stop]);
 
   const stopRecording = async (): Promise<void> => {
-    await finalizeRecording();
     // The meeting is over and the note is the artifact, so the window's job is
     // done: it closes and hands the main window to the note it just produced.
-    // Only on a clean finalization — `finalizeRecording` rejects when the note
-    // could not be marked complete, and closing then would take the visible
-    // error with it. The native close path stays as it was: it closes
-    // regardless, because a window that will not shut also blocks app quit.
+    // Only when the meeting actually finished, though — a failed transcript
+    // close, segment save, or final summary leaves an error that this window is
+    // the only place to read, and closing over it would strand the person with
+    // a note that is quietly missing its summary. The native close path stays
+    // as it was: it closes regardless, because a window that will not shut also
+    // blocks app quit.
+    if (!await finalizeRecording()) return;
     await desktopBridge().closeMeetingNotes(noteId).catch(() => undefined);
   };
 
@@ -690,7 +735,10 @@ export function MeetingNotesScreen(): React.JSX.Element {
                 <div className="meeting-empty-state">
                   <WandSparkles aria-hidden="true" size={24} />
                   <strong>Your live meeting briefing will appear here</strong>
-                  <p>Control Tower keeps you current every minute, then creates a complete summary when recording ends.</p>
+                  <p>
+                    Control Tower keeps you current {meetingRefreshCadenceLabel(refreshIntervalMs)},
+                    then creates a complete summary when recording ends.
+                  </p>
                 </div>
               )}
               {notesPending && (

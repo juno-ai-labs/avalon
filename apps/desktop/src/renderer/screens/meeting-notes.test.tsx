@@ -6,6 +6,7 @@ import {
   appendMeetingSegment,
   DEFAULT_MEETING_NOTES_INTERVAL_MS,
   meetingRecordedMs,
+  meetingRefreshCadenceLabel,
   mergeSavedMeetingSegmentDuration,
   MeetingNotesScreen,
   noteIdFromSearch,
@@ -377,6 +378,97 @@ describe('MeetingNotesScreen', () => {
     const closeOrder = state.closeMeetingNotes.mock.invocationCallOrder[0]!;
     const completeCallIndex = state.api.updateNote.mock.calls.findIndex(([, patch]) => patch.recordingStatus === 'complete');
     expect(state.api.updateNote.mock.invocationCallOrder[completeCallIndex]).toBeLessThan(closeOrder);
+  });
+
+  it('keeps the window open on End when the final summary failed', async () => {
+    state.dictationState = 'listening';
+    state.api.generateNoteNotes.mockRejectedValue(new Error('Avalon could not create the final meeting summary.'));
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+    await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole('button', { name: 'End' }));
+
+    // The note is marked complete either way — the recording really did end —
+    // but nothing in the note screen can ask for the summary again, so closing
+    // over the error is how a person ends up with a note silently missing it.
+    await waitFor(() => expect(state.api.updateNote).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ recordingStatus: 'complete' }),
+    ));
+    expect(await screen.findByText('Avalon could not create the final meeting summary.')).toBeVisible();
+    expect(state.closeMeetingNotes).not.toHaveBeenCalled();
+  });
+
+  it('coalesces a live refresh raised while one is still running', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      state.api.clientFeatureFlags.mockResolvedValue({
+        developerSettings: false,
+        controlTowerRefreshSeconds: 15,
+      });
+      const slowGeneration = deferred<void>();
+      const detail = noteDetail();
+      state.api.generateNoteNotes.mockImplementation(async () => {
+        await slowGeneration.promise;
+        return { ...detail, liveNotes: '## Right now\n\n- Still going.', notesThroughSequence: 1 };
+      });
+      state.commit.mockResolvedValue('More talk.');
+
+      const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      await screen.findByDisplayValue('Meeting notes');
+      await waitFor(() => expect(state.api.clientFeatureFlags).toHaveBeenCalled());
+      await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+      state.dictationState = 'listening';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+
+      // Three cadences pass while the first briefing is still being written.
+      // The real hook leaves `listening` for each commit and returns, which is
+      // what re-arms the timer; drive that transition by hand each tick.
+      for (let tick = 0; tick < 3; tick += 1) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+        state.dictationState = 'transcribing';
+        view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+        state.dictationState = 'listening';
+        view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      }
+
+      // Every minute of speech is still committed — that is the durable half.
+      expect(state.api.appendNoteTranscriptSegment.mock.calls.length).toBeGreaterThan(1);
+
+      // The backlog, if there were one, drains here. Queued refreshes would now
+      // each run in turn: three more inferences, for minutes the very next pass
+      // already covers, with finalization waiting behind all of them.
+      await act(async () => { slowGeneration.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(state.api.generateNoteNotes).toHaveBeenCalledOnce();
+
+      // And the loop is refreshing again rather than latched off.
+      state.dictationState = 'transcribing';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      state.dictationState = 'listening';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledTimes(2));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('describes the cadence it was actually served', async () => {
+    state.api.clientFeatureFlags.mockResolvedValue({
+      developerSettings: false,
+      controlTowerRefreshSeconds: 300,
+    });
+
+    render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+    await screen.findByDisplayValue('Meeting notes');
+
+    expect(await screen.findByText(/keeps you current every 5 minutes/u)).toBeVisible();
+    expect(meetingRefreshCadenceLabel(60_000)).toBe('every minute');
+    expect(meetingRefreshCadenceLabel(15_000)).toBe('every 15 seconds');
+    expect(meetingRefreshCadenceLabel(90_000)).toBe('every 90 seconds');
   });
 
   it('keeps the window open on End when the note could not be marked complete', async () => {
