@@ -1,3 +1,4 @@
+import { socketTicketProtocols } from '@avalon/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvalonApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks } from './api';
 import type { ApiError } from './api';
@@ -1133,9 +1134,28 @@ describe('Avalon API wire adapter', () => {
   });
 });
 
+describe('socket ticket transport', () => {
+  it('drops the query ticket the endpoint still returns and offers it as a subprotocol', async () => {
+    // The server keeps `?ticket=` in the URL for desktop builds released before
+    // the subprotocol scheme. Nothing here may open a socket with it, because
+    // Cloudflare records request URLs into stores this app cannot redact.
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}?ticket=socket-ticket`,
+      ticket: 'socket-ticket',
+    })));
+    const api = new AvalonApi('https://api.avalon.test', session);
+
+    await expect(api.getSocketTicket(workstreamId)).resolves.toEqual({
+      url: `wss://api.avalon.test/socket/workstreams/${workstreamId}`,
+      ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
+    });
+  });
+});
+
 describe('expired access-token recovery', () => {
   const renewed: DesktopSession = { ...session, accessToken: 'renewed-access-token-longer-than-twenty' };
-  const socketTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket' };
+  const socketTicket = { url: 'wss://api.avalon.test/socket', ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket') };
 
   function unauthorizedUntilRenewed() {
     return vi.fn((_input: RequestInfo | URL, init?: RequestInit) => Promise.resolve(
