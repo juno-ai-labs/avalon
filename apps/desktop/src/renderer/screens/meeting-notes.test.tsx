@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendMeetingSegment,
   DEFAULT_MEETING_NOTES_INTERVAL_MS,
+  MEETING_CADENCE_REQUEST_TIMEOUT_MS,
   meetingRecordedMs,
   meetingRefreshCadenceLabel,
   mergeSavedMeetingSegmentDuration,
@@ -202,10 +203,13 @@ describe('MeetingNotesScreen', () => {
         expect.any(String),
         expect.objectContaining({ text: 'A committed minute of talk.' }),
       ));
+      // The cadence this meeting settled on travels with the request, so the
+      // briefing is written for the schedule the client is actually keeping.
       await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledWith(
         expect.any(String),
         'live',
         'partial',
+        15,
       ));
       const appendOrder = state.api.appendNoteTranscriptSegment.mock.invocationCallOrder[0]!;
       const generateOrder = state.api.generateNoteNotes.mock.invocationCallOrder[0]!;
@@ -275,6 +279,7 @@ describe('MeetingNotesScreen', () => {
       expect.any(String),
       'final',
       'complete',
+      60,
     ));
     expect(screen.getByRole('heading', { name: 'Control Tower' })).toBeVisible();
     expect(await screen.findByRole('heading', { name: 'Summary' })).toBeVisible();
@@ -353,7 +358,7 @@ describe('MeetingNotesScreen', () => {
     const completeOrder = state.api.updateNote.mock.invocationCallOrder[completeCallIndex]!;
     expect(appendOrder).toBeLessThan(generateOrder);
     expect(generateOrder).toBeLessThan(completeOrder);
-    expect(state.api.generateNoteNotes).toHaveBeenCalledWith(expect.any(String), 'final', 'complete');
+    expect(state.api.generateNoteNotes).toHaveBeenCalledWith(expect.any(String), 'final', 'complete', 60);
   });
 
   it('closes the window on End and hands the main window the note it produced', async () => {
@@ -456,6 +461,77 @@ describe('MeetingNotesScreen', () => {
     }
   });
 
+  it('records on the default when the cadence request never answers, without waiting on it to start', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // A request that never settles, which is what a captive portal looks like.
+      state.api.clientFeatureFlags.mockImplementation(() => new Promise(() => undefined));
+      state.commit.mockResolvedValue('Talk on the default cadence.');
+
+      const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      await screen.findByDisplayValue('Meeting notes');
+
+      // Capture is never made to wait for a feature flag.
+      await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+      state.dictationState = 'listening';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+
+      // The segment timer does, but only until the request is given up on.
+      await act(async () => { await vi.advanceTimersByTimeAsync(MEETING_CADENCE_REQUEST_TIMEOUT_MS - 1); });
+      expect(state.commit).not.toHaveBeenCalled();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      state.dictationState = 'transcribing';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      state.dictationState = 'listening';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      await act(async () => { await vi.advanceTimersByTimeAsync(DEFAULT_MEETING_NOTES_INTERVAL_MS); });
+
+      await waitFor(() => expect(state.commit).toHaveBeenCalled());
+      await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledWith(
+        expect.any(String),
+        'live',
+        'partial',
+        CONTROL_TOWER_REFRESH_SECONDS.default,
+      ));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps one cadence for the whole meeting once it has settled', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const cadence = deferred<{ developerSettings: boolean; controlTowerRefreshSeconds: number }>();
+      state.api.clientFeatureFlags.mockReturnValue(cadence.promise);
+      state.commit.mockResolvedValue('Talk.');
+
+      const view = render(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+      await screen.findByDisplayValue('Meeting notes');
+      await waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+      await act(async () => cadence.resolve({ developerSettings: false, controlTowerRefreshSeconds: 15 }));
+      state.dictationState = 'listening';
+      view.rerender(<Tooltip.Provider><MeetingNotesScreen /></Tooltip.Provider>);
+
+      // A later answer — a remount, a retry — cannot replace the cadence this
+      // meeting is already recording on, because a boundary that moves
+      // mid-recording moves the transcript with it.
+      state.api.clientFeatureFlags.mockResolvedValue({
+        developerSettings: false,
+        controlTowerRefreshSeconds: 600,
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+      await waitFor(() => expect(state.api.generateNoteNotes).toHaveBeenCalledWith(
+        expect.any(String),
+        'live',
+        'partial',
+        15,
+      ));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('describes the cadence it was actually served', async () => {
     state.api.clientFeatureFlags.mockResolvedValue({
       developerSettings: false,
@@ -510,7 +586,7 @@ describe('MeetingNotesScreen', () => {
       expect.objectContaining({ text: 'Close-safe final sentence.' }),
     );
     expect(state.api.generateNoteNotes).toHaveBeenCalledOnce();
-    expect(state.api.generateNoteNotes).toHaveBeenCalledWith(expect.any(String), 'final', 'complete');
+    expect(state.api.generateNoteNotes).toHaveBeenCalledWith(expect.any(String), 'final', 'complete', 60);
     const closeOrder = state.closeMeetingNotes.mock.invocationCallOrder[0]!;
     const completeCallIndex = state.api.updateNote.mock.calls.findIndex(([, patch]) => patch.recordingStatus === 'complete');
     expect(state.api.updateNote.mock.invocationCallOrder[completeCallIndex]).toBeLessThan(closeOrder);
@@ -555,6 +631,7 @@ describe('MeetingNotesScreen', () => {
       expect.any(String),
       'final',
       'partial',
+      60,
     ));
     await waitFor(() => expect(state.api.updateNote).toHaveBeenCalledWith(
       expect.any(String),
@@ -623,6 +700,7 @@ describe('MeetingNotesScreen', () => {
       expect.any(String),
       'final',
       'partial',
+      60,
     ));
     expect(screen.getByText('Final transcript timed out')).toBeVisible();
   });

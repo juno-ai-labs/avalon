@@ -40,6 +40,13 @@ import { useRealtimeDictation } from '../lib/use-realtime-dictation';
  * matches the flag's checked-in default so both answers agree.
  */
 export const DEFAULT_MEETING_NOTES_INTERVAL_MS = CONTROL_TOWER_REFRESH_SECONDS.default * 1_000;
+
+/**
+ * How long the cadence request may hold the first segment timer before this
+ * meeting settles on the default and records on that. A meeting must never wait
+ * on a feature flag; it must also not start one cadence and finish on another.
+ */
+export const MEETING_CADENCE_REQUEST_TIMEOUT_MS = 5_000;
 const NOTE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 export function noteIdFromSearch(search: string, createId: () => string = () => crypto.randomUUID()): string {
@@ -139,7 +146,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
   const [notesError, setNotesError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
   const [now, setNow] = useState(Date.now());
-  const [refreshIntervalMs, setRefreshIntervalMs] = useState(DEFAULT_MEETING_NOTES_INTERVAL_MS);
+  /** `null` until the cadence for this meeting settles; then never replaced. */
+  const [refreshIntervalMs, setRefreshIntervalMs] = useState<number | null>(null);
   const noteRef = useRef<NoteDetail | null>(null);
   const segmentsRef = useRef<NoteTranscriptSegment[]>([]);
   const segmentRef = useRef('');
@@ -228,19 +236,37 @@ export function MeetingNotesScreen(): React.JSX.Element {
   }, [api, hydrateNote, initialTitle, noteId]);
 
   useEffect(() => {
-    if (!api) return undefined;
+    if (!api || refreshIntervalMs !== null) return undefined;
     const controller = new AbortController();
-    // Asked once, when the screen opens, rather than polled: this window exists
-    // for one meeting, and a cadence that changed underneath a recording would
-    // move the transcript's own segment boundaries mid-conversation. A device
-    // that cannot ask, or an older service that does not answer, keeps the
-    // checked-in default — the same value the flag is provisioned with — so a
-    // Flagship outage cannot stop a meeting from being summarized.
-    void api.clientFeatureFlags(controller.signal).then((flags) => {
-      setRefreshIntervalMs(flags.controlTowerRefreshSeconds * 1_000);
-    }).catch(() => undefined);
-    return () => controller.abort();
-  }, [api]);
+    // Asked once, when the screen opens, and never replaced: this window exists
+    // for one meeting, and a cadence arriving later would re-arm the segment
+    // timer mid-recording, moving a transcript boundary and leaving the
+    // briefing describing a schedule that had already changed under it.
+    //
+    // Capture is not made to wait for it. Recording starts as soon as the note
+    // loads; only the segment timer holds until this settles, which is why the
+    // request is bounded rather than left to the network — a device that cannot
+    // ask, or an older service that does not answer, settles on the checked-in
+    // default within the timeout and records on that.
+    const settle = (intervalMs: number): void => {
+      setRefreshIntervalMs((current) => current ?? intervalMs);
+    };
+    const timeout = window.setTimeout(
+      () => {
+        controller.abort();
+        settle(DEFAULT_MEETING_NOTES_INTERVAL_MS);
+      },
+      MEETING_CADENCE_REQUEST_TIMEOUT_MS,
+    );
+    void api.clientFeatureFlags(controller.signal)
+      .then((flags) => settle(flags.controlTowerRefreshSeconds * 1_000))
+      .catch(() => settle(DEFAULT_MEETING_NOTES_INTERVAL_MS))
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [api, refreshIntervalMs]);
 
   useEffect(() => {
     const current = noteRef.current;
@@ -366,7 +392,12 @@ export function MeetingNotesScreen(): React.JSX.Element {
         // final summary of the segments that reached the server when the most
         // recent segment save failed.
         await persistenceTailRef.current.catch(() => undefined);
-        const updated = await api.generateNoteNotes(noteId, mode, transcriptStatus);
+        // The cadence this meeting settled on travels with the request, so the
+        // briefing is written for the schedule actually being kept rather than
+        // for whatever the flag says at the moment the server reads it.
+        const updated = await api.generateNoteNotes(noteId, mode, transcriptStatus, refreshIntervalMs === null
+          ? undefined
+          : Math.round(refreshIntervalMs / 1_000));
         applyGeneratedNote(updated);
         return true;
       }).catch((error: unknown) => {
@@ -383,7 +414,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
       generationTailRef.current = operation;
       if (mode === 'live') liveGenerationRef.current = operation;
       return operation;
-    }, [api, applyGeneratedNote, noteId, readOnly]);
+    }, [api, applyGeneratedNote, noteId, readOnly, refreshIntervalMs]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -391,6 +422,9 @@ export function MeetingNotesScreen(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
+    // No timer until this meeting has a cadence. Arming on the default and
+    // re-arming on the served value would move the first segment boundary.
+    if (refreshIntervalMs === null) return undefined;
     if (dictation.state !== 'listening' || !recordingIntentRef.current) return undefined;
     const timer = window.setTimeout(() => {
       if (!recordingIntentRef.current) return;
@@ -736,7 +770,8 @@ export function MeetingNotesScreen(): React.JSX.Element {
                   <WandSparkles aria-hidden="true" size={24} />
                   <strong>Your live meeting briefing will appear here</strong>
                   <p>
-                    Control Tower keeps you current {meetingRefreshCadenceLabel(refreshIntervalMs)},
+                    Control Tower keeps you current{' '}
+                    {meetingRefreshCadenceLabel(refreshIntervalMs ?? DEFAULT_MEETING_NOTES_INTERVAL_MS)},
                     then creates a complete summary when recording ends.
                   </p>
                 </div>

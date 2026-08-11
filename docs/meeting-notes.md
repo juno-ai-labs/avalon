@@ -51,19 +51,32 @@ costs an inference per tick and has to drain before finalization can even start.
 
 The cadence is the `control-tower-refresh-seconds` flag, served from Flagship and
 resolved by `control-tower-flags.ts` ([`FEATURE_FLAGS.md`](FEATURE_FLAGS.md)).
-The meeting screen asks `GET /feature-flags` once when it opens — a meeting
-window exists for one meeting, and a cadence that moved underneath a recording
-would move the transcript's own segment boundaries mid-conversation. The
-meeting-notes generator resolves the same flag for the same person and states the
-number in the live request, so the prompt's instruction to reuse what it wrote
-last time is calibrated to the gap the client is actually keeping.
+**One meeting keeps one cadence**, and the client is what keeps it:
 
-Three readers therefore have to agree, and they do because the default and its
-bounds are declared once as `CONTROL_TOWER_REFRESH_SECONDS` in
-`@avalon/contracts`: the desktop's fallback, the response schema, and the clamp
-the resolver applies. A device that cannot reach the service, an older service
-that does not know the field, and an unreachable Flagship all land on the same
-sixty seconds.
+1. The meeting screen asks `GET /feature-flags` once when it opens, and the
+   answer is never replaced — a cadence arriving later would re-arm the segment
+   timer mid-recording and move a transcript boundary with it.
+2. Capture does not wait for that answer; the **segment timer** does, and only
+   for `MEETING_CADENCE_REQUEST_TIMEOUT_MS`. Recording starts as soon as the note
+   loads, and a request that has not answered by then settles the meeting on the
+   default. Arming on the default and re-arming on the served value would produce
+   exactly the moved boundary the snapshot exists to prevent.
+3. Every live generate request carries that snapshot, so the prompt's cadence is
+   the schedule being kept rather than whatever the flag says at the moment the
+   server reads it. The server resolves the flag itself only when a request does
+   not carry one, which is what an older client looks like.
+
+The bounds in the request schema are what make a client-sent cadence safe to
+repeat back to the model: it can only name a cadence the flag itself could serve,
+and it phrases one sentence rather than authorizing anything. What a meeting
+spends is bounded by how often the client asks, which it already controls — see
+[Open questions](#should-generation-move-to-the-server).
+
+Every reader agrees on the fallback because the default and its bounds are
+declared once as `CONTROL_TOWER_REFRESH_SECONDS` in `@avalon/contracts`: the
+desktop's fallback, both request schemas, and the clamp the resolver applies. A
+device that cannot reach the service, an older service that does not know the
+field, and an unreachable Flagship all land on the same sixty seconds.
 
 Segments are sequenced by the server. `appendSegment` allocates
 `next_segment_sequence` with a single `UPDATE … RETURNING`, so two windows
@@ -160,6 +173,12 @@ briefings.
 - **At most one live refresh is in flight per window.** Removing the coalescing
   turns a slow pass into an unbounded queue of them, and the symptom is a bill
   and a stuck **End**, not a visibly broken briefing.
+- **A meeting's cadence is decided once and never replaced.** Anything that
+  re-reads it mid-recording moves a segment boundary, and the transcript moves
+  with it — the damage is in the evidence, not just the schedule.
+- **The prompt's cadence is the client's, not the flag's.** A server that
+  re-resolves the flag per pass describes a schedule nobody is on for the rest
+  of any meeting the flag moved under.
 - **The meeting window closes only when the meeting finished cleanly.** Anything
   that closes it on a failure discards the only report of that failure.
 - **Only the owner may record, append, or generate.** Every statement binds
@@ -184,6 +203,7 @@ what happens when a note's scope changes, which is
 | Limit | Value | Where |
 | --- | --- | --- |
 | Segment commit and refresh cadence | 60s by default, 15–600s as served | `control-tower-refresh-seconds`, bounded by `CONTROL_TOWER_REFRESH_SECONDS` |
+| Cadence request before the timer arms on the default | 5s | `MEETING_CADENCE_REQUEST_TIMEOUT_MS` |
 | Recent focus window | 10 min | `RECENT_TRANSCRIPT_WINDOW_MS` |
 | Complete transcript context | 400,000 chars, middle elided | `MAX_TRANSCRIPT_CONTEXT_CHARACTERS` |
 | Recent window context | 100,000 chars | `MAX_RECENT_TRANSCRIPT_CHARACTERS` |
@@ -194,9 +214,12 @@ what happens when a note's scope changes, which is
 - **Inference fails or times out.** The screen shows "Avalon could not update
   Control Tower" and keeps the previous briefing. Nothing is retried at the same
   model; the next refresh is the retry.
-- **The cadence cannot be fetched, or Flagship is unreachable.** Both ends fall
-  back to `CONTROL_TOWER_REFRESH_SECONDS.default`, so the loop runs unchanged; a
-  cadence outside the bounds is clamped and logged rather than served.
+- **The cadence cannot be fetched, or Flagship is unreachable.** Recording starts
+  regardless; the segment timer waits out
+  `MEETING_CADENCE_REQUEST_TIMEOUT_MS` and the meeting settles on
+  `CONTROL_TOWER_REFRESH_SECONDS.default`, which is also what the request then
+  carries. A served cadence outside the bounds is clamped and logged rather than
+  passed on.
 - **A segment save fails during a refresh.** That minute's commit rejects and its
   refresh is skipped, leaving the segment's audio unrepresented until the next
   one; the next cadence tick starts a fresh segment from the boundary that failed.
@@ -316,6 +339,59 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-08-11 — One meeting keeps one cadence, and the client is what keeps it
+
+**What changed:** The meeting screen settles its cadence once and never replaces
+it: the segment timer does not arm until the served value lands or
+`MEETING_CADENCE_REQUEST_TIMEOUT_MS` passes, and capture is not made to wait for
+either. That snapshot now travels with every live generate request as
+`refreshSeconds`, bounded by the same range the flag is clamped to, and the
+server resolves the flag itself only when a request does not carry one.
+
+This supersedes two things said below. The entry beneath it has the generator
+resolving the flag per pass, which is what this replaces; and the entry below
+that says the two cadence constants must stay equal, which stopped being true
+when they became one. Both entries stand as written — they are the record of
+what was believed when each shipped.
+
+**Why:** Two reviewers found the same drift from opposite ends. The client
+snapshots at window open and the server re-resolved per pass, so any flag change
+mid-meeting left the prompt telling the model it runs again in five minutes while
+the client kept ticking every sixty seconds — and the prompt's reuse and latency
+instructions are calibrated on exactly that number, so they were being calibrated
+against a schedule nobody was on. The second half was worse and nearly invisible:
+the cadence fetch raced auto-start, so a slow answer re-armed a timer that was
+already running and moved the first segment boundary — the transcript's own
+structure, not just the schedule.
+
+**Considered and rejected:** Blocking `startRecording` on the cadence, which is
+what a naive reading of "snapshot before you start" produces. It makes a feature
+flag a precondition for capturing audio in a meeting that is already happening,
+which is the one thing this loop must never wait for. Holding only the *timer*,
+with a bounded request behind it, gets one interval per meeting at no cost to
+capture. Also rejected: snapshotting the cadence server-side per note, which
+needs per-meeting state the server does not have — that is the Durable Object in
+[Open questions](#should-generation-move-to-the-server), not a fix for this.
+
+Two smaller review findings landed with it. `revealNoteInMainWindow` raised
+nothing when the main window existed but was still loading, so pressing **End**
+during a reload closed the meeting window onto whatever was behind it — every
+path now ends with a window in front of the person. And the attribute loader
+now shares an in-flight read between evaluations describing the same subject:
+this service resolves two flags for one person at once, and the cache is only
+written when a read resolves, so a cold isolate was paying for the same rows
+twice on the path that now runs once a minute per recording meeting.
+
+**Consequences:** The prompt's cadence is now client-asserted. That is safe
+because the schema bounds it to what the flag itself could serve and it phrases
+one sentence — but it means a future reader must not mistake it for an
+authorization: nothing about spend or scheduling follows from it. A flag change
+now reaches a meeting only at its next recording, which is the intended
+granularity and worth remembering when staging a rollout: meetings in progress
+finish on the cadence they started with. And a client that sends no
+`refreshSeconds` still works, so the field cannot be made required without
+breaking older desktops.
 
 ### 2026-08-11 — A live refresh coalesces instead of queueing, and End only closes on a clean finish
 
