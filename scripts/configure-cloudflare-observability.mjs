@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
+
+import { isEntryPoint } from "./entry-point.mjs";
 
 const RETENTION_RULE_ID = "delete-observability-after-90-days";
 const RETENTION_SECONDS = 90 * 24 * 60 * 60;
@@ -415,7 +416,7 @@ export async function configureCloudflareObservability({
   await ensureSavedQueries(cloudflare, checkOnly);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isEntryPoint(import.meta.url)) {
   configureCloudflareObservability().catch((error) => {
     console.error(error instanceof Error ? error.message : "Cloudflare observability configuration failed");
     process.exitCode = 1;
