@@ -405,6 +405,73 @@ Connector polls have a 20-second adapter cancellation deadline inside a 25-secon
 
 Inline read-only subagents use independent ceilings configured with `HARNESS_CHILD_MAX_*`. The production defaults are four model iterations, eight tool calls, 90 seconds, 12,000 tokens, 100 cents, four active credential plugins, 64 KiB of tool schemas, four children per chain, eight active children per workspace, and depth one. A child inherits and narrows the parent's persisted authority; raising these limits must never enable writes, recursion, or mid-run scope expansion.
 
+### Inspecting a run's raw inference
+
+Structured logs are redacted by design, so they say what a run did and never what
+the model was actually asked. When the question is *why did the agent do that* —
+a fabricated value, a tool the model never called, a question it should not have
+needed to ask — the answer is the recorded request body, and this section turns a
+work-stream URL into it. Nothing here mutates production; every step is a read.
+
+**Preconditions.** `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are already
+present in the sandbox environment and in `.env.local` locally — check for them
+before concluding that production data is out of reach. Payload capture is
+per-workspace and **off by default**: `workspaces.log_agent_inference` must have
+been `1` while the run happened. No rows means logging was off, not that the run
+did not happen, and it cannot be turned on retroactively.
+
+1. **Pull the ID out of the URL.** In the canonical
+   `https://with-avalon.com/app/workstreams/<uuid>` and in the
+   `avalon://workstreams/<uuid>` deep link it wraps, that `<uuid>` is
+   `workstreams.id` — see [`WORKSTREAM_LINKS.md`](WORKSTREAM_LINKS.md).
+2. **Find the region.** Query Global first
+   (`avalon-global`, `3802fdab-e21c-4313-beb2-c1defb37f253`), then EU
+   (`avalon-eu`, `099eb3bf-4291-4a0f-a051-645e5c338881`). A workspace's region is
+   immutable, so exactly one holds the row — see
+   [`REGIONALIZATION.md`](REGIONALIZATION.md). The same query returns the
+   `workspace_id` the next steps need:
+
+   ```sql
+   SELECT id, title, workspace_id FROM workstreams WHERE id = '<uuid>';
+   ```
+3. **List the turns.** One row per model request, with its `turn_id`, model,
+   outcome, token counts, and the R2 `object_key`. Lead with the `workspace_id`
+   from step 2 — the index is `(workspace_id, workstream_id, created_at DESC)`,
+   so a filter on the work stream alone still answers but scans:
+
+   ```sql
+   SELECT turn_id, model, outcome, object_key, created_at
+     FROM agent_inference_payload_logs
+    WHERE workspace_id = '<workspace-id>' AND workstream_id = '<uuid>'
+    ORDER BY created_at ASC;
+   ```
+4. **Fetch the payload.** `object_key` addresses the region's payload bucket —
+   `avalon-global-payloads`, or the EU-jurisdiction `avalon-eu-payloads` — under
+   `agent-inference/<workspace-id>/<YYYY-MM-DD>/<inference-request-id>.json`. Each
+   object holds `{metadata, request}`, where `request` is the exact OpenRouter
+   body: the frozen system prompt, every message, and the full tool schemas as
+   the model saw them. The **last** turn's `messages` array is the whole
+   conversation, so start there rather than reassembling the earlier ones.
+
+`wrangler d1 execute --remote` and `wrangler r2 object get` do the same job when
+Wrangler is available. When it is not — a sandbox that denies it, or CI — the
+REST API takes the same token:
+
+```bash
+curl -sS -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/<database-id>/query" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sql":"SELECT …","params":[]}'
+curl -sS "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/<bucket>/objects/<object-key>" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+```
+
+A retrieved payload contains the prompt, the connector data pulled into it, and
+whatever the person wrote. Treat it as production user content: read it from a
+scratch directory, keep it out of logs, tickets, and commits, and delete it when
+the investigation is done. What the feature stores and why is
+[`AGENT_HARNESS.md`](AGENT_HARNESS.md#limits); this section is only how to read it
+back.
+
 ## Incident response
 
 ### OpenRouter unavailable
