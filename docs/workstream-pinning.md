@@ -138,8 +138,16 @@ It deliberately does not:
   dialog naming the limit. It is a product limit — the section's whole value is
   that a glance takes it in — not a storage one, and the stored row count may
   exceed it by however many pins have gone dark. The check is a read followed by
-  a write, so two pins made at the same instant can both pass at 49 and leave 51;
-  overshooting a soft product limit was judged not worth a trigger or a lock.
+  a write, so two pins made at the same instant can both pass at 49 and leave 51.
+  The obvious way to close that is the way this schema closes its other
+  invariants — a `BEFORE INSERT` trigger that counts and `RAISE`s, of which the
+  database already holds around fifty — and it is the wrong tool *here*
+  specifically: this limit counts the pins the reader can **see**, so a trigger
+  would have to restate `workstream-visibility.ts` in SQL, inside a migration
+  that is immutable once deployed and therefore cannot follow that rule when it
+  changes. The one time that rule was duplicated by hand, the copy silently
+  omitted `scope`. A trigger counting *stored* rows instead would enforce a
+  different limit and reintroduce the archived-pins-wedge-the-feature bug below.
 - **A refused drag reverts.** The local arrangement is dropped and the section
   re-renders from what the server holds, which is what the person's other
   devices are showing. The dialog says so rather than leaving a list that
