@@ -7,10 +7,20 @@ import { WorkstreamEmailRoutingService } from "../services/workstream-email-rout
 
 /** The probe's own shape — this route owns it, so the contract lives here. */
 const HealthCheckSchema = z.object({ ok: z.boolean(), message: z.string() });
+/**
+ * `region` and `environment` are reported as-is rather than enum-validated.
+ *
+ * This is the probe a misconfigured deployment is diagnosed with — it is exempt
+ * from the environment assertion in `index.ts` for exactly that reason. An enum
+ * here would put the two variables most likely to be wrong, `AVALON_REGION` and
+ * `APP_ENV`, into the one response that has to survive them being wrong: the
+ * parse would throw and the route would answer a bare 500 naming nothing.
+ * The probe's job is to describe the environment, not to assert it.
+ */
 const HealthResponseSchema = z.object({
   ok: z.boolean(),
-  region: z.enum(["global", "eu"]),
-  environment: z.enum(["development", "test", "staging", "production"]),
+  region: z.string(),
+  environment: z.string(),
   checks: z.record(z.string(), HealthCheckSchema),
 });
 

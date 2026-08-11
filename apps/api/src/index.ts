@@ -1,5 +1,6 @@
 import { app } from "./app";
 import { assertEnvContract, EnvContractError, type Env } from "./env";
+import { misconfiguredResponse } from "./lib/misconfigured-response";
 import { logStructuredEvent } from "./observability/logger";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
 import { reapExpiredActivityEvents } from "./services/activity-event-service";
@@ -103,10 +104,7 @@ export default {
     // and the 503 body deliberately carries no key names, since they are
     // secrets, so the probe is the only place an operator can see them.
     if (new URL(request.url).pathname !== "/health" && assertEnvContractOrLog(env)) {
-      return Response.json(
-        { error: { code: "service_misconfigured", message: "The service is misconfigured", requestId: null } },
-        { status: 503 },
-      );
+      return misconfiguredResponse(request, env);
     }
     return app.fetch(request, env, context);
   },
