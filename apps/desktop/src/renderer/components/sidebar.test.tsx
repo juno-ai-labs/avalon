@@ -195,7 +195,10 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '340');
   });
 
-  it('anchors a local-only onboarding checklist above the account footer', () => {
+  // OnboardingChecklist is disabled (demo-only, local-state-only, and had no
+  // dismiss mechanism — see the commented-out render call in sidebar.tsx).
+  // This guards against it silently coming back.
+  it('does not render the disabled onboarding checklist', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -204,16 +207,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    const sidebar = screen.getByRole('complementary', { name: 'Avalon navigation' });
-    const onboarding = within(sidebar).getByRole('region', { name: 'Get started with Avalon' });
-    const account = within(sidebar).getByRole('button', { name: /AdamAvalon Studio/u });
-    expect(onboarding.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(onboarding).getByText('0 / 3')).toBeVisible();
-
-    fireEvent.click(within(onboarding).getByRole('button', { name: /Connect your tools/u }));
-
-    expect(within(onboarding).getByText('1 / 3')).toBeVisible();
-    expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
+    expect(screen.queryByRole('region', { name: 'Get started with Avalon' })).not.toBeInTheDocument();
   });
 
   it('uses the compact status-dot pattern for every work stream', () => {
