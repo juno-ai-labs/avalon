@@ -8,6 +8,7 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus']): WorkstreamS
   return {
     id: workstreamId,
     title: 'Draft the reply',
+    titleStatus: 'settled',
     origin: 'ad_hoc',
     scope: 'workspace',
     harnessStatus,

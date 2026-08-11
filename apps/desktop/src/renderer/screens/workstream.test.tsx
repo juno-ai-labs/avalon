@@ -26,6 +26,7 @@ vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText, getRuntime
 const headerWorkstream: WorkstreamDetail = {
   id: 'workstream-header',
   title: 'Daily product brief',
+  titleStatus: 'settled' as const,
   origin: 'automation',
   automationName: 'Daily monitor',
   harnessStatus: 'completed',
@@ -279,6 +280,20 @@ describe('WorkstreamHeader inline rename', () => {
     // Keyboard activation of a button reports a detail of 0.
     fireEvent.click(title, { detail: 0 });
     expect(screen.getByRole('textbox', { name: 'Work stream name' })).toBeInTheDocument();
+  });
+
+  it('holds the header for a name instead of showing the request it was created from', () => {
+    renderWorkstreamHeader({
+      ...headerWorkstream,
+      title: 'Create an email draft to Danny from Mucker that shares the download link',
+      titleStatus: 'naming',
+    });
+
+    expect(screen.getByRole('status', { name: 'Avalon is naming this work stream' })).toBeInTheDocument();
+    expect(screen.queryByText(/Create an email draft/u)).not.toBeInTheDocument();
+    // Nothing to rename yet: the title on the row is a placeholder, and the
+    // editor returns with the name a second later.
+    expect(screen.queryByRole('button', { name: /Create an email draft/u })).not.toBeInTheDocument();
   });
 
   it('opens the editor on F2', () => {

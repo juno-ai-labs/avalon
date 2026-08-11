@@ -493,6 +493,19 @@ export function useWorkstreamSocket(
           current?.map((workstream) => workstream.id === workstreamId
             ? advanceWorkstreamAttention(workstream, message)
             : workstream));
+      } else if (event.type === 'workstream_renamed') {
+        // Avalon names a work stream a moment after it is created, and a
+        // participant can rename one at any time. Both arrive here, and both
+        // have to reach the header and the sidebar row without a refetch.
+        // Either way the title is now settled, so the skeleton comes down —
+        // including when naming failed and the placeholder is what stands.
+        const renamed = { title: event.title, titleStatus: event.titleStatus };
+        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+          current ? { ...current, ...renamed } : current);
+        queryClient.setQueryData<WorkstreamSummary[]>(['workstreams'], (current) =>
+          current?.map((workstream) => workstream.id === workstreamId
+            ? { ...workstream, ...renamed }
+            : workstream));
       } else if (event.type === 'stream_completed') {
         const cursor = streamCursors.get(event.message.id);
         if (cursor) {

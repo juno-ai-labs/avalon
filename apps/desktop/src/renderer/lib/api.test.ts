@@ -31,6 +31,7 @@ const detail = {
   id: workstreamId,
   workspaceId,
   title: 'Investigate ENG-142',
+  titleStatus: 'settled' as const,
   objective: 'Find the cause.',
   emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
   originType: 'ad_hoc' as const,

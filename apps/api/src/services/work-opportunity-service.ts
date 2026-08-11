@@ -1438,7 +1438,11 @@ async function storeRankingSet(
 }
 
 export class WorkOpportunityService {
-  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+  constructor(
+    private readonly env: Env,
+    private readonly auth: AuthContext,
+    private readonly defer?: (promise: Promise<unknown>) => void,
+  ) {}
 
   async list(limit: number) {
     const items = await rankWorkOpportunitiesForUser(this.env, this.auth.workspaceId, this.auth.userId);
@@ -1515,7 +1519,7 @@ export class WorkOpportunityService {
     }
     let createdResult: Awaited<ReturnType<WorkstreamService["createFromOpportunity"]>>;
     try {
-      createdResult = await new WorkstreamService(this.env, this.auth).createFromOpportunity({
+      createdResult = await new WorkstreamService(this.env, this.auth, this.defer).createFromOpportunity({
         opportunityId: id,
         version,
         displayPrompt: String(opportunity.display_prompt),

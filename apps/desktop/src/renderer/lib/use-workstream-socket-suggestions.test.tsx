@@ -62,6 +62,7 @@ function detail(): WorkstreamDetail {
   return {
     id: workstreamId,
     title: 'Create Linear issues for comments',
+    titleStatus: 'settled' as const,
     origin: 'ad_hoc',
     harnessStatus: 'completed',
     scope: 'workspace',
