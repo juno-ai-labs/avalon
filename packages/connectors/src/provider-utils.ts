@@ -128,8 +128,10 @@ const REVOKED_GRANT_ERRORS = new Set(["invalid_grant", "expired_token", "invalid
  * Classifying by status alone marks a connection `needs_reconnect` for any 400
  * or 403, which is how a malformed request or a proxy's rate limit ends up
  * demanding that a member reauthorize a healthy account. When the provider sent
- * an error code, that code decides; with no code, only a 401 is taken as a
- * rejection.
+ * an error code, that code decides. With no code at all the original status
+ * test stands — 400, 401, and 403 — because an unclassifiable rejection that
+ * leaves a dead connection reporting healthy strands it silently, and that is
+ * the worse of the two ways to be wrong here.
  */
 export function isRevokedGrantError(error: unknown): error is ConnectorError {
   if (!(error instanceof ConnectorError) || !isRecord(error.details)) return false;

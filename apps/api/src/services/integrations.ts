@@ -4418,6 +4418,11 @@ async function reauthorizeFrozenPlugin(
       // nothing is about to use. A provider that has since refused the
       // credential still surfaces on the next tool call, which recovers.
       await assertFrozenConnectionAuthorized(env, input, frozen);
+      // Again after the reads, not only before them. A deadline that fires
+      // while D1 is answering would otherwise leave the one check already
+      // passed, and this branch would report `authorized` for a run that had
+      // stopped being allowed to proceed.
+      signal.throwIfAborted();
       await ownershipGuard?.();
       return "authorized";
     }
