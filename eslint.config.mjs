@@ -9,6 +9,7 @@ import {
   requireWebSocketTicketRule,
 } from "./scripts/eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
+import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
 
 export default tseslint.config(
@@ -32,6 +33,7 @@ export default tseslint.config(
       avalon: {
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
+          "no-raw-entry-point-check": noRawEntryPointCheckRule,
           "no-direct-model-env-read": noDirectModelEnvReadRule,
           "no-direct-openrouter-client": noDirectOpenRouterClientRule,
           "provider-json-schema-complexity": providerJsonSchemaComplexityRule,
@@ -43,6 +45,10 @@ export default tseslint.config(
     },
     rules: {
       "avalon/no-bare-zod-url": "error",
+      // Repository-wide rather than scoped to scripts/: the guard is wrong
+      // wherever it is written, and the two folders that need it already keep
+      // separate copies of the helper that replaces it.
+      "avalon/no-raw-entry-point-check": "error",
       "avalon/provider-json-schema-complexity": "error",
     },
   },
