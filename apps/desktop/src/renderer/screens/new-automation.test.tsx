@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useLocation, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../lib/api';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
 import type { Workspace } from '../lib/types';
 import { clearAllDrafts } from '../lib/draft-cache';
@@ -352,6 +353,144 @@ describe('New automation composer', () => {
 
     const fresh = await screen.findByRole('textbox', { name: 'Describe an automation' });
     await waitFor(() => expect(fresh).toHaveValue(''));
+  });
+
+  it('says a draft could not be opened rather than offering a blank automation', async () => {
+    api.resumeAutomationDraft.mockRejectedValue(new ApiError('This draft’s conversation is no longer available.', 409, 'automation_draft_unavailable'));
+    renderScreen('/automations/new?draft=draft-9');
+
+    expect(await screen.findByRole('heading', { name: 'This draft could not be opened' })).toBeVisible();
+    expect(screen.getByText('This draft’s conversation is no longer available.')).toBeVisible();
+
+    // Sending here would compile with no draft id, opening a second draft while
+    // the sidebar still highlights the first.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'carry on then' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(api.compileAutomation).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unsent message with a draft this screen named itself', async () => {
+    renderScreen();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('What should the automation monitor?');
+    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-1'));
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'What should the automation monitor?' }), {
+      target: { value: 'an unsent afterthought' },
+    });
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+
+    // Every automation created through the product enters this way rather than
+    // through a resume, so the launcher's key is the one that has to stop being
+    // shared with the draft the first turn named.
+    const fresh = await screen.findByRole('textbox', { name: 'Describe an automation' });
+    await waitFor(() => expect(fresh).toHaveValue(''));
+  });
+
+  it('keeps a turn from landing on the draft the reader moved to', async () => {
+    let resolveCompile!: (value: unknown) => void;
+    let stream!: (event: AutomationAssistantStreamEvent) => void;
+    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
+      resolveCompile = resolve;
+      stream = onStream;
+    }));
+    api.resumeAutomationDraft.mockResolvedValue({
+      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+      messages: [
+        { role: 'user', content: 'Watch my blog.' },
+        { role: 'assistant', content: 'Which blog should I monitor?' },
+      ],
+    });
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('Check a blog every day');
+
+    // The reader opens another draft while that turn is still compiling.
+    fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+
+    act(() => {
+      stream({ type: 'delta', delta: 'Which post types?', reset: false });
+      resolveCompile({ draftId: 'draft-1', assistantMessage: 'Which post types?' });
+    });
+
+    // Neither the streamed text nor the settled answer belongs to the
+    // conversation now on screen, and the turn must not drag the reader back to
+    // the draft it was sent from.
+    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-9'));
+    expect(screen.queryByText('Which post types?')).not.toBeInTheDocument();
+    expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument();
+  });
+
+  it('clears the conversation the moment another draft is chosen, before it loads', async () => {
+    let resolveResume!: (value: unknown) => void;
+    api.resumeAutomationDraft.mockImplementation(() => new Promise((resolve) => {
+      resolveResume = resolve;
+    }));
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await screen.findByText('What should the automation monitor?');
+
+    fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
+
+    // Leaving the old transcript up while the new draft loads offers a Send
+    // that would answer a draft the sidebar says is closed — and a load that
+    // never arrives would leave it there for good.
+    await waitFor(() => expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument());
+    act(() => {
+      resolveResume({
+        draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+        messages: [
+          { role: 'user', content: 'Watch my blog.' },
+          { role: 'assistant', content: 'Which blog should I monitor?' },
+        ],
+      });
+    });
+    expect(await screen.findByText('Watch my blog.')).toBeVisible();
+  });
+
+  it('carries an answer typed during a turn onto the draft that turn named', async () => {
+    let resolveCompile!: (value: unknown) => void;
+    api.compileAutomation.mockImplementation(() => new Promise((resolve) => {
+      resolveCompile = resolve;
+    }));
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    // Typing ahead while the model works. The composer's cache moves to the new
+    // draft when the turn settles, and re-keying it empties the composer, so
+    // this is the sentence that would be lost.
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Only weekdays' },
+    });
+
+    act(() => {
+      resolveCompile({ draftId: 'draft-1', assistantMessage: 'Noted.' });
+    });
+
+    await screen.findByText('Noted.');
+    expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('Only weekdays');
+
+    // And it stays with that draft rather than the blank launcher.
+    fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
   });
 
   it('names the draft it just wrote in the address bar, so its sidebar row is the open one', async () => {

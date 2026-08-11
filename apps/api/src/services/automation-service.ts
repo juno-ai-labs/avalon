@@ -1,4 +1,5 @@
 import { newId, nowIso } from "@avalon/db";
+import { AutomationDraftStateSchema } from "@avalon/contracts";
 import type {
   AutomationCompilerMessage,
   AutomationDeliveryTargetType,
@@ -243,15 +244,23 @@ export class AutomationService {
     } satisfies Omit<AutomationDraftState, "draftId">);
     const existing = await this.loadOwnDraft(input.draftId);
     if (existing) {
+      // A compile turn takes seconds, and the row it started against can be
+      // created or archived from another window in that time. Every statement
+      // is therefore conditional on the subscription *still* being a visible
+      // draft, rather than trusting the check above: without it a turn that
+      // began before a promotion would rewrite the finished automation's name
+      // and instructions from a draft that no longer exists, and hang a draft
+      // conversation back off an automation that runs.
+      const stillDraft = this.stillDraftPredicate(existing.id);
       await this.env.DB.batch([
         this.env.DB.prepare(
           `UPDATE automation_templates SET name = ?, description = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ?`,
-        ).bind(draft.name, draft.description, at, existing.template_id, this.auth.workspaceId),
-        this.draftVersionUpdate(existing.template_version_id, draft),
+           WHERE id = ? AND workspace_id = ? AND ${stillDraft.sql}`,
+        ).bind(draft.name, draft.description, at, existing.template_id, this.auth.workspaceId, ...stillDraft.values),
+        this.draftVersionUpdate(existing.template_version_id, draft, stillDraft),
         this.env.DB.prepare(
           `UPDATE automation_subscriptions SET draft_conversation_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ?`,
+           WHERE id = ? AND workspace_id = ? AND status = 'draft' AND lifecycle_state = 'visible'`,
         ).bind(conversation, at, existing.id, this.auth.workspaceId),
       ]);
       return existing.id;
@@ -300,14 +309,68 @@ export class AutomationService {
     }>();
   }
 
-  private draftVersionUpdate(versionId: string, draft: AutomationDraft) {
+  /** Refuses a draft this caller owns that has already stopped being one.
+   * Sequential double-creation lands here; the simultaneous kind is caught by
+   * the claim in `create`, which is the same refusal a moment later. */
+  private async assertDraftNotAlreadyCreated(draftId: string): Promise<void> {
+    const row = await this.env.DB.prepare(
+      `SELECT status FROM automation_subscriptions
+       WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND lifecycle_state = 'visible'`,
+    ).bind(draftId, this.auth.workspaceId, this.auth.userId).first<{ status: string }>();
+    if (row && row.status !== "draft") {
+      throw new ApiError(409, "automation_already_created", "This automation has already been created");
+    }
+  }
+
+  /** The condition under which a draft's rows may still be written: the
+   * subscription is a visible draft in this workspace. Composed into a
+   * statement's `WHERE` so a batch spanning three tables is all-or-nothing
+   * against a promotion or an archival that landed in between. */
+  private stillDraftPredicate(subscriptionId: string) {
+    return {
+      sql: `EXISTS (SELECT 1 FROM automation_subscriptions
+                    WHERE id = ? AND workspace_id = ? AND status = 'draft' AND lifecycle_state = 'visible')`,
+      values: [subscriptionId, this.auth.workspaceId] as const,
+    };
+  }
+
+  /** The condition that a version row is the one this subscription pins. */
+  private pinnedVersionPredicate(subscriptionId: string, versionId: string) {
+    return {
+      sql: `EXISTS (SELECT 1 FROM automation_subscriptions
+                    WHERE id = ? AND workspace_id = ? AND template_version_id = ?)`,
+      values: [subscriptionId, this.auth.workspaceId, versionId] as const,
+    };
+  }
+
+  /**
+   * Rewrites a template version in place — the one exception to the immutability
+   * `DATA_MODEL.md` states for `automation_template_versions`, and the reason
+   * this is the only method that writes that table.
+   *
+   * It exists because a draft's version is private to the conversation writing
+   * it: every turn would otherwise leave a version behind, and a draft that
+   * took twenty turns would land as version 21 of a template nobody has ever
+   * run. What makes that safe is that nothing else can be pinned to the row —
+   * a draft's template is `private`, and `shareSubscription` refuses a draft.
+   *
+   * The guard is required rather than optional so this can never be pointed at
+   * a version some other subscription is running against. A caller passes the
+   * condition under which the row is still theirs to rewrite; the statement
+   * changes nothing when it no longer holds.
+   */
+  private draftVersionUpdate(
+    versionId: string,
+    draft: AutomationDraft,
+    guard: { sql: string; values: readonly string[] },
+  ) {
     return this.env.DB.prepare(
       `UPDATE automation_template_versions
        SET overview = ?, instructions = ?, trigger_definitions_json = ?,
            required_capabilities_json = ?, expected_outputs_json = ?, default_behavior_json = ?,
            recommended_plugins_json = ?, memory_tables_json = ?
-       WHERE id = ?`,
-    ).bind(draft.overview, draft.instructions, JSON.stringify(draft.triggers), JSON.stringify(draft.requiredCapabilities), JSON.stringify(draft.expectedOutputs), JSON.stringify(draft.defaultBehavior), JSON.stringify(draft.recommendedPlugins), JSON.stringify(draft.memoryTables), versionId);
+       WHERE id = ? AND ${guard.sql}`,
+    ).bind(draft.overview, draft.instructions, JSON.stringify(draft.triggers), JSON.stringify(draft.requiredCapabilities), JSON.stringify(draft.expectedOutputs), JSON.stringify(draft.defaultBehavior), JSON.stringify(draft.recommendedPlugins), JSON.stringify(draft.memoryTables), versionId, ...guard.values);
   }
 
   /** The conversation behind a draft, so the builder can pick it back up out of
@@ -319,11 +382,21 @@ export class AutomationService {
     if (row.status !== "draft") {
       throw new ApiError(409, "automation_not_draft", "Only a draft automation can be reopened");
     }
-    const conversation = parseJson<Omit<AutomationDraftState, "draftId"> | null>(row.draft_conversation_json, null);
-    if (!conversation) {
+    // Validated here rather than left to the route, because this blob was
+    // written by whichever deploy compiled that turn and `AutomationDraft` is a
+    // model-output contract that has changed before. A draft that predates a
+    // change would otherwise fail the route's own parse, which is a 500 — and a
+    // sidebar row that answers 500 forever is unopenable with no way to clear
+    // it. The 409 below is the same recoverable state a missing conversation
+    // gets: the draft is still there, still archivable, and says why.
+    const stored = AutomationDraftStateSchema.safeParse({
+      draftId: String(row.id),
+      ...parseJson<Record<string, unknown>>(row.draft_conversation_json, {}),
+    });
+    if (!stored.success) {
       throw new ApiError(409, "automation_draft_unavailable", "This draft's conversation is no longer available");
     }
-    return { draftId: String(row.id), ...conversation };
+    return stored.data;
   }
 
   async create(input: CreateAutomationInput) {
@@ -343,11 +416,16 @@ export class AutomationService {
     const deliveryTargets = await this.resolveDeliveryTargets(input.scope, input.deliveryTargets);
     // Creating an automation the person watched take shape in the sidebar
     // promotes that row rather than inserting a second one beside it: same id,
-    // same position, and no abandoned draft left over. An id that names
-    // anything else — someone else's draft, an automation that already runs —
-    // is not promotable and creates a new automation, which is also the path an
-    // automation created without a draft takes.
+    // same position, and no abandoned draft left over. An id that names nothing
+    // this caller may write through to — another person's draft, another
+    // workspace's row, no row at all — creates a new automation, which is also
+    // the path an automation created without a draft takes.
+    //
+    // A draft this caller *did* own and has already created is the one case
+    // that refuses rather than inserting: it is a Create pressed twice, and
+    // answering it with a second automation is never what was meant.
     const promoted = await this.loadOwnDraft(input.draftId);
+    if (!promoted && input.draftId) await this.assertDraftNotAlreadyCreated(input.draftId);
     const templateId = promoted?.template_id ?? newId();
     const versionId = promoted?.template_version_id ?? newId();
     const subscriptionId = promoted?.id ?? newId();
@@ -367,6 +445,34 @@ export class AutomationService {
       createdByUserId: this.auth.userId,
       createdAt: at,
     });
+    // Promotion claims the draft before anything else is written, and the claim
+    // is the status transition itself — so two creations of the same draft
+    // cannot both proceed. Without it the loser's `UPDATE` would change no rows
+    // while its schedules, memory tables, and delivery targets were inserted
+    // anyway: nothing constrains a subscription to one schedule, so the
+    // automation would quietly run twice for every trigger it has.
+    //
+    // The cost of claiming first is the opposite failure: if the batch below
+    // fails, the automation is active with no schedules and does not run until
+    // it is recreated. That is visible and recoverable, where double-firing is
+    // neither.
+    if (promoted) {
+      const claim = await this.env.DB.prepare(
+        // The draft's own transcript goes with the status: an automation that
+        // runs is edited through its overview, and keeping the conversation
+        // would leave a second, diverging definition of it.
+        `UPDATE automation_subscriptions
+         SET scope = ?, owner_user_id = ?, execution_principal_json = ?,
+             connector_bindings_json = ?, activity_trigger_bindings_json = ?,
+             default_plugins_json = ?, status = 'active', draft_conversation_json = NULL,
+             email_address = ?, email_route_status = 'reserved', model_override = ?,
+             next_run_at = ?, updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND status = 'draft' AND lifecycle_state = 'visible'`,
+      ).bind(input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, input.modelOverride ?? null, nextRunAt, at, subscriptionId, this.auth.workspaceId).run();
+      if (Number(claim.meta?.changes ?? 0) === 0) {
+        throw new ApiError(409, "automation_already_created", "This automation has already been created");
+      }
+    }
     await this.env.DB.batch([
       ...(promoted
         ? [
@@ -374,19 +480,10 @@ export class AutomationService {
               `UPDATE automation_templates SET name = ?, description = ?, updated_at = ?
                WHERE id = ? AND workspace_id = ?`,
             ).bind(input.draft.name, input.draft.description, at, templateId, this.auth.workspaceId),
-            this.draftVersionUpdate(versionId, input.draft),
-            this.env.DB.prepare(
-              // The draft's own transcript goes with the status: an automation
-              // that runs is edited through its overview, and keeping the
-              // conversation would leave a second, diverging definition of it.
-              `UPDATE automation_subscriptions
-               SET scope = ?, owner_user_id = ?, execution_principal_json = ?,
-                   connector_bindings_json = ?, activity_trigger_bindings_json = ?,
-                   default_plugins_json = ?, status = 'active', draft_conversation_json = NULL,
-                   email_address = ?, email_route_status = 'reserved', model_override = ?,
-                   next_run_at = ?, updated_at = ?
-               WHERE id = ? AND workspace_id = ? AND status = 'draft'`,
-            ).bind(input.scope, input.scope === "personal" ? this.auth.userId : null, JSON.stringify(principal), JSON.stringify(connectorSelection.bindings), JSON.stringify(input.activitySourcePluginIds), JSON.stringify(input.defaultPluginIds), emailRoute.emailAddress, input.modelOverride ?? null, nextRunAt, at, subscriptionId, this.auth.workspaceId),
+            // The claim above has already flipped the row to active, so this
+            // is bounded by the version still being the one that row pins
+            // rather than by it still being a draft's.
+            this.draftVersionUpdate(versionId, input.draft, this.pinnedVersionPredicate(subscriptionId, versionId)),
           ]
         : [
             this.env.DB.prepare(
@@ -884,6 +981,16 @@ export class AutomationService {
 
   async shareSubscription(subscriptionId: string): Promise<{ templateId: string }> {
     const subscription = await this.loadSubscription(subscriptionId);
+    // A draft's template is owned by whoever started the conversation, so the
+    // ownership check below passes by construction and cannot stand in for
+    // this one. Publishing a draft would put a half-written template in the
+    // workspace gallery — and worse, a subscriber would pin the very version
+    // row every later compile turn rewrites in place, so their automation's
+    // definition would change under them with no version bump and nothing
+    // marking it as an update.
+    if (subscription.status === "draft") {
+      throw new ApiError(409, "automation_not_created", "Create this automation before sharing it as a template");
+    }
     if (subscription.template_owner_user_id !== this.auth.userId) {
       throw new ApiError(403, "template_owner_required", "Only the template owner can publish this automation");
     }

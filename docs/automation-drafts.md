@@ -107,11 +107,24 @@ may not write through to, inserts a new automation exactly as it always did.
   read would also make opening the sidebar depend on the Global registry, and an
   active route on a `draft` row would mean mail could start a run that cannot
   legitimately begin.
-- **The only way out of `draft` is `create` or `archiveDraft`.** `setPaused`
-  refuses a draft for that reason: it is the one other writer of `status`, and
-  resuming through it would reach `active` without any of the scope, connector,
-  and binding validation that creation does — handing a half-written automation
-  a live address and a **Run now**.
+- **The only way out of `draft` is `create` or `archiveDraft`.** `setPaused` and
+  `shareSubscription` each refuse a draft for that reason. Resuming would reach
+  `active` without any of the scope, connector, and binding validation creation
+  does; sharing would publish a half-written template *and* leave a subscriber
+  pinned to the version row every later turn rewrites in place, so their
+  automation's definition would change under them with no version bump. Any
+  further writer of `status` — or of `sharing_state` — needs the same refusal.
+- **A draft's rows are written only while it is still a draft.** A compile turn
+  takes seconds, and the row can be created or archived from another window in
+  that time, so every statement in `saveDraft` carries the condition rather than
+  trusting the check that preceded it. Without it a turn begun before a
+  promotion rewrites the finished automation's name and instructions and hangs a
+  draft conversation back off it.
+- **Creation claims the draft before it writes anything else.** The claim is the
+  status transition itself, so two creations of one draft cannot both proceed.
+  A second one that got as far as the child inserts would give the automation
+  two of every schedule — nothing constrains a subscription to one — and it
+  would fire twice for every trigger.
 - **A surface that lists automations by recency excludes drafts.** A draft's
   `updated_at` moves on every compile turn, so any query ordered by it — Slack's
   App Home is the one today — is otherwise led by whatever is being typed right
@@ -157,6 +170,20 @@ this module keeps the automation they were describing.
   preserved and sent on the next compile, so the compiler still sees them, but
   the transcript renders those turns without their attachment tiles — only the
   ids are persisted, not the per-message metadata.
+- **A conversation this deploy cannot read** answers `409
+  automation_draft_unavailable` rather than failing. `AutomationDraft` is a
+  model-output contract that has changed before, and a draft written by an
+  earlier deploy can stop parsing; the draft stays listed and archivable rather
+  than becoming a row that answers 500 forever with no way to clear it.
+- **A resume that is loading or has failed** shows that, and refuses to send.
+  A turn sent in that window would carry no draft id and open a *second* draft
+  while the sidebar still highlights the first.
+- **Two windows writing one draft** is last-turn-wins on the saved conversation.
+  Each turn carries the whole transcript, so the loser's next turn restores its
+  own and the draft stays coherent; what is lost is one turn's text. A revision
+  token was rejected for this — it would reject a turn *after* the model had
+  already run, which costs more than it saves for a conflict that needs the same
+  draft open in two windows.
 - **No expiry.** A draft stays until its author creates or archives it. The
   transcript is bounded only by the conversation's own length, and the compile
   request carries the same messages, so a draft too large to save is a draft too
@@ -213,6 +240,52 @@ creation, not at draft time.
 
 ## Changelog
 
+### 2026-08-11 — Bound every writer that a live draft row newly exposed
+
+**What changed:** `shareSubscription` refuses a draft. `saveDraft`'s statements
+are each conditional on the row still being a visible draft, and
+`draftVersionUpdate` now requires a caller-supplied condition rather than
+writing any version row it is handed. Creation claims the draft — the status
+transition itself — before writing anything else, and a second creation of one
+draft is refused instead of inserting duplicates. `draftState` validates the
+stored conversation and answers 409 when it cannot read it. In the builder, a
+turn is discarded if the reader moved to another draft while it compiled, the
+old conversation clears the moment another draft is chosen rather than when its
+replacement arrives, a resume that is loading or has failed says so and refuses
+to send, and the composer's cache moves onto the draft a turn names — carrying
+whatever was typed while that turn was compiling.
+
+**Why:** Review of the entry below, by a person and two bots. The pattern in
+every finding is the same and worth stating plainly: **a row that could not
+exist before is now reachable by every writer that never had to exclude it.**
+`shareSubscription` was the exact "third writer" that entry predicted and it was
+already in the tree — its ownership check passes by construction for a draft,
+because the draft's template is owned by whoever started the conversation. The
+composer-cache leak was the common path, not the rare one: the existing test
+entered through a resume, where the key is per-draft from the start, while every
+automation created through the product enters through the launcher, where it
+was not.
+
+**Considered and rejected:** A revision token on the saved conversation, to
+reject a stale write from a second window. It would reject a turn after the
+model had already run — paying for a conflict that needs the same draft open in
+two windows with a failure in the common case. Last-turn-wins is recorded under
+Failure modes instead, and it self-heals, because each turn carries the whole
+transcript. Also rejected: keying the composer on the draft in the URL, again —
+the URL commit lags the state beside it, so that key changes mid-turn.
+
+**Consequences:** Three separate things now key off the address bar *changing*
+rather than what it says, because this screen writes its own URL and the router
+commits it a render or two later; anything added here must do the same or it
+will wipe a conversation that has not finished naming itself. Creation is no
+longer atomic end to end: a claim that succeeds and a batch that then fails
+leaves an automation active with no schedules, which does not run — chosen over
+the alternative, which was running twice. And `draftVersionUpdate` is the only
+in-place writer of a table `DATA_MODEL.md` calls immutable; its guard parameter
+is what keeps that exception to a draft's own private version.
+
+Shipped in #99.
+
 ### 2026-08-11 — Close the paths a draft could take out of being one
 
 **What changed:** `setPaused` refuses a draft, deleting a draft no longer mints
@@ -249,7 +322,7 @@ legitimate exits from `draft` — `create` and `archiveDraft` — and a third wr
 needs the same explicit refusal `setPaused` now carries. Any new surface listing
 automations by `updated_at` must exclude drafts or be swamped by them.
 
-Shipped in #TBD.
+Shipped in #99.
 
 ### 2026-08-11 — Automations being set up are drafts, and drafts are in the sidebar
 
@@ -289,4 +362,4 @@ not paused. Any new writer of a client-supplied draft id must go through
 promotion and insertion; a change to what a new subscription holds has to be made
 in both or a promoted automation will quietly lack it.
 
-Shipped in #TBD.
+Shipped in #99.
