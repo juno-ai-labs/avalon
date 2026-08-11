@@ -805,7 +805,7 @@ export function useWorkstreamSocket(
           scheduleReconnect();
           return;
         }
-        const nextSocket = new WebSocket(socketTicket.url);
+        const nextSocket = new WebSocket(socketTicket.url, socketTicket.protocols);
         socket = nextSocket;
         nextSocket.addEventListener('open', () => {
           if (closedByEffect || socket !== nextSocket) return;

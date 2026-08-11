@@ -47,6 +47,7 @@ import {
   type WorkstreamArtifact as WireWorkstreamArtifact,
   type WorkstreamDetail as WireWorkstreamDetail,
 } from '@avalon/contracts';
+import { socketTicketProtocols, socketUrlWithoutTicket } from '@avalon/contracts/socket-tickets';
 import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
@@ -259,7 +260,15 @@ const runNowResponseSchema = z.object({
   harnessRunId: z.string().optional(),
   reused: z.boolean(),
 });
-const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() });
+// The issuing endpoints still put the ticket in the URL for desktop builds
+// released before the subprotocol scheme. Strip it on the way in, so no call
+// site can open a socket whose URL carries the credential.
+const socketTicketSchema = z.object({ url: z.string(), ticket: z.string() })
+  .transform(({ url, ticket }): SocketTicket => ({
+    url: socketUrlWithoutTicket(url),
+    ticket,
+    protocols: socketTicketProtocols(ticket),
+  }));
 
 export function normalizeHarnessStatus(status: WireWorkstream['harnessStatus']): HarnessStatus {
   return status === 'idle' ? 'completed' : status;

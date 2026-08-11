@@ -537,8 +537,15 @@ export interface WorkspaceTemplate {
 }
 
 export interface SocketTicket {
+  /**
+   * The handshake URL with the deprecated `?ticket=` stripped: the credential
+   * travels in `protocols` instead, because Cloudflare captures request URLs
+   * into stores no redaction here can reach.
+   */
   url: string;
   ticket: string;
+  /** Pass as the `WebSocket` constructor's second argument. */
+  protocols: [string, string];
 }
 
 export type WorkstreamSocketEvent =
