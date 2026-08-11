@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 
-export type RailVariant = 'context' | 'background' | 'runs';
+export type RailVariant = 'context' | 'runs';
+/** Which of the two panels the right sidebar's one slot is being laid out for. */
+export type RailPanel = 'hypersight' | 'inspector';
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
   id: string;
@@ -12,10 +14,10 @@ interface UiState {
   railOpen: boolean;
   railVariant: RailVariant;
   railWidth: number;
-  railExpanded: boolean;
   inspector: RailInspector | null;
   hypersightOpen: boolean;
   hypersightWidth: number;
+  railLeaving: RailPanel | null;
   railScope: string | null;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -23,7 +25,6 @@ interface UiState {
   closeRail: () => void;
   setRailVariant: (variant: RailVariant) => void;
   setRailWidth: (width: number) => void;
-  toggleRailExpanded: () => void;
   inspect: (inspector: RailInspector | null) => void;
   // HyperSight and the inspector rail share the right sidebar slot, and only
   // one of them is ever open. Which one is open is a personal, per-work-stream
@@ -31,6 +32,11 @@ interface UiState {
   // shell to lay out against rather than deciding it.
   setHyperSightOpen: (open: boolean) => void;
   setHyperSightWidth: (width: number) => void;
+  // A panel that has lost the slot is still on screen for its fade, so the
+  // shell has to keep laying out against it: dropping the room it occupies, or
+  // re-targeting the slot at the other panel's width, would reflow the screen
+  // underneath something the person can still see.
+  setRailLeaving: (panel: RailPanel | null) => void;
   // Each panel keeps its own width per work stream: a wide HyperSight in one
   // stream must not narrow the inspector in another. Screens outside a work
   // stream pass null and share one bucket.
@@ -107,10 +113,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   railOpen: false,
   railVariant: 'context',
   railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, null),
-  railExpanded: false,
   inspector: null,
   hypersightOpen: false,
   hypersightWidth: loadRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, null),
+  railLeaving: null,
   railScope: null,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarWidth: (width) => {
@@ -119,14 +125,16 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ sidebarWidth });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
-  closeRail: () => set({ railOpen: false, railExpanded: false, inspector: null }),
+  // The detail view is cleared when the rail is next opened rather than as it
+  // closes: the panel is still on screen fading out, and swapping its contents
+  // under the fade would be the last thing seen of it.
+  closeRail: () => set({ railOpen: false }),
   setRailVariant: (railVariant) => set({ railVariant, inspector: null }),
   setRailWidth: (width) => {
     const railWidth = clampRailWidth(width);
     saveRailWidth(RAIL_WIDTH_STORAGE_PREFIX, get().railScope, railWidth);
     set({ railWidth });
   },
-  toggleRailExpanded: () => set((state) => ({ railExpanded: !state.railExpanded })),
   inspect: (inspector) => set({ inspector }),
   setHyperSightOpen: (hypersightOpen) => set({ hypersightOpen }),
   setHyperSightWidth: (width) => {
@@ -134,6 +142,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     saveRailWidth(HYPERSIGHT_WIDTH_STORAGE_PREFIX, get().railScope, hypersightWidth);
     set({ hypersightWidth });
   },
+  setRailLeaving: (railLeaving) => set({ railLeaving }),
   setRailScope: (railScope) => set({
     railScope,
     railWidth: loadRailWidth(RAIL_WIDTH_STORAGE_PREFIX, railScope),

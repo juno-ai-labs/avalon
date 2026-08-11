@@ -12,7 +12,7 @@ The product includes:
 - Global and European Union workspace regions with separate deployment configurations.
 - Hibernating work-stream WebSockets with bounded room replay, turn/epoch stream resets, duplicate suppression, and REST resynchronization.
 - Electron organization signup, Resend-delivered regional invitations, and a native Settings window available with **Command-,**.
-- A contextual right sidebar for people and resources, background tasks, run history, and focused item details.
+- A contextual right sidebar for people and resources, run history, and focused item details.
 
 ## Repository
 

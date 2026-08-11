@@ -37,11 +37,6 @@ export function formatDuration(milliseconds?: number): string | undefined {
   return `${minutes}m ${remainder.toString().padStart(2, '0')}s`;
 }
 
-export function formatCompactNumber(value?: number): string | undefined {
-  if (value === undefined) return undefined;
-  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-}
-
 export const statusLabel: Record<HarnessStatus, string> = {
   scheduled: 'Scheduled',
   running: 'Running',

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
-import type { BackgroundTask, ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import {
   AddResourceDialog,
@@ -11,7 +11,6 @@ import {
   initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
-  mergeBackgroundTasks,
   RunFailureNotice,
   WorkstreamErrorState,
   WorkstreamHeader,
@@ -140,7 +139,7 @@ describe('WorkstreamHeader origin affordances', () => {
     expect(openContext).toHaveAttribute('aria-pressed', 'true');
     expect(openContext).toHaveClass('is-active');
     // The sidebar holds one panel at a time, so the other control stays unpressed.
-    expect(screen.getByRole('button', { name: 'Background tasks' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Show HyperSight' })).toHaveAttribute('aria-pressed', 'false');
 
     fireEvent.click(openContext);
     expect(useUiStore.getState().railOpen).toBe(false);
@@ -688,19 +687,3 @@ describe('workspaceMemberFromSession', () => {
   });
 });
 
-describe('mergeBackgroundTasks', () => {
-  it('keeps persisted history while allowing realtime state to replace the matching task', () => {
-    const persisted: BackgroundTask[] = [
-      { id: 'old', title: 'Earlier task', type: 'tool', status: 'completed', startedAt: '2026-07-31T10:00:00.000Z' },
-      { id: 'current', title: 'Current task', type: 'tool', status: 'running', startedAt: '2026-08-01T10:00:00.000Z' },
-    ];
-    const live: BackgroundTask[] = [
-      { id: 'current', title: 'Current task', type: 'tool', status: 'completed', startedAt: '2026-08-01T10:00:00.000Z' },
-    ];
-
-    expect(mergeBackgroundTasks(persisted, live)).toEqual([
-      expect.objectContaining({ id: 'current', status: 'completed' }),
-      expect.objectContaining({ id: 'old', status: 'completed' }),
-    ]);
-  });
-});
