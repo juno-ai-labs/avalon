@@ -25,11 +25,11 @@ vi.mock("../src/services/workstream-naming-service", async (importOriginal) => (
 }));
 
 import { WorkstreamService } from "../src/services/workstream-service";
-import { WorkstreamEmailRoutingService } from "../src/services/workstream-email-routing-service";
 import { publishWorkstreamEvent, startWorkstreamWorkflow } from "../src/services/integrations";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const authorId = "00000000-0000-7000-8000-000000000002";
+const strangerId = "00000000-0000-7000-8000-00000000000f";
 const at = "2026-08-11T09:00:00.000Z";
 const databases: DatabaseSync[] = [];
 
@@ -37,136 +37,84 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
   vi.restoreAllMocks();
   vi.clearAllMocks();
-  // `clearAllMocks` clears calls but not a queued `mockImplementationOnce`, and
-  // every test here queues one. A leftover would be consumed by whichever test
-  // ran next, which is the kind of order dependency that only fails in a full
-  // suite run.
+  // `clearAllMocks` clears calls but not a queued `mockImplementationOnce`. A
+  // leftover would be consumed by whichever test ran next, which is the kind of
+  // order dependency that only fails in a full suite run.
   vi.mocked(startWorkstreamWorkflow).mockReset();
   vi.mocked(startWorkstreamWorkflow).mockImplementation(async () => "unused");
 });
 
 /**
- * What a person waiting on `POST /workstreams` is made to wait for.
+ * What `POST /workstreams` finishes before it answers.
  *
- * Everything here is about the boundary rather than the behaviour on either
- * side of it: the run is real and the address is reserved before the response,
- * and the two slowest steps — the Workflows round trip and the route
- * activation — happen after it. A regression that quietly moves either back
- * onto the critical path is invisible in every other test, because the result
- * is identical once the dust settles.
+ * Deferring the two slowest steps to `waitUntil` was tried here and reverted,
+ * and these tests are the record of what has to stay true instead: the run is
+ * started and the route is active before the response, because a run that never
+ * reached a Workflow is a work stream nothing can recover. The launch surface on
+ * the client is what makes that wait invisible; see `docs/workstream-creation.md`.
  */
-describe("work-stream create latency", () => {
-  it("answers before the Workflows round trip when a person is waiting on it", async () => {
-    const database = seededDatabase();
-    let startWorkflow = (): void => undefined;
-    vi.mocked(startWorkstreamWorkflow).mockImplementationOnce(() => new Promise<string>((resolve) => {
-      startWorkflow = () => resolve("workflow-1");
-    }));
-    const deferred: Promise<unknown>[] = [];
-    const service = new WorkstreamService(environment(database), auth(), (promise) => {
-      deferred.push(promise);
-    });
-
-    // Deliberately not released first: if the create ever waits on the workflow
-    // start again, this line never returns and the test times out.
-    const created = await service.create(request());
-
-    expect(created.harnessRunId).toEqual(expect.any(String));
-    // The run the response names is already recorded and already running, which
-    // is what makes waiting for the workflow start pointless.
-    expect(harnessRun(database, created.harnessRunId)).toMatchObject({ status: "running" });
-    expect(workstreamRow(database, created.workstream.id)).toMatchObject({ harness_status: "running" });
-
-    startWorkflow();
-    await Promise.all(deferred);
-    expect(startWorkstreamWorkflow).toHaveBeenCalledOnce();
-  });
-
-  it("activates the email route after answering rather than before", async () => {
-    const database = seededDatabase();
-    // Against an in-memory D1 the activation would finish inside the create
-    // whether it was awaited or not, so it is held open here: the point being
-    // fixed is that the response does not depend on it, and outside Global it
-    // is a second hop to the Global registry.
-    let activateRoute = (): void => undefined;
-    const held = new Promise<void>((resolve) => {
-      activateRoute = () => resolve();
-    });
-    const activate = WorkstreamEmailRoutingService.prototype.activateWorkstreamRoute;
-    vi.spyOn(WorkstreamEmailRoutingService.prototype, "activateWorkstreamRoute")
-      .mockImplementation(async function activateAfterRelease(
-        this: WorkstreamEmailRoutingService,
-        input: Parameters<typeof activate>[0],
-      ) {
-        await held;
-        return activate.call(this, input);
-      });
-    const deferred: Promise<unknown>[] = [];
-    const service = new WorkstreamService(environment(database), auth(), (promise) => {
-      deferred.push(promise);
-    });
-
-    const created = await service.create(request());
-
-    // The address itself is settled — it is in the response and on the row.
-    // Only the routing status is outstanding, and nothing the caller received
-    // depends on it.
-    expect(created.workstream.emailAddress).toEqual(expect.stringContaining("@"));
-    expect(workstreamRow(database, created.workstream.id)).toMatchObject({ email_route_status: "reserved" });
-
-    activateRoute();
-    await Promise.all(deferred);
-    expect(workstreamRow(database, created.workstream.id)).toMatchObject({ email_route_status: "active" });
-  });
-
-  it("still waits for the workflow start when nobody is waiting on a response", async () => {
-    const database = seededDatabase();
-    let startWorkflow = (): void => undefined;
-    // Resolved when the create actually reaches the workflow start. Waiting a
-    // fixed delay instead would be a race: under a loaded suite the create can
-    // still be several D1 round trips away, and releasing a workflow that has
-    // not been started yet leaves it pending for ever.
-    const reachedWorkflowStart = new Promise<void>((reached) => {
-      vi.mocked(startWorkstreamWorkflow).mockImplementationOnce(() => new Promise<string>((resolve) => {
-        startWorkflow = () => resolve("workflow-1");
-        reached();
-      }));
-    });
-    // Slack ingress and the tests below it supply no deferral, and an unawaited
-    // promise in a Worker is not guaranteed to finish once the response is sent.
-    const service = new WorkstreamService(environment(database), auth());
-
-    const pending = service.create(request());
-    let settled = false;
-    void pending.then(() => { settled = true; }, () => { settled = true; });
-    await reachedWorkflowStart;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
-    expect(settled).toBe(false);
-    startWorkflow();
-    await pending;
-    expect(settled).toBe(true);
-  });
-
-  it("reports a deferred launch failure on the run instead of failing the create", async () => {
+describe("work-stream create", () => {
+  it("starts the harness before answering, so a failed start is the caller's answer", async () => {
     const database = seededDatabase();
     vi.mocked(startWorkstreamWorkflow).mockRejectedValueOnce(new Error("Workflows is unavailable"));
-    const deferred: Promise<unknown>[] = [];
-    const service = new WorkstreamService(environment(database), auth(), (promise) => {
-      deferred.push(promise);
-    });
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
 
-    const created = await service.create(request());
-    // The work stream exists either way, so a 503 would have been an error
-    // about something that already happened. The failure belongs on the run.
-    await expect(Promise.all(deferred)).resolves.toBeDefined();
+    await expect(service.create(request())).rejects.toMatchObject({ status: 503 });
 
-    expect(harnessRun(database, created.harnessRunId)).toMatchObject({ status: "failed" });
-    expect(workstreamRow(database, created.workstream.id)).toMatchObject({ harness_status: "failed" });
+    // The work stream exists either way, so anyone already watching is told the
+    // run failed rather than left on a `running` row nothing will move.
+    const run = latestRun(database);
+    expect(run).toMatchObject({ status: "failed" });
     expect(vi.mocked(publishWorkstreamEvent).mock.calls.map((call) => call[3])).toContainEqual({
       type: "harness_status_changed",
       status: "failed",
     });
+  });
+
+  it("leaves the email route active, not merely reserved", async () => {
+    const database = seededDatabase();
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+
+    const created = await service.create(request());
+
+    // `list` backfills any route that is not active, and the create invalidates
+    // that list immediately — leaving it reserved here only moves the same hop
+    // onto the refresh that follows.
+    expect(created.workstream.emailAddress).toEqual(expect.stringContaining("@"));
+    expect(workstreamRow(database, created.workstream.id)).toMatchObject({
+      email_route_status: "active",
+      harness_status: "running",
+    });
+  });
+
+  it("reports the same refusal whichever of two bad pre-flight checks loses the race", async () => {
+    // Both checks run concurrently, so a request that violates both must not
+    // report whichever rejection happened to land first.
+    const codes = new Set<string>();
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const database = seededDatabase();
+      const service = new WorkstreamService(environment(database), auth(), () => undefined);
+      await service.create({
+        ...request(),
+        participantUserIds: [strangerId],
+        attachmentIds: ["00000000-0000-7000-8000-0000000000ee"],
+      }).catch((error: unknown) => {
+        codes.add((error as { code?: string }).code ?? "unknown");
+      });
+    }
+
+    expect([...codes]).toEqual(["invalid_workspace_member"]);
+  });
+
+  it("does not reserve an address for a work stream it is about to refuse", async () => {
+    const database = seededDatabase();
+    const service = new WorkstreamService(environment(database), auth(), () => undefined);
+
+    await expect(service.create({ ...request(), participantUserIds: [strangerId] }))
+      .rejects.toMatchObject({ status: 422 });
+
+    expect(database.prepare("SELECT COUNT(*) AS count FROM workstream_email_routes").get())
+      .toMatchObject({ count: 0 });
   });
 });
 
@@ -174,8 +122,8 @@ function request() {
   return {
     openingMessage: "Prepare the launch brief",
     clientMessageId: "client-create-latency",
-    participantUserIds: [],
-    attachmentIds: [],
+    participantUserIds: [] as string[],
+    attachmentIds: [] as string[],
   };
 }
 
@@ -203,8 +151,10 @@ function environment(database: DatabaseSync): Env {
   } as unknown as Env;
 }
 
-function harnessRun(database: DatabaseSync, id: string): Record<string, unknown> {
-  return database.prepare("SELECT * FROM harness_runs WHERE id = ?").get(id) as Record<string, unknown>;
+function latestRun(database: DatabaseSync): Record<string, unknown> {
+  return database
+    .prepare("SELECT * FROM harness_runs ORDER BY created_at DESC LIMIT 1")
+    .get() as Record<string, unknown>;
 }
 
 function workstreamRow(database: DatabaseSync, id: string): Record<string, unknown> {
