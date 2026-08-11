@@ -27,6 +27,7 @@ import {
   type SlackOriginNearbyMessage,
   type SlackSearchAuthorization,
 } from "@avalon/contracts";
+import { HttpsUrlSchema, httpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { newId, nowIso } from "@avalon/db";
 import {
   SLACK_UNFURL_MAX_LINKS,
@@ -121,7 +122,7 @@ const SlackModalContextSchema = z.object({
     title: z.string().max(500).nullable(),
     mimeType: z.string().max(255).nullable(),
     fileType: z.string().max(120).nullable(),
-    permalink: z.string().url().max(2000).nullable(),
+    permalink: httpsUrlSchema(2000).nullable(),
   }).strict()).max(10).optional().default([]),
 }).strict();
 
@@ -155,7 +156,7 @@ const SlackCommandFormSchema = z.object({
   text: z.string().default(""),
   channel_id: z.string().min(1),
   trigger_id: z.string().min(1),
-  response_url: z.string().url().optional(),
+  response_url: HttpsUrlSchema.optional(),
 }).catchall(z.string());
 const SlackAutomationTargetSchema = z.object({
   id: z.string().min(1),

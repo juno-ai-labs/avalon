@@ -233,6 +233,47 @@ describe("suggested-work aggregation", () => {
     expect(maximum).toBe(3);
   });
 
+  it("keeps admission output portable while enforcing limits after generation", () => {
+    const serialized = JSON.stringify(__workOpportunityTesting.admissionJsonSchema);
+    for (const providerConstraint of [
+      "maxItems",
+      "minItems",
+      "maxLength",
+      "minLength",
+      "minimum",
+      "maximum",
+      "format",
+    ]) {
+      expect(serialized).not.toContain(`"${providerConstraint}"`);
+    }
+    expect(__workOpportunityTesting.admissionJsonSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        decisions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const decision = {
+      action: "ignore",
+      existingTargetId: null,
+      displayPrompt: "",
+      executionPrompt: "",
+      admissionReasoning: "",
+      linkedUsers: [],
+      sourceIds: ["source-1"],
+    };
+    expect(() => __workOpportunityTesting.parseAdmissionResult({
+      decisions: Array.from({ length: 5 }, () => decision),
+    })).toThrow();
+  });
+
   it("bounds every ranking candidate and guarantees tournament rounds shrink", () => {
     type RankingCandidate = Parameters<typeof __workOpportunityTesting.rankingGroups>[0][number];
     const candidate = (index: number): RankingCandidate => __workOpportunityTesting.boundRankingCandidate({

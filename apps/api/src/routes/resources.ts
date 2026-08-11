@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
 import { IdSchema } from "@avalon/contracts";
+import { HttpUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -14,7 +15,7 @@ const resolveBody = z.object({
   providerResourceId: z.string().min(1).max(500),
   resourceType: z.string().min(1).max(80),
   title: z.string().min(1).max(300),
-  canonicalUrl: z.string().url().nullable().optional(),
+  canonicalUrl: HttpUrlSchema.nullable().optional(),
 });
 const watchBody = z.object({ workstreamId: IdSchema });
 const watchQuery = z.object({ workstreamId: IdSchema });

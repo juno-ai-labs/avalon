@@ -1,5 +1,4 @@
 import {
-  OpenRouterClient,
   renderWorkOpportunityAdmissionMessages,
   renderWorkOpportunityRankingMessages,
 } from "@avalon/agent-harness";
@@ -15,13 +14,10 @@ import { newId, nowIso } from "@avalon/db";
 import { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
-import {
-  resolveAgentModelRouting,
-  type AgentModelFlagContext,
-  type AgentModelRole,
-} from "./agent-model-flags";
+import { resolveAgentModelRouting } from "./agent-model-flags";
 import { createActivitySuggestion } from "./activity-suggestion-service";
 import { hydrateConnectorActivitySource } from "./integrations";
+import { runStructuredInference } from "./structured-inference";
 import { WorkstreamService } from "./workstream-service";
 
 const MAX_BATCH_EVENTS = 16;
@@ -66,36 +62,34 @@ const admissionJsonSchema = {
   properties: {
     decisions: {
       type: "array",
-      maxItems: 4,
       items: {
         type: "object",
         additionalProperties: false,
         properties: {
           action: { type: "string", enum: ["add", "ignore", "update_existing", "route_existing"] },
-          existingTargetId: { type: ["string", "null"], format: "uuid" },
-          displayPrompt: { type: "string", maxLength: 180 },
-          executionPrompt: { type: "string", maxLength: 20_000 },
-          admissionReasoning: { type: "string", maxLength: 20_000 },
+          existingTargetId: { type: ["string", "null"] },
+          displayPrompt: { type: "string" },
+          executionPrompt: { type: "string" },
+          admissionReasoning: { type: "string" },
           linkedUsers: {
             type: "array",
-            maxItems: 30,
             items: {
               type: "object",
               additionalProperties: false,
               properties: {
-                userId: { type: ["string", "null"], format: "uuid" },
-                role: { type: "string", maxLength: 80 },
+                userId: { type: ["string", "null"] },
+                role: { type: "string" },
                 resolution: { type: "string", enum: ["verified", "inferred", "ambiguous", "unresolved"] },
-                reasoning: { type: "string", maxLength: 4_000 },
-                sourceId: { type: "string", maxLength: 200 },
-                sourceText: { type: "string", maxLength: 1_000 },
-                startOffset: { type: ["integer", "null"], minimum: 0 },
-                endOffset: { type: ["integer", "null"], minimum: 1 },
+                reasoning: { type: "string" },
+                sourceId: { type: "string" },
+                sourceText: { type: "string" },
+                startOffset: { type: ["integer", "null"] },
+                endOffset: { type: ["integer", "null"] },
               },
               required: ["userId", "role", "resolution", "reasoning", "sourceId", "sourceText", "startOffset", "endOffset"],
             },
           },
-          sourceIds: { type: "array", minItems: 1, maxItems: 16, items: { type: "string", maxLength: 200 } },
+          sourceIds: { type: "array", items: { type: "string" } },
         },
         required: ["action", "existingTargetId", "displayPrompt", "executionPrompt", "admissionReasoning", "linkedUsers", "sourceIds"],
       },
@@ -169,27 +163,6 @@ interface OpportunityCandidateRow {
   impression_count: number | null;
   first_impressed_at: string | null;
   last_impressed_at: string | null;
-}
-
-/**
- * Admission and ranking are separate agents with separate flags: admission turns
- * connector activity into prompts, ranking orders them per user, and pinning one
- * to a different model should not move the other.
- */
-async function modelClient(
-  env: Env,
-  role: Extract<AgentModelRole, "work_opportunity_admission" | "work_opportunity_ranking">,
-  context: AgentModelFlagContext,
-): Promise<{ client: OpenRouterClient; model: string }> {
-  const routing = await resolveAgentModelRouting(env, role, context);
-  return {
-    client: new OpenRouterClient({
-      apiKey: env.OPENROUTER_API_KEY,
-      primaryModel: routing.model,
-      fallbackModels: routing.fallbackModels,
-    }),
-    model: routing.model,
-  };
 }
 
 function parseRecord(value: unknown): Record<string, unknown> {
@@ -1073,11 +1046,12 @@ async function processModelBatch(
     `UPDATE opportunity_batch_events SET status = 'processing', attempt_count = attempt_count + 1, updated_at = ? WHERE id = ?`,
   ).bind(at, event.id)));
   try {
-    const admission = await modelClient(env, "work_opportunity_admission", {
-      workspaceId: window.workspace_id,
-      userId: window.audience_user_id ?? undefined,
-    });
-    const result = await admission.client.structured({
+    const { result } = await runStructuredInference(env, {
+      role: "work_opportunity_admission",
+      context: {
+        workspaceId: window.workspace_id,
+        userId: window.audience_user_id ?? undefined,
+      },
       messages: renderWorkOpportunityAdmissionMessages({
         audience: { scope: window.audience_scope, userId: window.audience_user_id },
         members: context.members,
@@ -1300,8 +1274,9 @@ async function rankBatch(
   candidates: Awaited<ReturnType<typeof rankingCandidates>>,
   roundNumber: number,
 ) {
-  const ranking = await modelClient(env, "work_opportunity_ranking", { workspaceId, userId });
-  const result = await ranking.client.structured({
+  const ranking = await runStructuredInference(env, {
+    role: "work_opportunity_ranking",
+    context: { workspaceId, userId },
     messages: renderWorkOpportunityRankingMessages({
       user: { id: userId, name: userName },
       candidates: candidates.map((candidate) => ({
@@ -1321,6 +1296,7 @@ async function rankBatch(
     parse: (value) => RankingResultSchema.parse(value),
     reasoningEffort: "high",
   });
+  const result = ranking.result;
   const allowed = new Set(candidates.map((candidate) => candidate.id));
   const ids = [...new Set(result.orderedOpportunityIds)].filter((id) => allowed.has(id)).slice(0, 4);
   await env.DB.prepare(
@@ -1676,6 +1652,8 @@ export class WorkOpportunityService {
 }
 
 export const __workOpportunityTesting = {
+  admissionJsonSchema,
+  parseAdmissionResult: (value: unknown) => AdmissionResultSchema.parse(value),
   packBatches,
   mapConcurrent,
   boundRankingCandidate,
