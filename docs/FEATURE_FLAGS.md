@@ -15,13 +15,21 @@ directly:
 | Module | Owns | Fails |
 | --- | --- | --- |
 | `apps/api/src/services/agent-model-flags.ts` | One flag per model-using agent, and the pin that overrides one | **Open** — to the Worker variables, because an agent still has to run |
-| `apps/api/src/services/client-feature-flags.ts` | The flags the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
+| `apps/api/src/services/client-feature-flags.ts` | The features the desktop polls | **Closed** — to off, because a client feature has nothing it must do |
+| `apps/api/src/services/control-tower-flags.ts` | Control Tower's refresh cadence | **Open** — to the checked-in default, because a cadence has no off |
 
-That difference in failure direction is the reason they are separate modules
-rather than one resolver with a parameter. A client flag that fell back the way
-a model flag does would ship an unreleased feature on the first Flagship outage.
-Because the pin lives with the model flags, every answer to "which model does
-this run use" still comes from one file.
+Failure direction is the reason these are separate modules rather than one
+resolver with a parameter. A client feature that fell back the way a model flag
+does would ship an unreleased feature on the first Flagship outage; a cadence
+that failed closed would leave a recording meeting with no briefing at all,
+which is not a safe reading of an outage. Because the pin lives with the model
+flags, every answer to "which model does this run use" still comes from one file.
+
+The cadence is the one flag with two readers that must agree: the desktop reads
+it through `GET /feature-flags` to set the timer that commits a transcript
+segment and asks for the next briefing, and the meeting-notes generator reads it
+to tell the model how soon it runs again. Both go through the same module for
+that reason — see [`meeting-notes.md`](meeting-notes.md).
 
 `apps/api/src/services/flag-targeting-attributes.ts` is the companion both of
 them evaluate through: it turns the ids a caller happens to hold into the
@@ -327,18 +335,36 @@ guarantee. The inference ledger records what each attempt actually used.
 
 ## Client-visible flags
 
-A client flag decides what the desktop is allowed to *offer*. There is one
-today:
+A client flag decides what the desktop is allowed to *offer*, or how it should
+behave. There are two today:
 
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
+| `control-tower-refresh-seconds` | number | `60` | How often a recording meeting commits a transcript segment and rewrites its Control Tower briefing |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
-false }` — resolved for the signed-in person. It answers under *identity* auth
-rather than workspace auth: eligibility belongs to the account, and a device
-that has not chosen an organization yet still has to be told the feature is off
-rather than read a 403 as an outage.
+false, "controlTowerRefreshSeconds": 60 }` — resolved for the signed-in person.
+It answers under *identity* auth rather than workspace auth: eligibility belongs
+to the account, and a device that has not chosen an organization yet still has to
+be told the feature is off rather than read a 403 as an outage.
+
+The two are not the same kind of answer, and the response schema says so.
+`developerSettings` is a feature and defaults to off. `controlTowerRefreshSeconds`
+is a setting with no off: it defaults to the cadence the client would have used
+anyway, and both ends read that number from one definition —
+`CONTROL_TOWER_REFRESH_SECONDS` in `@avalon/contracts` — so an unreachable
+Flagship, an older service, and the desktop fallback cannot disagree. The
+resolver clamps what Flagship serves to that range before serving it, because
+every refresh is an inference: a flag typed in milliseconds would otherwise turn
+one meeting into thousands of runs. A clamp logs
+`control_tower_refresh_flag_clamped` rather than passing quietly.
+
+The desktop reads the cadence from the **renderer** that acts on it — the
+meeting screen, once when it opens — rather than through the main-process poll
+below. A meeting window exists for one meeting, and a cadence that changed
+underneath a recording would move the transcript's own segment boundaries
+mid-conversation.
 
 The Developer section is for Juno staff, and **that is a Flagship targeting
 rule, not a condition in the Worker** — see [the rule the flag is provisioned
@@ -485,6 +511,18 @@ pnpm exec wrangler flagship flags create <APP_ID> developer-settings --type bool
   --rule "serve=on; when=userEmailDomain equals juno-labs.com"
 ```
 
+Then the cadence, seeded at the checked-in default so provisioning changes
+nothing. It is served to everyone rather than scoped by a rule — it is a tuning
+knob, not a feature somebody is let into — so it is created with no rules and
+retargeted only to stage a change:
+
+```bash
+pnpm exec wrangler flagship flags create <APP_ID> control-tower-refresh-seconds --type number \
+  -V current=60 \
+  --default current \
+  -d "Seconds between Control Tower refreshes while a meeting records. 15-600; the service clamps"
+```
+
 **The staff scope is that `--rule`, and it is the only thing holding it.**
 Nothing in the Worker narrows the flag, so a `developer-settings` served with no
 rule reaches every account it is evaluated for. `create` takes rules, so give it
@@ -600,8 +638,12 @@ To exercise a real flag locally you need Cloudflare credentials and
    module alongside them otherwise. Keep `env.FLAGS` out of call sites.
 2. Give it a default that reproduces today's behavior, and hand that same
    default to Flagship so an absent flag and an unreachable Flagship agree. For
-   a client flag that means `false`: a feature nobody has been given yet is the
-   behavior an outage has to reproduce.
+   a client *feature* that means `false`: a feature nobody has been given yet is
+   the behavior an outage has to reproduce. For a value with no off — a cadence,
+   a limit, a window — it means the number already in the code, defined once and
+   read by every end, so a flag nobody can reach leaves every reader agreeing.
+   Such a value does not belong in `client-feature-flags.ts`, whose whole
+   contract is failing closed; give it a module beside it.
 3. Parse the served value with zod and reject it whole on failure. A boolean
    flag is the degenerate case — anything that is not `true` is off.
 4. **Write who gets it as a targeting rule, never as a condition in the

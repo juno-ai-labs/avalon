@@ -4,6 +4,7 @@ import {
   AutomationDraftSchema as WireAutomationDraftSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   ConnectorOAuthAttemptSchema as WireConnectorOAuthAttemptSchema,
   ConnectorOAuthStartSchema as WireConnectorOAuthStartSchema,
@@ -33,6 +34,7 @@ import {
   type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
+  type ClientFeatureFlags,
   type Connection as WireConnection,
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
@@ -1073,6 +1075,16 @@ export class AvalonApi {
       body: { ...input, speakerLabel: input.speakerLabel ?? null },
       schema: WireNoteTranscriptSegmentSchema,
     });
+  }
+
+  /**
+   * The server-decided values this device is allowed to see, for the signed-in
+   * person. The main process polls the same route for Application → Developer;
+   * a renderer asks directly for a value only it acts on, rather than adding an
+   * IPC hop and a second reader of the same answer.
+   */
+  clientFeatureFlags(signal?: AbortSignal): Promise<ClientFeatureFlags> {
+    return this.request('/feature-flags', { schema: WireClientFeatureFlagsSchema, signal });
   }
 
   generateNoteNotes(

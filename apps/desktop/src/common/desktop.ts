@@ -132,7 +132,12 @@ export interface AvalonDesktopBridge {
   openExternal: (url: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   openMeetingNotes: (noteId?: string) => Promise<void>;
-  closeMeetingNotes: () => Promise<void>;
+  /**
+   * Closes the meeting window. Given a note id, the main window is raised and
+   * taken to that note on the way out — the meeting is over, and the note is
+   * the thing the person is left with.
+   */
+  closeMeetingNotes: (noteId?: string) => Promise<void>;
   getMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   prepareMeetingAudioPermissions: () => Promise<DesktopMeetingAudioPermissions>;
   startMeetingSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
