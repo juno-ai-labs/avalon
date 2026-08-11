@@ -14,7 +14,18 @@ interface AppShellProps extends PropsWithChildren {
 
 export function openWorkstreamId(pathname: string): string | null {
   const id = /^\/workstreams\/([^/]+)$/.exec(pathname)?.[1];
-  return id === undefined || id === 'new' ? null : decodeURIComponent(id);
+  if (id === undefined || id === 'new') return null;
+  try {
+    return decodeURIComponent(id);
+  } catch {
+    // This runs during the shell's render, where a throw takes the whole window
+    // to the error boundary rather than just the route — and the segment is
+    // reachable by hand-edited hash or deep link, so `/workstreams/%` must not
+    // be able to do that. Falling back to the raw segment is also what React
+    // Router does when it decodes a param, which keeps the id this returns
+    // equal to the one the screen keys its detail query by.
+    return id;
+  }
 }
 
 /**
