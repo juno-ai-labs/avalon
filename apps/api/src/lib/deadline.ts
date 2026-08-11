@@ -36,6 +36,16 @@ export function createDeadline(timeoutMs: number): Deadline {
   };
 }
 
+/**
+ * A cancellable deadline combined with a signal that is already running — the
+ * replacement for `AbortSignal.any([parent, AbortSignal.timeout(ms)])`, which
+ * arms an uncancellable timer inside whatever invocation the parent belongs to.
+ */
+export function createChildDeadline(parent: AbortSignal, timeoutMs: number): Deadline {
+  const deadline = createDeadline(timeoutMs);
+  return { signal: AbortSignal.any([parent, deadline.signal]), dispose: deadline.dispose };
+}
+
 /** Runs `work` under a cancellable deadline, clearing the timer either way. */
 export async function withDeadline<T>(
   timeoutMs: number,

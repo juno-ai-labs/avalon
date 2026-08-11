@@ -171,11 +171,16 @@ export type HonoAppEnv = {
  */
 const binding = <T>() => z.custom<T>((value) => value != null && typeof value === "object");
 
-/** A variable Wrangler carries as a string but the code reads as a number. */
-const numericString = z
-  .string()
-  .regex(/^\d+$/u, "must be a base-10 positive integer")
-  .refine((value) => Number.parseInt(value, 10) > 0, "must be greater than zero");
+/**
+ * A variable Wrangler carries as a string but the code reads as a number.
+ *
+ * Readability is the whole check: `numericEnv` already treats a non-positive
+ * value as "use the default", so `"0"` is a configuration an operator may
+ * legitimately set — usually to disable a ceiling during an incident. Rejecting
+ * it here would make a `RUNBOOK` mitigation take the region down. `"3O000"` is
+ * the case that has no reading at all, and the regex still catches it.
+ */
+const numericString = z.string().regex(/^\d+$/u, "must be a base-10 integer");
 
 const EnvContractSchema = z.object({
   DB: binding<D1Database>(),
@@ -197,7 +202,7 @@ const EnvContractSchema = z.object({
   ALLOWED_ORIGINS: z.string().min(1),
   DESKTOP_DEEP_LINK_URI: AvalonUrlSchema,
 
-  OPENROUTER_API_KEY: z.string().min(1),
+  // `OPENROUTER_API_KEY` is deliberately not here; see `productionOnlySecrets`.
   OPENROUTER_PRIMARY_MODEL: z.string().min(1),
   OPENROUTER_FALLBACK_MODELS: z.string(),
   OPENROUTER_CLASSIFIER_MODEL: z.string().min(1),
@@ -247,12 +252,24 @@ const EnvContractSchema = z.object({
 });
 
 /**
- * Typed required on `Env`, but absent from `.dev.vars`, so local development
- * has always run without them. Requiring them outright would break `pnpm
- * dev:api:local` rather than catch a real misconfiguration, so they are
+ * Typed required on `Env`, but routinely absent from `.dev.vars`, so local
+ * development has always run without them. Requiring them outright would break
+ * `pnpm dev:api:local` rather than catch a real misconfiguration, so they are
  * enforced only where their absence is genuinely a deployment fault.
+ *
+ * `OPENROUTER_API_KEY` belongs here for a second reason: the app already models
+ * its absence as a supported state rather than a fault — `/health` reports
+ * `openRouter: not configured` — and `scripts/seed-sandbox-env.mjs` leaves it
+ * empty whenever no real key is available, which is every sandbox session.
+ * Enforcing it at the entrypoint turned that into a 503 on every route of both
+ * regions, `/health` included, so the one endpoint whose job is to report which
+ * key is missing was the one endpoint that could not answer.
  */
-const productionOnlySecrets = ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"] as const;
+const productionOnlySecrets = [
+  "GOOGLE_OAUTH_CLIENT_ID",
+  "GOOGLE_OAUTH_CLIENT_SECRET",
+  "OPENROUTER_API_KEY",
+] as const;
 
 /**
  * Drift guard. If a key is required by the schema but optional on `Env` — or
@@ -290,7 +307,12 @@ export function assertEnvContract(env: Env): void {
   const keys = [
     ...(result.success ? [] : result.error.issues.map((issue) => {
       const key = issue.path.map(String).join(".") || "(root)";
-      return `${key} ${issue.code === "invalid_type" && issue.input === undefined ? "is missing" : "is invalid"}`;
+      // Read from the environment rather than the issue. Zod does not populate
+      // `issue.input` at runtime, so testing it reported every `invalid_type`
+      // as missing — including a key that is set but malformed, which sends
+      // whoever is reading `env_contract_failed` after a variable that is there.
+      const present = env[issue.path[0] as keyof Env] !== undefined;
+      return `${key} ${present ? "is invalid" : "is missing"}`;
     })),
     ...missingSecrets.map((key) => `${key} is missing`),
   ];

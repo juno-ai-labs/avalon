@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDeadline, withDeadline } from "../src/lib/deadline";
+import { createChildDeadline, createDeadline, withDeadline } from "../src/lib/deadline";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -59,5 +59,45 @@ describe("cancellable deadlines", () => {
       throw new Error("poll_failed");
     })).rejects.toThrow("poll_failed");
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  describe("combined with a signal that is already running", () => {
+    it("clears its own timer without waiting for the parent", () => {
+      vi.useFakeTimers();
+      const parent = new AbortController();
+      const deadline = createChildDeadline(parent.signal, 30_000);
+
+      expect(vi.getTimerCount()).toBe(1);
+      deadline.dispose();
+
+      // `AbortSignal.any([parent, AbortSignal.timeout(ms)])` — the spelling this
+      // replaces — leaves the timer armed for the full thirty seconds after the
+      // guarded call returns, inside a Workflow step whose invocation is over.
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(deadline.signal.aborted).toBe(false);
+    });
+
+    it("still aborts when the parent does", () => {
+      const parent = new AbortController();
+      const deadline = createChildDeadline(parent.signal, 30_000);
+
+      parent.abort(new Error("run_cancelled"));
+
+      expect(deadline.signal.aborted).toBe(true);
+      deadline.dispose();
+    });
+
+    it("aborts on its own deadline when the parent is still running", async () => {
+      const parent = new AbortController();
+      const deadline = createChildDeadline(parent.signal, 5);
+      await new Promise((resolve) => {
+        deadline.signal.addEventListener("abort", resolve, { once: true });
+      });
+
+      expect(parent.signal.aborted).toBe(false);
+      expect(deadline.signal.aborted).toBe(true);
+      deadline.dispose();
+    });
   });
 });

@@ -729,14 +729,22 @@ function withExpectedJsonSchema(
  * The diagnosable part of an OpenRouter error envelope.
  *
  * Provider response bodies are not retained — they can echo prompt content back.
- * These three fields are the provider's own classification of the rejection, and
- * without them a run that fails against OpenRouter is indistinguishable from any
- * other failure: the status code alone cannot tell a bad model id from an
- * over-long context from a provider outage. The message is bounded, because it
- * is the one field a provider could pad.
+ * `code` and `providerName` are the provider's own classification of the
+ * rejection, and without them a run that fails against OpenRouter is
+ * indistinguishable from any other failure: the status code alone cannot tell a
+ * bad model id from an over-long context from a provider outage.
+ *
+ * **`message` is in-memory only and must never be logged.** It is the provider's
+ * free text, which for some upstreams quotes the request back — bounding it to
+ * 300 characters limits its size, not what it can disclose, and the host's
+ * key-based redactor has no way to recognise it. It exists for a debugger and
+ * for the thrown `OpenRouterError`; the two fields above are what the host
+ * records. Anything that wants the message belongs behind the same opt-in as
+ * the payload ledger.
  */
 export interface OpenRouterProviderError {
   code?: string | number;
+  /** In-memory only. See the note above before recording this anywhere. */
   message?: string;
   providerName?: string;
 }

@@ -79,8 +79,13 @@ async function rpcResult<T>(operation: () => Promise<T>): Promise<WorkstreamEmai
         error: {
           status: error.status,
           code: error.code,
+          // `details` deliberately does not travel. `unwrapRpcResult` rebuilds
+          // an `ApiError` from this envelope and `errorHandler` echoes its
+          // details into the HTTP body, so forwarding them would put internal
+          // RPC method names and schema field paths in front of the client.
+          // The other four bridge serializers already project to these three
+          // fields; this one was the outlier.
           message: error.message,
-          ...(error.details ? { details: error.details } : {}),
         },
       };
     }

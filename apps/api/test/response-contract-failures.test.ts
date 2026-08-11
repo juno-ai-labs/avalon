@@ -62,6 +62,10 @@ describe("response contract failures", () => {
       error_name: "ZodError",
       method: "GET",
       path: "/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f",
+      // The route template as well as the resolved path: without it, 131
+      // failures on one work stream are 131 distinct log lines rather than one
+      // group, which is how the original burst stayed hard to see.
+      route: "/workstreams/:id",
       validation_issues: [{ path: "lastActivityAt", code: "invalid_type" }],
     });
   });

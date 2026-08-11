@@ -42,21 +42,39 @@ export const requireValidatedResponseRule = {
       }
     }
 
-    /** `SomethingSchema.parse(value)` — including `await` and a trailing `as` cast. */
+    /**
+     * The identifier a member chain is rooted at — `PageSchema` in
+     * `PageSchema.shape.items.parse`, `JSON` in `JSON.parse`.
+     */
+    function chainRoot(node) {
+      let current = node;
+      while (current?.type === "MemberExpression" && !current.computed) current = current.object;
+      return current?.type === "Identifier" ? current.name : null;
+    }
+
+    /**
+     * `SomethingSchema.parse(value)` — including `await` and a trailing cast.
+     *
+     * The chain has to be rooted at a `*Schema`, not merely end in `.parse`.
+     * Without that, `JSON.parse(...)` satisfies the rule, which would leave the
+     * rule passing on exactly the response it exists to catch.
+     */
     function isContractParse(node) {
       if (!node) return false;
       if (node.type === "AwaitExpression") return isContractParse(node.argument);
       if (node.type === "TSAsExpression" || node.type === "TSNonNullExpression") {
         return isContractParse(node.expression);
       }
-      if (node.type === "CallExpression") {
-        const callee = node.callee;
-        return callee.type === "MemberExpression"
-          && !callee.computed
-          && callee.property.type === "Identifier"
-          && (callee.property.name === "parse" || callee.property.name === "parseAsync");
-      }
-      return false;
+      if (node.type !== "CallExpression") return false;
+      const callee = node.callee;
+      if (
+        callee.type !== "MemberExpression"
+        || callee.computed
+        || callee.property.type !== "Identifier"
+        || (callee.property.name !== "parse" && callee.property.name !== "parseAsync")
+      ) return false;
+      const root = chainRoot(callee.object);
+      return root !== null && /Schema$/u.test(root);
     }
 
     return {
@@ -67,8 +85,12 @@ export const requireValidatedResponseRule = {
           || callee.computed
           || callee.property.type !== "Identifier"
           || callee.property.name !== "json"
+          // Any identifier, not just `c`: the Hono context is named `context` in
+          // several handlers, and a rule that only recognised one spelling would
+          // hold by naming convention rather than by checking anything.
+          // `await response.json()` is not caught by this, because reading a
+          // body takes no argument and the arity check below returns first.
           || callee.object.type !== "Identifier"
-          || callee.object.name !== "c"
         ) return;
         const body = node.arguments[0];
         if (body === undefined || isContractParse(body) || isLiteralShape(body)) return;
