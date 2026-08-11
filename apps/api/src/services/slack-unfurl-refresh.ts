@@ -42,6 +42,12 @@ const MAX_REFRESHES_PER_SWEEP = 100;
  * workspace's backlog is picked up by the next sweep.
  */
 const MAX_REFRESHES_PER_CONNECTION = 20;
+/**
+ * How long a recorded card may go without its channel audience being
+ * revalidated. Status drift alone is not enough: a channel that becomes
+ * externally shared has to be redacted whether or not the work stream moved.
+ */
+const AUDIENCE_REVALIDATION_HOURS = 24;
 
 /** Slack errors that mean this row can never be unfurled again. */
 const TERMINAL_UNFURL_REASONS = new Set([
@@ -61,6 +67,9 @@ const StaleUnfurlRowSchema = z.object({
   url: z.string(),
   workstream_id: z.string(),
   harness_status: z.string(),
+  rendered_status: z.string(),
+  // SQLite has no boolean type; the column is a 0/1 integer.
+  rendered_anonymous: z.number().int(),
 });
 
 interface SlackUnfurlConnection {
@@ -75,19 +84,40 @@ const SlackCredentialsSchema = z.object({ botAccessToken: z.string().min(1) }).l
 
 export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   const since = new Date(Date.now() - REFRESH_WINDOW_DAYS * 86_400_000).toISOString();
-  // A card is rewritten only when the status it shows no longer matches the
-  // work stream. Comparing last activity instead would mark almost every row
-  // stale on every sweep, since any message bumps it.
+  const audienceCutoff = new Date(Date.now() - AUDIENCE_REVALIDATION_HOURS * 3_600_000).toISOString();
+  // Two independent reasons to look at a card. Status drift is the common one;
+  // comparing last activity instead would mark almost every row stale on every
+  // sweep, since any message bumps it. The audience clock is the other: a
+  // channel can become externally shared while the work stream sits perfectly
+  // still, and that card has to be redacted even though nothing drifted.
+  //
+  // The per-connection cap is applied by ROW_NUMBER *before* the global limit.
+  // Taking the global 100 first and trimming per connection afterwards lets one
+  // busy workspace fill every slot and starve the rest indefinitely.
   const stale = await env.DB.prepare(
-    `SELECT l.connection_id, l.slack_channel_id, l.slack_message_ts, l.url, l.workstream_id,
-            w.id, ${WORKSTREAM_UNFURL_COLUMNS}
-       FROM slack_unfurled_links l
-       JOIN workstreams w ON w.id = l.workstream_id AND w.workspace_id = l.workspace_id
-       ${WORKSTREAM_UNFURL_JOINS}
-      WHERE l.shared_at >= ?1 AND w.harness_status <> l.rendered_status
-      ORDER BY w.last_activity_at DESC
-      LIMIT ?2`,
-  ).bind(since, MAX_REFRESHES_PER_SWEEP + 1).all<Record<string, unknown>>();
+    `SELECT * FROM (
+       SELECT l.connection_id, l.slack_channel_id, l.slack_message_ts, l.url, l.workstream_id,
+              l.rendered_status AS rendered_status, l.rendered_anonymous,
+              w.id, ${WORKSTREAM_UNFURL_COLUMNS},
+              w.last_activity_at AS ordered_activity_at,
+              ROW_NUMBER() OVER (
+                PARTITION BY l.connection_id ORDER BY w.last_activity_at DESC
+              ) AS connection_rank
+         FROM slack_unfurled_links l
+         JOIN workstreams w ON w.id = l.workstream_id AND w.workspace_id = l.workspace_id
+         ${WORKSTREAM_UNFURL_JOINS}
+        WHERE l.shared_at >= ?1
+          AND (w.harness_status <> l.rendered_status OR l.audience_checked_at < ?2)
+     )
+     WHERE connection_rank <= ?3
+     ORDER BY ordered_activity_at DESC
+     LIMIT ?4`,
+  ).bind(
+    since,
+    audienceCutoff,
+    MAX_REFRESHES_PER_CONNECTION,
+    MAX_REFRESHES_PER_SWEEP + 1,
+  ).all<Record<string, unknown>>();
 
   const rows = stale.results ?? [];
   if (rows.length > MAX_REFRESHES_PER_SWEEP) {
@@ -101,10 +131,7 @@ export async function refreshSlackWorkstreamUnfurls(env: Env): Promise<void> {
   const byConnection = new Map<string, Record<string, unknown>[]>();
   for (const row of rows.slice(0, MAX_REFRESHES_PER_SWEEP)) {
     const connectionId = String(row.connection_id);
-    const bucket = byConnection.get(connectionId) ?? [];
-    if (bucket.length >= MAX_REFRESHES_PER_CONNECTION) continue;
-    bucket.push(row);
-    byConnection.set(connectionId, bucket);
+    byConnection.set(connectionId, [...(byConnection.get(connectionId) ?? []), row]);
   }
 
   for (const [connectionId, connectionRows] of byConnection) {
@@ -151,6 +178,15 @@ async function refreshConnectionUnfurls(
       externalByChannel.set(row.slack_channel_id, external);
     }
 
+    // A row selected only by the audience clock usually has nothing to say.
+    // Rewriting an identical card would burn the workspace's `chat.unfurl`
+    // budget for no visible change, so only a genuine drift re-posts.
+    const wasAnonymous = row.rendered_anonymous === 1;
+    if (row.harness_status === row.rendered_status && external === wasAnonymous) {
+      await markAudienceChecked(env, connectionId, row, at);
+      continue;
+    }
+
     const blocks = workstreamUnfurlBlocks(
       external ? null : workstreamUnfurlSummary(raw),
       workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, row.workstream_id),
@@ -182,10 +218,13 @@ async function refreshConnectionUnfurls(
     }
 
     await env.DB.prepare(
-      `UPDATE slack_unfurled_links SET rendered_status = ?, refreshed_at = ?
+      `UPDATE slack_unfurled_links
+          SET rendered_status = ?, rendered_anonymous = ?, audience_checked_at = ?, refreshed_at = ?
         WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
     ).bind(
       row.harness_status,
+      external ? 1 : 0,
+      at,
       at,
       connectionId,
       row.slack_channel_id,
@@ -193,6 +232,18 @@ async function refreshConnectionUnfurls(
       row.url,
     ).run();
   }
+}
+
+async function markAudienceChecked(
+  env: Env,
+  connectionId: string,
+  row: { slack_channel_id: string; slack_message_ts: string; url: string },
+  at: string,
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE slack_unfurled_links SET audience_checked_at = ?
+      WHERE connection_id = ? AND slack_channel_id = ? AND slack_message_ts = ? AND url = ?`,
+  ).bind(at, connectionId, row.slack_channel_id, row.slack_message_ts, row.url).run();
 }
 
 function slackUnfurlErrorReason(error: unknown): string {

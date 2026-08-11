@@ -2283,23 +2283,22 @@ export class SlackAgentService {
     summaries: Map<string, WorkstreamUnfurlSummary>,
   ): Promise<void> {
     const at = nowIso();
-    const statements = [...linkedWorkstreams]
-      .flatMap(([url, workstreamId]) => {
-        const summary = summaries.get(workstreamId);
-        return summary ? [{ url, workstreamId, summary }] : [];
-      })
+    const statements = recordableUnfurlLinks(linkedWorkstreams, summaries)
       .map(({ url, workstreamId, summary }) => this.env.DB.prepare(
         `INSERT INTO slack_unfurled_links
          (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-          rendered_status, shared_at, refreshed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+          rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8, ?8)
          ON CONFLICT(connection_id, slack_channel_id, slack_message_ts, url)
-         DO UPDATE SET rendered_status = excluded.rendered_status, refreshed_at = excluded.refreshed_at`,
+         DO UPDATE SET rendered_status = excluded.rendered_status,
+                       rendered_anonymous = 0,
+                       audience_checked_at = excluded.audience_checked_at,
+                       refreshed_at = excluded.refreshed_at`,
       ).bind(
         connection.id,
         channel,
         ts,
-        url.slice(0, 2_000),
+        url,
         connection.workspace_id,
         workstreamId,
         summary.harnessStatus,
@@ -3189,6 +3188,40 @@ function escapeMrkdwn(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+/** Mirrors the `length(url) BETWEEN 1 AND 2000` check in `0054_slack_unfurled_links.sql`. */
+const SLACK_UNFURL_MAX_URL_LENGTH = 2_000;
+
+/**
+ * Decide which of a message's work-stream links are worth recording for refresh.
+ *
+ * The stored URL is the key `chat.unfurl` is later called with, so it has to
+ * match what Slack reported byte for byte. Trimming one to fit the column would
+ * store a key that can never match again: the refresh would look like it
+ * succeeded while the message kept its stale card. Skipping instead costs only
+ * the ability to refresh that one link — its card is still posted.
+ *
+ * Over-long links are reachable, not hypothetical: a canonical link is about
+ * seventy characters, but the legacy `/open#target=…` form this still accepts
+ * tolerates arbitrary extra fragment parameters.
+ */
+function recordableUnfurlLinks(
+  linkedWorkstreams: Map<string, string>,
+  summaries: Map<string, WorkstreamUnfurlSummary>,
+): { url: string; workstreamId: string; summary: WorkstreamUnfurlSummary }[] {
+  return [...linkedWorkstreams].flatMap(([url, workstreamId]) => {
+    const summary = summaries.get(workstreamId);
+    if (!summary) return [];
+    if (url.length > SLACK_UNFURL_MAX_URL_LENGTH) {
+      console.warn("Skipped recording an over-long work-stream link; its card cannot be refreshed", {
+        workstream_id: workstreamId,
+        url_length: url.length,
+      });
+      return [];
+    }
+    return [{ url, workstreamId, summary }];
+  });
+}
+
 export const __slackAgentTesting = {
   claimWorkspaceSession,
   isDirectSlackMessageEvent,
@@ -3204,6 +3237,7 @@ export const __slackAgentTesting = {
   slackChannelResolutionDenial,
   slackChannelType,
   linkedHome,
+  recordableUnfurlLinks,
   slackIngressRetryable,
   slackReconnectRequired,
 };
