@@ -33,6 +33,7 @@ import type {
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
+import { RailResizeHandle } from './rail-resize-handle';
 import '../styles/inspector-rail.css';
 
 interface InspectorRailProps {
@@ -524,7 +525,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const inspect = useUiStore((state) => state.inspect);
   const railRef = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
-  const [resizing, setResizing] = useState(false);
   const tasks = props.tasks ?? props.workstream?.backgroundTasks ?? [];
   const runs = props.runs ?? props.workstream?.automationRuns ?? [];
 
@@ -535,18 +535,6 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     return () => previousFocus.current?.focus();
   }, [railOpen]);
 
-  useEffect(() => {
-    if (!resizing) return;
-    const move = (event: PointerEvent): void => setRailWidth(window.innerWidth - event.clientX - 8);
-    const stop = (): void => setResizing(false);
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', stop, { once: true });
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', stop);
-    };
-  }, [resizing, setRailWidth]);
-
   if (!railOpen) return null;
   const displayedWidth = railExpanded ? Math.max(520, railWidth) : railWidth;
 
@@ -555,7 +543,7 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       <button aria-label="Close inspector" className="rail-scrim" onClick={closeRail} type="button" />
       <aside
         aria-label={inspector ? 'Inspector detail' : railTitle[railVariant]}
-        className={clsx('inspector-rail', resizing && 'is-resizing', props.dropTarget?.dragging && 'is-file-dragging')}
+        className={clsx('inspector-rail', props.dropTarget?.dragging && 'is-file-dragging')}
         onDragEnter={props.dropTarget?.onDragEnter}
         onDragLeave={props.dropTarget?.onDragLeave}
         onDragOver={props.dropTarget?.onDragOver}
@@ -567,23 +555,14 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         style={{ width: displayedWidth }}
         tabIndex={-1}
       >
-        <div
-          aria-label="Resize inspector"
-          aria-orientation="vertical"
-          aria-valuemax={560}
-          aria-valuemin={320}
-          aria-valuenow={displayedWidth}
-          className="rail-resizer"
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowLeft') setRailWidth(railWidth + 16);
-            if (event.key === 'ArrowRight') setRailWidth(railWidth - 16);
-          }}
-          onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setResizing(true);
-          }}
-          role="separator"
-          tabIndex={0}
+        {/* The keys step the stored width, never the expanded floor: stepping
+            from what is on screen would write the expanded 520 back over the
+            width this person chose the moment they pressed a key. */}
+        <RailResizeHandle
+          displayedWidth={displayedWidth}
+          label="Resize inspector"
+          onResize={setRailWidth}
+          width={railWidth}
         />
         <header className="rail-header window-drag">
           <div className="rail-title window-no-drag">
