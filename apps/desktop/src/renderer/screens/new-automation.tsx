@@ -401,7 +401,9 @@ function DraftSummary({
       <div className="automation-overview"><MarkdownBody>{summary.overview || summary.description}</MarkdownBody></div>
       <dl className="automation-summary-meta">
         <div>
-          <dt><Users size={13} /> <label htmlFor="automation-scope">Runs as</label></dt>
+          <dt><Users size={13} /> {scopeChangeAllowed
+            ? <label htmlFor="automation-scope">Runs as</label>
+            : <span>Runs as</span>}</dt>
           <dd>
             {scopeChangeAllowed ? (
               <select

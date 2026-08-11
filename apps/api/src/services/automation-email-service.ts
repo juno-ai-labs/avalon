@@ -1,10 +1,14 @@
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { escapeHtml, sendResendEmail, singleLine } from "./resend";
 import { shouldSuppressAutomationResult } from "./slack-agent-service";
 
-const RESEND_EMAILS_URL = "https://api.resend.com/emails";
-const MAX_RESEND_RESPONSE_CHARS = 32_000;
 const MAX_RESULT_LENGTH = 40_000;
+
+const EMAIL_ERRORS = {
+  unavailable: { code: "automation_email_unavailable", message: "Automation result email is temporarily unavailable" },
+  failed: { code: "automation_email_failed", message: "The automation result email could not be sent" },
+};
 
 export interface AutomationResultEmail {
   workspaceId: string;
@@ -47,69 +51,59 @@ export async function deliverAutomationResultEmail(
   if (!target) return "skipped";
   if (target.last_delivered_workstream_id === input.workstreamId) return "skipped";
 
-  // Local and test traffic must never send transactional email through a
-  // developer's production Resend account.
-  if (env.APP_ENV !== "production") return "skipped";
-
-  const apiKey = env.RESEND_API_KEY?.trim();
-  const from = env.RESEND_NOTIFICATION_FROM_EMAIL?.trim() || env.RESEND_FROM_EMAIL?.trim();
-  if (!apiKey || !from) {
-    await markEmailDeliveryFailed(env, target.id, "Automation result email is not configured");
-    throw new ApiError(503, "automation_email_unavailable", "Automation result email is temporarily unavailable");
-  }
-
   const name = singleLine(input.title) || "Avalon automation";
   const subject = input.outcomeStatus === "needs_input" ? `Action needed · ${name}` : name;
   const body = resultBody(input.text);
   const workstreamUrl = `avalon://workstreams/${encodeURIComponent(input.workstreamId)}`;
-  const text = [subject, "", body, "", `Open in Avalon: ${workstreamUrl}`].join("\n");
 
+  let delivery;
   try {
-    const response = await request(RESEND_EMAILS_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-        "idempotency-key": `avalon-automation-result/${target.id}/${input.workstreamId}`,
-        "user-agent": "avalon-worker/0.1",
-      },
-      body: JSON.stringify({
-        from,
-        to: [target.email_address],
-        subject,
-        html: resultEmailHtml({ name, subject, body, workstreamUrl }),
-        text,
-        tags: [
-          { name: "category", value: "automation_result" },
-          { name: "region", value: env.AVALON_REGION },
-        ],
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const responseBody = await response.text();
-    if (!response.ok || responseBody.length > MAX_RESEND_RESPONSE_CHARS) throw new Error("Resend rejected the automation result");
-    const parsed = JSON.parse(responseBody) as { id?: unknown };
-    if (typeof parsed.id !== "string" || parsed.id.length === 0 || parsed.id.length > 200) {
-      throw new Error("invalid Resend response");
-    }
+    delivery = await sendResendEmail(env, {
+      recipientEmail: target.email_address,
+      subject,
+      html: resultEmailHtml({ name, subject, body, workstreamUrl }),
+      text: [subject, "", body, "", `Open in Avalon: ${workstreamUrl}`].join("\n"),
+      idempotencyKey: `avalon-automation-result/${target.id}/${input.workstreamId}`,
+      category: "automation_result",
+      region: env.AVALON_REGION,
+      sender: "notification",
+      errors: EMAIL_ERRORS,
+    }, request);
   } catch (error) {
-    await markEmailDeliveryFailed(env, target.id, error instanceof Error ? error.message : "Automation email delivery failed");
-    throw new ApiError(502, "automation_email_failed", "The automation result email could not be sent");
+    // The address is frozen at save time, so a rejected address never fixes
+    // itself. Marking the target needs_input surfaces it on the automation
+    // rather than repeating the same failure on every run in silence.
+    const permanent = error instanceof ApiError && error.details?.retryable === false;
+    await recordEmailDeliveryFailure(
+      env,
+      target.id,
+      permanent ? "needs_input" : "active",
+      error instanceof Error ? error.message : "Automation email delivery failed",
+    );
+    throw error;
   }
+  // Non-production runs never send, so nothing is recorded as delivered.
+  if (delivery === "skipped") return "skipped";
 
   const at = new Date().toISOString();
   await env.DB.prepare(
     `UPDATE automation_delivery_targets
-     SET last_delivered_at = ?, last_delivered_workstream_id = ?, last_error_json = NULL, updated_at = ?
+     SET status = 'active', last_delivered_at = ?, last_delivered_workstream_id = ?,
+         last_error_json = NULL, updated_at = ?
      WHERE id = ?`,
   ).bind(at, input.workstreamId, at, target.id).run();
   return "sent";
 }
 
-async function markEmailDeliveryFailed(env: Env, targetId: string, message: string): Promise<void> {
+async function recordEmailDeliveryFailure(
+  env: Env,
+  targetId: string,
+  status: "active" | "needs_input",
+  message: string,
+): Promise<void> {
   await env.DB.prepare(
-    "UPDATE automation_delivery_targets SET last_error_json = ?, updated_at = ? WHERE id = ?",
-  ).bind(JSON.stringify({ code: "email_delivery_failed", message }), new Date().toISOString(), targetId).run();
+    "UPDATE automation_delivery_targets SET status = ?, last_error_json = ?, updated_at = ? WHERE id = ?",
+  ).bind(status, JSON.stringify({ code: "email_delivery_failed", message }), new Date().toISOString(), targetId).run();
 }
 
 function resultBody(text: string): string {
@@ -139,18 +133,4 @@ function resultEmailHtml(input: { name: string; subject: string; body: string; w
     </table>
   </body>
 </html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/gu, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  })[character] ?? character);
-}
-
-function singleLine(value: string): string {
-  return value.replace(/[\r\n\t]+/gu, " ").replace(/\s{2,}/gu, " ").trim();
 }

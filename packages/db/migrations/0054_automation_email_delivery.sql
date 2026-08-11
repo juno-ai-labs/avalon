@@ -43,3 +43,5 @@ ALTER TABLE automation_delivery_targets_with_email RENAME TO automation_delivery
 
 CREATE INDEX automation_delivery_targets_connection_idx
   ON automation_delivery_targets(connection_id, status);
+
+PRAGMA defer_foreign_keys = OFF;

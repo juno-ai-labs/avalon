@@ -322,6 +322,15 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
         slack.deliverAutomationResult(result),
         deliverAutomationResultEmail(this.env, result),
       ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
+      // Only the first is rethrown, so the rest would otherwise be lost — and
+      // which one that is depends on settle order rather than on severity.
+      for (const failure of failures) {
+        console.warn("Automation result delivery failed", {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          reason: failure instanceof Error ? failure.message : "unknown",
+        });
+      }
       if (failures.length > 0) throw failures[0];
     }
   }

@@ -697,6 +697,8 @@ describe('New automation composer', () => {
 
     expect(await screen.findByText('Runs as')).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Runs as' })).not.toBeInTheDocument();
+    // No orphan label: with no select to point at, it is plain text.
+    expect(document.querySelector('label[for="automation-scope"]')).toBeNull();
   });
 
   it('reuses one elicitation identity and preserves answer-response order', async () => {

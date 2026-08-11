@@ -1,11 +1,14 @@
 import type { Region } from "@avalon/contracts";
 
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { escapeHtml, sendResendEmail, singleLine } from "./resend";
 
-const RESEND_EMAILS_URL = "https://api.resend.com/emails";
-const MAX_RESEND_RESPONSE_BYTES = 32_000;
 const MAX_MESSAGE_EXCERPT_LENGTH = 320;
+
+const EMAIL_ERRORS = {
+  unavailable: { code: "mention_email_unavailable", message: "Mention email is temporarily unavailable" },
+  failed: { code: "mention_email_failed", message: "The mention email could not be sent" },
+};
 
 export interface WorkstreamMentionEmail {
   messageId: string;
@@ -28,20 +31,6 @@ export async function sendWorkstreamMentionEmail(
   input: WorkstreamMentionEmail,
   request: typeof fetch = fetch,
 ): Promise<MentionEmailDelivery> {
-  // Local and test traffic must never send transactional email through a
-  // developer's production Resend account.
-  if (env.APP_ENV !== "production") return "skipped";
-
-  const apiKey = env.RESEND_API_KEY?.trim();
-  const from = env.RESEND_NOTIFICATION_FROM_EMAIL?.trim() || env.RESEND_FROM_EMAIL?.trim();
-  if (!apiKey || !from) {
-    throw new ApiError(
-      503,
-      "mention_email_unavailable",
-      "Mention email is temporarily unavailable",
-    );
-  }
-
   const authorName = singleLine(input.authorName);
   const workspaceName = singleLine(input.workspaceName);
   const workstreamTitle = singleLine(input.workstreamTitle);
@@ -60,68 +49,26 @@ export async function sendWorkstreamMentionEmail(
     ...(replyTo ? ["", "Reply to this email to continue the work stream."] : []),
   ].join("\n");
 
-  let response: Response;
-  try {
-    response = await request(RESEND_EMAILS_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-        "idempotency-key": `avalon-workstream-mention/${input.messageId}/${input.recipientUserId}`,
-        "user-agent": "avalon-worker/0.1",
-      },
-      body: JSON.stringify({
-        from,
-        to: [input.recipientEmail],
-        subject,
-        html: mentionEmailHtml({
-          authorName,
-          workspaceName,
-          workstreamTitle,
-          recipientName,
-          excerpt,
-          workstreamUrl,
-          replyTo,
-        }),
-        text,
-        ...(replyTo ? { reply_to: replyTo } : {}),
-        tags: [
-          { name: "category", value: "workstream_mention" },
-          { name: "region", value: input.region },
-        ],
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    throw mentionEmailFailed();
-  }
-
-  let body: string;
-  try {
-    body = await boundedResponseText(response);
-  } catch {
-    throw mentionEmailFailed();
-  }
-  if (!response.ok) throw mentionEmailFailed();
-  try {
-    const parsed = JSON.parse(body) as { id?: unknown };
-    if (typeof parsed.id !== "string" || parsed.id.length === 0 || parsed.id.length > 200) {
-      throw new Error("invalid Resend response");
-    }
-  } catch {
-    throw mentionEmailFailed();
-  }
-  return "sent";
-}
-
-async function boundedResponseText(response: Response): Promise<string> {
-  const body = await response.text();
-  if (body.length > MAX_RESEND_RESPONSE_BYTES) throw mentionEmailFailed();
-  return body;
-}
-
-function mentionEmailFailed(): ApiError {
-  return new ApiError(502, "mention_email_failed", "The mention email could not be sent");
+  return sendResendEmail(env, {
+    recipientEmail: input.recipientEmail,
+    subject,
+    html: mentionEmailHtml({
+      authorName,
+      workspaceName,
+      workstreamTitle,
+      recipientName,
+      excerpt,
+      workstreamUrl,
+      replyTo,
+    }),
+    text,
+    idempotencyKey: `avalon-workstream-mention/${input.messageId}/${input.recipientUserId}`,
+    category: "workstream_mention",
+    region: input.region,
+    ...(replyTo ? { replyTo } : {}),
+    sender: "notification",
+    errors: EMAIL_ERRORS,
+  }, request);
 }
 
 function messageExcerpt(value: string): string {
@@ -172,18 +119,4 @@ function mentionEmailHtml(input: {
     </table>
   </body>
 </html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>'"]/gu, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  })[character] ?? character);
-}
-
-function singleLine(value: string): string {
-  return value.replace(/[\r\n\t]+/gu, " ").replace(/\s{2,}/gu, " ").trim();
 }
