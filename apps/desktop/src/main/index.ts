@@ -491,6 +491,7 @@ const launchAtLoginController = new LaunchAtLoginController({
   readSettings: () => readStoredApplicationSettings(userDataDirectory()),
   writeSettings: (settings) => updateStoredApplicationSettings(userDataDirectory(), settings),
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  logWarning: (message, error) => logWarn('avalon', message, error),
 });
 
 /** A status item click does not activate Avalon the way a Dock click does, so
@@ -1721,10 +1722,29 @@ function createMenuBarTray(): MenuBarTray {
     if (!inMemoryAuth) return;
     void menuBarContentStore.refreshIfStale(MENU_BAR_CONTENT_MAX_AGE_MS);
   };
+  // Opening the drop-down is the moment its suggestions are seen, and seeing
+  // one and passing over it is what moves the ranking. `mouse-enter` is
+  // deliberately not a trigger: the pointer crossing the menu bar puts nothing
+  // in front of anyone.
+  const recordImpressions = (): void => {
+    void menuBarContentStore.recordImpressions();
+  };
   tray.on('mouse-enter', refreshContent);
-  tray.on('click', refreshContent);
+  tray.on('click', () => {
+    refreshContent();
+    // Both this and `menu-will-show` report the open. Which of the two macOS
+    // raises for a status item's own menu is not something this repository can
+    // check — there is no menu bar in the sandbox — and reporting nothing is
+    // the failure being avoided. `recordImpressions` is keyed on the set, so
+    // the pair costs one report rather than two.
+    recordImpressions();
+  });
   return {
-    setContextMenu: (template) => tray.setContextMenu(Menu.buildFromTemplate(template)),
+    setContextMenu: (template) => {
+      const menu = Menu.buildFromTemplate(template);
+      menu.on('menu-will-show', recordImpressions);
+      tray.setContextMenu(menu);
+    },
     destroy: () => tray.destroy(),
   };
 }

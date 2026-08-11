@@ -17,6 +17,7 @@ export interface LaunchAtLoginDependencies {
   readonly readSettings: () => Promise<StoredApplicationSettings>;
   readonly writeSettings: (settings: Partial<StoredApplicationSettings>) => Promise<void>;
   readonly onChange: (enabled: boolean) => void;
+  readonly logWarning: (message: string, error: unknown) => void;
 }
 
 /**
@@ -58,7 +59,26 @@ export class LaunchAtLoginController {
 
   constructor(private readonly dependencies: LaunchAtLoginDependencies) {}
 
+  /**
+   * Whether macOS opens Avalon at login — read from the operating system on
+   * every call rather than from the last value this process wrote.
+   *
+   * The login item can be removed, added, or approved in System Settings →
+   * General → Login Items at any moment, and nothing tells Avalon it happened.
+   * A cached answer would have Settings offer to turn on something already on,
+   * or claim Avalon opens at login after someone removed it, until the next
+   * launch. The read is a synchronous `SMAppService` status query.
+   */
   enabled(): boolean {
+    if (!this.dependencies.supported) return false;
+    try {
+      this.enabledState = this.dependencies.getLoginItemState().openAtLogin;
+    } catch (error) {
+      // Keep the last answer rather than reporting off. "Avalon does not open
+      // at login" is a claim about the system, and this cannot make it while it
+      // cannot see the system.
+      this.dependencies.logWarning('could not read whether Avalon opens at login', error);
+    }
     return this.enabledState;
   }
 

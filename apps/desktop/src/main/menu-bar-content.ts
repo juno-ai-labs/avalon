@@ -65,6 +65,9 @@ export class MenuBarContentStore {
   private inFlight: Promise<void> | null = null;
   private inFlightGeneration = -1;
   private lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
+  /** The suggestion set last reported as seen, so opening the menu twice on the
+   * same four suggestions is one impression rather than two. */
+  private recordedImpressions: string | null = null;
   /**
    * Which account, and which state of it, the cache describes. Every request
    * carries the generation it was issued under and publishes only if that is
@@ -88,6 +91,7 @@ export class MenuBarContentStore {
   clear(): void {
     this.generation += 1;
     this.lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
+    this.recordedImpressions = null;
     if (this.cached === emptyMenuBarContent) return;
     this.cached = emptyMenuBarContent;
     this.dependencies.onChange(this.cached);
@@ -192,6 +196,43 @@ export class MenuBarContentStore {
     } catch (error) {
       this.dependencies.logWarning(`could not read ${description} for the menu bar`, error);
       return null;
+    }
+  }
+
+  /**
+   * Reports the suggestions the drop-down is showing.
+   *
+   * This is what keeps them moving. The ranking treats an impression as
+   * evidence a suggestion was put in front of someone and passed over, and it
+   * asks for a re-rank on the strength of it — see `SUGGESTED_WORK.md`. A
+   * surface that displays suggestions without reporting them is a free rider:
+   * whoever uses only that surface sees the same four indefinitely.
+   *
+   * Called when the menu opens, never when its content is fetched. The fetch
+   * happens as the pointer reaches the status item, and reporting there would
+   * count suggestions that were never on screen — pushing the ranking away from
+   * work nobody has actually declined.
+   *
+   * Reported once per distinct set, which is what the home screen does: its
+   * effect is keyed on the ids and versions, not on each render.
+   */
+  async recordImpressions(): Promise<void> {
+    const shown = this.cached.suggestions;
+    if (shown.length === 0) return;
+    const impressions = shown.map((suggestion) => `${suggestion.id}:${suggestion.version}`).join('|');
+    if (impressions === this.recordedImpressions) return;
+    this.recordedImpressions = impressions;
+    try {
+      await this.dependencies.requestJson('/work-opportunities/impressions', {
+        method: 'POST',
+        body: { opportunityIds: shown.map((suggestion) => suggestion.id) },
+      });
+    } catch (error) {
+      // Nothing on screen waits on this. Forgetting that it was reported is the
+      // point of the reset: the next open tries again rather than treating a
+      // failed report as delivered for as long as the set holds.
+      this.recordedImpressions = null;
+      this.dependencies.logWarning('could not record menu bar suggestion impressions', error);
     }
   }
 
