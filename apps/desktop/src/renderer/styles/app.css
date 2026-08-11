@@ -2636,6 +2636,12 @@ pre {
   line-height: 1.62;
 }
 
+/* This is the declaration that decides which side a turn lands on. Every
+   person's turn sits on the right — the signed-in person's, a coworker's, and
+   one relayed in by a connector — so the transcript reads as people on one side
+   and Avalon on the other. Who sent it is carried by the header, never by the
+   side: do not add an exception that moves a turn based on its author, or the
+   same transcript renders differently for each person reading it. */
 :is(.workstream-screen, .automation-chat-surface) .human-message {
   margin-left: auto;
   max-width: min(72%, 620px);
@@ -2656,15 +2662,6 @@ pre {
   max-width: 100%;
   padding: 9px 14px;
   width: fit-content;
-}
-
-:is(.workstream-screen, .automation-chat-surface) .coworker-message {
-  margin-left: 0;
-  margin-right: auto;
-}
-
-:is(.workstream-screen, .automation-chat-surface) .coworker-message .human-message-content {
-  align-items: flex-start;
 }
 
 :is(.workstream-screen, .automation-chat-surface) .human-message.is-sending {
@@ -2701,8 +2698,12 @@ pre {
   100% { transform: translateX(125%); }
 }
 
+/* Anchors the identity line to the bubble it labels. The block is
+   `width: fit-content`, so a header narrower than the bubble would otherwise sit
+   flush left inside an otherwise right-aligned turn. */
 :is(.workstream-screen, .automation-chat-surface) .human-message > header {
   gap: 5px;
+  justify-content: flex-end;
   margin-bottom: 4px;
 }
 
