@@ -63,7 +63,16 @@ export interface MenuBarContentDependencies {
 export class MenuBarContentStore {
   private cached: MenuBarContent = emptyMenuBarContent;
   private inFlight: Promise<void> | null = null;
+  private inFlightGeneration = -1;
   private lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
+  /**
+   * Which account, and which state of it, the cache describes. Every request
+   * carries the generation it was issued under and publishes only if that is
+   * still current, so an answer already on the wire when the account changed —
+   * or when the thing it describes was used up — is dropped rather than written
+   * over what replaced it.
+   */
+  private generation = 0;
 
   constructor(private readonly dependencies: MenuBarContentDependencies) {}
 
@@ -73,8 +82,11 @@ export class MenuBarContentStore {
 
   /** Drops everything the previous account could see. Called on sign-out, where
    * leaving the last titles in the menu would keep them readable to whoever
-   * signs in next. */
+   * signs in next — including through a request that was already in flight when
+   * they signed out, which is why this bumps the generation rather than only
+   * emptying the cache. */
   clear(): void {
+    this.generation += 1;
     this.lastRefreshStartedAt = Number.NEGATIVE_INFINITY;
     if (this.cached === emptyMenuBarContent) return;
     this.cached = emptyMenuBarContent;
@@ -93,21 +105,30 @@ export class MenuBarContentStore {
   }
 
   /**
-   * Refreshes both halves. Coalesced, because the menu asks on every open and
-   * the periodic timer asks on its own schedule; two overlapping refreshes would
-   * race to publish and could leave the older answer in place.
+   * Refreshes both halves.
+   *
+   * Coalesced, because the pointer reaching the status item and a sign-in can
+   * ask within moments of each other, and two overlapping refreshes would race
+   * to publish and could leave the older answer in place. Only a request issued
+   * under the *current* generation is reused: after a sign-out or a consumed
+   * suggestion, the answer already in flight describes a state that no longer
+   * exists, and handing it back would report it as fresh.
    */
   refresh(): Promise<void> {
-    if (this.inFlight) return this.inFlight;
+    if (this.inFlight && this.inFlightGeneration === this.generation) return this.inFlight;
+    const generation = this.generation;
     this.lastRefreshStartedAt = (this.dependencies.now ?? Date.now)();
-    const request = this.refreshNow().finally(() => {
-      this.inFlight = null;
+    const request = this.refreshNow(generation).finally(() => {
+      // Only if it is still the newest. A superseded request settling later
+      // must not clear the one that replaced it.
+      if (this.inFlightGeneration === generation) this.inFlight = null;
     });
     this.inFlight = request;
+    this.inFlightGeneration = generation;
     return request;
   }
 
-  private async refreshNow(): Promise<void> {
+  private async refreshNow(generation: number): Promise<void> {
     // Each half is independent: a failing suggestion poll must not blank the
     // recent list, which is the part a person actually navigates with.
     // One request answers both work-stream sections. `GET /workstreams` leaves
@@ -119,6 +140,9 @@ export class MenuBarContentStore {
       this.load('suggested work streams', '/work-opportunities?limit=4', MenuBarOpportunityPageSchema),
     ]);
     if (!page && !suggestions) return;
+    // Sign-out, or a suggestion consumed, while this was on the wire. What came
+    // back describes a state that no longer exists.
+    if (generation !== this.generation) return;
     const workstreams = page?.items.map((workstream) => ({
       pinPosition: workstream.pinPosition,
       entry: {
@@ -198,6 +222,11 @@ export class MenuBarContentStore {
   }
 
   private forget(suggestionId: string): void {
+    // Bumped whether or not the suggestion was cached: a refresh already in
+    // flight was issued before the start and would put the consumed suggestion
+    // back, where a second click is refused by the version check with nothing on
+    // screen explaining why.
+    this.generation += 1;
     const suggestions = this.cached.suggestions.filter((item) => item.id !== suggestionId);
     if (suggestions.length === this.cached.suggestions.length) return;
     this.cached = { ...this.cached, suggestions };

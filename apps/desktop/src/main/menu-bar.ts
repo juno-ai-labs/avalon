@@ -46,6 +46,16 @@ export class MenuBarController {
     return this.dependencies.supported;
   }
 
+  /**
+   * Whether a status item is actually in the menu bar right now — the
+   * preference being on is not enough, because creating the item can fail.
+   * A launch that opens no window asks this: without an item there would be
+   * nothing on screen at all.
+   */
+  present(): boolean {
+    return this.tray !== null;
+  }
+
   async initialize(): Promise<void> {
     this.enabledState = (await this.dependencies.readSettings()).menuBarEnabled;
     this.applyPresence();

@@ -68,15 +68,23 @@ export class LaunchAtLoginController {
 
   async initialize(): Promise<void> {
     if (!this.dependencies.supported) return;
-    const stored = await this.dependencies.readSettings();
-    if (this.dependencies.registersDefault && !stored.launchAtLoginDefaultApplied) {
-      // Register before recording it. A failed registration that had already
-      // written the marker would never be retried, and Avalon would silently
-      // ship its default off.
-      this.dependencies.setOpenAtLogin(true);
-      await this.dependencies.writeSettings({ launchAtLoginDefaultApplied: true });
+    try {
+      const stored = await this.dependencies.readSettings();
+      if (this.dependencies.registersDefault && !stored.launchAtLoginDefaultApplied) {
+        // Register before recording it. A failed registration that had already
+        // written the marker would never be retried, and Avalon would silently
+        // ship its default off.
+        this.dependencies.setOpenAtLogin(true);
+        await this.dependencies.writeSettings({ launchAtLoginDefaultApplied: true });
+      }
+    } finally {
+      // Read back whatever happened above, including when it threw. The
+      // registration can succeed and the marker fail to write, and reporting
+      // the login item as off while macOS holds it on is the one answer that
+      // is certainly wrong — Settings would offer to turn on something already
+      // on, and the marker is retried on the next launch anyway.
+      this.enabledState = this.dependencies.getLoginItemState().openAtLogin;
     }
-    this.enabledState = this.dependencies.getLoginItemState().openAtLogin;
   }
 
   async set(rawEnabled: unknown): Promise<boolean> {

@@ -2231,7 +2231,12 @@ if (!singleInstanceLock) {
       logWarn('avalon', 'could not add Avalon to the menu bar', error);
     }
     if (launchAuth) void menuBarContentStore.refresh();
-    if (!openedAtLogin) await createMainWindow();
+    // Hidden only into somewhere. The menu bar item is what a login launch
+    // leaves a person, and it is off whenever they turned it off and absent
+    // whenever creating it failed — either way, opening no window would start
+    // Avalon with nothing on screen and nothing in the menu bar, reachable only
+    // by hunting for it in the Dock.
+    if (!openedAtLogin || !menuBarController.present()) await createMainWindow();
     void initializeApplicationIcon();
 
     const initialDeepLink = process.argv.find((argument) => argument.startsWith(`${customProtocol}://`));
