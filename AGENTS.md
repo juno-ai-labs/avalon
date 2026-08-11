@@ -29,6 +29,39 @@ Every change must leave `pnpm lint` (zero warnings), `pnpm typecheck`, and
 dry-run builds, the desktop release invariants, and a Gitleaks scan over the full
 history.
 
+## Flaky tests
+
+**A test that fails once and passes on a rerun is a defect in the test or the
+code under it — fix it in the change that encountered it, whoever wrote it.**
+Rerunning until green, skipping it, or setting `retry` in a Vitest config hides
+a real race that will fail for someone else; none of those are an accepted
+resolution here.
+
+- Reproduce it first, in isolation and in bulk, capturing the output to a file
+  as the section below requires — the failing iteration is the evidence, and it
+  is the one that gets truncated away. `--filter … exec` runs in the package
+  directory, so the path is package-relative; pasting the repo-relative path a
+  failure reports fails as `No test files found`, naming the file rather than
+  the working directory:
+
+  ```bash
+  (for i in $(seq 20); do
+     pnpm --filter @avalon/<pkg> exec vitest run <path-within-the-package> \
+       || { echo "failed on run $i"; exit 1; }
+   done) &> /tmp/flake.log
+  ```
+
+  The subshell makes the loop exit nonzero on the first failing run rather than
+  reporting the success of `break`, and the iteration number characterizes how
+  often the flake fires. Add `--sequence.shuffle` to catch a test that depends
+  on another in the same file having run first; cross-file interference only
+  appears in a suite-wide rerun, where `--no-file-parallelism` isolates it.
+- Confirm the fix by looping the test again, then run the full `pnpm test` once
+  more before calling the change done.
+- Fix the cause. A flake rooted in code the change does not touch may be left
+  unfixed — only then, and only if it is named in the report and the pull
+  request description. Never leave an intermittent failure unmentioned.
+
 ## Capturing command output
 
 For any command with non-trivial output — tests, typecheck, lint, migrations,

@@ -1617,4 +1617,68 @@ describe("database migrations", () => {
     ]);
     database.close();
   });
+
+  it("keeps Slack delivery targets and admits email targets when delivery gains email", () => {
+    const database = migrateDatabaseThrough("0053_slack_workstream_creator_backfill.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('user-delivery', 'user-delivery-subject', 'owner@example.com', 'Owner', '2026-08-10', '2026-08-10');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('workspace-delivery', 'Delivery', 'delivery', 'global', 'user-delivery', '2026-08-10', '2026-08-10');
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
+         granted_scopes_json, model_plugin_id, status, created_at, updated_at)
+      VALUES ('connection-delivery', 'workspace-delivery', 'slack', 'workspace', NULL, 'Slack',
+              '[]', 'plugin_delivery_slack', 'healthy', '2026-08-10', '2026-08-10');
+      INSERT INTO automation_templates
+        (id, workspace_id, owner_user_id, name, description, sharing_state, created_at, updated_at)
+      VALUES ('template-delivery', 'workspace-delivery', 'user-delivery', 'Template', 'Template', 'private', '2026-08-10', '2026-08-10');
+      INSERT INTO automation_template_versions
+        (id, template_id, version_number, instructions, trigger_definitions_json, created_by_user_id, created_at)
+      VALUES ('version-delivery', 'template-delivery', 1, 'Run', '[]', 'user-delivery', '2026-08-10');
+      INSERT INTO automation_subscriptions
+        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
+         execution_principal_json, status, created_at, updated_at)
+      VALUES ('subscription-delivery', 'workspace-delivery', 'template-delivery', 'version-delivery',
+              'personal', 'user-delivery', '{}', 'active', '2026-08-10', '2026-08-10');
+      INSERT INTO automation_delivery_targets
+        (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
+         slack_team_id, slack_user_id, status, created_at, updated_at)
+      VALUES ('target-slack', 'workspace-delivery', 'subscription-delivery', 'slack_agent_dm',
+              'connection-delivery', 'user-delivery', 'T123', 'U123', 'active', '2026-08-10', '2026-08-10');
+    `);
+
+    database.exec(readFileSync(new URL("../migrations/0054_automation_email_delivery.sql", import.meta.url), "utf8"));
+
+    expect(database.prepare(
+      "SELECT connection_id, slack_team_id, email_address FROM automation_delivery_targets WHERE id = 'target-slack'",
+    ).get()).toEqual({ connection_id: "connection-delivery", slack_team_id: "T123", email_address: null });
+
+    database.exec(`
+      INSERT INTO automation_delivery_targets
+        (id, workspace_id, automation_subscription_id, target_type, user_id, email_address,
+         status, created_at, updated_at)
+      VALUES ('target-email', 'workspace-delivery', 'subscription-delivery', 'email',
+              'user-delivery', 'owner@example.com', 'active', '2026-08-10', '2026-08-10');
+    `);
+    expect(database.prepare(
+      "SELECT email_address FROM automation_delivery_targets WHERE id = 'target-email'",
+    ).get()).toEqual({ email_address: "owner@example.com" });
+
+    expect(() => database.exec(`
+      INSERT INTO automation_delivery_targets
+        (id, workspace_id, automation_subscription_id, target_type, connection_id, user_id,
+         email_address, status, created_at, updated_at)
+      VALUES ('target-mixed', 'workspace-delivery', 'subscription-delivery', 'email',
+              'connection-delivery', 'user-delivery', 'owner@example.com', 'active', '2026-08-10', '2026-08-10');
+    `)).toThrow();
+    expect(() => database.exec(`
+      INSERT INTO automation_delivery_targets
+        (id, workspace_id, automation_subscription_id, target_type, user_id,
+         status, created_at, updated_at)
+      VALUES ('target-empty', 'workspace-delivery', 'subscription-delivery', 'email',
+              'user-delivery', 'active', '2026-08-10', '2026-08-10');
+    `)).toThrow();
+    database.close();
+  });
 });

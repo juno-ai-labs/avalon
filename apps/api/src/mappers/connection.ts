@@ -16,7 +16,10 @@ const ConnectionRowSchema = z.object({
   created_at: z.string(),
 });
 
-export function connectionFromRow(input: unknown): Connection {
+export function connectionFromRow(
+  input: unknown,
+  userDelivery: Connection["userDelivery"] = null,
+): Connection {
   const row = ConnectionRowSchema.parse(input);
   const grantedCapabilities: unknown = JSON.parse(row.granted_scopes_json);
   const candidate = {
@@ -30,6 +33,7 @@ export function connectionFromRow(input: unknown): Connection {
     displayName: row.display_name,
     grantedCapabilities,
     status: row.status,
+    userDelivery,
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,
   } satisfies Record<keyof Connection, unknown>;

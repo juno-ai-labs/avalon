@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
-import type { Message, WorkstreamDetail } from '../lib/types';
+import type { Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from './inspector-rail';
 
@@ -300,5 +300,72 @@ describe('InspectorRail details', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Download Launch brief.md' }));
     expect(onDownloadArtifact).toHaveBeenCalledWith(expect.objectContaining({ id: 'artifact-persisted' }));
+  });
+
+  // The watch control sits beside the button that opens the resource, rather
+  // than inside it, and the two are kept apart by sibling order and a
+  // positioned overlay. These lock that arrangement in.
+  const watched: WorkstreamResource = {
+    id: 'resource-1',
+    title: 'Linear issue create: AVA-9',
+    resourceType: 'issue',
+    provider: 'linear',
+    watchEnabled: false,
+    watchStatus: 'paused',
+  };
+
+  function renderResources(resources: WorkstreamResource[], onToggleWatch = vi.fn()): { onToggleWatch: ReturnType<typeof vi.fn> } {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail onToggleWatch={onToggleWatch} workstream={{ ...workstream, resources }} />
+      </Tooltip.Provider>,
+    );
+    return { onToggleWatch };
+  }
+
+  it('toggles the watch without opening the resource it belongs to', () => {
+    const { onToggleWatch } = renderResources([watched]);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Watch' }));
+
+    expect(onToggleWatch).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }), true);
+    expect(useUiStore.getState().inspector).toBeNull();
+  });
+
+  it('opens the resource from the row without touching the watch', () => {
+    const { onToggleWatch } = renderResources([watched]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
+    expect(onToggleWatch).not.toHaveBeenCalled();
+  });
+
+  it('names every watch state in full even where the row shows the short form', () => {
+    renderResources([
+      watched,
+      { ...watched, id: 'resource-2', title: 'Watched doc', watchEnabled: true, watchStatus: 'watching' },
+      { ...watched, id: 'resource-3', title: 'Local note', provider: 'fixture', watchStatus: 'unsupported' },
+      { ...watched, id: 'resource-4', title: 'Stale issue', watchStatus: 'error' },
+    ]);
+
+    expect(screen.getByRole('checkbox', { name: 'Watch' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Watching' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Watch unavailable' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Watch needs attention' })).toBeEnabled();
+    expect(screen.getByText('Unavailable')).toBeVisible();
+    expect(screen.getByText('Needs attention')).toBeVisible();
+  });
+
+  it('keeps the watch control out of the button that opens the resource', () => {
+    renderResources([{ ...watched, watchStatus: 'unsupported' }]);
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Watch unavailable' });
+    expect(checkbox).toBeDisabled();
+    // Nesting the label back inside the button would send its clicks to the
+    // resource instead of the checkbox, which is the arrangement this row
+    // exists to avoid. jsdom has no layout, so the overlay that widens the
+    // button's hit area back over the whole row is checked in a real engine.
+    expect(screen.getByRole('button', { name: /Linear issue create: AVA-9/ })).not.toContainElement(checkbox);
   });
 });
