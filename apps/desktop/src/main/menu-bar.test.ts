@@ -158,6 +158,38 @@ describe('menu bar controller', () => {
     expect(subject.controller.present()).toBe(false);
   });
 
+  it('still settles its presence when the preference cannot be read', async () => {
+    const menus: MenuItemConstructorOptions[][] = [];
+    const createTray = vi.fn((): MenuBarTray => ({
+      setContextMenu: (template) => {
+        menus.push(template);
+      },
+      destroy: vi.fn(),
+    }));
+    const controller = new MenuBarController({
+      supported: true,
+      appName: 'Avalon',
+      createTray,
+      content: () => emptyMenuBarContent,
+      signedIn: () => true,
+      sectionHeaders: true,
+      actions: noopActions(),
+      readSettings: () => Promise.reject(new Error('EACCES: permission denied')),
+      writeSettings: () => Promise.resolve(),
+      onChange: vi.fn(),
+      logWarning: vi.fn(),
+    });
+
+    await expect(controller.initialize()).rejects.toThrow(/EACCES/u);
+
+    // Otherwise `enabledState` keeps its default of `true` with no tray to
+    // match it, and the caller fetches and caches menu content that nothing can
+    // render.
+    expect(createTray).toHaveBeenCalledTimes(1);
+    expect(controller.enabled()).toBe(true);
+    expect(controller.present()).toBe(true);
+  });
+
   it('rebuilds the drop-down from whatever is currently cached', async () => {
     const subject = harness({
       content: {

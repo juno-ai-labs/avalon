@@ -231,7 +231,12 @@ export class MenuBarContentStore {
       // Nothing on screen waits on this. Forgetting that it was reported is the
       // point of the reset: the next open tries again rather than treating a
       // failed report as delivered for as long as the set holds.
-      this.recordedImpressions = null;
+      //
+      // Only if nothing has been reported since. A newer set can be recorded
+      // while this POST is still on the wire — the content refreshes and the
+      // menu is opened again — and clearing that would report the newer set a
+      // second time, which is the invariant this whole field exists to hold.
+      if (this.recordedImpressions === impressions) this.recordedImpressions = null;
       this.dependencies.logWarning('could not record menu bar suggestion impressions', error);
     }
   }

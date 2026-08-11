@@ -57,8 +57,17 @@ export class MenuBarController {
   }
 
   async initialize(): Promise<void> {
-    this.enabledState = (await this.dependencies.readSettings()).menuBarEnabled;
-    this.applyPresence();
+    try {
+      this.enabledState = (await this.dependencies.readSettings()).menuBarEnabled;
+    } finally {
+      // Even when the preference could not be read. Skipping this leaves
+      // `enabledState` on its default of `true` with no tray to match it, and
+      // the caller then fetches and caches menu content that nothing can
+      // render. Falling back to the default is what the rest of the preference
+      // file does for an unreadable value; here it also keeps the two halves
+      // agreeing with each other.
+      this.applyPresence();
+    }
   }
 
   async set(rawEnabled: unknown): Promise<boolean> {
