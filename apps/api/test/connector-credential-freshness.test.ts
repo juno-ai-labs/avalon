@@ -3,12 +3,15 @@ import {
   authorizedConnection,
   createConnectorRegistry,
   isProviderCredentialRejection,
+  isRevokedGrantError,
+  providerJson,
   withProviderReauthorization,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
 import { describe, expect, it, vi } from "vitest";
 import { encryptString } from "../src/lib/crypto";
+import { __connectionServiceTesting } from "../src/services/connection-service";
 import { withAuthorizedConnection } from "../src/services/connector-connection-access";
 import { __integrationTesting } from "../src/services/integrations";
 
@@ -273,6 +276,400 @@ describe("plugin revalidation verdicts", () => {
   });
 });
 
+describe("refresh rejection classification", () => {
+  it("marks a grant dead only when the provider says so", async () => {
+    // A token endpoint answers both a revoked grant and Avalon's own malformed
+    // request with HTTP 400. Classifying on status alone told members to
+    // reconnect healthy accounts over our bugs.
+    // Three answers, not two. A code naming a dead grant marks; a code naming
+    // Avalon's own fault does not, whatever the status; anything else defers to
+    // the status, because an unfamiliar word is not evidence.
+    const revoked = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_grant" });
+    const ourFault = new ConnectorError("provider_error", "bad", { status: 400, providerError: "invalid_request" });
+    const badClient = new ConnectorError("unauthorized", "bad", { status: 401, providerError: "invalid_client" });
+
+    expect(isRevokedGrantError(revoked)).toBe(true);
+    expect(isRevokedGrantError(ourFault)).toBe(false);
+    expect(isRevokedGrantError(badClient)).toBe(false);
+    // Envelope shapes are flattened into `providerError` before this layer
+    // sees them; the `it.each` below is what covers those.
+    //
+    // An unrecognized code falls through to the status test rather than
+    // answering "not a rejection". A provider spelling a dead grant in a word
+    // this list has not learned would otherwise leave the connection healthy,
+    // failing every call and prompting nobody.
+    const unfamiliar = new ConnectorError("provider_error", "bad", { status: 400, providerError: "grant_expunged" });
+    expect(isRevokedGrantError(unfamiliar)).toBe(true);
+    // With no code at all the same status test stands.
+    expect(isRevokedGrantError(new ConnectorError("unauthorized", "x", { status: 401 }))).toBe(true);
+    expect(isRevokedGrantError(new ConnectorError("provider_error", "x", { status: 400 }))).toBe(true);
+    expect(isRevokedGrantError(new ConnectorError("provider_error", "x", { status: 500 }))).toBe(false);
+  });
+
+  it.each([
+    { label: "OAuth `error`", body: { error: "invalid_grant" } },
+    { label: "Notion's `code`", body: { object: "error", code: "invalid_grant", message: "bad" } },
+    { label: "a nested envelope", body: { error: { code: "invalid_grant" } } },
+  ])("carries the provider's error code out of a failed request: $label", async ({ body }) => {
+    const fetcher = (async () => Response.json(body, { status: 400 })) as typeof fetch;
+    await expect(providerJson(fetcher, "https://provider.test/token", { method: "POST" }))
+      .rejects.toMatchObject({ details: { status: 400, providerError: "invalid_grant" } });
+  });
+});
+
+describe("what a failed refresh does to the row", () => {
+  // The predicate was right in both cases the host got wrong, so these assert
+  // the outcome — is the connection marked? — rather than a boolean.
+  function refreshFailingWith(error: unknown): Promise<string[]> {
+    return doorStatementsForFailedRefresh(
+      { refreshCredentials: async () => { throw error; } } as unknown as ResolvedConnectorAdapter,
+      { accessToken: STALE_TOKEN, refreshToken: "refresh-token" },
+    );
+  }
+
+  it("marks the connection when the provider refused the grant", async () => {
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
+      status: 400,
+      providerError: "invalid_grant",
+      reconnectRequired: true,
+    }));
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+
+  it("leaves it alone when the failure was Avalon's own request", async () => {
+    // `invalid_client` is our configuration being wrong. No member fixes that
+    // by reconnecting an account that still works.
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "bad client", {
+      status: 401,
+      providerError: "invalid_client",
+    }));
+    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+  });
+
+  it("still marks the connection when the adapter stated no verdict at all", async () => {
+    // The safe default. Requiring the flag made forgetting it strand a
+    // connection: healthy row, plugin dropped from every run, nobody prompted.
+    // With nothing stated, the provider's own code decides.
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
+      status: 400,
+      providerError: "invalid_grant",
+    }));
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+
+  it("marks an unclassifiable refusal rather than leaving it silent", async () => {
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "no", { status: 401 }));
+    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+  });
+
+  it("believes an adapter that says the grant is not the problem", async () => {
+    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "transient", {
+      status: 401,
+      reconnectRequired: false,
+    }));
+    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+  });
+});
+
+/**
+ * The other half of the freshness guarantee. The door refreshing is worth
+ * nothing if a refresh the provider refuses leaves the row `healthy`: the
+ * plugin is dropped from every run, no member is ever prompted, and only
+ * somebody happening to press Test recovers it. Registry-driven for the same
+ * reason as the recovery suite — a connector added later is enrolled by
+ * existing, not by someone remembering.
+ */
+describe("adapter conformance: a revoked grant reaches the row", () => {
+  const registry = conformanceRegistry(revokedGrantFetch);
+  const adapters = registry.list()
+    .map((manifest) => ({ type: manifest.type, adapter: registry.get(manifest.type) }))
+    .filter(({ adapter }) => adapter.refreshCredentials);
+
+  it("covers every adapter that can refresh a credential", () => {
+    expect(adapters.map(({ type }) => type).sort())
+      .toEqual(["github", "google", "granola", "linear", "notion", "slack"]);
+  });
+
+  for (const { type, adapter } of adapters) {
+    it(`${type} leaves no connection reporting healthy after its grant is revoked`, async () => {
+      const fixture = CREDENTIAL_FIXTURES[type];
+      if (!fixture) throw new Error(`Add a credential fixture for the ${type} connector`);
+      const statements = await doorStatementsForFailedRefresh(
+        adapter,
+        fixture.credentials,
+        fixture.scope,
+      );
+      expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+    });
+  }
+
+  it("does not mark a connection when the token endpoint faulted Avalon's own request", async () => {
+    // The counterpart the suite above cannot express, since it revokes every
+    // grant. GitHub is the case that had it backwards: it reported a token
+    // failure as HTTP 200 with an `error` body and marked every one of them
+    // `reconnectRequired`, so an `invalid_client` of ours sent members to
+    // reconnect accounts that worked.
+    const registry = conformanceRegistry((async (input: RequestInfo | URL) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return url.pathname.endsWith("/access_token")
+        ? Response.json({ error: "invalid_client", error_description: "wrong secret" })
+        : Response.json({ ok: true });
+    }) as typeof fetch);
+    const statements = await doorStatementsForFailedRefresh(
+      registry.get("github"),
+      CREDENTIAL_FIXTURES.github!.credentials,
+      "personal",
+    );
+    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+  });
+});
+
+/**
+ * Drives an expired credential through the door and returns every statement the
+ * door issued, so a test can ask what the refusal did to the row.
+ */
+async function doorStatementsForFailedRefresh(
+  adapter: ResolvedConnectorAdapter,
+  credentials: Record<string, unknown>,
+  scope: "personal" | "workspace" = "workspace",
+): Promise<string[]> {
+  const statements: string[] = [];
+  const secret = "coordinator-key";
+  const connection = connectionContext({ ...credentials, expiresAt: EXPIRED_AT }, scope);
+  const encrypted = await encryptString(JSON.stringify(connection.credentials), secret, connection.id);
+  const database = {
+    prepare(sql: string) {
+      statements.push(sql.replace(/\s+/gu, " ").trim());
+      return {
+        bind() { return this; },
+        async first() {
+          return sql.includes("credential_refresh_lease_id = ?")
+            ? {
+                encrypted_credentials: encrypted.ciphertext,
+                credential_iv: encrypted.iv,
+                credential_key_version: 1,
+              }
+            : null;
+        },
+        async run() { return { success: true, meta: { changes: 1 } }; },
+      };
+    },
+  } as unknown as D1Database;
+
+  await expect(withAuthorizedConnection(
+    { DB: database, CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+    { connection, adapter, signal: AbortSignal.timeout(5_000) },
+    async () => undefined,
+  )).rejects.toBeDefined();
+  return statements;
+}
+
+describe("repairing a connection under test", () => {
+  const identity = { connectionId: "connection", connectorType: "granola" };
+  const connection = authorizedConnection(connectionContext({}, "workspace"));
+  const env = { LOG_LEVEL: "error" } as never;
+
+  it("reports what a successful repair did", async () => {
+    const adapter = { repair: async () => ({ repaired: true, message: "Re-enabled the webhook" }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBe("Re-enabled the webhook");
+  });
+
+  it("says nothing when there was nothing to repair", async () => {
+    const adapter = { repair: async () => ({ repaired: false }) };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBeNull();
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, {}, connection, identity))
+      .resolves.toBeNull();
+  });
+
+  it("reports a failed repair without failing the test", async () => {
+    // The health check that follows is still the answer being asked for, so
+    // this must not throw — but a connection whose delivery is still broken
+    // must not read the same as one that was fixed.
+    const adapter = { repair: async () => { throw new Error("Granola refused the PATCH"); } };
+    await expect(__connectionServiceTesting.attemptConnectorRepair(env, adapter, connection, identity))
+      .resolves.toBe("A repair was attempted and failed: Granola refused the PATCH");
+  });
+});
+
+describe("provider writes", () => {
+  it("keeps the Granola webhook repair out of the health check", async () => {
+    // A health check runs on every plugin activation. Re-enabling a webhook is
+    // a write, and it belongs to an explicit connection test instead.
+    const methods: string[] = [];
+    const registry = createConnectorRegistry({
+      granola: {
+        redirectUri: "https://api.example.com/connections/granola/callback",
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          methods.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname}`);
+          return Response.json({
+            notes: [],
+            webhook_endpoints: [{ id: "whe_00000000000000", enabled: false }],
+          });
+        }) as typeof fetch,
+      },
+    });
+    const adapter = registry.get("granola");
+    const connection = authorizedConnection(connectionContext(
+      { apiKey: "grn_workspace-key", webhookEndpointId: "whe_00000000000000" },
+      "workspace",
+    ));
+
+    // Reported, not repaired, and not failed: reads still work, so the
+    // connection stays loadable while the condition is visible.
+    await expect(adapter.healthCheck(connection, AbortSignal.timeout(5_000)))
+      .resolves.toMatchObject({ ok: true, message: expect.stringContaining("webhook endpoint is disabled") });
+    expect(methods.some((call) => call.startsWith("PATCH"))).toBe(false);
+
+    methods.length = 0;
+    await expect(adapter.repair!(connection, AbortSignal.timeout(5_000)))
+      .resolves.toMatchObject({ repaired: true });
+    expect(methods.some((call) => call.startsWith("PATCH"))).toBe(true);
+  });
+});
+
+describe("revalidation between model turns", () => {
+  it("answers from Avalon's own records without calling the provider", async () => {
+    // `reauthorizeActive` runs before every inference, so a provider round trip
+    // here costs one call per active plugin per turn. Everything this check
+    // exists to catch — a revoked grant, a removed member, an archived work
+    // stream, a connection marked unhealthy — is already in D1.
+    const statements: string[] = [];
+    const database = {
+      prepare(sql: string) {
+        statements.push(sql.replace(/\s+/gu, " ").trim().slice(0, 60));
+        return {
+          bind() { return this; },
+          async first() {
+            if (sql.includes("FROM workspace_members")) return { status: "active" };
+            if (sql.includes("FROM workstreams")) {
+              return { archived_at: null, automation_subscription_id: null, automation_run_id: null };
+            }
+            if (sql.includes("FROM connector_connections")) {
+              return {
+                id: FROZEN.connectionId,
+                workspace_id: FROZEN.workspaceId,
+                connector_type: "granola",
+                scope: "personal",
+                owner_user_id: OWNER,
+                granted_scopes_json: JSON.stringify(["granola.personal.read"]),
+                encrypted_credentials: "ciphertext",
+                credential_iv: "iv",
+                cursor_json: "{}",
+                config_json: "{}",
+                status: "healthy",
+              };
+            }
+            return null;
+          },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+    const fetcher = vi.fn(async () => new Response("{}"));
+
+    await expect(__integrationTesting.reauthorizeFrozenPlugin(
+      { DB: database, CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1", TWITTER_API_IO_API_KEY: "k", fetch: fetcher } as never,
+      {
+        workspaceId: FROZEN.workspaceId,
+        workstreamId: "00000000-0000-7000-8000-0000000000ws",
+        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        executionPrincipal: { type: "user", userId: OWNER },
+      } as never,
+      FROZEN as never,
+      AbortSignal.timeout(2_000),
+      "continuation",
+    )).resolves.toBe("authorized");
+
+    expect(fetcher).not.toHaveBeenCalled();
+    // Nothing was decrypted either: the credentials are not needed to answer.
+    expect(statements.some((sql) => sql.includes("encrypted_credentials = ?"))).toBe(false);
+  });
+});
+
+describe("continuation revalidation respects its deadline", () => {
+  it("does not answer authorized when the deadline fires while D1 is answering", async () => {
+    const controller = new AbortController();
+    const database = {
+      prepare(sql: string) {
+        return {
+          bind() { return this; },
+          async first() {
+            if (sql.includes("FROM workspace_members")) return { status: "active" };
+            if (sql.includes("FROM workstreams")) {
+              return { archived_at: null, automation_subscription_id: null, automation_run_id: null };
+            }
+            if (sql.includes("FROM connector_connections")) {
+              // Every authority check passes, and the deadline lands while the
+              // last of them is being answered — after the branch's own first
+              // check has already gone by.
+              controller.abort();
+              return {
+                id: FROZEN.connectionId,
+                workspace_id: FROZEN.workspaceId,
+                connector_type: "granola",
+                scope: "personal",
+                owner_user_id: OWNER,
+                granted_scopes_json: JSON.stringify(["granola.personal.read"]),
+                encrypted_credentials: "ciphertext",
+                credential_iv: "iv",
+                cursor_json: "{}",
+                config_json: "{}",
+                status: "healthy",
+              };
+            }
+            return null;
+          },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+
+    await expect(__integrationTesting.reauthorizeFrozenPlugin(
+      { DB: database } as never,
+      {
+        workspaceId: FROZEN.workspaceId,
+        workstreamId: "00000000-0000-7000-8000-0000000000ws",
+        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        executionPrincipal: { type: "user", userId: OWNER },
+      } as never,
+      FROZEN as never,
+      controller.signal,
+      "continuation",
+    )).resolves.toBe("indeterminate");
+  });
+
+  it("does not answer authorized once the run has been aborted", async () => {
+    const aborted = AbortSignal.abort();
+    await expect(__integrationTesting.reauthorizeFrozenPlugin(
+      { DB: { prepare() { throw new Error("D1 must not be read after the deadline"); } } } as never,
+      {
+        workspaceId: FROZEN.workspaceId,
+        workstreamId: "00000000-0000-7000-8000-0000000000ws",
+        harnessRunId: "00000000-0000-7000-8000-0000000000rn",
+        executionPrincipal: { type: "user", userId: OWNER },
+      } as never,
+      FROZEN as never,
+      aborted,
+      "continuation",
+    )).resolves.toBe("indeterminate");
+  });
+});
+
+const OWNER = "00000000-0000-7000-8000-00000000a11e";
+const FROZEN = {
+  pluginId: "connection:00000000-0000-7000-8000-00000000c0de",
+  connectionId: "00000000-0000-7000-8000-00000000c0de",
+  workspaceId: "00000000-0000-7000-8000-00000000ffff",
+  connectorType: "granola",
+  scope: "personal" as const,
+  ownerUserId: OWNER,
+  grantedScopes: ["granola.personal.read"],
+  shortWireName: "granola",
+  modelPluginId: "plugin_granola",
+};
+
 /**
  * The credential a run starts with can still be rejected while the call is in
  * flight — a token revoked seconds ago, a provider expiring it early, a clock
@@ -486,8 +883,28 @@ const conformanceFetch = (() => {
   };
 })();
 
-function conformanceRegistry() {
-  const fetcher = conformanceFetch.fetcher;
+/**
+ * A token endpoint that has revoked every grant, in each provider's own idiom.
+ * Two of the six never send a status a caller could classify on: Slack answers
+ * HTTP 200 with `{ok: false, error}` and GitHub answers HTTP 200 with
+ * `{error}`, which is the whole reason the adapter, not the host, has to be
+ * the one that says the grant is gone. The RFC-abiding adapters answer 400
+ * with `invalid_grant`. Non-token requests still succeed, so the refresh is
+ * the only thing that can fail.
+ */
+const revokedGrantFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+  const body = typeof init?.body === "string" ? init.body : String(init?.body ?? "");
+  if (body.includes("grant_type=refresh_token") || url.pathname.endsWith("/token")) {
+    if (url.hostname.endsWith("slack.com")) return Response.json({ ok: false, error: "token_revoked" });
+    if (url.hostname.endsWith("github.com")) return Response.json({ error: "bad_refresh_token" });
+    return Response.json({ error: "invalid_grant", error_description: "revoked" }, { status: 400 });
+  }
+  return Response.json({ ok: true, active: true });
+}) as typeof fetch;
+
+function conformanceRegistry(fetchOverride?: typeof fetch) {
+  const fetcher = fetchOverride ?? conformanceFetch.fetcher;
   return createConnectorRegistry({
     granola: {
       redirectUri: "https://api.example.com/connections/granola/callback",

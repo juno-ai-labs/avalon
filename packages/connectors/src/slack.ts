@@ -2096,14 +2096,40 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
     },
     async refreshCredentials(connection, signal) {
       const refreshToken = stringValue(connection.credentials, "refreshToken");
-      if (!refreshToken) throw new ConnectorError("unauthorized", "Slack authorization must be reconnected");
+      if (!refreshToken) {
+        throw new ConnectorError("unauthorized", "Slack authorization must be reconnected", {
+          reconnectRequired: true,
+          reason: "missing_refresh_token",
+        });
+      }
       const endpoint = connection.scope === "personal" ? `${SLACK_API}/oauth.v2.user.access` : `${SLACK_API}/oauth.v2.access`;
-      const response = parseSlackSuccess(await providerJson(fetcher, endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-        body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: "refresh_token", refresh_token: refreshToken }),
-        signal,
-      }, SLACK_MAX_RESPONSE_BYTES), SlackRefreshSuccessSchema, "Slack token refresh failed");
+      // Slack answers a refused refresh with HTTP 200 and `{ok: false, error}`,
+      // which `parseSlackSuccess` raises as a bare `unauthorized` carrying no
+      // verdict. The host only marks a connection `needs_reconnect` when the
+      // adapter states one, so without this a revoked grant leaves the row
+      // `healthy` forever: every run drops the plugin and nothing prompts the
+      // member. Only Slack's authorization vocabulary reaches here as
+      // `unauthorized` — `invalid_client_id` and `bad_client_secret` are
+      // Avalon's own configuration and stay `provider_error`, unmarked.
+      let response: z.infer<typeof SlackRefreshSuccessSchema>;
+      try {
+        response = parseSlackSuccess(await providerJson(fetcher, endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+          body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret, grant_type: "refresh_token", refresh_token: refreshToken }),
+          signal,
+        }, SLACK_MAX_RESPONSE_BYTES), SlackRefreshSuccessSchema, "Slack token refresh failed");
+      } catch (error) {
+        if (error instanceof ConnectorError && error.code === "unauthorized") {
+          // The provider's own word stays the message; only the verdict is added.
+          throw new ConnectorError("unauthorized", error.message, {
+            ...(isRecord(error.details) ? error.details : {}),
+            reconnectRequired: true,
+            reason: "refresh_rejected",
+          });
+        }
+        throw error;
+      }
       const authedUser = response.authed_user ?? {};
       const accessToken = response.access_token ?? authedUser.access_token;
       if (!accessToken) throw new ConnectorError("provider_error", "Slack token refresh did not return an access token");
@@ -2122,7 +2148,11 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
           throw new ConnectorError(
             "unauthorized",
             `Slack authorization is missing required permissions: ${missingScopes.join(", ")}`,
-            { missingScopes },
+            // A grant that no longer carries the scopes Avalon requires is
+            // fixed only by the member reauthorizing, which is what
+            // `needs_reconnect` asks for. Unmarked, the connection reports
+            // healthy while every call needing the missing scope fails.
+            { missingScopes, reconnectRequired: true, reason: "missing_scopes" },
           );
         }
       }

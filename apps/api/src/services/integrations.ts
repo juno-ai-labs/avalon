@@ -38,6 +38,7 @@ import {
   type HarnessTool,
   type ModelMessage,
   type PluginAuthorization,
+  type PluginAuthorizationOccasion,
   type StructuredModelDiagnostic,
   toolActivityName,
 } from "@avalon/agent-harness";
@@ -1639,7 +1640,7 @@ export async function runWorkstreamHarness(
     async (pluginId) => {
       const frozen = harnessTools.frozenConnections.get(pluginId);
       return frozen
-        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal)
+        ? reauthorizeFrozenPlugin(env, input, frozen, harnessSignal, "activation")
         : builtinPluginAuthorization(pluginId, harnessTools);
     },
     async (pluginId) => {
@@ -1783,7 +1784,7 @@ export async function runWorkstreamHarness(
       activationHints,
       includeWebSearch: false,
       signal: harnessSignal,
-      reauthorizePlugin: async (pluginId) => {
+      reauthorizePlugin: async (pluginId, occasion) => {
         const frozen = harnessTools.frozenConnections.get(pluginId);
         if (!frozen) return builtinPluginAuthorization(pluginId, harnessTools);
         // Cancellable: this runs inside the bind loop's Workflow step, so an
@@ -1794,7 +1795,7 @@ export async function runWorkstreamHarness(
           numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         );
         try {
-          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal);
+          return await reauthorizeFrozenPlugin(env, input, frozen, deadline.signal, occasion);
         } finally {
           deadline.dispose();
         }
@@ -2806,6 +2807,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childInput,
                   frozen,
                   childSignal,
+                  "activation",
                   assertChildOwned,
                 )
               : builtinPluginAuthorization(pluginId, childHarnessTools);
@@ -2867,7 +2869,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           activationHints,
           includeWebSearch: false,
           signal: childSignal,
-          reauthorizePlugin: async (pluginId) => {
+          reauthorizePlugin: async (pluginId, occasion) => {
             await assertChildOwned();
             const frozen = childFrozenConnections.get(pluginId);
             return frozen
@@ -2876,6 +2878,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
                   childInput,
                   frozen,
                   childSignal,
+                  occasion,
                   assertChildOwned,
                 )
               : builtinPluginAuthorization(pluginId, childHarnessTools);
@@ -4395,10 +4398,34 @@ async function reauthorizeFrozenPlugin(
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
   signal: AbortSignal,
+  occasion: PluginAuthorizationOccasion,
   ownershipGuard?: () => Promise<void>,
 ): Promise<PluginAuthorization> {
   try {
     await ownershipGuard?.();
+    if (occasion === "continuation") {
+      // The caller's deadline still bounds this branch. Without it a cancelled
+      // or timed-out run would answer `authorized` from records it read after
+      // the run stopped being allowed to proceed, and the disposable deadline
+      // wrapped around this call would bound nothing.
+      signal.throwIfAborted();
+      // Between turns, authority is exactly what Avalon's own records say: the
+      // principal, the work stream, the automation authority, the connection's
+      // identity, scope, owner, grants, and stored health. This check runs
+      // before every inference, so re-asking the provider would spend a round
+      // trip per active plugin per turn — up to eight rounds a run — to
+      // rediscover something already known here, and would decrypt credentials
+      // nothing is about to use. A provider that has since refused the
+      // credential still surfaces on the next tool call, which recovers.
+      await assertFrozenConnectionAuthorized(env, input, frozen);
+      // Again after the reads, not only before them. A deadline that fires
+      // while D1 is answering would otherwise leave the one check already
+      // passed, and this branch would report `authorized` for a run that had
+      // stopped being allowed to proceed.
+      signal.throwIfAborted();
+      await ownershipGuard?.();
+      return "authorized";
+    }
     const { connection, adapter } = await loadAuthorizedConnectionContext(
       env,
       input,
@@ -4440,9 +4467,25 @@ async function pluginAuthorizationFromHealth(
   env: Env,
   input: WorkstreamWorkflowInput,
   frozen: FrozenConnectorPlugin,
-  health: { ok: boolean; message: string; reconnectRequired?: boolean },
+  health: { ok: boolean; message: string; reconnectRequired?: boolean; warning?: string },
 ): Promise<PluginAuthorization> {
-  if (health.ok) return "authorized";
+  if (health.ok) {
+    // A healthy connection can still be degraded, and this is the only place
+    // that learns it: a warning dropped here is an outage nobody is told
+    // about until somebody happens to test the connection.
+    if (health.warning) {
+      logStructuredEvent(env, "warn", "connector_health_warning", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        plugin_id: frozen.pluginId,
+        connection_id: frozen.connectionId,
+        connector_type: frozen.connectorType,
+        warning: health.warning,
+      });
+    }
+    return "authorized";
+  }
   logPluginAuthorizationFailure(env, input, frozen, health.message);
   // An adapter reports a withdrawn grant as `reconnectRequired`. Every other
   // unhealthy result — an unreachable provider, a malformed response — says
@@ -6005,6 +6048,7 @@ export const __integrationTesting = {
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
+  reauthorizeFrozenPlugin,
   createStreamDeltaBatcher,
   classifyHarnessToolFailure,
   createConnectorToolContext,

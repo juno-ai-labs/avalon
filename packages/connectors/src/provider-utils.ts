@@ -64,6 +64,32 @@ export async function withProviderReauthorization<T>(
 }
 
 /**
+ * Replaces a credential the adapter itself judged too close to expiry.
+ *
+ * The host refreshes before an adapter is reached, so this fires only when a
+ * long-running operation crosses the expiry boundary mid-flight — but when it
+ * does, two concurrent operations would each redeem the same rotating refresh
+ * token if they refreshed privately. It is the same race
+ * `withProviderReauthorization` closes on the rejection route, and it is closed
+ * the same way: through the host's serialized rotation when one is registered,
+ * falling back to the adapter's own refresh when none is (a diagnostic path, or
+ * a caller outside the credential door).
+ */
+export async function refreshExpiringCredentials(
+  connection: ConnectorConnectionContext,
+  refresh: (
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+  ) => Promise<Record<string, unknown>>,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const rotate = connectorCredentialRotation(connection);
+  return rotate
+    ? rotate({ ...connection.credentials }, signal)
+    : refresh(connection, signal);
+}
+
+/**
  * Whether an error is the provider refusing the credential that was presented.
  *
  * `unauthorized` alone is far too broad to answer this: adapters also raise it
@@ -83,6 +109,75 @@ export function isProviderCredentialRejection(
     && error.code === "unauthorized"
     && isRecord(error.details)
     && matches(error.details);
+}
+
+/**
+ * The OAuth error codes that mean the member's grant itself is gone, so the
+ * only recovery is reconnecting.
+ *
+ * Deliberately excludes `invalid_client`, `unauthorized_client`,
+ * `invalid_request`, and `invalid_scope`: every one of those is Avalon's
+ * configuration or Avalon's request being wrong, and none of them is fixed by a
+ * member reauthorizing an account that still works.
+ */
+const REVOKED_GRANT_ERRORS = new Set(["invalid_grant", "expired_token", "invalid_token"]);
+
+/**
+ * Codes that say Avalon's configuration or request was wrong. None is fixed by
+ * a member reauthorizing an account that still works, so none marks a
+ * connection for reconnection.
+ */
+const CONFIGURATION_ERRORS = new Set([
+  "invalid_client",
+  "unauthorized_client",
+  "invalid_request",
+  "invalid_scope",
+  "unsupported_grant_type",
+]);
+
+/**
+ * Whether an OAuth error code a token endpoint named means the grant is dead.
+ *
+ * For the callers that hold the code but no HTTP status — a provider that
+ * reports a token failure as `200 {"error": "..."}`, as GitHub does — so they
+ * do not have to treat every named error as a revoked grant and nag members to
+ * reconnect accounts that work. An unfamiliar code still counts as revoked: the
+ * two ways to be wrong are not symmetric, and leaving a dead connection
+ * reporting healthy strands it silently.
+ */
+export function isRevokedGrantCode(code: string): boolean {
+  return !CONFIGURATION_ERRORS.has(code);
+}
+
+/**
+ * Whether a token-endpoint failure means the stored grant is dead.
+ *
+ * Classifying by status alone marks a connection `needs_reconnect` for any 400
+ * or 403, which is how a malformed request or a proxy's rate limit ends up
+ * demanding that a member reauthorize a healthy account. When the provider sent
+ * an error code, that code decides. With no code at all the original status
+ * test stands — 400, 401, and 403 — because an unclassifiable rejection that
+ * leaves a dead connection reporting healthy strands it silently, and that is
+ * the worse of the two ways to be wrong here.
+ */
+export function isRevokedGrantError(error: unknown): error is ConnectorError {
+  if (!(error instanceof ConnectorError) || !isRecord(error.details)) return false;
+  const providerError = error.details.providerError;
+  if (typeof providerError === "string") {
+    if (REVOKED_GRANT_ERRORS.has(providerError)) return true;
+    // Only a code we recognize as Avalon's own fault answers "no". An
+    // unrecognized code is not evidence of anything, and treating it as a
+    // denial of the question inverts the safe default below — a provider
+    // spelling a dead grant in a word this list has not learned would leave
+    // the connection healthy, failing every call, prompting nobody.
+    if (CONFIGURATION_ERRORS.has(providerError)) return false;
+  }
+  // No code to read. Guessing wrong in this direction nags a member to reconnect
+  // an account that works; guessing wrong in the other leaves a dead connection
+  // reporting healthy while every call fails and nothing ever prompts them. The
+  // silent one is worse, so an unclassifiable rejection keeps the original
+  // status test.
+  return [400, 401, 403].includes(Number(error.details.status));
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -128,8 +223,14 @@ export async function providerJsonResponse(
   if (!response.ok) {
     const message = providerErrorMessage(payload) ?? `The provider returned HTTP ${response.status}`;
     const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+    // The provider's own short error code, when it sent one. A status alone
+    // cannot separate "this grant is gone" from "this request was malformed" —
+    // OAuth reports both as 400 — and telling a member to reconnect a working
+    // account because of our own bad request is the worse of the two mistakes.
+    const providerError = providerErrorCode(payload);
     throw new ConnectorError(response.status === 401 || response.status === 403 ? "unauthorized" : "provider_error", message, {
       status: response.status,
+      ...(providerError ? { providerError } : {}),
       ...(retryAfterMs != null ? { retryAfterMs } : {}),
     });
   }
@@ -260,6 +361,29 @@ export function base64(value: string): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+/**
+ * The provider's own short error code, wherever it put it.
+ *
+ * OAuth says `error`, and Notion answers its token endpoint with an envelope
+ * keyed `code`; some providers nest either inside an object. Reading only the
+ * first would silently drop the classification for the rest and fall back to
+ * judging by status, which is the thing the code exists to avoid.
+ */
+function providerErrorCode(payload: unknown): string | null {
+  if (!isRecord(payload)) return null;
+  for (const key of ["error", "code"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value) return value;
+    if (isRecord(value)) {
+      for (const nested of ["code", "error", "type"]) {
+        const inner = value[nested];
+        if (typeof inner === "string" && inner) return inner;
+      }
+    }
+  }
+  return null;
 }
 
 function providerErrorMessage(value: unknown): string | null {
