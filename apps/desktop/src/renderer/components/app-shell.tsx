@@ -59,7 +59,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
-  const railExpanded = useUiStore((state) => state.railExpanded);
   const hypersightOpen = useUiStore((state) => state.hypersightOpen);
   const hypersightWidth = useUiStore((state) => state.hypersightWidth);
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
@@ -95,8 +94,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     void queryClient.invalidateQueries({ queryKey: ['workstream', staleId], exact: true });
   }, [activeWorkstreamId, queryClient, workstreams.data, workstreams.dataUpdatedAt]);
 
+  // One custom property carries the right sidebar's width, so the panel in the
+  // slot, the grab handle beside it, and the room the main pane leaves for it
+  // all animate together when the slot changes hands.
   const shellStyle = {
-    '--rail-width': `${hypersightOpen ? hypersightWidth : railExpanded ? Math.max(520, railWidth) : railWidth}px`,
+    '--rail-width': `${hypersightOpen ? hypersightWidth : railWidth}px`,
     '--sidebar-width': `${sidebarWidth}px`,
   } as CSSProperties;
 
