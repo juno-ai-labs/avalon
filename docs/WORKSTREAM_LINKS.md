@@ -117,7 +117,7 @@ Its bounds, all deliberate:
 
 | Bound | Value | Why |
 | --- | --- | --- |
-| Trigger | `harness_status` differs from `rendered_status`, the audience has not been revalidated in 24 hours, **or** the row has no `rendered_hash` | Comparing last activity would mark nearly every row stale every pass, since any message bumps it. The audience clock is separate because a channel can become externally shared while the work stream sits still |
+| Trigger | `harness_status` differs from `rendered_status`, the work stream was edited since the card was last written (`updated_at > refreshed_at`), the audience has not been revalidated in 24 hours, **or** the row has no `rendered_hash` | Comparing last activity would mark nearly every row stale every pass, since any message bumps it. The audience clock is separate because a channel can become externally shared while the work stream sits still |
 | Rewrite | Only when the card's **rendered blocks** hash differently from what is posted | The real question is "would this render differently?", and no stored field answers it: the drawing code can change, the title and activity stamp both render, and an anonymous card is identical whatever the status does. A selected row whose hash matches records its new status and posts nothing |
 | Age | Links shared in the last 30 days | Nobody is rereading an older message |
 | Per sweep | 100 rows | Bounds the work; the overflow is logged, never silently dropped |
@@ -145,12 +145,23 @@ Slack already showed them.
 query decides which rows are looked at. Those are different, and the gap is
 worth stating plainly.
 
-Selection matches on status drift, the 24-hour audience clock, or a missing
-hash. A change that alters the card without touching any of those — a renamed
-work stream is the clear case — therefore does not select a row on its own. The
-audience clock picks it up on the next daily pass, and the hash then catches the
-difference. **The guarantee is that a card catches up with any content change
-within 24 hours, not that it is never briefly stale.**
+Selection matches on status drift, an edit to the work stream itself, the
+24-hour audience clock, or a missing hash. The edit arm is what covers a rename:
+the title renders but no status moves, so `updated_at > refreshed_at` is the only
+thing that would notice. **A card therefore catches up with an edit on the next
+five-minute sweep, not a day later.**
+
+Selecting a row is not the same as rewriting it. An edit that never reaches the
+card — changing the objective, which `updated_at` bumps but the card never shows
+— selects the row, matches on hash, and posts nothing. That is why every field
+the selection query reads is advanced when a card is marked current: leave
+`refreshed_at` behind and that row is re-selected on every sweep for 30 days,
+comparing hashes forever.
+
+What is still bounded by the daily clock is a change that neither moves the
+status nor touches the work stream row — the channel becoming externally shared
+is the real case, and redaction there is worth the 24-hour worst case rather
+than a `conversations.info` call per card per sweep.
 
 A row with no hash is one recorded before hashing shipped. Null never matches a
 freshly computed hash, so each such card is rewritten exactly once and then

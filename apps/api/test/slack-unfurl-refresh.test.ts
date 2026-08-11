@@ -148,18 +148,14 @@ describe("Slack work-stream unfurl refresh", () => {
     expect(second.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
   });
 
-  it("catches up with a renamed work stream on the next daily pass", async () => {
-    // The title renders but nothing in the selection query notices it change,
-    // so a rename alone never selects a row. The 24h audience clock does, and
-    // the hash then catches any content difference — so the guarantee is that a
-    // card catches up within a day, not that it never goes stale.
-    const database = await seed({
-      harnessStatus: "running",
-      renderedStatus: "running",
-      audienceCheckedAt: "2020-01-01T00:00:00.000Z",
-    });
-    database.prepare("UPDATE workstreams SET title = ? WHERE id = ?")
-      .run("Quarterly planning (revised)", workstreamId);
+  it("rewrites a card on the next sweep when the work stream is renamed", async () => {
+    // A rename changes the card without touching its status, so `updated_at`
+    // moving past `refreshed_at` is what selects the row; the hash then
+    // confirms the card really would differ. Inline rename from the header
+    // (#60) makes this an ordinary gesture rather than a rare one.
+    const database = await seed({ harnessStatus: "running", renderedStatus: "running" });
+    database.prepare("UPDATE workstreams SET title = ?, updated_at = ? WHERE id = ?")
+      .run("Quarterly planning (revised)", justEdited(), workstreamId);
     const calls: SlackCall[] = [];
     vi.stubGlobal("fetch", slackFixture(calls));
 
@@ -183,6 +179,27 @@ describe("Slack work-stream unfurl refresh", () => {
 
     expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
     expect(renderedStatus(database)).toBe("needs_input");
+  });
+
+  it("settles a work-stream edit that never reaches the card", async () => {
+    // The objective is not rendered, so bumping `updated_at` selects the row
+    // but the hash matches and nothing is posted. Every field the selection
+    // query reads has to advance anyway, or this row is re-selected on every
+    // sweep for the next 30 days.
+    const database = await seed({ harnessStatus: "running", renderedStatus: "running" });
+    database.prepare("UPDATE workstreams SET objective = ?, updated_at = ? WHERE id = ?")
+      .run("A revised objective the card never shows", justEdited(), workstreamId);
+    const calls: SlackCall[] = [];
+    vi.stubGlobal("fetch", slackFixture(calls));
+
+    await refreshSlackWorkstreamUnfurls(environment(database));
+    expect(calls.filter((call) => call.method === "chat.unfurl")).toHaveLength(0);
+
+    // The row must no longer select, or the sweep spins on it forever.
+    const row = database.prepare(
+      "SELECT refreshed_at, updated_at FROM slack_unfurled_links l JOIN workstreams w ON w.id = l.workstream_id",
+    ).get() as { refreshed_at: string; updated_at: string };
+    expect(row.refreshed_at >= row.updated_at).toBe(true);
   });
 
   it("ignores links shared too long ago to still be read", async () => {
@@ -357,6 +374,11 @@ describe("Slack work-stream unfurl refresh", () => {
 
 function nowish(): string {
   return new Date(Date.now() - 60_000).toISOString();
+}
+
+/** Strictly after `nowish()`, so an edit really does outrun `refreshed_at`. */
+function justEdited(): string {
+  return new Date().toISOString();
 }
 
 function renderedAnonymous(database: DatabaseSync): number {
