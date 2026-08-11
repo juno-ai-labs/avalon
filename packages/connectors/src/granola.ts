@@ -577,9 +577,16 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         { id: GranolaCapabilities.workspaceRead, kind: "tool" },
         { id: GranolaCapabilities.personalRead, kind: "tool" },
       ],
+      // A meeting note being written for the first time is the meeting; every
+      // later pass over the same note is Granola improving its own output, and
+      // being granted access to an existing note is a permission change rather
+      // than something that happened.
       activityTriggers: defineConnectorActivityTriggers(
         "Granola",
-        ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        {
+          digestible: ["note.generated"],
+          operational: ["note.access_granted", "note.edited", "note.regenerated"],
+        },
         {},
         [{ key: "changedFields", label: "Changed fields", description: "Granola note fields reported as changed.", valueType: "string_array" }],
       ),

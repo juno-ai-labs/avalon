@@ -765,39 +765,72 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
       displayName: "GitHub",
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("GitHub", [
-        "github.push",
-        "github.release.created", "github.release.deleted", "github.release.edited",
-        "github.release.prereleased", "github.release.published", "github.release.released", "github.release.unpublished",
-        "github.issue.opened", "github.issue.edited", "github.issue.deleted", "github.issue.transferred",
-        "github.issue.pinned", "github.issue.unpinned", "github.issue.closed", "github.issue.reopened",
-        "github.issue.assigned", "github.issue.unassigned", "github.issue.labeled", "github.issue.unlabeled",
-        "github.issue.locked", "github.issue.unlocked", "github.issue.milestoned", "github.issue.demilestoned",
-        "github.issue.field_added", "github.issue.field_removed", "github.issue.typed", "github.issue.untyped",
-        "github.issue_comment.created", "github.issue_comment.edited", "github.issue_comment.deleted",
-        "github.issue_comment.pinned", "github.issue_comment.unpinned",
-        "github.issue_dependencies.blocked_by_added", "github.issue_dependencies.blocked_by_removed",
-        "github.issue_dependencies.blocking_added", "github.issue_dependencies.blocking_removed",
-        "github.sub_issues.parent_issue_added", "github.sub_issues.parent_issue_removed",
-        "github.sub_issues.sub_issue_added", "github.sub_issues.sub_issue_removed",
-        "github.pull_request_comment.created", "github.pull_request_comment.edited", "github.pull_request_comment.deleted",
-        "github.pull_request_comment.pinned", "github.pull_request_comment.unpinned",
-        "github.pull_request.opened", "github.pull_request.edited", "github.pull_request.closed", "github.pull_request.merged", "github.pull_request.reopened",
-        "github.pull_request.synchronize", "github.pull_request.ready_for_review", "github.pull_request.converted_to_draft",
-        "github.pull_request.review_requested", "github.pull_request.review_request_removed",
-        "github.pull_request.assigned", "github.pull_request.unassigned", "github.pull_request.labeled", "github.pull_request.unlabeled",
-        "github.pull_request.locked", "github.pull_request.unlocked", "github.pull_request.milestoned", "github.pull_request.demilestoned",
-        "github.pull_request.auto_merge_enabled", "github.pull_request.auto_merge_disabled",
-        "github.pull_request.enqueued", "github.pull_request.dequeued", "github.pull_request.stacked",
-        "github.pull_request_review.submitted", "github.pull_request_review.edited", "github.pull_request_review.dismissed",
-        "github.pull_request_review_comment.created", "github.pull_request_review_comment.edited", "github.pull_request_review_comment.deleted",
-        "github.workflow_run.requested", "github.workflow_run.in_progress", "github.workflow_run.completed",
-        "github.check_run.created", "github.check_run.completed",
-        "github.installation_repositories.added", "github.installation_repositories.removed",
-        "github.repository.created", "github.repository.edited", "github.repository.renamed", "github.repository.transferred",
-        "github.repository.archived", "github.repository.unarchived", "github.repository.publicized", "github.repository.privatized",
-        "github.repository.deleted",
-      ], {
+      // GitHub is the loudest connector Avalon has, and the split matters most
+      // here: continuous integration reports two events per check and three per
+      // workflow run, so a repository under active development emits an order
+      // of magnitude more machinery than news. Digestible is the work — a pull
+      // request opened or merged, a review, a comment, a release. Everything a
+      // person learns by looking at the pull request once they open it is
+      // operational.
+      activityTriggers: defineConnectorActivityTriggers("GitHub", {
+        digestible: [
+          "github.release.created", "github.release.published", "github.release.released",
+          "github.release.prereleased", "github.release.deleted", "github.release.unpublished",
+          "github.issue.opened", "github.issue.closed", "github.issue.reopened",
+          "github.issue.transferred", "github.issue.deleted",
+          "github.issue.assigned",
+          "github.issue_comment.created",
+          "github.pull_request_comment.created",
+          "github.pull_request.opened", "github.pull_request.closed", "github.pull_request.merged",
+          "github.pull_request.reopened", "github.pull_request.ready_for_review",
+          "github.pull_request.review_requested",
+          "github.pull_request.assigned",
+          "github.pull_request_review.submitted", "github.pull_request_review.dismissed",
+          "github.pull_request_review_comment.created",
+          "github.repository.created", "github.repository.transferred",
+          "github.repository.archived", "github.repository.deleted",
+          "github.repository.publicized", "github.repository.privatized",
+        ],
+        operational: [
+          // Continuous integration. Its own history, in its own tab.
+          "github.workflow_run.requested", "github.workflow_run.in_progress", "github.workflow_run.completed",
+          "github.check_run.created", "github.check_run.completed",
+          // Edits and housekeeping on something whose arrival was already
+          // digestible: the reader is told once, when it happens.
+          "github.release.edited",
+          "github.issue.edited", "github.issue.pinned", "github.issue.unpinned",
+          "github.issue.unassigned", "github.issue.labeled", "github.issue.unlabeled",
+          "github.issue.locked", "github.issue.unlocked", "github.issue.milestoned", "github.issue.demilestoned",
+          "github.issue.field_added", "github.issue.field_removed", "github.issue.typed", "github.issue.untyped",
+          "github.issue_comment.edited", "github.issue_comment.deleted",
+          "github.issue_comment.pinned", "github.issue_comment.unpinned",
+          "github.issue_dependencies.blocked_by_added", "github.issue_dependencies.blocked_by_removed",
+          "github.issue_dependencies.blocking_added", "github.issue_dependencies.blocking_removed",
+          "github.sub_issues.parent_issue_added", "github.sub_issues.parent_issue_removed",
+          "github.sub_issues.sub_issue_added", "github.sub_issues.sub_issue_removed",
+          "github.pull_request_comment.edited", "github.pull_request_comment.deleted",
+          "github.pull_request_comment.pinned", "github.pull_request_comment.unpinned",
+          "github.pull_request.edited",
+          // Branch traffic. `push` fires for every branch, so on a repository
+          // that reviews its work it is the same commits the pull request
+          // already reported, counted twice; `synchronize` is the same event
+          // seen from the pull request's side.
+          "github.push",
+          "github.pull_request.synchronize", "github.pull_request.converted_to_draft",
+          "github.pull_request.review_request_removed",
+          "github.pull_request.unassigned", "github.pull_request.labeled", "github.pull_request.unlabeled",
+          "github.pull_request.locked", "github.pull_request.unlocked",
+          "github.pull_request.milestoned", "github.pull_request.demilestoned",
+          "github.pull_request.auto_merge_enabled", "github.pull_request.auto_merge_disabled",
+          "github.pull_request.enqueued", "github.pull_request.dequeued", "github.pull_request.stacked",
+          "github.pull_request_review.edited",
+          "github.pull_request_review_comment.edited", "github.pull_request_review_comment.deleted",
+          // Installation and repository administration, which reaches Avalon as
+          // configuration rather than as somebody's work.
+          "github.installation_repositories.added", "github.installation_repositories.removed",
+          "github.repository.edited", "github.repository.renamed", "github.repository.unarchived",
+        ],
+      }, {
         "github.pull_request.merged": {
           label: "Pull request merged",
           description: "A pull request was merged into its base branch.",

@@ -1502,15 +1502,18 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         .min(60)
         .max(86_400)
         .parse(connection.config.pollIntervalSeconds ?? 300);
+      // Mail and calendar are somebody's day; the Drive stream is a file
+      // watcher, useful to an automation watching a document and never
+      // something to read back over breakfast.
       return [
         ...(connection.grantedScopes.includes("gmail.read")
-          ? [{ id: "gmail", legacyCursorKey: "gmail", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5 }]
+          ? [{ id: "gmail", legacyCursorKey: "gmail", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5, digestible: true }]
           : []),
         ...(connection.grantedScopes.includes("calendar.read")
-          ? [{ id: "calendar", legacyCursorKey: "calendar", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5 }]
+          ? [{ id: "calendar", legacyCursorKey: "calendar", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5, digestible: true }]
           : []),
         ...(connection.grantedScopes.includes("drive.read")
-          ? [{ id: "drive", legacyCursorKey: "drive", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5 }]
+          ? [{ id: "drive", legacyCursorKey: "drive", idlePollIntervalSeconds: intervalSeconds, backlogPollIntervalSeconds: 5, digestible: false }]
           : []),
       ];
     },
@@ -1557,15 +1560,23 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
       displayName: "Google",
       supportedScopes: ["personal", "workspace"],
       oauthRequired: true,
-      activityTriggers: defineConnectorActivityTriggers("Google", [
-        "email.received",
-        "email.updated",
-        "calendar.event_changed",
-        "calendar.event_completed",
-        "drive.file_changed",
-        "docs.document_changed",
-        "sheets.spreadsheet_changed"
-      ], {
+      // Mail arriving and a meeting changing are things a person needs told.
+      // `email.updated` is a label or read-state change on mail they have
+      // already seen, and the Drive change feed reports a save — the file
+      // whose ten saves this morning were one afternoon's work.
+      activityTriggers: defineConnectorActivityTriggers("Google", {
+        digestible: [
+          "email.received",
+          "calendar.event_changed",
+          "calendar.event_completed",
+        ],
+        operational: [
+          "email.updated",
+          "drive.file_changed",
+          "docs.document_changed",
+          "sheets.spreadsheet_changed",
+        ],
+      }, {
         "email.received": { filterFields: googleEmailActivityFilterFields },
         "email.updated": { filterFields: googleEmailActivityFilterFields },
         "calendar.event_changed": { filterFields: googleCalendarChangedActivityFilterFields },
@@ -4005,7 +4016,14 @@ export function createGenericWebhookConnector(): ConnectorAdapter {
       displayName: "Generic webhook",
       supportedScopes: ["personal", "workspace"],
       oauthRequired: false,
-      activityTriggers: defineConnectorActivityTriggers("Generic webhook", ["webhook.received"]),
+      // Avalon cannot know what a caller will post here, and an unreadable
+      // payload rendered into somebody's morning email is worse than a missing
+      // line. A generic webhook earns a digest through an automation that
+      // understands it, not by default.
+      activityTriggers: defineConnectorActivityTriggers("Generic webhook", {
+        digestible: [],
+        operational: ["webhook.received"],
+      }),
       resourceTypes: ["webhook_resource"],
       tools: [],
       supportsWatches: false,
