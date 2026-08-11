@@ -2,6 +2,7 @@ import type { ToolDefinition } from "@avalon/contracts";
 import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
+  isProviderCredentialRejection,
   isRecord,
   jsonHeaders,
   providerJson,
@@ -9,6 +10,7 @@ import {
   recordArray,
   sha256Hex,
   stringValue,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -500,6 +502,65 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
   const mcpUrl = normalizeHttpsUrl(config.mcpUrl ?? DEFAULT_MCP_URL);
   const redirectUri = new URL(config.redirectUri).toString();
 
+  async function refreshCredentials(
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    if (connection.scope !== "personal") return connection.credentials;
+    const refreshToken = stringValue(connection.credentials, "refreshToken");
+    if (!refreshToken) throw new ConnectorError("unauthorized", "Granola authorization must be reconnected");
+    const authorizationState = parseOAuthState({
+      resource: connection.credentials.resource,
+      authorizationEndpoint: "https://unused.invalid",
+      tokenEndpoint: connection.credentials.tokenEndpoint,
+      clientId: connection.credentials.clientId,
+      clientSecret: connection.credentials.clientSecret,
+      tokenEndpointAuthMethod: connection.credentials.tokenEndpointAuthMethod,
+      scope: connection.credentials.tokenScope ?? "mcp offline_access",
+    });
+    const token = await exchangeToken(fetcher, authorizationState, {
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      resource: authorizationState.resource,
+    }, signal);
+    return {
+      ...connection.credentials,
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token ?? refreshToken,
+      tokenType: token.token_type,
+      tokenScope: token.scope ?? connection.credentials.tokenScope,
+      expiresAt: expiresAt(token.expires_in, now()),
+    };
+  }
+
+  /**
+   * Granola's MCP server answers a token it will not accept with HTTP 401, and
+   * that answer arrives whether the token aged out a second ago or the grant is
+   * genuinely gone. Recovering once tells the two apart.
+   */
+  async function reauthorizingMcpCall<T>(
+    connection: ConnectorConnectionContext,
+    signal: AbortSignal,
+    call: (token: string) => Promise<T>,
+  ): Promise<T> {
+    return withProviderReauthorization(
+      connection,
+      {
+        refresh: refreshCredentials,
+        // Granola's MCP transport answers a token it will not accept with 401.
+        // A 403 is a policy denial that a new token does not change.
+        isRejection: (error) => isProviderCredentialRejection(
+          error,
+          (details) => details.status === 401,
+        ),
+        canRefresh: (candidate) => candidate.scope === "personal"
+          && Boolean(stringValue(candidate.credentials, "refreshToken")),
+        signal,
+      },
+      () => call(requirePersonalAccessToken(connection)),
+    );
+  }
+
   return {
     agentPlugin: GranolaAgentPluginDescriptor,
     webhookActivity: {
@@ -577,9 +638,16 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         { id: GranolaCapabilities.workspaceRead, kind: "tool" },
         { id: GranolaCapabilities.personalRead, kind: "tool" },
       ],
+      // A meeting note being written for the first time is the meeting; every
+      // later pass over the same note is Granola improving its own output, and
+      // being granted access to an existing note is a permission change rather
+      // than something that happened.
       activityTriggers: defineConnectorActivityTriggers(
         "Granola",
-        ["note.access_granted", "note.edited", "note.generated", "note.regenerated"],
+        {
+          digestible: ["note.generated"],
+          operational: ["note.access_granted", "note.edited", "note.regenerated"],
+        },
         {},
         [{ key: "changedFields", label: "Changed fields", description: "Granola note fields reported as changed.", valueType: "string_array" }],
       ),
@@ -721,33 +789,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         resource: authorizationState.resource,
       };
     },
-    async refreshCredentials(connection, signal) {
-      if (connection.scope !== "personal") return connection.credentials;
-      const refreshToken = stringValue(connection.credentials, "refreshToken");
-      if (!refreshToken) throw new ConnectorError("unauthorized", "Granola authorization must be reconnected");
-      const authorizationState = parseOAuthState({
-        resource: connection.credentials.resource,
-        authorizationEndpoint: "https://unused.invalid",
-        tokenEndpoint: connection.credentials.tokenEndpoint,
-        clientId: connection.credentials.clientId,
-        clientSecret: connection.credentials.clientSecret,
-        tokenEndpointAuthMethod: connection.credentials.tokenEndpointAuthMethod,
-        scope: connection.credentials.tokenScope ?? "mcp offline_access",
-      });
-      const token = await exchangeToken(fetcher, authorizationState, {
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        resource: authorizationState.resource,
-      }, signal);
-      return {
-        ...connection.credentials,
-        accessToken: token.access_token,
-        refreshToken: token.refresh_token ?? refreshToken,
-        tokenType: token.token_type,
-        tokenScope: token.scope ?? connection.credentials.tokenScope,
-        expiresAt: expiresAt(token.expires_in, now()),
-      };
-    },
+    refreshCredentials,
     async revoke(connection, signal) {
       if (connection.scope !== "workspace") return;
       const apiKey = requireWorkspaceApiKey(connection);
@@ -808,22 +850,20 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
         throw new ConnectorError("unsupported_capability", `Granola personal MCP does not expose ${name}`);
       }
       const args = personalMcpInputSchemas[name].parse(rawArgs) as Record<string, unknown>;
-      const output = await callGranolaMcp(
-        requirePersonalAccessToken(context.connection),
-        name,
-        args,
+      const output = await reauthorizingMcpCall(
+        context.connection,
         context.signal,
-        fetcher,
-        mcpUrl,
+        (token) => callGranolaMcp(token, name, args, context.signal, fetcher, mcpUrl),
       );
       return { output: boundGranolaValue(output), summary: `Read Granola with ${name}` };
     },
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Granola connector configuration is available" };
+      const signal = callerSignal ?? AbortSignal.timeout(15_000);
       try {
         if (connection.scope === "workspace") {
           const apiKey = requireWorkspaceApiKey(connection);
-          await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, AbortSignal.timeout(10_000));
+          await granolaApi(fetcher, apiBaseUrl, apiKey, "/v1/notes", { page_size: 1 }, signal);
           const webhookEndpointId = stringValue(connection.credentials, "webhookEndpointId");
           if (!webhookEndpointId) {
             throw new ConnectorError("invalid_configuration", "Granola webhook endpoint identity is missing");
@@ -834,7 +874,7 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
             apiKey,
             "/v1/webhook-endpoints",
             {},
-            AbortSignal.timeout(10_000),
+            signal,
           );
           const endpoint = recordArray(endpoints, "webhook_endpoints")
             .find((candidate) => stringValue(candidate, "id") === webhookEndpointId);
@@ -847,19 +887,16 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
                 method: "PATCH",
                 headers: jsonHeaders(apiKey),
                 body: JSON.stringify({ enabled: true }),
-                signal: AbortSignal.timeout(10_000),
+                signal,
               },
               GRANOLA_RESPONSE_BYTES,
             );
           }
         } else {
-          const accountResult = await callGranolaMcp(
-            requirePersonalAccessToken(connection),
-            "get_account_info",
-            {},
-            AbortSignal.timeout(15_000),
-            fetcher,
-            mcpUrl,
+          const accountResult = await reauthorizingMcpCall(
+            connection,
+            signal,
+            (token) => callGranolaMcp(token, "get_account_info", {}, signal, fetcher, mcpUrl),
           );
           const account = extractAccountInfo(accountResult);
           const digest = await sha256Hex(`${account.email.toLowerCase()}\n${account.workspaceIdentity}`);

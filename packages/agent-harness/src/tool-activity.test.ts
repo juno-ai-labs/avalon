@@ -46,6 +46,19 @@ describe("tool activity names", () => {
     // Named for its object rather than its verb, and still not the generic row.
     expect(toolActivityName({ toolName: "google_2_gmail_find_contacts", status: "started", plugin: drive }))
       .toBe("Looking up contacts in Google Drive · Work");
+    expect(toolActivityName({ toolName: "google_2_gmail_read_profile", status: "completed", plugin: drive }))
+      .toBe("Checked the connected account on Google Drive · Work");
+    // Composing a draft is a write; the generic row read as a review of it.
+    expect(toolActivityName({ toolName: "google_2_gmail_create_draft", status: "completed", plugin: drive }))
+      .toBe("Drafted in Google Drive · Work");
+    // Slack's `read_user_profile` ends in `profile` too. A leaf-keyed entry for
+    // the Gmail tool would label somebody else's Slack profile as the
+    // connected account, so these are keyed on the whole action path.
+    expect(toolActivityName({
+      toolName: "slack_1_read_user_profile",
+      status: "completed",
+      plugin: { pluginId: "plugin_slack_1", displayName: "Slack" },
+    })).toBe("Reviewed Slack");
   });
 
   it("does not describe a connector write as a read", () => {

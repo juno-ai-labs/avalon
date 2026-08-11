@@ -1293,6 +1293,19 @@ export const MeetingNotesResponseSchema = z.object({
   generatedAt: TimestampSchema
 });
 
+/**
+ * Set on a normalized activity's metadata when the polling stream that produced
+ * it is not digestible, so the withholding survives the queue and the
+ * `activities` row into the moment the activity log is written.
+ *
+ * A metadata key rather than a column because it is a stream's veto over its own
+ * output, not a property of the activity that any other surface reads: nothing
+ * queries on it, and the event type remains the authority on what a digest may
+ * contain. The leading underscore is the same convention the activity
+ * consumer's processing-claim keys already use for host-owned metadata.
+ */
+export const ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY = "_streamNotDigestible";
+
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -1584,6 +1597,22 @@ export const ConnectorActivityTriggerDescriptorSchema = z.object({
   label: z.string().min(1).max(160),
   description: z.string().min(1).max(800),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
+  /**
+   * Whether a person should be told about this activity in a digest.
+   *
+   * There is deliberately no default. A connector declares dozens of event
+   * types, and most providers emit far more machinery than news: a repository
+   * that reports every check run and every workflow transition will fill a
+   * digest window with its own continuous integration before a single review
+   * comment reaches the reader. Which of the two an event type is can only be
+   * answered by whoever designed the connector, at the moment they added it, so
+   * the contract asks then and refuses a manifest that stays quiet.
+   *
+   * `false` is not a lesser event. It still ingests, still routes, still
+   * triggers automations and watches, and still appears in the activity log.
+   * It just does not interrupt a person on a schedule.
+   */
+  digestible: z.boolean(),
 });
 
 /**
@@ -1768,6 +1797,12 @@ export const ConnectorManifestSchema = ConnectorManifestBaseSchema.superRefine((
 }).transform((manifest) => ({
   ...manifest,
   activityTypes: manifest.activityTriggers.map((trigger) => trigger.eventType),
+  // Derived rather than declared a second time: the descriptor is the single
+  // authority on digestibility, and a consumer asking "may this event type
+  // reach a digest" should not have to scan a list of descriptors to find out.
+  digestibleActivityTypes: manifest.activityTriggers
+    .filter((trigger) => trigger.digestible)
+    .map((trigger) => trigger.eventType),
 }));
 
 export type Region = z.infer<typeof RegionSchema>;

@@ -19,6 +19,7 @@ import {
   type HarnessTool,
   type InferenceAttemptEvent,
   type InferenceRequestEvent,
+  type PluginAuthorization,
   type StructuredModelDiagnostic,
 } from "./index";
 
@@ -198,11 +199,14 @@ describe("agent harness", () => {
       "requiredCapabilities",
     ]));
     const elicitationTool = (requestBody!.tools as Array<{
-      function: { name: string; parameters: { properties: Record<string, unknown> } };
+      function: { name: string; description: string; parameters: { properties: Record<string, unknown> } };
     }>).find((tool) => tool.function.name === "core_request_elicitation");
     expect(elicitationTool).toBeDefined();
     expect(elicitationTool!.function.parameters.properties).toHaveProperty("responseType");
     expect(elicitationTool!.function.parameters.properties).toHaveProperty("options");
+    // The precondition is the point of this tool's description; without an
+    // assertion it could be dropped without anything failing.
+    expect(elicitationTool!.function.description).toContain("Check the plugin catalog as part of that search");
   });
 
   it("applies personal and workspace timezone defaults without replacing explicit timezones", async () => {
@@ -646,6 +650,7 @@ describe("agent harness", () => {
             description: "Changed file MIME type.",
             valueType: "string",
           }],
+          digestible: false,
         }],
         tools: [{
           name: "google_2_drive_search",
@@ -930,6 +935,43 @@ describe("agent harness", () => {
       retryable: true,
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not tell an automation author whether an event type is digestible", () => {
+    const plugin = {
+      pluginId: "plugin_github",
+      displayName: "GitHub",
+      icon: "brand-github" as const,
+      description: "Read GitHub.",
+      scope: "workspace" as const,
+      searchAliases: ["git"],
+      systemMessage: "Use GitHub tools.",
+      activityTriggers: [{
+        eventType: "github.check_run.completed",
+        label: "Check run completed",
+        description: "A check run finished.",
+        filterFields: [],
+        digestible: false,
+      }],
+      tools: [],
+    };
+
+    const inspected = __testing.executeAutomationCreatorDiscoveryTool(
+      "plugin_inspect",
+      { pluginId: "plugin_github" },
+      [plugin],
+    ) as { plugin: { activityTriggers: Array<Record<string, unknown>> } };
+
+    // `digestible` answers a question about scheduled digests. It says nothing
+    // about whether an automation may trigger on the event, and it reads
+    // `false` on two thirds of GitHub's triggers — a model building an
+    // automation would reasonably take that as "not available to me".
+    expect(inspected.plugin.activityTriggers[0]).toEqual({
+      eventType: "github.check_run.completed",
+      label: "Check run completed",
+      description: "A check run finished.",
+      filterFields: [],
+    });
   });
 
   it("canonicalizes tool inputs for stable hashes", () => {
@@ -1786,7 +1828,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation: (id) => { order.push(`persist:${id}`); },
       onEvent: (event) => { events.push(event); },
     });
@@ -1803,7 +1845,15 @@ describe("agent harness", () => {
       "call load_plugin with the exact plugin id",
     );
     expect(requestBodies[0]!.messages[0]!.content).toContain(
-      "Before claiming that a capability or its data is unavailable, inspect the compact catalog",
+      "or requesting it from a person, inspect the compact catalog",
+    );
+    // The other two halves of the same fix had no assertion anywhere, so a
+    // later edit could drop either sentence in silence.
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      "Asking a person for something counts as answering",
+    );
+    expect(requestBodies[0]!.messages[0]!.content).toContain(
+      "An available plugin is part of this run's capability, not a suggestion",
     );
     expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).toContain("gh1_search");
     expect(requestBodies[1]!.messages[0]!.content).toContain(
@@ -1880,7 +1930,7 @@ describe("agent harness", () => {
           "Work with authorized Linear issues and projects.",
         ),
       ],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation: () => undefined,
     });
 
@@ -2005,7 +2055,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation: (id) => { order.push(`persist:${id}`); },
       onEvent: (event) => { events.push(event); },
       findCompletedToolResult,
@@ -2073,7 +2123,7 @@ describe("agent harness", () => {
       ...runInput(fetcher),
       plugins: [first, second],
       activationHints: [first.canonicalId, second.canonicalId],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "could not choose" });
@@ -2122,7 +2172,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "found it", toolCalls: 1 });
@@ -2158,7 +2208,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation,
     });
 
@@ -2166,6 +2216,54 @@ describe("agent harness", () => {
     expect(persistActivation).not.toHaveBeenCalled();
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain("preload_search");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Preloaded plugin policy");
+  });
+
+  it.each([
+    { verdict: "denied" as const, error: "plugin_not_authorized" },
+    { verdict: "indeterminate" as const, error: "plugin_authorization_unavailable" },
+  ])("reports a $verdict load as $error", async ({ verdict, error }) => {
+    // A host that cannot verify a plugin has not learned that the grant was
+    // revoked. Both outcomes leave it inactive; only one of them is an
+    // authorization result the run should reason about.
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: [toolDeltaWithArguments(
+              0,
+              "provider-load",
+              "load_plugin",
+              JSON.stringify({ pluginId: "plugin_unverifiable" }),
+            )],
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "carried on" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const persistActivation = vi.fn();
+    const plugin = {
+      ...credentialPlugin("connection:unverifiable", "unverifiable", "Unverifiable plugin policy"),
+      modelId: "plugin_unverifiable",
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => verdict,
+      persistActivation,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "carried on" });
+    expect(persistActivation).not.toHaveBeenCalled();
+    const transcript = JSON.stringify(requestBodies[1]!.messages);
+    expect(transcript).toContain(error);
+    if (verdict === "indeterminate") expect(transcript).not.toContain("plugin_not_authorized");
   });
 
   it("does not widen a frozen run scope when the model requests an ineligible plugin id", async () => {
@@ -2198,7 +2296,7 @@ describe("agent harness", () => {
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [credentialPlugin("connection:eligible", "eligible", "Eligible plugin policy")],
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
       persistActivation,
     });
 
@@ -2218,14 +2316,14 @@ describe("agent harness", () => {
       return streamResponse([{ choices: [{ delta: { content: "continued safely" }, finish_reason: "stop" }] }]);
     }) as typeof fetch;
     const plugin = credentialPlugin("connection:revoked", "revoked", "Revoked plugin policy");
-    const authorization = [true, false];
+    const authorization: PluginAuthorization[] = ["authorized", "denied"];
     const dropped: unknown[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       plugins: [plugin],
       activationHints: [plugin.canonicalId],
-      reauthorizePlugin: () => authorization.shift() ?? false,
+      reauthorizePlugin: () => authorization.shift() ?? "denied",
       onActivationDropped: (drop) => { dropped.push(drop); },
     });
 
@@ -2258,7 +2356,7 @@ describe("agent harness", () => {
       ...runInput(fetcher),
       plugins,
       activationHints: plugins.map((plugin) => plugin.canonicalId),
-      reauthorizePlugin: () => true,
+      reauthorizePlugin: () => "authorized",
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "all plugins available" });

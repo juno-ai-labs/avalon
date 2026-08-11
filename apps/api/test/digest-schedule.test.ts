@@ -272,6 +272,7 @@ describe("activity event visibility", () => {
       actorLabel: "Other",
       title: "Launch",
       audience: { kind: "workstream", workstreamId: WORKSTREAM },
+      digestible: true,
       occurredAt: "2026-01-02T09:00:00.000Z",
       sourceKind: "message",
       dedupeKey: `event-${Math.random()}`,
@@ -286,7 +287,7 @@ describe("activity event visibility", () => {
 
     const through = await latestActivityEventCursor(env, WORKSPACE);
     const forOwner = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
     });
     expect(forOwner).toEqual([]);
 
@@ -296,7 +297,7 @@ describe("activity event visibility", () => {
       VALUES ('${WORKSTREAM}', '${OWNER}', '${OTHER}', 'explicit', '2026-01-01');
     `);
     const afterJoining = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
     });
     // Audience is a rule, not a frozen recipient list, so joining a work stream
     // brings its history with it.
@@ -313,10 +314,10 @@ describe("activity event visibility", () => {
 
     const through = await latestActivityEventCursor(env, WORKSPACE);
     expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
     })).toEqual([]);
     expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OTHER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OTHER, through, digestibleOnly: false, limit: 50,
     })).toHaveLength(1);
   });
 
@@ -330,7 +331,7 @@ describe("activity event visibility", () => {
 
     const through = await latestActivityEventCursor(env, WORKSPACE);
     const [event] = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
     });
     expect(event?.is_target).toBe(1);
     expect(event?.target_relations).toBe("mentioned");
@@ -358,7 +359,7 @@ describe("activity event visibility", () => {
 
     const through = await latestActivityEventCursor(env, WORKSPACE);
     const remaining = await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, from: firstCursor, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, from: firstCursor, through, digestibleOnly: false, limit: 50,
     });
 
     expect(remaining.map((event) => event.id)).not.toContain(firstId);
@@ -386,6 +387,9 @@ describe("activity event visibility", () => {
       actorLabel: "Avalon",
       title: "Digest",
       audience: { kind: "workstream", workstreamId: WORKSTREAM },
+      // Digestible on its face, so the exclusion below is proved by the system
+      // work stream itself rather than by this event being uninteresting.
+      digestible: true,
       occurredAt: "2026-01-02T09:00:00.000Z",
       sourceKind: "message",
       dedupeKey: "digest-brief:1",
@@ -393,7 +397,7 @@ describe("activity event visibility", () => {
 
     const through = await latestActivityEventCursor(env, WORKSPACE);
     expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
     })).toEqual([]);
   });
 
@@ -405,7 +409,7 @@ describe("activity event visibility", () => {
 
     const through = await latestActivityEventCursor(env, WORKSPACE);
     expect(await listActivityEventsForUser(env, {
-      workspaceId: WORKSPACE, userId: OWNER, through, limit: 50,
+      workspaceId: WORKSPACE, userId: OWNER, through, digestibleOnly: false, limit: 50,
     })).toEqual([]);
   });
 });

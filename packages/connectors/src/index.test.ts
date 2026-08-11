@@ -8,9 +8,11 @@ import {
   createGenericWebhookConnector,
   createGoogleConnector,
   CredentialCipher,
+  defineConnectorActivityTriggers,
   pollCheckpointedActivityStreams,
   verifyGenericWebhook,
-  type ConnectorConnectionContext
+  authorizedConnection,
+  type AuthorizedConnectorConnection
 } from "./index";
 
 describe("connectors", () => {
@@ -186,6 +188,53 @@ describe("connectors", () => {
     })).not.toThrow();
   });
 
+  it("marks every activity a non-digestible stream produced, and nothing else", async () => {
+    const connection = googleConnection([]);
+    const result = await pollCheckpointedActivityStreams({
+      streams: () => [
+        { id: "gmail", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "drive", idlePollIntervalSeconds: 300, digestible: false },
+      ],
+      normalizeHighWatermark: () => ({}),
+      async pollStream(_connection, stream) {
+        return {
+          activities: [activityFrom(stream.id)],
+          highWatermark: {},
+          hasMore: false,
+        };
+      },
+    }, connection, AbortSignal.timeout(1_000));
+
+    const byEventType = new Map(result.activities.map((activity) => [activity.eventType, activity.metadata]));
+    // The stamp travels with the activity through the queue and the ingest
+    // row, because the decision is made here and read when the activity log is
+    // written — long after the stream object is gone.
+    expect(byEventType.get("drive.file_changed")).toMatchObject({ _streamNotDigestible: true });
+    expect(byEventType.get("gmail.email.received")).not.toHaveProperty("_streamNotDigestible");
+  });
+
+  it("refuses an activity type declared both digestible and operational", () => {
+    // Two lists are what force the decision; an event type in both is the
+    // decision not being made, and the manifest's duplicate check would see
+    // only a duplicate descriptor rather than an unanswered question.
+    expect(() => defineConnectorActivityTriggers("Test", {
+      digestible: ["test.thing.happened"],
+      operational: ["test.thing.happened"],
+    })).toThrow(/both digestible and operational/);
+  });
+
+  it("carries digestibility from the partition onto every descriptor", () => {
+    const triggers = defineConnectorActivityTriggers("Test", {
+      digestible: ["test.review.submitted"],
+      operational: ["test.check.completed"],
+    });
+
+    expect(triggers.map((trigger) => [trigger.eventType, trigger.digestible])).toEqual([
+      ["test.review.submitted", true],
+      ["test.check.completed", false],
+    ]);
+  });
+
   it("checkpoints polling streams independently and isolates transient failures", async () => {
     const connection = googleConnection([]);
     connection.cursor = {
@@ -195,8 +244,8 @@ describe("connectors", () => {
     };
     const result = await pollCheckpointedActivityStreams({
       streams: () => [
-        { id: "gmail", idlePollIntervalSeconds: 300, backlogPollIntervalSeconds: 5 },
-        { id: "calendar", idlePollIntervalSeconds: 300, failurePollIntervalSeconds: 60 },
+        { id: "gmail", idlePollIntervalSeconds: 300, backlogPollIntervalSeconds: 5, digestible: true },
+        { id: "calendar", idlePollIntervalSeconds: 300, failurePollIntervalSeconds: 60, digestible: true },
       ],
       normalizeHighWatermark(_connection, _stream, value) {
         return value && typeof value === "object" && !Array.isArray(value)
@@ -234,9 +283,9 @@ describe("connectors", () => {
     const seen = new Map<string, Record<string, unknown>>();
     const result = await pollCheckpointedActivityStreams({
       streams: () => [
-        { id: "sequence", legacyCursorKey: "sequenceLegacy", idlePollIntervalSeconds: 300 },
-        { id: "date", idlePollIntervalSeconds: 300 },
-        { id: "cursor", idlePollIntervalSeconds: 300 },
+        { id: "sequence", legacyCursorKey: "sequenceLegacy", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "date", idlePollIntervalSeconds: 300, digestible: true },
+        { id: "cursor", idlePollIntervalSeconds: 300, digestible: true },
       ],
       normalizeHighWatermark(_connection, stream, value) {
         if (value == null) return {};
@@ -714,6 +763,50 @@ describe("connectors", () => {
     expect(pdf.output).toMatchObject({ contentIncluded: false, mimeType: "application/pdf" });
     expect(pdf.output).not.toHaveProperty("base64");
     expect(requested).toHaveLength(callsBeforePdf);
+  });
+
+  it("reads the connected Gmail account's own address rather than leaving it to be inferred", async () => {
+    const requests: URL[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(requestUrl(input));
+      return googleJson({
+        emailAddress: "adam@example.com",
+        messagesTotal: 42_000,
+        threadsTotal: 9_000,
+        historyId: "998877"
+      });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "gmail.read_profile",
+      {},
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    expect(requests[0]?.pathname).toBe("/gmail/v1/users/me/profile");
+    expect(result.output).toMatchObject({
+      resourceType: "gmail_profile",
+      emailAddress: "adam@example.com",
+      messagesTotal: 42_000,
+      threadsTotal: 9_000,
+      historyId: "998877"
+    });
+    expect(result.summary).toContain("adam@example.com");
+  });
+
+  it("refuses the account profile to a connection that was not granted Gmail read", async () => {
+    const fetcher: typeof fetch = async () => googleJson({ emailAddress: "adam@example.com" });
+    await expect(googleAdapter(fetcher).executeTool(
+      "gmail.read_profile",
+      {},
+      {
+        connection: googleConnection(["calendar.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({ code: "unsupported_capability" });
   });
 
   it("returns sender, recipients, subject, and snippet with every Gmail search hit", async () => {
@@ -1658,6 +1751,267 @@ describe("connectors", () => {
     expect(requests.filter((request) => request.url.pathname.startsWith("/drive/v3/files/"))).toHaveLength(3);
   });
 
+  it("searches Drive file contents, not only names, and narrows with its own parameters", async () => {
+    let query = "";
+    let orderBy: string | null = null;
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      query = url.searchParams.get("q") ?? "";
+      orderBy = url.searchParams.get("orderBy");
+      return googleJson({ files: [{ id: "file-1", name: "Q3 pricing", webViewLink: "https://drive.example/1" }] });
+    };
+    const result = await googleAdapter(fetcher).executeTool(
+      "drive.search",
+      {
+        query: "Q3 pricing",
+        fileType: "spreadsheet",
+        modifiedAfter: "2026-08-01T00:00:00Z",
+        orderBy: "modified"
+      },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    // Contents as well as names: a search for what a document says used to come
+    // back empty, which the plugin message then licensed reporting as absent.
+    expect(query).toContain("fullText contains 'Q3 pricing'");
+    expect(query).toContain("name contains 'Q3 pricing'");
+    expect(query).toContain("mimeType = 'application/vnd.google-apps.spreadsheet'");
+    expect(query).toContain("modifiedTime > '2026-08-01T00:00:00Z'");
+    expect(query).toContain("trashed = false");
+    expect(orderBy).toBe("modifiedTime desc");
+    // One name for the address a person opens, across every Google tool.
+    expect(result.output).toMatchObject({ items: [{ id: "file-1", webUrl: "https://drive.example/1" }] });
+  });
+
+  it("returns computable values from Sheets when asked for them", async () => {
+    const requests: URL[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      requests.push(requestUrl(input));
+      return googleJson({ range: "Sheet1!A1:B2", majorDimension: "ROWS", values: [[1234.5, 0.45]] });
+    };
+    const context = {
+      connection: googleConnection(["sheets.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    await googleAdapter(fetcher).executeTool(
+      "sheets.read_values",
+      { spreadsheetId: "sheet-1", range: "Sheet1!A1:B2", valueRenderOption: "UNFORMATTED_VALUE" },
+      context
+    );
+    expect(requests[0]?.searchParams.get("valueRenderOption")).toBe("UNFORMATTED_VALUE");
+    // Serial dates belong with unformatted numbers; pairing them with display
+    // strings would return two spellings of the same date.
+    expect(requests[0]?.searchParams.get("dateTimeRenderOption")).toBe("SERIAL_NUMBER");
+
+    await googleAdapter(fetcher).executeTool(
+      "sheets.read_values",
+      { spreadsheetId: "sheet-1", range: "Sheet1!A1:B2" },
+      context
+    );
+    expect(requests[1]?.searchParams.get("valueRenderOption")).toBe("FORMATTED_VALUE");
+    expect(requests[1]?.searchParams.get("dateTimeRenderOption")).toBe("FORMATTED_STRING");
+  });
+
+  it("names the tool that reads an id rather than passing a Workspace mismatch through", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({ mimeType: "application/vnd.google-apps.spreadsheet" });
+      }
+      return googleJson({ error: { code: 404, message: "Requested entity was not found." } }, 404);
+    };
+    const context = {
+      connection: googleConnection(["docs.read", "drive.read", "sheets.read"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      context
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", field: "documentId", expected: "document", actual: "spreadsheet" }
+    });
+    // The remedy names the tool to call, not a description of it: the caller
+    // can match `sheets.read_spreadsheet` against its own prefixed wire name.
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      context
+    )).rejects.toThrow(/sheets\.read_spreadsheet/u);
+  });
+
+  it("names the family from every Docs and Sheets tool that takes an id, not just the two readers", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      // Drive answers what the id really is; every other host refuses it.
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({
+          mimeType: "application/vnd.google-apps.document",
+          isAppAuthorized: true,
+          capabilities: { canEdit: true }
+        });
+      }
+      return googleJson({ error: { code: 400, message: "Invalid" } }, 400);
+    };
+    const context = {
+      connection: googleConnection(["drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(2_000)
+    };
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["sheets.read_values", { spreadsheetId: "a-doc", range: "A1:B2" }],
+      ["sheets.update_values", { spreadsheetId: "a-doc", range: "A1:B2", values: [["x"]] }],
+      ["sheets.append_values", { spreadsheetId: "a-doc", range: "A1:B2", values: [["x"]] }]
+    ];
+    for (const [tool, args] of calls) {
+      await expect(googleAdapter(fetcher).executeTool(tool, args, context))
+        .rejects.toMatchObject({
+          details: { reason: "wrong_id_family", expected: "spreadsheet", actual: "document" }
+        });
+    }
+  });
+
+  it("names the family on a write before the writability verdict hides it", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      // The realistic case: an arbitrary Drive result is not app-authorized, so
+      // the writability preflight would otherwise refuse it as read-only and
+      // never say it is the wrong kind of file.
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({
+          mimeType: "application/vnd.google-apps.spreadsheet",
+          isAppAuthorized: false,
+          capabilities: { canEdit: false }
+        });
+      }
+      return googleJson({ documentId: "doc" });
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.append_text",
+      { documentId: "actually-a-sheet", text: "hello" },
+      {
+        connection: googleConnection(["drive.read", "docs.write", "sheets.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({
+      code: "invalid_payload",
+      details: { reason: "wrong_id_family", expected: "document", actual: "spreadsheet" }
+    });
+  });
+
+  it("does not point a connection at a tool it was never granted", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") {
+        return googleJson({ mimeType: "application/vnd.google-apps.spreadsheet" });
+      }
+      return googleJson({ error: { code: 404 } }, 404);
+    };
+    // No sheets.read, so naming the Sheets reader would be advice this
+    // connection cannot follow.
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "actually-a-sheet" },
+      {
+        connection: googleConnection(["docs.read", "drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toThrow(/^That id is a spreadsheet, not a document\.$/u);
+  });
+
+  it("browses Drive by type and recency without a search term", async () => {
+    let query = "";
+    const fetcher: typeof fetch = async (input) => {
+      query = requestUrl(input).searchParams.get("q") ?? "";
+      return googleJson({ files: [] });
+    };
+    await googleAdapter(fetcher).executeTool(
+      "drive.search",
+      { fileType: "spreadsheet", orderBy: "modified" },
+      {
+        connection: googleConnection(["drive.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    );
+    // "The most recently modified spreadsheet" has no search term, and an empty
+    // one would have built `contains ''`.
+    expect(query).not.toContain("contains ''");
+    expect(query).toContain("mimeType = 'application/vnd.google-apps.spreadsheet'");
+    expect(query).toContain("trashed = false");
+  });
+
+  it("declares the same Drive file types it parses", () => {
+    const search = createGoogleConnector({
+      clientId: "google-client",
+      clientSecret: "google-secret",
+      redirectUri: "https://avalon.example/oauth/google/callback"
+    }).manifest.tools.find((tool) => tool.name === "drive.search");
+    const schema = search?.inputSchema as { properties: { fileType: { enum: string[] } } };
+    // The advertised vocabulary and the one the executor enforces are the same
+    // list, so a type added to one cannot be missing from the other.
+    expect(schema.properties.fileType.enum).toEqual([
+      "document",
+      "spreadsheet",
+      "presentation",
+      "form",
+      "drawing",
+      "folder",
+      "pdf"
+    ]);
+  });
+
+  it("leaves the provider failure alone when Drive cannot say what the id is", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "www.googleapis.com") return googleJson({ error: { code: 404 } }, 404);
+      return googleJson({ error: { code: 404, message: "Requested entity was not found." } }, 404);
+    };
+    // Without drive.read there is nothing to diagnose with, and diagnosing must
+    // never replace the original failure with a different one.
+    await expect(googleAdapter(fetcher).executeTool(
+      "docs.read_document",
+      { documentId: "missing" },
+      {
+        connection: googleConnection(["docs.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: AbortSignal.timeout(1_000)
+      }
+    )).rejects.toMatchObject({ code: "provider_error" });
+  });
+
+  it("hands back an openable address from every Google create", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "sheets.googleapis.com") {
+        return googleJson({
+          spreadsheetId: "sheet-created",
+          spreadsheetUrl: "https://docs.google.com/spreadsheets/d/sheet-created/edit",
+          properties: { title: "Budget" },
+          sheets: []
+        });
+      }
+      return googleJson({ documentId: "doc-created", title: "Notes" });
+    };
+    const context = {
+      connection: googleConnection(["docs.write", "sheets.write"]),
+      principal: { type: "user" as const, userId: TEST_USER_ID },
+      signal: AbortSignal.timeout(1_000)
+    };
+    const doc = await googleAdapter(fetcher).executeTool("docs.create_document", { title: "Notes" }, context);
+    expect(doc.output).toMatchObject({ webUrl: "https://docs.google.com/document/d/doc-created/edit" });
+    const sheet = await googleAdapter(fetcher).executeTool("sheets.create_spreadsheet", { title: "Budget" }, context);
+    expect(sheet.output).toMatchObject({ webUrl: "https://docs.google.com/spreadsheets/d/sheet-created/edit" });
+  });
+
   it("reports per-file Drive writability and blocks unauthorized Docs and Sheets writes", async () => {
     const mutationUrls: URL[] = [];
     const fetcher: typeof fetch = async (input, init) => {
@@ -1865,6 +2219,38 @@ const TEST_USER_ID = "00000000-0000-7000-8000-000000000001";
 const TEST_WORKSPACE_ID = "00000000-0000-7000-8000-000000000002";
 const TEST_CONNECTION_ID = "00000000-0000-7000-8000-000000000003";
 
+/** A minimal polled activity, named after the stream that produced it. */
+function activityFrom(streamId: string) {
+  const eventType = streamId === "gmail" ? "gmail.email.received" : "drive.file_changed";
+  return {
+    workspaceId: TEST_WORKSPACE_ID,
+    region: "global" as const,
+    connectionId: TEST_CONNECTION_ID,
+    connectionScope: "personal" as const,
+    connectionOwnerUserId: TEST_USER_ID,
+    provider: "google",
+    providerEventId: `${streamId}-1`,
+    eventType,
+    resourceType: null,
+    providerResourceId: null,
+    actor: {},
+    subject: {},
+    occurredAt: "2026-08-11T09:00:00.000Z",
+    receivedAt: "2026-08-11T09:00:01.000Z",
+    title: `Something happened in ${streamId}`,
+    summary: "",
+    textSnippet: "",
+    payloadRef: null,
+    visibility: {},
+    targetUserIds: [],
+    entityKeys: [],
+    dedupeKey: `${streamId}-1`,
+    rawContentHash: null,
+    metadata: { source: streamId },
+    externalPeople: [],
+  };
+}
+
 function googleAdapter(fetcher: typeof fetch) {
   return createGoogleConnector({
     clientId: "google-client",
@@ -1877,8 +2263,8 @@ function googleAdapter(fetcher: typeof fetch) {
 function googleConnection(
   grantedScopes: string[],
   cursor: Record<string, unknown> = {}
-): ConnectorConnectionContext {
-  return {
+): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: TEST_CONNECTION_ID,
     workspaceId: TEST_WORKSPACE_ID,
     scope: "personal",
@@ -1887,7 +2273,7 @@ function googleConnection(
     credentials: { accessToken: "google-access-token" },
     cursor,
     config: { region: "global", pollIntervalSeconds: 300 }
-  };
+  });
 }
 
 function requestUrl(input: RequestInfo | URL): URL {

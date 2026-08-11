@@ -1954,6 +1954,10 @@ export class WorkstreamService {
       body: truncateUtf16Safe(message.textContent, ACTIVITY_EVENT_BODY_LIMIT),
       canonicalUrl: this.workstreamLinkOrNull(workstream.id),
       audience: { kind: "workstream", workstreamId: workstream.id },
+      // A person wrote this to a work stream someone is a participant of.
+      // There is no first-party equivalent of a check run: everything Avalon
+      // records here is somebody addressing somebody.
+      digestible: true,
       occurredAt: message.createdAt,
       sourceKind: "message",
       sourceId: message.id,

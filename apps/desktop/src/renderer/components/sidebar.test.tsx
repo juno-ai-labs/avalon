@@ -25,6 +25,7 @@ vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
     openSettings,
+    getRuntimeConfig: () => Promise.resolve({ webBaseUrl: 'https://with-avalon.com' }),
     getApplicationSettings: () => Promise.resolve(applicationSettings.current),
     onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
       applicationSettings.listeners.add(listener);
@@ -202,7 +203,10 @@ describe('Sidebar work-stream markers', () => {
     expect(resizer).toHaveAttribute('aria-valuenow', '340');
   });
 
-  it('anchors a local-only onboarding checklist above the account footer', () => {
+  // OnboardingChecklist is disabled (demo-only, local-state-only, and had no
+  // dismiss mechanism — see the commented-out render call in sidebar.tsx).
+  // This guards against it silently coming back.
+  it('does not render the disabled onboarding checklist', () => {
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -211,16 +215,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    const sidebar = screen.getByRole('complementary', { name: 'Avalon navigation' });
-    const onboarding = within(sidebar).getByRole('region', { name: 'Get started with Avalon' });
-    const account = within(sidebar).getByRole('button', { name: /AdamAvalon Studio/u });
-    expect(onboarding.compareDocumentPosition(account) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(onboarding).getByText('0 / 3')).toBeVisible();
-
-    fireEvent.click(within(onboarding).getByRole('button', { name: /Connect your tools/u }));
-
-    expect(within(onboarding).getByText('1 / 3')).toBeVisible();
-    expect(within(onboarding).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
+    expect(screen.queryByRole('region', { name: 'Get started with Avalon' })).not.toBeInTheDocument();
   });
 
   it('uses the compact status-dot pattern for every work stream', () => {
@@ -780,8 +775,10 @@ describe('Sidebar work-stream markers', () => {
     expect(screen.getByRole('link', { name: /Customer interview/u })).toBeVisible();
   });
 
-  it('copies resource identifiers from the menus only while debugging is enabled', async () => {
-    const target = workstream('workstream-42', 'Quarterly planning', 'completed');
+  it('copies a work-stream link and the other resource identifiers only while debugging is enabled', async () => {
+    // A real work-stream id, because the row copies a canonical link and
+    // `workstreamCanonicalUrl` refuses anything that is not a UUID.
+    const target = workstream('00000000-0000-4000-8000-000000000042', 'Quarterly planning', 'completed');
     render(
       <MemoryRouter>
         <Tooltip.Provider>
@@ -800,7 +797,7 @@ describe('Sidebar work-stream markers', () => {
     const workstreamRow = screen.getByRole('link', { name: /Quarterly planning/u });
     fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
     expect(await screen.findByRole('menuitem', { name: 'Rename' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Copy work stream id' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Copy work stream link' })).not.toBeInTheDocument();
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
     const noteRow = screen.getByRole('link', { name: /Customer interview/u });
@@ -814,8 +811,10 @@ describe('Sidebar work-stream markers', () => {
     announceApplicationSettings({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true });
 
     fireEvent.contextMenu(workstreamRow, { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream id' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith('workstream-42'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work stream link' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(
+      'https://with-avalon.com/app/workstreams/00000000-0000-4000-8000-000000000042',
+    ));
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy automation id' }));
