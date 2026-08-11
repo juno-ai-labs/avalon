@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { zValidator } from "../middleware/validation";
 import { DesktopExchangeRequestSchema, RefreshRequestSchema, RefreshTokenSchema } from "@avalon/contracts";
+import { HttpOrAvalonUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -10,7 +11,7 @@ import { AuthService, verifyAccessToken } from "../services/auth-service";
 import { previewInvitation } from "../services/workspace-service";
 
 const startBody = z.object({
-  returnUri: z.string().url().optional(),
+  returnUri: HttpOrAvalonUrlSchema.optional(),
   desktopAttemptId: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
   desktopCodeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
 });

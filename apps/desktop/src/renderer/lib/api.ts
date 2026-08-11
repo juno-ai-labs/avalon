@@ -43,6 +43,7 @@ import {
   type WorkstreamArtifact as WireWorkstreamArtifact,
   type WorkstreamDetail as WireWorkstreamDetail,
 } from '@avalon/contracts';
+import { HttpUrlSchema } from '@avalon/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
@@ -821,7 +822,7 @@ export class AvalonApi {
       body: { email, role },
       schema: z.object({
         invitation: WireWorkspaceInvitationSchema,
-        inviteUrl: z.string().url(),
+        inviteUrl: HttpUrlSchema,
         emailDelivery: z.enum(['sent', 'skipped']),
       }),
     });
@@ -1684,7 +1685,7 @@ export class AvalonApi {
       },
       schema: z.object({
         connection: WireConnectionSchema,
-        endpoint: z.string().url(),
+        endpoint: HttpUrlSchema,
         signingSecret: z.string().min(1),
         signatureFormat: z.string().min(1),
       }),
@@ -1700,7 +1701,7 @@ export class AvalonApi {
     return this.request(`/connections/${encodeURIComponent(id)}/webhook-secret/rotate`, {
       method: 'POST',
       schema: z.object({
-        endpoint: z.string().url(),
+        endpoint: HttpUrlSchema,
         signingSecret: z.string().min(1),
         signatureFormat: z.string().min(1),
       }),
@@ -1782,7 +1783,7 @@ export class AvalonApi {
         ...(input.workspaceName ? { workspaceName: input.workspaceName } : {}),
         ...(input.invitationToken ? { invitationToken: input.invitationToken } : {}),
       },
-      schema: z.object({ url: z.string().url() }),
+      schema: z.object({ url: HttpUrlSchema }),
     });
     return result.url;
   }

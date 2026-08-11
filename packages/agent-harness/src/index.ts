@@ -238,8 +238,8 @@ export class OpenRouterClient {
       let repairMessages: ModelMessage[] | null = null;
       let repairAttempt = 0;
       for (let attempt = 0; attempt <= this.sameModelRetries(); attempt += 1) {
+        const startedAt = Date.now();
         try {
-          const startedAt = Date.now();
           await input.onDiagnostic?.({
             stage: "model_request",
             schemaName: input.schemaName,
@@ -324,7 +324,15 @@ export class OpenRouterClient {
           try {
             const parsed = input.parse(parsedJson);
             await input.onDiagnostic?.({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
-            await input.onDiagnostic?.({ stage: "complete", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt });
+            await input.onDiagnostic?.({
+              stage: "complete",
+              schemaName: input.schemaName,
+              model,
+              attempt,
+              fallbackAttempt,
+              repairAttempt,
+              success: true,
+            });
             return parsed;
           } catch (error) {
             if (error instanceof z.ZodError && !repaired) {
@@ -370,6 +378,17 @@ export class OpenRouterClient {
             throw error;
           }
         } catch (error) {
+          await input.onDiagnostic?.({
+            stage: "complete",
+            schemaName: input.schemaName,
+            model,
+            attempt,
+            fallbackAttempt,
+            repairAttempt,
+            latencyMs: Date.now() - startedAt,
+            success: false,
+            failureKind: structuredFailureKind(error, input.signal),
+          });
           if (input.signal?.aborted) throw error;
           const disposition = openRouterFailureDisposition(error);
           if (disposition === "terminal") throw error;
@@ -597,6 +616,26 @@ function openRouterFailureDisposition(error: unknown): OpenRouterFailureDisposit
     return "retry";
   }
   return "fallback";
+}
+
+function structuredFailureKind(error: unknown, signal?: AbortSignal): string {
+  if (signal?.aborted) {
+    return signal.reason instanceof Error && signal.reason.name === "TimeoutError"
+      ? "timeout"
+      : "aborted";
+  }
+  if (error instanceof z.ZodError) return "validation_error";
+  if (error instanceof OpenRouterError) {
+    if (error.status === 408) return "timeout";
+    if (error.status === 429) return "rate_limit";
+    if (error.status != null && error.status >= 500) return "server_error";
+    if (error.status != null) return "provider_error";
+    return "completion_error";
+  }
+  if (error instanceof TypeError || (error instanceof Error && error.name === "NetworkError")) {
+    return "network";
+  }
+  return "unexpected_error";
 }
 
 function isAbortError(error: unknown): boolean {

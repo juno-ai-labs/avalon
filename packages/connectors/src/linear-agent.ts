@@ -1,4 +1,5 @@
 import type { ConnectorSurfaceRuntimeStatus } from "@avalon/contracts";
+import { httpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
   booleanValue,
@@ -28,8 +29,8 @@ const userSchema = z.object({
   id: idSchema,
   name: z.string().min(1).max(500),
   email: z.string().email().max(500),
-  url: z.string().url().max(LINEAR_AGENT_URL_CHARS),
-  avatarUrl: z.string().url().max(LINEAR_AGENT_URL_CHARS).nullable().optional(),
+  url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
+  avatarUrl: httpsUrlSchema(LINEAR_AGENT_URL_CHARS).nullable().optional(),
 }).passthrough();
 
 const commentSchema = z.object({
@@ -50,7 +51,7 @@ const issueSchema = z.object({
   teamId: idSchema,
   title: z.string().min(1).max(1_000),
   description: z.string().max(LINEAR_AGENT_BODY_CHARS).nullable().optional(),
-  url: z.string().url().max(LINEAR_AGENT_URL_CHARS),
+  url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
   team: z.object({ id: idSchema }).passthrough(),
 }).passthrough();
 
@@ -74,7 +75,7 @@ const sessionSchema = z.object({
   sourceMetadata: jsonObjectSchema.nullable().optional(),
   startedAt: dateTimeSchema.nullable().optional(),
   summary: z.string().max(LINEAR_AGENT_BODY_CHARS).nullable().optional(),
-  url: z.string().url().max(LINEAR_AGENT_URL_CHARS).nullable().optional(),
+  url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS).nullable().optional(),
 }).passthrough();
 
 const promptContentSchema = z.object({
@@ -303,7 +304,7 @@ export const LinearAgentActivityContentSchema = z.discriminatedUnion("type", [
 export type LinearAgentActivityContent = z.infer<typeof LinearAgentActivityContentSchema>;
 
 const authSignalMetadataSchema = z.object({
-  url: z.string().url().max(LINEAR_AGENT_URL_CHARS),
+  url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
   userId: idSchema.optional(),
   providerName: z.string().min(1).max(200).optional(),
 }).strict();
@@ -344,7 +345,7 @@ export type LinearAgentActivityCreateInput = z.infer<typeof LinearAgentActivityC
 
 export const LinearAgentExternalUrlSchema = z.object({
   label: z.string().min(1).max(200),
-  url: z.string().url().max(LINEAR_AGENT_URL_CHARS),
+  url: httpsUrlSchema(LINEAR_AGENT_URL_CHARS),
 }).strict();
 
 export const LinearAgentPlanStepSchema = z.object({
@@ -439,7 +440,7 @@ export function createLinearNativeAgentProtocol(executeGraphql: LinearAgentGraph
         }, signal);
       }
       if (command.kind === "patch_external_urls") {
-        const removedExternalUrls = z.array(z.string().url().max(LINEAR_AGENT_URL_CHARS)).max(100).parse(command.removedExternalUrls);
+        const removedExternalUrls = z.array(httpsUrlSchema(LINEAR_AGENT_URL_CHARS)).max(100).parse(command.removedExternalUrls);
         return updateLinearAgentSession(executeGraphql, command.agentSessionId, {
           addedExternalUrls: validateExternalUrls(command.addedExternalUrls),
           removedExternalUrls,
