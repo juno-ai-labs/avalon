@@ -1,6 +1,7 @@
 import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type PersonalSocketEvent,
   type ServerSocketEvent,
 } from '@avalon/contracts';
@@ -379,6 +380,11 @@ export function useWorkstreamSocket(
       return;
     }
     let closedByEffect = false;
+    // Separate from `closedByEffect`, which means this hook is tearing down. The
+    // work stream is still on screen here; it is the reader who is no longer in
+    // it, and nothing should dial back until the effect re-runs on a work stream
+    // they can read.
+    let accessRevoked = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
@@ -703,8 +709,29 @@ export function useWorkstreamSocket(
       }, socketHeartbeatDelay());
     };
 
+    /**
+     * The room closed this socket because the reader may no longer see the work
+     * stream — it went private without them, or they were taken out of it.
+     *
+     * Reconnecting is the one thing that must not happen: the ticket request
+     * behind it now answers 404, and the generic close path would retry that
+     * forever while the transcript already fetched stayed on screen. Dropping
+     * the cached work stream instead lets the screen's existing "could not be
+     * opened" state take over, and takes the sidebar row with it rather than
+     * waiting for the list poll to notice.
+     */
+    const handleAccessRevoked = (): void => {
+      accessRevoked = true;
+      clearReconnectTimer();
+      setState('unavailable');
+      queryClient.removeQueries({ queryKey: ['messages', workstreamId], exact: true });
+      queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, (current) =>
+        current?.filter((workstream) => workstream.id !== workstreamId));
+      queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
+    };
+
     const scheduleReconnect = (): void => {
-      if (closedByEffect) return;
+      if (closedByEffect || accessRevoked) return;
       clearReconnectTimer();
       attempts.current += 1;
       if (isOffline()) {
@@ -808,11 +835,15 @@ export function useWorkstreamSocket(
             // Invalid frames are ignored; canonical REST state remains authoritative.
           }
         });
-        nextSocket.addEventListener('close', () => {
+        nextSocket.addEventListener('close', (closeEvent) => {
           if (socket !== nextSocket) return;
           clearHeartbeat();
           clearStabilityTimer();
           socket = null;
+          if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
+            handleAccessRevoked();
+            return;
+          }
           scheduleReconnect();
         });
         nextSocket.addEventListener('error', () => {
@@ -833,7 +864,8 @@ export function useWorkstreamSocket(
     };
 
     const handleOnline = (): void => {
-      if (closedByEffect || socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      if (closedByEffect || accessRevoked) return;
+      if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
       clearReconnectTimer();
       void connect();
     };

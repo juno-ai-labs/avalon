@@ -147,6 +147,35 @@ describe("changing who may read a work stream", () => {
     // locks its author out of it.
     expect(await participantIds(database, SHARED)).toEqual([OWNER, COLLEAGUE].sort());
     expect((await serviceFor(database, COLLEAGUE).get(SHARED)).id).toBe(SHARED);
+    // And they are announced, or they would be a participant in D1 and absent
+    // from every open right rail — their own included — until a reload.
+    expect(published.map((entry) => entry.event.type))
+      .toEqual(["participant_added", "workstream_scope_changed"]);
+  });
+
+  it("does not announce a join by somebody who was already in it", async () => {
+    const database = seededDatabase();
+
+    // The owner has been a participant since it was created. Closing the work
+    // stream does not make them a new arrival, and saying so would refresh
+    // every reader's participant list and HyperSight for nothing.
+    await serviceFor(database, OWNER).update(SHARED, { scope: "personal" });
+
+    expect(published.map((entry) => entry.event.type)).toEqual(["workstream_scope_changed"]);
+  });
+
+  it("keeps the participant and the scope together when the write fails", async () => {
+    const database = seededDatabase();
+    const service = serviceFor(database, COLLEAGUE);
+    // A batch, so the pair is all-or-nothing: the alternative leaves a stray
+    // `explicit` participant on a work stream that stayed public, which nothing
+    // ever cleans up and a retry cannot undo.
+    database.exec("DROP TABLE workstream_description_refreshes");
+    await expect(service.update(SHARED, { scope: "personal", objective: "Closed-door review" }))
+      .rejects.toThrow();
+
+    expect(await participantIds(database, SHARED)).toEqual([OWNER]);
+    expect((await serviceFor(database, OWNER).get(SHARED)).scope).toBe("workspace");
   });
 
   it("opens it back up to the workspace", async () => {

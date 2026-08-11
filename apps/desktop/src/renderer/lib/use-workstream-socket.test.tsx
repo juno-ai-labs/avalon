@@ -39,10 +39,11 @@ class FakeWebSocket extends EventTarget {
     this.dispatchEvent(new Event('open'));
   }
 
-  close(): void {
+  /** `code` defaults to a normal closure; the hook only distinguishes one. */
+  close(code = 1000): void {
     if (this.readyState === FakeWebSocket.CLOSED) return;
     this.readyState = FakeWebSocket.CLOSED;
-    this.dispatchEvent(new Event('close'));
+    this.dispatchEvent(Object.assign(new Event('close'), { code }));
   }
 
   message(value: unknown): void {
@@ -978,6 +979,81 @@ describe('useWorkstreamSocket', () => {
       { id: workstreamId, title: 'Compensation review', scope: 'personal' },
       { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
     ]);
+  });
+
+  it('stops dialling a work stream it has just been shut out of', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-7000-7000-8000-000000000405';
+    queryClient.setQueryData(['workstream', workstreamId], {
+      id: workstreamId,
+      title: 'Compensation review',
+      scope: 'workspace',
+      harnessStatus: 'completed',
+    } as WorkstreamDetail);
+    queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
+    queryClient.setQueryData(['workstreams'], [
+      { id: workstreamId, title: 'Compensation review' },
+      { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
+    ] as WorkstreamSummary[]);
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+
+    // Somebody else made this work stream private without them, and the room
+    // closed the socket rather than sending them anything more.
+    act(() => socket.close(1008));
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    // The ticket behind a reconnect now answers 404, so retrying is a loop that
+    // never ends. Nothing dialled again, and the transcript the reader may no
+    // longer see is gone rather than left on screen.
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
+      { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
+    ]);
+  });
+
+  it('still reconnects after an ordinary close', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-7000-7000-8000-000000000407';
+    const api = {
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.avalon.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+      })),
+      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
+      getMessages: vi.fn(async () => []),
+      getWorkstreams: vi.fn(async () => []),
+    } as unknown as AvalonApi;
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    act(() => FakeWebSocket.instances[0]!.open());
+    act(() => FakeWebSocket.instances[0]!.close());
+    await vi.advanceTimersByTimeAsync(90_000);
+    await flushPromises();
+
+    // The revoked case must not have turned every close into a dead end.
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
   });
 
   it('refreshes run metadata when a new run starts in another client', async () => {

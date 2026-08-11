@@ -26,6 +26,52 @@ export interface D1DatabaseLike {
   batch<T = unknown>(statements: D1PreparedStatementLike[]): Promise<D1ResultLike<T>[]>;
 }
 
+export type ParticipationReason = "explicit" | "message" | "elicitation" | "action";
+
+/**
+ * Add somebody to a work stream, or bring them back if they had been removed.
+ *
+ * A statement rather than a write, because two callers need it inside a batch
+ * with something else — a message and its participant, a work stream going
+ * private and the person who closed it — and both pairs have to be
+ * all-or-nothing.
+ */
+export function buildParticipantUpsertStatement<TStatement extends D1PreparedStatementLike>(
+  db: { prepare(query: string): TStatement },
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    userId: string;
+    addedByUserId: string;
+    reason: ParticipationReason;
+  },
+): TStatement {
+  return db
+    .prepare(
+      `INSERT INTO workstream_participants
+       (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
+       SELECT ?, ?, ?, ?, ?, NULL
+       WHERE EXISTS (SELECT 1 FROM workstreams WHERE id = ? AND workspace_id = ?)
+       ON CONFLICT(workstream_id, user_id) DO UPDATE SET
+         removed_at = NULL,
+         added_by_user_id = CASE WHEN workstream_participants.removed_at IS NOT NULL
+           THEN excluded.added_by_user_id ELSE workstream_participants.added_by_user_id END,
+         participation_reason = CASE WHEN workstream_participants.removed_at IS NOT NULL
+           THEN excluded.participation_reason ELSE workstream_participants.participation_reason END,
+         joined_at = CASE WHEN workstream_participants.removed_at IS NOT NULL
+           THEN excluded.joined_at ELSE workstream_participants.joined_at END`
+    )
+    .bind(
+      input.workstreamId,
+      input.userId,
+      input.addedByUserId,
+      input.reason,
+      nowIso(),
+      input.workstreamId,
+      input.workspaceId,
+    ) as TStatement;
+}
+
 export function buildMessageAttachmentStatements<TStatement extends D1PreparedStatementLike>(
   db: { prepare(query: string): TStatement },
   input: {
@@ -507,25 +553,11 @@ export function createDatabase(db: D1DatabaseLike) {
       workstreamId: string,
       userId: string,
       addedByUserId: string,
-      reason: "explicit" | "message" | "elicitation" | "action"
+      reason: ParticipationReason
     ): Promise<void> {
-      const result = await db
-        .prepare(
-          `INSERT INTO workstream_participants
-           (workstream_id, user_id, added_by_user_id, participation_reason, joined_at, removed_at)
-           SELECT ?, ?, ?, ?, ?, NULL
-           WHERE EXISTS (SELECT 1 FROM workstreams WHERE id = ? AND workspace_id = ?)
-           ON CONFLICT(workstream_id, user_id) DO UPDATE SET
-             removed_at = NULL,
-             added_by_user_id = CASE WHEN workstream_participants.removed_at IS NOT NULL
-               THEN excluded.added_by_user_id ELSE workstream_participants.added_by_user_id END,
-             participation_reason = CASE WHEN workstream_participants.removed_at IS NOT NULL
-               THEN excluded.participation_reason ELSE workstream_participants.participation_reason END,
-             joined_at = CASE WHEN workstream_participants.removed_at IS NOT NULL
-               THEN excluded.joined_at ELSE workstream_participants.joined_at END`
-        )
-        .bind(workstreamId, userId, addedByUserId, reason, nowIso(), workstreamId, workspaceId)
-        .run();
+      const result = await buildParticipantUpsertStatement(db, {
+        workspaceId, workstreamId, userId, addedByUserId, reason,
+      }).run();
       if (!result.success) throw new RepositoryError("database_error", "Could not add participant");
     },
 
