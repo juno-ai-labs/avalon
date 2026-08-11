@@ -74,7 +74,7 @@ describe("automation delivery targets", () => {
     });
   });
 
-  it("rejects a Slack destination the owner has not linked", async () => {
+  it("rejects a destination the owner has not linked", async () => {
     const { service } = serviceWith(async () => null);
 
     await expect(service.create(createInput("personal", [{
@@ -82,7 +82,7 @@ describe("automation delivery targets", () => {
       connectionId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7910",
     }]))).rejects.toMatchObject({
       status: 422,
-      code: "slack_delivery_unavailable",
+      code: "delivery_target_unavailable",
     });
   });
 });

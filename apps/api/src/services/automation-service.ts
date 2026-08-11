@@ -1,5 +1,6 @@
 import { newId, nowIso } from "@avalon/db";
 import type {
+  AutomationDeliveryTargetType,
   AutomationDraft,
   CreateAutomationRequestSchema,
   ExecutionPrincipal,
@@ -21,7 +22,7 @@ import {
   buildAutomationMemoryTableStatements,
   ensureAutomationMemoryTables,
 } from "./memory-table-service";
-import { declaredUserDeliveryTargetType } from "./user-delivery";
+import { resolveFrozenDeliveryIdentity, type FrozenDeliveryIdentity } from "./user-delivery";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 
 type CreateAutomationInput = z.infer<typeof CreateAutomationRequestSchema>;
@@ -36,7 +37,7 @@ interface CompiledSchedule {
 }
 
 type ResolvedDeliveryTarget =
-  | { type: "slack_agent_dm"; connectionId: string; teamId: string; slackUserId: string }
+  | ({ type: Exclude<AutomationDeliveryTargetType, "email"> } & FrozenDeliveryIdentity)
   | { type: "email"; emailAddress: string };
 
 interface ValidatedConnectorBindings {
@@ -251,10 +252,10 @@ export class AutomationService {
         this.auth.workspaceId,
         subscriptionId,
         target.type,
-        target.type === "slack_agent_dm" ? target.connectionId : null,
+        target.type === "email" ? null : target.connectionId,
         this.auth.userId,
-        target.type === "slack_agent_dm" ? target.teamId : null,
-        target.type === "slack_agent_dm" ? target.slackUserId : null,
+        target.type === "email" ? null : target.providerTenantId,
+        target.type === "email" ? null : target.providerUserId,
         target.type === "email" ? target.emailAddress : null,
         at,
         at,
@@ -1176,25 +1177,19 @@ export class AutomationService {
         resolved.push({ type: "email", emailAddress: await this.deliveryEmailAddress() });
         continue;
       }
-      // The connector must declare this delivery surface and the owner must
-      // already be linked to the installation — the same two conditions the
-      // create screen offered the destination on.
-      const row = await this.env.DB.prepare(
-        `SELECT cc.id, cc.connector_type, cc.provider_account_id, l.slack_user_id
-         FROM connector_connections cc
-         JOIN slack_user_links l ON l.connection_id = cc.id
-           AND l.workspace_id = cc.workspace_id AND l.user_id = ? AND l.status = 'active'
-         WHERE cc.id = ? AND cc.workspace_id = ? AND cc.scope = 'workspace' AND cc.status = 'healthy'`,
-      ).bind(this.auth.userId, target.connectionId, this.auth.workspaceId).first<{
-        id: string;
-        connector_type: string;
-        provider_account_id: string;
-        slack_user_id: string;
-      }>();
-      if (!row || declaredUserDeliveryTargetType(this.env, row.connector_type) !== target.type) {
-        throw new ApiError(422, "slack_delivery_unavailable", "Connect your Avalon user in the selected Slack workspace before using it for automation delivery");
+      // Accepted on exactly the terms the create screen offered it on: the
+      // connector declares the surface, the connection is healthy, and any
+      // identity link that surface requires is in place.
+      const identity = await resolveFrozenDeliveryIdentity(this.env, {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        connectionId: target.connectionId,
+        targetType: target.type,
+      });
+      if (!identity) {
+        throw new ApiError(422, "delivery_target_unavailable", "Connect your Avalon account in the selected destination before using it for automation delivery");
       }
-      resolved.push({ type: "slack_agent_dm", connectionId: row.id, teamId: row.provider_account_id, slackUserId: row.slack_user_id });
+      resolved.push({ type: target.type, ...identity });
     }
     return resolved;
   }
