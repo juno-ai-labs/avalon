@@ -80,6 +80,17 @@ describe("structured logging", () => {
     expect(entry.authorization).toBe("[REDACTED]");
   });
 
+  it("keeps the reserved `message` slot a string", () => {
+    const entry = capture("warn", () => logWarn(env, "slack_thread_title_failed", {
+      // @ts-expect-error `message` becomes the row summary rather than a field,
+      // so a structured value there is a type error, not something the logger
+      // would silently drop on its way to Workers Logs.
+      message: { code: "ratelimited" },
+    }));
+
+    expect(entry.message).toBe("slack_thread_title_failed");
+  });
+
   it("routes each level helper to the console method Workers Logs reads it from", () => {
     expect(capture("info", () => logInfo(env, "slack_public_channel_sync_completed", { joined: 3 })))
       .toMatchObject({ event: "slack_public_channel_sync_completed", joined: 3, level: "info" });

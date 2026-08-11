@@ -27,11 +27,17 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 // receives the observability bindings.
 export type LogEnv = Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">;
 
+// `message` is the one reserved key: it becomes the row summary rather than an
+// ordinary field, so it has to be a string. Typing it that way is what keeps a
+// caller from putting a structured value in the slot and losing it — the
+// runtime falls back to the derived summary, which cannot carry it.
+export type LogFields = Record<string, unknown> & { message?: string };
+
 export function logEvent(
   c: Context<HonoAppEnv>,
   level: LogLevel,
   event: string,
-  fields: Record<string, unknown> = {},
+  fields: LogFields = {},
 ): void {
   const auth = c.get("auth");
   logStructuredEvent(c.env, level, event, {
@@ -50,7 +56,7 @@ const SUMMARY_FIELDS = ["method", "path", "status", "code"] as const;
 // field. An entry that omits one lists as a blank row that has to be expanded
 // before it says anything, so give every diagnostic a one-line summary of the
 // fields it already carries.
-export function summarizeEvent(event: string, fields: Record<string, unknown> = {}): string {
+export function summarizeEvent(event: string, fields: LogFields = {}): string {
   const parts: string[] = [event];
   for (const key of SUMMARY_FIELDS) {
     const value = fields[key];
@@ -64,11 +70,14 @@ export function logStructuredEvent(
   env: LogEnv,
   level: LogLevel,
   event: string,
-  fields: Record<string, unknown> = {},
+  fields: LogFields = {},
 ): void {
   const configured = env.LOG_LEVEL ?? "info";
   const rank = { debug: 0, info: 1, warn: 2, error: 3 } as const;
   if (rank[level] < rank[configured]) return;
+  // `message` is typed as a string, so the only value the fallback can discard
+  // is one an untyped caller forced into the slot; an empty string still falls
+  // back rather than listing the row blank.
   const { message: provided, ...rest } = fields;
   const entry = redact({
     timestamp: new Date().toISOString(),
@@ -95,18 +104,18 @@ export function logStructuredEvent(
   /* eslint-enable no-console */
 }
 
-export function logDebug(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+export function logDebug(env: LogEnv, event: string, fields: LogFields = {}): void {
   logStructuredEvent(env, "debug", event, fields);
 }
 
-export function logInfo(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+export function logInfo(env: LogEnv, event: string, fields: LogFields = {}): void {
   logStructuredEvent(env, "info", event, fields);
 }
 
-export function logWarn(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+export function logWarn(env: LogEnv, event: string, fields: LogFields = {}): void {
   logStructuredEvent(env, "warn", event, fields);
 }
 
-export function logError(env: LogEnv, event: string, fields: Record<string, unknown> = {}): void {
+export function logError(env: LogEnv, event: string, fields: LogFields = {}): void {
   logStructuredEvent(env, "error", event, fields);
 }
