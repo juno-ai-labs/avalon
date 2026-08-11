@@ -52,7 +52,7 @@ const defaultActions = {
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
-  onPinWorkstream: async (): Promise<void> => undefined,
+  onPinWorkstream: async (): Promise<boolean> => true,
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
   onRunAutomation: async (): Promise<void> => undefined,
@@ -1110,7 +1110,7 @@ describe('pinned work streams', () => {
   function renderWith(
     streams: WorkstreamSummary[],
     actions: Partial<{
-      onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<void>;
+      onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<boolean>;
       onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
     }> = {},
   ): void {
@@ -1185,7 +1185,7 @@ describe('pinned work streams', () => {
   });
 
   it('offers Pin on a recent row and Unpin on a pinned one', async () => {
-    const onPinWorkstream = vi.fn(async (): Promise<void> => undefined);
+    const onPinWorkstream = vi.fn(async (): Promise<boolean> => true);
     renderWith(
       [
         pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0),
@@ -1391,6 +1391,7 @@ describe('pinned work streams', () => {
             setWorkstreams((current) => current.map((item) => item.id === workstream.id
               ? { ...item, pinPosition: pinned ? 0 : null }
               : item));
+            return true;
           }}
           onSignOut={vi.fn()}
           workspace={workspace}
@@ -1421,6 +1422,35 @@ describe('pinned work streams', () => {
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
   });
 
+  // Motion is what lets the reader follow the row, so it is the default — but
+  // it is exactly the kind of movement somebody turns off, and asserting only
+  // on `block` would let that preference be ignored silently.
+  it.each([
+    { reduced: false, behavior: 'smooth' },
+    { reduced: true, behavior: 'auto' },
+  ])('scrolls with $behavior when reduced motion is $reduced', async ({ reduced, behavior }) => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: reduced && query.includes('prefers-reduced-motion'),
+    }));
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior })));
+  });
+
+  // jsdom does not define `matchMedia` at all, and neither does an Electron
+  // window in some startup states, so the sidebar has to reach it optionally.
+  it('still scrolls where the preference cannot be read', async () => {
+    renderPinnable([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' })));
+  });
+
   it('brings it back into view after unpinning too, since that moves it as far', async () => {
     renderPinnable([pinned(workstream('ws-pinned', 'Launch tracking', 'completed'), 0)]);
 
@@ -1431,6 +1461,77 @@ describe('pinned work streams', () => {
     const scrolled = scrollIntoView.mock.instances[0] as Element;
     expect(scrolled).toHaveAttribute('data-workstream-id', 'ws-pinned');
     expect(screen.queryByRole('region', { name: 'Pinned' })).not.toBeInTheDocument();
+  });
+
+  // The shell discards a pin response a later one has superseded, so the action
+  // behind it has no row movement to follow — and dragging the viewport back to
+  // the row the reader has already finished with is worse than doing nothing.
+  it('scrolls nothing when a later pin superseded this one', async () => {
+    // The list still ends up showing the row pinned, because the newer
+    // request's response carried it. Without that the reveal would simply never
+    // match and the test would pass whatever the code did.
+    function Superseded(): React.JSX.Element {
+      const [streams, setStreams] = useState([workstream('ws-recent', 'Quarterly planning', 'completed')]);
+      return (
+        <Sidebar
+          {...defaultActions}
+          automations={[]}
+          onPinWorkstream={async () => {
+            await Promise.resolve();
+            setStreams((current) => current.map((item) => ({ ...item, pinPosition: 0 })));
+            return false;
+          }}
+          onSignOut={vi.fn()}
+          workspace={workspace}
+          workstreams={streams}
+        />
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Superseded /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+
+    await screen.findByRole('region', { name: 'Pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  // Arming the reveal for a row the list does not carry would leave it waiting
+  // indefinitely, ready to seize the viewport whenever that work stream
+  // reappeared — seconds later, on an unrelated poll.
+  it('does not stay armed for a row that leaves the list', async () => {
+    const row = workstream('ws-gone', 'Quarterly planning', 'completed');
+    function Vanishing(): React.JSX.Element {
+      const [streams, setStreams] = useState([row]);
+      return (
+        <>
+          <button onClick={() => setStreams([{ ...row, pinPosition: 0 }])} type="button">Bring it back</button>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onPinWorkstream={async () => {
+              await Promise.resolve();
+              setStreams([]);
+              return true;
+            }}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={streams}
+          />
+        </>
+      );
+    }
+    render(<MemoryRouter><Tooltip.Provider><Vanishing /></Tooltip.Provider></MemoryRouter>);
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Quarterly planning/u })).not.toBeInTheDocument());
+
+    // The row reappearing later — a poll, an unarchive — is not a reason to
+    // scroll to it. The pin that would have asked for that is long finished.
+    fireEvent.click(screen.getByRole('button', { name: 'Bring it back' }));
+    await screen.findByRole('region', { name: 'Pinned' });
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   it('scrolls nothing when the pin was refused', async () => {
