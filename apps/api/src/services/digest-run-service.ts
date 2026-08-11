@@ -103,6 +103,12 @@ export async function fireDigestSchedule(
     from,
     through: latest,
     notBefore,
+    // A digest interrupts somebody on a schedule, so it reads only what a
+    // connector positively confirmed is worth interrupting them with. The
+    // window below still ends at the log's top rather than at the last
+    // digestible event: the cursor has to step over what was withheld, or every
+    // later occurrence would re-scan it forever.
+    digestibleOnly: true,
     limit: MAX_DIGEST_EVENTS,
   });
   // The window ends where the read actually stopped, not where the log happens

@@ -16,6 +16,7 @@ import {
   composeBeforeToolCallHooks,
   canonicalToolInputHash,
   memberSafeHarnessFailureMessage,
+  renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
   renderTriggerActivityMessage,
   renderUntrustedInboundEmailMessage,
@@ -3139,6 +3140,39 @@ async function loadRunPromptContext(
       dueAt: wakeup.due_at,
     });
   }
+  if (input.digestDeliveryId) {
+    // The brief is in the transcript as a `system` row, and the protocol
+    // projector drops those as UI state. A digest therefore needs its window
+    // carried here like any other trigger, or the run reaches the model with
+    // nothing but its objective and writes a digest saying nothing happened.
+    //
+    // Re-read through the delivery rather than through the workflow's
+    // `triggerMessageId`: the delivery owns `digest:<id>` as the brief's
+    // client-message id, so this cannot pick up a later message in the same
+    // work stream, and one occurrence's run can never be handed another's
+    // window.
+    const digest = await env.DB.prepare(
+      `SELECT d.planned_for, d.event_count, m.text_content
+         FROM digest_deliveries d
+         JOIN messages m
+           ON m.workspace_id = d.workspace_id
+          AND m.workstream_id = ?
+          AND m.client_message_id = 'digest:' || d.id
+        WHERE d.id = ? AND d.workspace_id = ?`,
+    ).bind(input.workstreamId, input.digestDeliveryId, input.workspaceId)
+      .first<{ planned_for: string; event_count: number; text_content: string }>();
+    // Failing the attempt rather than running without the window: a digest with
+    // no brief cannot be written, and settlement folds an unsettled window into
+    // the next occurrence instead of consuming it.
+    if (!digest?.text_content.trim()) throw new Error("digest_brief_context_not_found");
+    // Nothing is pushed to `memoryQueryParts` here — the brief is this run's
+    // trigger message, so the branch above already added its text.
+    triggerMessage = renderScheduledDigestBriefMessage({
+      brief: digest.text_content,
+      plannedFor: digest.planned_for,
+      eventCount: Number(digest.event_count),
+    });
+  }
   const frozenMemory = await freezeRunMemoryContext(
     env,
     input,
@@ -5691,6 +5725,7 @@ export const __integrationTesting = {
   loadToolInvocation,
   stableWireToolName,
   loadTriggerFencedTranscriptMessages,
+  loadRunPromptContext,
   projectModelProtocolTranscript,
   projectElicitationResponseMessage,
   renderElicitationResponseMessage,
