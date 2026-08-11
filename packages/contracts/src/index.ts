@@ -1704,3 +1704,58 @@ export type ConnectorActivityTriggerDescriptor = z.infer<typeof ConnectorActivit
 /** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */
 export type ConnectorManifestInput = z.input<typeof ConnectorManifestSchema>;
 export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;
+
+/**
+ * The machine-readable half of a thrown tool failure, reduced to what is safe
+ * to show a model.
+ *
+ * A tool that throws otherwise reaches the model as a single string, so any
+ * remediation it attached — which family of identifier was expected, that a
+ * connection needs reconnecting, what values were available — is lost exactly
+ * where the caller needs it to recover. Reading the shape here rather than
+ * importing a connector's error class keeps the harness free of a dependency on
+ * any one provider package.
+ *
+ * The forwarded keys are an allowlist rather than a convention each adapter is
+ * trusted to follow, because several already attach whole parsed provider error
+ * bodies as their details. Forwarding those would put up to a quarter-megabyte
+ * of raw provider JSON into the transcript, and from there into the inference
+ * payload logs, on every failed call.
+ */
+const FORWARDED_FAILURE_DETAIL_KEYS = [
+  "reason",
+  "field",
+  "expected",
+  "available",
+  "reconnectRequired",
+  "retryAfterMs",
+] as const;
+
+const MAXIMUM_FAILURE_DETAIL_BYTES = 2_000;
+
+export interface StructuredFailureDetail {
+  code: string;
+  details?: Record<string, unknown>;
+}
+
+export function readStructuredFailure(error: unknown): StructuredFailureDetail | null {
+  if (!error || typeof error !== "object") return null;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== "string" || !code) return null;
+  const raw = (error as { details?: unknown }).details;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { code };
+  const source = raw as Record<string, unknown>;
+  const details: Record<string, unknown> = {};
+  for (const key of FORWARDED_FAILURE_DETAIL_KEYS) {
+    if (!Object.hasOwn(source, key)) continue;
+    const value = source[key];
+    if (value === undefined) continue;
+    details[key] = value;
+  }
+  if (Object.keys(details).length === 0) return { code };
+  // A bound on the allowlisted values as well: `available` is a provider-shaped
+  // list, so its length is not ours to assume.
+  return JSON.stringify(details).length > MAXIMUM_FAILURE_DETAIL_BYTES
+    ? { code }
+    : { code, details };
+}
