@@ -69,11 +69,12 @@ always produces a menu immediately. In order:
    never pinned anything, and a section that is simply absent teaches them
    nothing about a feature they have not found.
 
+8. A separator, then **Open Avalon** and **Quit Avalon**.
+
 Signed out, **Suggestions** and **Pinned** are dropped whole. Neither has
 anything to say to a stranger, and the one message that state needs is already on
 the **Recent** row. Everything else renders whether or not it has content, so the
 menu has a fixed shape a person can learn.
-8. A separator, then **Open Avalon** and **Quit Avalon**.
 
 Both headers use `type: 'header'`, which macOS added in 14 and which AppKit
 styles as a real section header. `supportsSectionHeaders` reads
@@ -191,6 +192,12 @@ destination, so the hidden state is not sticky.
 - **A surface that shows suggestions reports them.** The ranking cannot tell a
   suggestion nobody wanted from one nobody was shown, so a surface that displays
   without reporting freezes its own list.
+- **Content is fetched only where a menu can be built.** Otherwise the fetch is
+  recurring API traffic and workspace titles held in memory for nobody — on every
+  non-macOS install, on every token renewal.
+- **The status item is torn down on `will-quit`, never `before-quit`.** A meeting
+  window can veto a quit, and a teardown that has already run by then leaves
+  Avalon alive with no window and no menu bar presence.
 - **The login item is read from macOS, never from a field.** It can be removed,
   added, or approved in System Settings while Avalon runs, and nothing announces
   it; `enabled()` therefore re-reads on every call.
@@ -253,7 +260,8 @@ the link there first, not a second navigation channel here.
 | Sign-out, or a suggestion started, while a refresh is in flight | The generation moves, so that answer is discarded on arrival and a caller asking again gets a new request rather than the superseded one. |
 | The login item registers but the marker fails to write | The registration is reported as it stands, not as off. The marker is retried on the next launch. |
 | The login item cannot be read | The last answer is kept rather than reported as off, which would be a claim about a system this cannot see. |
-| An impression report fails | Logged, and the set is forgotten so the next open reports it again. Nothing on screen waits on it. |
+| An impression report fails | Logged, and the set is forgotten so the next open reports it again. Nothing on screen waits on it. A 204 is a success, not a failure — `readJsonBody` is what makes that true. |
+| No status item on this platform, or the preference is off | No content is fetched at all. `clear()` still runs on sign-out, so a cache from a session where the item was on cannot outlive it. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
 | The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
 | Not macOS | No status item; `menuBarAvailable` is false and Settings omits the toggle. The preference is still stored, so the same profile on a Mac gets the choice rather than the default. |
@@ -297,9 +305,12 @@ arguments.
 
 The status item itself cannot be verified in the sandbox — see
 [`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox).
-What can be, and was: the Settings toggle in a real window, and the hidden launch,
-by starting the client with `--hidden` and confirming it has zero renderer
-targets while the main process still loads the menu's content.
+Nor can the windowless launch: it is gated on a status item being present, and
+off darwin there never is one, so `--hidden` opens a window there. What can be
+checked, and was: the two Settings toggles in a real window; that a `--hidden`
+launch still loads the menu's content in the main process; and that a deep link
+delivered to that instance opens the work stream, which is the path a **Recent**
+row takes.
 
 ## Security and trust model
 
@@ -369,6 +380,50 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 `sendDeepLink` and `activate` already do.
 
 **Not done:** a submenu for older work streams.
+
+### 2026-08-11 — Review round three: the impression report never worked
+
+**What changed:** `avalonApiRequest` decodes through `readJsonBody`, which reads
+a 204 as `null` instead of rejecting. `startSuggestion` moves the generation
+again once the POST resolves. `will-quit` replaces `before-quit` for the
+teardown. Session changes and launch fetch content only when a status item can
+exist. Two documents stopped claiming the windowless launch is checkable off
+darwin.
+
+**Why:** the impressions commit shipped inverted. `POST
+/work-opportunities/impressions` answers `c.body(null, 204)`, `response.ok` is
+true for a 204, and `response.json()` on an empty body rejects — so every open
+logged a warning about a request that had succeeded *and* cleared the dedupe key,
+which meant the once-per-set guarantee the whole commit was built around never
+held once. Five opens on the same four suggestions reported five impressions,
+over-reporting in the same direction the free-rider problem under-reported. The
+test could not see it because the fake resolved a value the endpoint cannot
+return.
+
+The other three: the generation bump before the POST cannot cover a refresh
+issued *during* it, because the service has not consumed the suggestion yet —
+that answer legitimately still carries it, and `refresh()` then hands the caller
+that stale request instead of a new one. `before-quit` fires before any window is
+asked to close, and a meeting window vetoes; the status item was already gone by
+then, with nothing to recreate it and Settings still reporting it on. And the
+content fetch had no platform gate at all.
+
+**Considered and rejected:** fixing the 204 inside `recordImpressions` by
+tolerating a `SyntaxError`. That leaves the next no-content endpoint to
+rediscover it, and it treats a decoding failure as success everywhere rather than
+where a body is genuinely absent. Also rejected: gating the fetch on `present()`
+rather than `enabled() && available()` — a status item whose creation failed
+still has the preference on and is retried next launch, and content fetched
+meanwhile is what that retry renders.
+
+**Consequences:** `readJsonBody` is where a no-content Avalon response is
+decoded; a caller that goes back to `response.json()` reintroduces this for its
+own endpoint. Anything that consumes a server-side resource has to move the
+generation *after* the server agrees, not before — the sign-out case is the
+exception precisely because the state has already changed when it fires. And the
+impressions path is still the least-observed part of this module: it has no
+end-to-end coverage, only the unit test and the decoding test that would have
+caught this one.
 
 ### 2026-08-11 — Review round two: impressions, a stale login item, and a promise the copy could not keep
 

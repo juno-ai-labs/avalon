@@ -52,6 +52,7 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import {
   definitivelyInvalidatesStoredCredential,
+  readJsonBody,
   refreshFailureIsTerminal,
   responseError,
   UnusableCredentialError,
@@ -296,8 +297,14 @@ function broadcastSessionChanged(value: WireSession | null): void {
   // The menu bar item outlives every window, so it has to be told about a
   // sign-out directly. Leaving the previous account's work-stream titles in the
   // menu would keep them readable to whoever signs in next.
-  if (exposed) void menuBarContentStore.refresh();
-  else menuBarContentStore.clear();
+  //
+  // Only the sign-out half is unconditional. This also fires on every token
+  // renewal, so fetching without a status item to fill would be recurring API
+  // traffic — and a cache of work-stream titles in memory — on every Windows and
+  // Linux install and on any Mac with the preference off. `clear()` stays
+  // ungated so a cache from a session where the item *was* on cannot outlive it.
+  if (!exposed) menuBarContentStore.clear();
+  else if (menuBarItemIsLive()) void menuBarContentStore.refresh();
   menuBarController.refresh();
 }
 
@@ -494,6 +501,20 @@ const launchAtLoginController = new LaunchAtLoginController({
   logWarning: (message, error) => logWarn('avalon', message, error),
 });
 
+/**
+ * Whether there is a menu to fill. The preference and the platform both have to
+ * agree before the main process spends a request on content nobody can see —
+ * `MenuBarController.refresh()` returns early with no tray, so fetching for one
+ * buys nothing and keeps workspace content in memory to no purpose.
+ *
+ * Deliberately `enabled() && available()` rather than `present()`: a status item
+ * whose creation failed still has the preference on and will be retried at the
+ * next launch, and content fetched meanwhile is what that retry renders.
+ */
+function menuBarItemIsLive(): boolean {
+  return menuBarController.available() && menuBarController.enabled();
+}
+
 /** A status item click does not activate Avalon the way a Dock click does, so
  * anything opened from the menu would appear behind the frontmost app. */
 function activateFromMenuBar(): void {
@@ -657,7 +678,7 @@ async function avalonApiRequest(
     response = await ask(renewed.accessToken);
   }
   if (!response.ok) throw await responseError(response);
-  return response.json();
+  return readJsonBody(response);
 }
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
@@ -1457,6 +1478,9 @@ function registerIpc(): void {
   ipcMain.handle('application-settings:set-menu-bar-enabled', async (event, rawEnabled: unknown) => {
     assertTrustedIpcSender(event);
     await menuBarController.set(rawEnabled);
+    // Nothing was fetched while the item was off, so an item just switched on
+    // would open empty until the pointer next crossed it.
+    if (menuBarItemIsLive() && inMemoryAuth) void menuBarContentStore.refresh();
     // `state()` for the same reason as the Developer preference above: reading
     // Lockdown mode's full settings can run the keystore fallback, and adding
     // or removing a status item must never cost anyone their session.
@@ -2250,7 +2274,7 @@ if (!singleInstanceLock) {
     } catch (error) {
       logWarn('avalon', 'could not add Avalon to the menu bar', error);
     }
-    if (launchAuth) void menuBarContentStore.refresh();
+    if (launchAuth && menuBarItemIsLive()) void menuBarContentStore.refresh();
     // Hidden only into somewhere. The menu bar item is what a login launch
     // leaves a person, and it is off whenever they turned it off and absent
     // whenever creating it failed — either way, opening no window would start
@@ -2282,6 +2306,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Take the status item down with the app rather than leaving it in the menu bar
-// until the process finishes exiting.
-app.on('before-quit', () => menuBarController.destroy());
+// `will-quit`, not `before-quit`: the latter fires before any window is asked to
+// close, and a meeting window refuses. A quit vetoed that way would leave Avalon
+// running with the status item already destroyed and nothing that recreates it —
+// no window and no menu bar presence, which is the state the `present()` check
+// on launch exists to prevent. This fires only once the quit is going through.
+app.on('will-quit', () => menuBarController.destroy());
