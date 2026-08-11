@@ -214,6 +214,7 @@ export interface MentionIdentity {
 }
 
 const wireWorkstreamPageSchema = CursorPageSchema(WireWorkstreamSchema);
+const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
 const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
   newerCursor: z.string().nullable().default(null),
 });
@@ -336,6 +337,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
     ...(workstream.plannedFor ? { plannedFor: workstream.plannedFor } : {}),
     scope: workstream.scope,
     ...(workstream.systemKind ? { systemKind: workstream.systemKind } : {}),
+    pinPosition: workstream.pinPosition,
     preview: workstream.objective,
   };
 }
@@ -966,6 +968,7 @@ export class AvalonApi {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      pinPosition: null,
     };
   }
 
@@ -1127,6 +1130,45 @@ export class AvalonApi {
       schema: WireWorkstreamSchema,
     });
     return mapWorkstreamSummary(workstream);
+  }
+
+  /**
+   * Pin a work stream for the signed-in person, across every device they use.
+   *
+   * All three pin calls answer with the whole pinned list in its stored order,
+   * so the caller replaces what it holds rather than reasoning about which row
+   * moved — see {@link ApiClient.reorderWorkstreamPins}.
+   */
+  async pinWorkstream(id: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'PUT');
+  }
+
+  async unpinWorkstream(id: string): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams(`/workstreams/${encodeURIComponent(id)}/pin`, 'DELETE');
+  }
+
+  /**
+   * Send the pinned list's new order after a drag.
+   *
+   * The whole arrangement travels, not the row that moved: the server writes it
+   * as dense positions, and the list it sends back is the one to render. Ids
+   * that have been unpinned elsewhere are ignored rather than refused.
+   */
+  async reorderWorkstreamPins(workstreamIds: string[]): Promise<WorkstreamSummary[]> {
+    return this.readPinnedWorkstreams('/workstreams/pins', 'PUT', { workstreamIds });
+  }
+
+  private async readPinnedWorkstreams(
+    path: string,
+    method: 'PUT' | 'DELETE',
+    body?: unknown,
+  ): Promise<WorkstreamSummary[]> {
+    const page = await this.request(path, {
+      method,
+      ...(body === undefined ? {} : { body }),
+      schema: wirePinnedWorkstreamsSchema,
+    });
+    return page.items.map(mapWorkstreamSummary);
   }
 
   async createWorkstream(input: {
