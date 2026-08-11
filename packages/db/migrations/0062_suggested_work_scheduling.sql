@@ -28,6 +28,21 @@ ALTER TABLE suggested_work_sets ADD COLUMN due_at TEXT;
 -- in particular has changed.
 ALTER TABLE suggested_work_sets ADD COLUMN last_ranked_at TEXT;
 
+-- Counts requests for a ranking, and is the identity of the one outstanding.
+--
+-- A ranking takes minutes, and anything can ask for another while it runs. The
+-- scheduler must answer only the request it claimed and leave a later one
+-- standing, which means recognising "the request now outstanding is not the one
+-- I picked up". `due_at` cannot carry that: it is a *when*, and it is combined
+-- with `MIN` so that asking again never delays a ranking already waiting — so a
+-- request raised mid-run against an earlier due time leaves the column
+-- byte-identical and is indistinguishable from no request at all.
+--
+-- A counter has no such collision. Every ask increments it, the scheduler
+-- records the value it claimed, and clearing is conditional on that value still
+-- being current.
+ALTER TABLE suggested_work_sets ADD COLUMN request_seq INTEGER NOT NULL DEFAULT 0;
+
 -- Partial, because a set that is not due is not a scheduling candidate and the
 -- steady state is that almost none of them are. This keeps the scheduler's scan
 -- proportional to the work outstanding rather than to the number of members.
@@ -57,7 +72,8 @@ CREATE INDEX workspace_members_last_seen_idx
 -- the code no longer consults, and nothing else will ever come along to mark it
 -- due. Making them all due now is what repairs them, on the first scheduler pass
 -- after deploy, in the scheduler's own priority order and inside its own budget.
-UPDATE suggested_work_sets SET due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+UPDATE suggested_work_sets
+   SET due_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), request_seq = request_seq + 1;
 
 -- Not dropped here, and not written from this migration forward:
 -- `workspace_opportunity_versions` and `suggested_work_sets.workspace_version`.

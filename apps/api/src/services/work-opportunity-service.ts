@@ -47,9 +47,26 @@ const ACTIVE_MEMBER_WINDOW_MS = 15 * 60_000;
 const DORMANT_MEMBER_AFTER_MS = 7 * 24 * 60 * 60_000;
 // Wall-clock a single member's tournament may spend before it settles for the
 // finalists it already has. The point is that it always writes something.
-const RANK_BUDGET_MS = 4 * 60_000;
-const MAX_RANKINGS_PER_TICK = 3;
+const RANK_BUDGET_MS = 2 * 60_000;
+// Wall-clock the whole pass may spend, which is the number that actually has to
+// be safe: this runs inside the scheduled handler's `waitUntil`, on a five-minute
+// cron, beside eleven other jobs and under a fifteen-minute ceiling. Bounding
+// only the per-member budget left the pass costing `MAX_RANKINGS_PER_TICK` times
+// that in sequence.
+const SCHEDULER_BUDGET_MS = 4 * 60_000;
+// With the pass bounded by time, this is a ceiling rather than the throughput
+// limit it used to be — and it needed to stop being the limit, because it is
+// region-wide across every workspace while the hourly impression trigger alone
+// wants one ranking per active member per hour.
+const MAX_RANKINGS_PER_TICK = 6;
+// A request waiting longer than this is treated as urgently as a recently-seen
+// member's, so the less-active tier cannot be starved indefinitely by a handful
+// of members who are always due.
+const RANK_STARVATION_MS = 30 * 60_000;
 const RANK_LEASE_MS = 10 * 60_000;
+// Marking members due is one statement each, so the list is chunked at the size
+// the rest of the repository treats as a safe D1 batch.
+const MAX_DUE_BATCH_STATEMENTS = 75;
 
 const UserLinkDecisionSchema = z.object({
   userId: z.string().uuid().nullable(),
@@ -712,6 +729,11 @@ async function loadAdmissionContext(env: Env, window: WindowRow) {
  * that admits several opportunities in a row coalesces into one ranking, and an
  * existing earlier due time always wins — being asked again must never delay a
  * ranking that was already waiting.
+ *
+ * `request_seq` is what makes the ask *visible* when `MIN` keeps the existing
+ * due time. Without it, asking during a running tournament left the row
+ * byte-identical, and the scheduler cleared the request on the way out as though
+ * it had answered this one too.
  */
 async function markSuggestedWorkDue(
   env: Env,
@@ -723,14 +745,21 @@ async function markSuggestedWorkDue(
   if (targets.length === 0) return;
   const at = nowIso();
   const dueAt = new Date(Date.now() + delayMs).toISOString();
-  await env.DB.batch(targets.map((userId) => env.DB.prepare(
+  const statements = targets.map((userId) => env.DB.prepare(
     `INSERT INTO suggested_work_sets
-     (workspace_id, user_id, candidate_fingerprint, due_at, created_at, updated_at)
-     VALUES (?, ?, '', ?, ?, ?)
+     (workspace_id, user_id, candidate_fingerprint, due_at, request_seq, created_at, updated_at)
+     VALUES (?, ?, '', ?, 1, ?, ?)
      ON CONFLICT(workspace_id, user_id) DO UPDATE SET
       due_at = MIN(COALESCE(suggested_work_sets.due_at, excluded.due_at), excluded.due_at),
+      request_seq = suggested_work_sets.request_seq + 1,
       updated_at = excluded.updated_at`,
-  ).bind(workspaceId, userId, dueAt, at, at)));
+  ).bind(workspaceId, userId, dueAt, at, at));
+  // One statement per member, so the list is chunked rather than handed to D1
+  // whole: an opportunity naming many people, or a window whose decisions name
+  // different ones, produces a batch far larger than anything else here sends.
+  for (let index = 0; index < statements.length; index += MAX_DUE_BATCH_STATEMENTS) {
+    await env.DB.batch(statements.slice(index, index + MAX_DUE_BATCH_STATEMENTS));
+  }
 }
 
 /**
@@ -750,11 +779,12 @@ async function markWorkspaceSuggestedWorkDue(
   const dueAt = new Date(Date.now() + delayMs).toISOString();
   await env.DB.prepare(
     `INSERT INTO suggested_work_sets
-     (workspace_id, user_id, candidate_fingerprint, due_at, created_at, updated_at)
-     SELECT workspace_id, user_id, '', ?, ?, ? FROM workspace_members
+     (workspace_id, user_id, candidate_fingerprint, due_at, request_seq, created_at, updated_at)
+     SELECT workspace_id, user_id, '', ?, 1, ?, ? FROM workspace_members
       WHERE workspace_id = ? AND status = 'active'
      ON CONFLICT(workspace_id, user_id) DO UPDATE SET
       due_at = MIN(COALESCE(suggested_work_sets.due_at, excluded.due_at), excluded.due_at),
+      request_seq = suggested_work_sets.request_seq + 1,
       updated_at = excluded.updated_at`,
   ).bind(dueAt, at, at, workspaceId).run();
 }
@@ -1490,8 +1520,9 @@ export async function rankWorkOpportunitiesForUser(
       roundNumber += 1;
     }
     if (pool.length === 0) {
-      selectedIds = [];
-      reasoning = [...rationales, "Final ranking omitted every candidate."].join("\n\n").slice(0, 20_000);
+      selectedIds = recencyOrder;
+      reasoning = [...rationales, "Final ranking omitted every candidate; kept the most recently revised instead."]
+        .join("\n\n").slice(0, 20_000);
     } else if (Date.now() >= deadline) {
       // Out of budget with finalists in hand. Their tournament order is already
       // a judgement about what matters; shipping it beats spending another call
@@ -1507,9 +1538,17 @@ export async function rankWorkOpportunitiesForUser(
       reasoning = [...rationales, `Final ranking:\n${finalResult.reasoning}`].join("\n\n").slice(0, 20_000);
     }
   }
-  await storeRankingSet(env, workspaceId, userId, fingerprint, selectedIds, reasoning, "ready");
+  // Never store an empty ranking while candidates exist. The model may return
+  // nothing usable — `orderedOpportunityIds` has a maximum and no minimum, and
+  // ids it invents are filtered out — and storing that against the real
+  // fingerprint produces a set the read path calls unranked and the scheduler
+  // then declines to re-rank, because the fingerprint says it is current. That
+  // is a loop with no exit: every read asks, every pass burns a candidate load
+  // and a ranking slot to change nothing, and it never self-heals.
+  const settled = selectedIds.length > 0 ? selectedIds : recencyOrder;
+  await storeRankingSet(env, workspaceId, userId, fingerprint, settled, reasoning, "ready");
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate.public]));
-  return selectedIds.map((id) => byId.get(id)).filter((item): item is WorkOpportunity => Boolean(item)).slice(0, 4);
+  return settled.map((id) => byId.get(id)).filter((item): item is WorkOpportunity => Boolean(item)).slice(0, 4);
 }
 
 async function storeRankingSet(
@@ -1551,33 +1590,35 @@ async function storeRankingSet(
  * Release the claim, and answer the request only if it is the one that was
  * claimed.
  *
- * `due_at` is compared rather than cleared outright because a dismissal, a
- * start, or an admission arriving during a four-minute tournament sets a *new*
- * request while that tournament runs. Clearing unconditionally discarded it and
- * left the member on a set that was already out of date the moment it was
- * written.
+ * The request is identified by `request_seq`, not by its due time. A dismissal,
+ * a start, or an admission arriving during a four-minute tournament raises a new
+ * request, and `markSuggestedWorkDue` combines due times with `MIN` so that a
+ * request raised against an already-earlier due time does not move the column at
+ * all. Comparing due times therefore could not see it, and the completed run
+ * cleared it on the way out — the member kept a set that was out of date before
+ * it was written, until something else happened to ask again.
  */
 async function settleRankingRequest(
   env: Env,
   workspaceId: string,
   userId: string,
   leaseId: string,
-  claimedDueAt: string,
+  claimedSeq: number,
 ): Promise<void> {
   const at = nowIso();
   await env.DB.prepare(
     `UPDATE suggested_work_sets
         SET lease_id = NULL, lease_expires_at = NULL, last_ranked_at = ?,
-            due_at = CASE WHEN due_at = ? THEN NULL ELSE due_at END,
+            due_at = CASE WHEN request_seq = ? THEN NULL ELSE due_at END,
             updated_at = ?
       WHERE workspace_id = ? AND user_id = ? AND lease_id = ?`,
-  ).bind(at, claimedDueAt, at, workspaceId, userId, leaseId).run();
+  ).bind(at, claimedSeq, at, workspaceId, userId, leaseId).run();
 }
 
 interface DueRankingRow {
   workspace_id: string;
   user_id: string;
-  due_at: string;
+  request_seq: number;
 }
 
 /**
@@ -1596,46 +1637,58 @@ interface DueRankingRow {
  */
 export async function processDueSuggestedWork(env: Env): Promise<void> {
   const at = nowIso();
+  const deadline = Date.now() + SCHEDULER_BUDGET_MS;
   const activeSince = new Date(Date.now() - ACTIVE_MEMBER_WINDOW_MS).toISOString();
   const dormantBefore = new Date(Date.now() - DORMANT_MEMBER_AFTER_MS).toISOString();
+  const starvedBefore = new Date(Date.now() - RANK_STARVATION_MS).toISOString();
   const due = await env.DB.prepare(
-    `SELECT s.workspace_id, s.user_id, s.due_at
+    `SELECT s.workspace_id, s.user_id, s.request_seq
        FROM suggested_work_sets s
        JOIN workspace_members m ON m.workspace_id = s.workspace_id AND m.user_id = s.user_id
       WHERE s.due_at IS NOT NULL AND s.due_at <= ?1
         AND m.status = 'active'
         AND m.last_seen_at IS NOT NULL AND m.last_seen_at > ?2
         AND (s.lease_expires_at IS NULL OR s.lease_expires_at < ?1)
-      ORDER BY (m.last_seen_at > ?3) DESC, s.due_at
-      LIMIT ?4`,
-  ).bind(at, dormantBefore, activeSince, MAX_RANKINGS_PER_TICK).all<DueRankingRow>();
+      ORDER BY (m.last_seen_at > ?3 OR s.due_at <= ?4) DESC, s.due_at
+      LIMIT ?5`,
+  ).bind(at, dormantBefore, activeSince, starvedBefore, MAX_RANKINGS_PER_TICK).all<DueRankingRow>();
 
   for (const row of due.results) {
+    // Stop claiming rather than run the pass past its budget. Whatever is left
+    // stays due and is picked up by the next tick in the same priority order.
+    if (Date.now() >= deadline) break;
     const leaseId = newId();
     // The lease alone claims the work. Overwriting `status` here would destroy
     // the record of how the last ranking ended, which is exactly what the
     // fingerprint cache consults to decide whether this one can be skipped — so
     // claiming a member would have guaranteed a full tournament for them every
     // time, which is the cost this whole change exists to control.
+    // Claiming is conditional on the request still being the one that was
+    // selected and still being due: both can move in the gap between the two
+    // statements, and ranking against a request that has already been withdrawn
+    // or rescheduled spends a tournament to answer nothing.
     const claimed = await env.DB.prepare(
       `UPDATE suggested_work_sets SET lease_id = ?, lease_expires_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND user_id = ? AND due_at IS NOT NULL
+        WHERE workspace_id = ? AND user_id = ? AND request_seq = ?
+          AND due_at IS NOT NULL AND due_at <= ?
           AND (lease_expires_at IS NULL OR lease_expires_at < ?)`,
     ).bind(
       leaseId, new Date(Date.now() + RANK_LEASE_MS).toISOString(), nowIso(),
-      row.workspace_id, row.user_id, nowIso(),
+      row.workspace_id, row.user_id, row.request_seq, nowIso(), nowIso(),
     ).run();
     if (Number(claimed.meta.changes ?? 0) !== 1) continue;
     try {
       await rankWorkOpportunitiesForUser(env, row.workspace_id, row.user_id);
-      // Answers the request this pass claimed, and only that one. A request
-      // raised while the tournament ran survives and is served on a later pass.
-      await settleRankingRequest(env, row.workspace_id, row.user_id, leaseId, row.due_at);
     } catch (error) {
       // The lease is released rather than left to expire, and the request is
       // pushed out instead of dropped: a member whose ranking fails should get
       // another attempt on a later pass, not be stuck behind a ten-minute lease
       // or silently lose their suggestions.
+      //
+      // The retry delay applies only to the request that failed. A newer one
+      // raised while this was running is somebody waiting on a change they just
+      // made, and pushing it five minutes out to punish an unrelated failure is
+      // the opposite of what it deserves.
       console.warn("Suggested-work ranking failed", {
         workspace_id: row.workspace_id,
         user_id: row.user_id,
@@ -1643,11 +1696,27 @@ export async function processDueSuggestedWork(env: Env): Promise<void> {
       });
       await env.DB.prepare(
         `UPDATE suggested_work_sets SET status = 'failed', lease_id = NULL, lease_expires_at = NULL,
-         due_at = ?, updated_at = ? WHERE workspace_id = ? AND user_id = ? AND lease_id = ?`,
+         due_at = CASE WHEN request_seq = ? THEN ? ELSE due_at END, updated_at = ?
+          WHERE workspace_id = ? AND user_id = ? AND lease_id = ?`,
       ).bind(
-        new Date(Date.now() + RETRY_DELAY_MS).toISOString(), nowIso(),
+        row.request_seq, new Date(Date.now() + RETRY_DELAY_MS).toISOString(), nowIso(),
         row.workspace_id, row.user_id, leaseId,
       ).run();
+      continue;
+    }
+    // Outside the catch above: the ranking succeeded, and a settle that fails is
+    // not a ranking that failed. Recording it as one would mark a perfectly good
+    // set `failed`; leaving the lease to expire instead costs one re-rank.
+    try {
+      // Answers the request this pass claimed, and only that one. A request
+      // raised while the tournament ran survives and is served on a later pass.
+      await settleRankingRequest(env, row.workspace_id, row.user_id, leaseId, row.request_seq);
+    } catch (error) {
+      console.warn("Could not settle a suggested-work ranking request", {
+        workspace_id: row.workspace_id,
+        user_id: row.user_id,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
     }
   }
 }
@@ -1679,7 +1748,14 @@ export class WorkOpportunityService {
     ).bind(this.auth.workspaceId, this.auth.userId).first<{ opportunity_ids_json: string; due_at: string | null }>();
     const rankedIds = parseArray(stored?.opportunity_ids_json).filter((id): id is string => typeof id === "string");
     const ranked = await this.showableOpportunities(rankedIds);
-    const items = ranked.length > 0 ? ranked : await this.showableOpportunities();
+    // Topped up rather than shown short. A hole means the ranking is one or two
+    // suggestions lighter than it was, and the next scheduler pass is up to five
+    // minutes away; the inline ranking this replaced always returned four, and a
+    // home screen that quietly loses a row for minutes at a time would be a
+    // regression the member can see.
+    const filler = ranked.length < size ? await this.showableOpportunities() : [];
+    const seen = new Set(ranked.map((item) => item.id));
+    const items = [...ranked, ...filler.filter((item) => !seen.has(item.id))];
     if (!stored || stored.due_at === null) {
       // Two things are worth a ranking, and the difference between them is the
       // difference between a member who is missing suggestions and one who
@@ -1778,7 +1854,8 @@ export class WorkOpportunityService {
       // the stored suggestions are left alone, so nothing changes on screen
       // until a real ranking replaces them.
       this.env.DB.prepare(
-        `UPDATE suggested_work_sets SET due_at = COALESCE(due_at, ?), candidate_fingerprint = '', updated_at = ?
+        `UPDATE suggested_work_sets SET due_at = COALESCE(due_at, ?), candidate_fingerprint = '',
+         request_seq = request_seq + 1, updated_at = ?
          WHERE workspace_id = ? AND user_id = ? AND due_at IS NULL
            AND COALESCE(last_ranked_at, created_at) <= ?`,
       ).bind(at, at, this.auth.workspaceId, this.auth.userId, rerankBefore),
@@ -1800,7 +1877,8 @@ export class WorkOpportunityService {
       // out the debounce. The read path drops the dismissed suggestion from the
       // stored set immediately; this is what refills the space it left.
       this.env.DB.prepare(
-        `UPDATE suggested_work_sets SET due_at = ?, updated_at = ? WHERE workspace_id = ? AND user_id = ?`,
+        `UPDATE suggested_work_sets SET due_at = ?, request_seq = request_seq + 1, updated_at = ?
+         WHERE workspace_id = ? AND user_id = ?`,
       ).bind(at, at, this.auth.workspaceId, this.auth.userId),
     ]);
   }
@@ -1989,6 +2067,7 @@ export class WorkOpportunityService {
 export const __workOpportunityTesting = {
   admissionJsonSchema,
   parseAdmissionResult: (value: unknown) => AdmissionResultSchema.parse(value),
+  markSuggestedWorkDue,
   markWorkspaceSuggestedWorkDue,
   packBatches,
   mapConcurrent,
