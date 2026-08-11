@@ -49,13 +49,25 @@ always produces a menu immediately. In order:
 1. **New Meeting/Note** — opens a meeting-notes window.
 2. **New Work Stream** — `avalon://workstreams/new`.
 3. **New Automation** — `avalon://automations/new`.
-4. One row per suggested work stream, from `GET /work-opportunities`.
-5. A separator.
-6. The five most recent work streams, from `GET /workstreams?limit=5`, which the
-   API already orders by `last_activity_at` descending. When there are none, one
-   disabled row says whether that is because there is nothing to show or because
-   nobody is signed in.
+4. A separator.
+5. A **Suggestions** header, one row per suggested work stream from
+   `GET /work-opportunities`, then another separator. The whole group is skipped
+   when Avalon is suggesting nothing — header and rules included — because two
+   rules with no group between them read as a menu that failed to load rather
+   than one with nothing to say.
+6. A **Recent** header, then the five most recent work streams from
+   `GET /workstreams?limit=5`, which the API already orders by
+   `last_activity_at` descending. When there are none, one disabled row says
+   whether that is because there is nothing to show or because nobody is signed
+   in; the header stays, which is what makes that row read as an answer rather
+   than a stray disabled item.
 7. A separator, then **Open Avalon** and **Quit Avalon**.
+
+Both headers use `type: 'header'`, which macOS added in 14 and which AppKit
+styles as a real section header. `supportsSectionHeaders` reads
+`process.getSystemVersion()` and falls back to a disabled row below that —
+unclickable either way, because a header that could be activated is a menu row
+that does nothing.
 
 Both list sections carry labels somebody's model wrote, and both contracts allow
 180 characters. A macOS menu is as wide as its widest row, so `menuBarLabel`
@@ -181,6 +193,8 @@ the link there first, not a second navigation channel here.
 | Both halves fail | The last good menu stays. A warning is logged once per attempt. |
 | Signed out | All three fixed actions remain; the recent section becomes one disabled **Sign in to Avalon** row. Content refreshes are skipped entirely rather than failing twice per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
+| Nothing to suggest | The suggestion group, its header, and both of its rules are omitted, leaving one rule between the fixed actions and **Recent**. |
+| macOS 13 or older | Both headers fall back to disabled rows. Everything else is unchanged. |
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
 | The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
@@ -285,9 +299,46 @@ load-bearing and checked by the package verifier: the `Template` suffix and the
 that assumes `mainWindow` exists after startup has to keep handling `null`, which
 `sendDeepLink` and `activate` already do.
 
-**Not done:** a **Recent** heading over the lower group, and a submenu for older
-work streams. The product contract asked for a rule and five rows, and both are
-additive.
+**Not done:** a submenu for older work streams.
+
+### 2026-08-11 — Both lists get a section header
+
+**What changed:** A **Suggestions** header over the suggestion rows and a
+**Recent** header over the recent work streams, drawn with `type: 'header'`.
+Below macOS 14, which has no such item, they fall back to disabled rows.
+
+**Why:** With a rule but no label, neither group said what it was — a suggested
+prompt and a work-stream title are both one line of sentence case, so the lower
+half of the menu read as one undifferentiated list of things that already exist.
+
+**Considered and rejected:** disabled rows everywhere, skipping the version
+check. They are visually close and one fewer branch, but on the macOS this ships
+to they are demonstrably wrong: AppKit gives a real section header its own type
+scale and spacing, and the menu is the one surface here people compare directly
+against the system's own extras.
+
+**Consequences:** `sectionHeaders` is resolved once at construction from
+`process.getSystemVersion()` rather than per rebuild, so it will not follow a
+macOS upgrade until Avalon restarts — acceptable, since the upgrade restarts the
+machine anyway. The **Recent** header is deliberately kept over the empty state;
+a future change that hides it there also has to say why the row below it is not a
+stray.
+
+### 2026-08-11 — The suggestions get a group of their own
+
+**What changed:** A separator after **New Automation**, so what Avalon suggests
+is its own group between what a person can always start and what they have
+already started. With no suggestions the group and both its rules collapse to the
+single rule that was there before.
+
+**Why:** The three fixed actions and the suggestion rows ran together as one
+block, which read as though the suggestions were more fixed actions rather than
+something Avalon proposed today.
+
+**Consequences:** The menu now has a variable number of separators. Anything
+adding a group here has to collapse its own rules when it is empty — the rule
+belongs to the group, not to the position — and a test asserts no two rules ever
+land next to each other for any content.
 
 ### 2026-08-11 — New Work Stream returns to the menu; the login item moves to Settings
 

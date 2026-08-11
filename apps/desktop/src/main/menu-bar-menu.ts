@@ -33,7 +33,29 @@ export interface MenuBarMenuOptions {
   readonly appName: string;
   readonly content: MenuBarContent;
   readonly signedIn: boolean;
+  /** Whether this macOS draws real section headers. See
+   * {@link supportsSectionHeaders}. */
+  readonly sectionHeaders: boolean;
   readonly actions: MenuBarActions;
+}
+
+/**
+ * Whether `type: 'header'` is available, which macOS added in 14. Below that
+ * Electron has no section-header item at all, so the label is drawn as a
+ * disabled row — which is close to what a header looks like, and much closer
+ * than the alternative of leaving the groups unlabelled.
+ *
+ * Takes the version string rather than reading it, both so the fallback is
+ * testable and because `process.getSystemVersion` exists only in Electron's
+ * main process.
+ */
+export function supportsSectionHeaders(systemVersion: string): boolean {
+  const major = Number.parseInt(systemVersion.split('.')[0] ?? '', 10);
+  return Number.isFinite(major) && major >= 14;
+}
+
+function sectionHeader(label: string, supported: boolean): MenuItemConstructorOptions {
+  return supported ? { label, type: 'header' } : { label, enabled: false };
 }
 
 /** How many recent work streams the menu shows, per the product contract. */
@@ -82,10 +104,11 @@ export function menuBarLabel(rawLabel: string): string {
  * mapping from content to menu is testable without a display server.
  *
  * The order is the product contract: the three things a person can always
- * start, then whatever Avalon is currently suggesting, then a rule and the five
- * most recent work streams. The trailing group is not part of that contract but
- * is what makes the item usable at all — Avalon can be launched hidden at login,
- * and then this menu is the only way to open a window or quit.
+ * start, then a rule, then **Suggestions** with whatever Avalon is currently
+ * suggesting, then a rule and **Recent** with the five most recent work streams.
+ * The trailing group is not part of that contract but is what makes the item
+ * usable at all — Avalon can be launched hidden at login, and then this menu is
+ * the only way to open a window or quit.
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
   const { actions, content } = options;
@@ -95,15 +118,27 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     { label: 'New Automation', click: actions.newAutomation },
   ];
 
-  for (const suggestion of content.suggestions) {
-    template.push({
-      label: menuBarLabel(suggestion.label),
-      click: () => actions.startSuggestion(suggestion),
-    });
-  }
-
   template.push({ type: 'separator' });
 
+  // The suggestions sit in a group of their own, between what a person can
+  // always start and what they have already started. Skipped entirely — header
+  // and rule included — when Avalon is suggesting nothing, because the
+  // alternative is two rules against each other with no group between them.
+  if (content.suggestions.length > 0) {
+    template.push(sectionHeader('Suggestions', options.sectionHeaders));
+    for (const suggestion of content.suggestions) {
+      template.push({
+        label: menuBarLabel(suggestion.label),
+        click: () => actions.startSuggestion(suggestion),
+      });
+    }
+    template.push({ type: 'separator' });
+  }
+
+  // The Recent header stays even with nothing under it. The row below says why
+  // the group is empty, and a header is what makes that row read as an answer
+  // rather than as a stray disabled item.
+  template.push(sectionHeader('Recent', options.sectionHeaders));
   const recents = content.recents.slice(0, MENU_BAR_RECENT_LIMIT);
   if (recents.length > 0) {
     for (const workstream of recents) {

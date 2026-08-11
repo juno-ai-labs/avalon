@@ -76,7 +76,7 @@ import { LaunchAtLoginController, launchedAtLogin } from './launch-at-login';
 import { LockdownModeController } from './lockdown-mode';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
 import { MenuBarContentStore } from './menu-bar-content';
-import type { MenuBarSuggestion } from './menu-bar-menu';
+import { supportsSectionHeaders, type MenuBarSuggestion } from './menu-bar-menu';
 import {
   allowsTrustedAudioCapture,
 } from './media-permission';
@@ -527,6 +527,7 @@ const menuBarController = new MenuBarController({
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
   signedIn: () => Boolean(inMemoryAuth),
+  sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     newMeetingNote: () => {
       activateFromMenuBar();

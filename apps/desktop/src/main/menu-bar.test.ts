@@ -42,6 +42,7 @@ function harness(options: {
     createTray,
     content: () => options.content ?? emptyMenuBarContent,
     signedIn: () => true,
+    sectionHeaders: true,
     actions: noopActions(),
     readSettings: () => Promise.resolve(settings),
     writeSettings: (patch) => {
