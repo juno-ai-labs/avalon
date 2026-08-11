@@ -33,7 +33,9 @@ import {
   resolveElicitationMessages,
   type ElicitationAnswer,
 } from '../lib/elicitation';
+import { newAutomationDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
+import { useDraftText } from '../lib/use-draft-text';
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -480,7 +482,8 @@ export function NewAutomationScreen(): React.JSX.Element {
   const queryClient = useQueryClient();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [input, setInput] = useState('');
+  const draftKey = newAutomationDraftKey(session?.workspace?.id ?? 'pending');
+  const { text: input, setText: setInput } = useDraftText(draftKey);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
@@ -498,7 +501,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
-  const attachmentDraft = useFileAttachments(api);
+  const attachmentDraft = useFileAttachments(api, draftKey);
   // This composer does not autofocus either, so a paste landing on the document
   // reaches the draft rather than going nowhere.
   useWindowFilePaste(attachmentDraft.addFiles);

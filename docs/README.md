@@ -33,6 +33,7 @@ update it in the same change.
 | [`DATA_MODEL.md`](DATA_MODEL.md) | Identity, tenancy, and the D1 schema — the checked-in migrations are authoritative. Read before adding a table, column, or migration. |
 | [`REGIONALIZATION.md`](REGIONALIZATION.md) | The Global/EU boundary: single identity endpoint, the Global control plane's membership and invitation discovery, immutable workspace region. Read before touching anything cross-region. |
 | [`SECURITY.md`](SECURITY.md) | Trust boundaries — renderer isolation, contextIsolation and sandboxing, CSP, validated IPC, what is treated as untrusted. Read before changing any of those. |
+| [`composer-drafts.md`](composer-drafts.md) | The on-device cache behind every composer: which surfaces keep a draft, how text and attachment bytes are stored and keyed, when a draft expires or is cleared, and how one is restored. Read before changing a composer, the attachment hook, or the draft cache. |
 | [`ASSUMPTIONS.md`](ASSUMPTIONS.md) | Low-level ambiguities resolved without changing the product contract. Add to it when you make such a call. |
 | [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) | The phased build checklist and its current state. |
 

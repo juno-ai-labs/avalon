@@ -1,9 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
+import { clearAllDrafts } from '../lib/draft-cache';
 import { NewWorkstreamScreen } from './new-workstream';
 
 const api = vi.hoisted(() => ({
@@ -73,8 +74,9 @@ function renderScreen(): QueryClient {
 }
 
 describe('New work-stream home', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    await clearAllDrafts();
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -254,4 +256,63 @@ describe('New work-stream home', () => {
     expect(await screen.findByText('offline')).toBeVisible();
   });
 
+  it('brings back the drafted message and its attachment after the screen is reopened', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Draft the launch brief' } });
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
+    cleanup();
+
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' }))
+      .toHaveValue('Draft the launch brief'));
+    expect(await screen.findByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled();
+  });
+
+  it('forgets the cached draft once the composer is emptied', async () => {
+    renderScreen();
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Draft the launch brief' } });
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }));
+    fireEvent.change(composer, { target: { value: '' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create work stream' })).toBeDisabled());
+    cleanup();
+
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Opening work-stream message' })).toHaveValue(''));
+    expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).not.toBeInTheDocument();
+  });
+
+  it('keeps taking attachments after one is already pending, including from a drop', async () => {
+    renderScreen();
+    await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(['first'], 'first.txt', { type: 'text/plain' })] },
+    });
+    await screen.findByRole('button', { name: 'Remove first.txt' });
+
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(['second'], 'second.txt', { type: 'text/plain' })] },
+    });
+    await screen.findByRole('button', { name: 'Remove second.txt' });
+    fireEvent.drop(document.querySelector('.workstream-composer')!, {
+      dataTransfer: { files: [new File(['third'], 'third.txt', { type: 'text/plain' })], types: ['Files'] },
+    });
+
+    expect(await screen.findByRole('button', { name: 'Remove third.txt' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove first.txt' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove second.txt' })).toBeInTheDocument();
+  });
 });

@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { IdSchema } from '@avalon/contracts';
 import type { DesktopSession, RuntimeConfig } from '../../common/desktop';
 import { AvalonApi } from './api';
+import { clearAllDrafts } from './draft-cache';
 import {
   readDevicePreferences,
   setDeviceSelectedRegion,
@@ -261,6 +262,9 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       setDeviceSelectedRegion('global');
       setRegion('global');
       queryClient.clear();
+      // Drafted text and cached attachment bytes are workspace content; a
+      // signed-out device keeps none of it.
+      void clearAllDrafts();
     }
   }, [bridge, queryClient]);
 
@@ -275,6 +279,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     setDeviceSelectedRegion('global');
     setRegion('global');
     queryClient.clear();
+    void clearAllDrafts();
   }, [bridge, queryClient]);
 
   const selectRegion = useCallback((nextRegion: Region) => {
