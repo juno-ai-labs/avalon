@@ -109,7 +109,12 @@ untrusted model or provider payloads, or secrets placement. See docs/SECURITY.md
 
 ## Related or new documentation
 
+A PR that creates or substantially changes an architecture or large module also
+carries that module's document in docs/ and a new entry in its Changelog saying
+why the change was made. See docs/module-documents.md.
+
 - <the docs/ files added or updated in this change>
+- <the module document whose Changelog gained an entry>
 
 ## Reviewer notes
 
