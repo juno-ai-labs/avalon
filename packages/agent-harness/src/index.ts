@@ -23,7 +23,7 @@ import {
 import { toolActivityName } from "./tool-activity";
 
 export * from "./prompts";
-export { toolActivityName, type ToolActivityStatus } from "./tool-activity";
+export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export { BUILT_IN_SKILLS, DEEP_RESEARCH_SKILL } from "./built-in-skills";
 export {
   AVALON_SKILLS_PLUGIN_ID,
@@ -1087,7 +1087,7 @@ function automationDiscoveryActivityName(
     return toolActivityName({ toolName, status });
   }
   const names = automationPluginNames(plugins);
-  if (toolName === "automation_plugins_search") {
+  if (toolName === "automation_plugins_search" || toolName === "search_plugins") {
     if (status === "completed") return plugins.length ? `Found ${names}` : "Searched connected plugins";
     return `Searching ${names}`;
   }
@@ -1098,11 +1098,7 @@ function automationDiscoveryActivityName(
   if (toolName === "automation_plugins_list" || toolName === "list_plugins") {
     return status === "completed" ? `Reviewed ${names}` : `Reviewing ${names}`;
   }
-  return toolActivityName({
-    toolName,
-    status,
-    pluginDisplayName: plugins[0]?.displayName ?? null,
-  });
+  return toolActivityName({ toolName, status, plugin: plugins[0] ?? null });
 }
 
 export async function compileAutomation(input: {
