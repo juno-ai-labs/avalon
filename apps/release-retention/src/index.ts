@@ -1,3 +1,4 @@
+import { logEvent } from "./logger";
 import { runRetention } from "./retention";
 import type { RetentionBindings } from "./retention";
 
@@ -64,13 +65,13 @@ export default {
     const localHour = requiredInteger(env.RETENTION_LOCAL_HOUR, "RETENTION_LOCAL_HOUR", 0);
     if (localHour > 23) throw new Error("RETENTION_LOCAL_HOUR must not exceed 23");
     if (!shouldRunAtLocalHour(controller.scheduledTime, env.RETENTION_TIME_ZONE, localHour)) {
-      console.log(JSON.stringify({
+      logEvent("info", "desktop_release_retention_skipped", {
+        message: "desktop_release_retention_skipped not_target_local_hour",
         cron: controller.cron,
-        event: "desktop_release_retention_skipped",
         reason: "not_target_local_hour",
-        scheduledTime: new Date(controller.scheduledTime).toISOString(),
-        timeZone: env.RETENTION_TIME_ZONE,
-      }));
+        scheduled_time: new Date(controller.scheduledTime).toISOString(),
+        time_zone: env.RETENTION_TIME_ZONE,
+      });
       return;
     }
 
@@ -78,12 +79,13 @@ export default {
       dryRun: env.RETENTION_DRY_RUN === "true",
       keepCount: requiredInteger(env.RETENTION_KEEP_COUNT, "RETENTION_KEEP_COUNT", 1),
     });
-    console.log(JSON.stringify({
+    logEvent("info", "desktop_release_retention_completed", {
+      message: `desktop_release_retention_completed ${report.status}`
+        + ` archived=${report.archivedObjectCount} deleted=${report.deletedObjectCount}`,
       cron: controller.cron,
-      event: "desktop_release_retention_completed",
       report,
-      scheduledTime: new Date(controller.scheduledTime).toISOString(),
-      timeZone: env.RETENTION_TIME_ZONE,
-    }));
+      scheduled_time: new Date(controller.scheduledTime).toISOString(),
+      time_zone: env.RETENTION_TIME_ZONE,
+    });
   },
 } satisfies ExportedHandler<Env>;

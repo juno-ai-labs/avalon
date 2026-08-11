@@ -388,6 +388,47 @@ Cloudflare can terminate long-lived connections during network deployments, so r
 
 ## Observability views and retention
 
+### Log shape
+
+`no-console` is an error across `apps/api/src`, `apps/release-retention/src`,
+`apps/site/src`, and `apps/desktop/src`. Every diagnostic goes through a logger
+instead:
+
+| Code | Logger | Call |
+| --- | --- | --- |
+| API Worker, inside a request | `apps/api/src/observability/logger.ts` | `logEvent(c, level, event, fields)` — adds `request_id` and `workspace_id` |
+| API Worker, everywhere else | same | `logInfo`/`logWarn`/`logError(env, event, fields)` |
+| Retention Worker | `apps/release-retention/src/logger.ts` | `logEvent(level, event, fields)` |
+| Desktop client | `apps/desktop/src/common/logger.ts` | `logWarn`/`logError(scope, message, …detail)` |
+
+`apps/site` is the fourth Worker and appears in no row: it serves static assets
+and logs nothing, so it has no logger. It keeps Workers Logs enabled without a
+head sampling rate and without traces; give it a logger of its own before adding
+the first diagnostic there, rather than reaching for `console`.
+
+The two Workers emit one object per `console` call, which is what Workers Logs
+wants: it indexes the object's properties as queryable fields and renders its
+`message` property as the row summary in the log list, so an entry needs both.
+
+- **Never `JSON.stringify` an entry.** A serialized entry arrives as one opaque
+  string, and no saved view below can filter it.
+- **Never log a bare object either.** Without `message`, the row lists as a
+  blank line and has to be expanded before it identifies itself. The API logger
+  derives one from `event` plus whichever of `method`, `path`, `status`, `code`,
+  and `duration_ms` the entry carries — `http_request GET /notes 200 96ms` — and
+  a caller may pass its own `message` instead.
+- Keep the summary a restatement of indexed fields. Filter on the fields, not on
+  message text; anything only the message says is unqueryable. `message` is
+  therefore reserved: a field that holds an opaque provider string is `detail`.
+- Name the event, not the sentence. `event` is snake_case and stable, because
+  the saved views below filter on it; the prose belongs in the field values.
+- The logger already records `region`, `app_version`, and `build_sha`. A field
+  named `region` would overwrite the Worker's own, so a different region — an
+  EU workspace resolved from Global — is `workspace_region`.
+
+The desktop client logs to a terminal or DevTools rather than to Workers Logs,
+so its logger keeps human-readable lines and only owns the scope tag and level.
+
 Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:observability` idempotently creates these account-level saved views in Workers & Pages → Observability → Query Builder; each view is scoped to both regional API service names:
 
 | View | Filters |
@@ -398,6 +439,27 @@ Workers Logs remain at full invocation and head sampling. `pnpm cloudflare:obser
 | Degraded connector workflows | `event = connector_poll_timeout` or `event = connector_poll_failed` |
 
 Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
+
+Automatic tracing is enabled on both API Workers and on the retention Worker at
+a `traces` head sampling rate of 1. It is a separate switch from logs: the
+`enabled`/`head_sampling_rate` pair at the top of an `observability` block
+governs Workers Logs only, and traces stay off until the block also carries
+`"traces": { "enabled": true }`. Traces are free during Cloudflare's open beta;
+if that changes, lower the traces sampling rate rather than the logs one, which
+the saved views above depend on.
+
+**Cloudflare's own capture is wider than ours, and the difference is
+credentials.** The application logs `pathname` only and redacts by key, but the
+platform records the whole request independently of that: the invocation log
+carries `$workers.event.request.url`, the Logpush `Event` field carries the same
+request object into R2 for 90 days, and a trace span adds `url.full` and
+`url.query`. So a connector OAuth callback's `?code=`/`?state=` and a WebSocket
+`?ticket=` reach all three, and no redaction in this repository can reach them —
+they arrive on the request rather than through `logEvent`. Both are short-lived
+and single-use, but treat the observability stores and the two R2 observability
+buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
+no wider dashboard access than a responder needs. Moving those two secrets off
+the query string is the only fix that removes them from the capture.
 
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. Use `pnpm cloudflare:observability:check` for a read-only release check.
 

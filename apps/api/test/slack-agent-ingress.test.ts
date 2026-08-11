@@ -6,6 +6,9 @@ import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
 
+// The logger only reads the observability bindings off the environment.
+const logEnv = { AVALON_REGION: "global", LOG_LEVEL: "error" } as unknown as Env;
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -193,6 +196,7 @@ describe("Slack Agent durable ingress", () => {
     vi.stubGlobal("fetch", fetcher);
 
     await expect(__slackAgentTesting.resolveSlackChannelType(
+      logEnv,
       "xoxb-test",
       "CPRIVATE",
       "channel",
@@ -209,6 +213,7 @@ describe("Slack Agent durable ingress", () => {
     }), { status: 200, headers: { "content-type": "application/json" } })));
 
     await expect(__slackAgentTesting.resolveSlackChannelType(
+      logEnv,
       "xoxb-test",
       "CUNKNOWN",
       "channel",
@@ -667,6 +672,7 @@ describe("App Home task rows", () => {
     // a per-row cost: the throw would otherwise escape views.publish and take
     // account linking down with it.
     const blocks = __slackAgentTesting.linkedHome(
+      logEnv,
       "Ada",
       [
         { id: "workstream-ownerless", title: "Unlinkable", harness_status: "running" },
@@ -698,6 +704,7 @@ describe("recording shared work-stream links for refresh", () => {
     const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
 
     expect(__slackAgentTesting.recordableUnfurlLinks(
+      logEnv,
       new Map([[url, workstreamId]]),
       new Map([[workstreamId, summary]]),
     )).toEqual([{ url, workstreamId, summary }]);
@@ -714,6 +721,7 @@ describe("recording shared work-stream links for refresh", () => {
     expect(overLong.length).toBeGreaterThan(2_000);
 
     expect(__slackAgentTesting.recordableUnfurlLinks(
+      logEnv,
       new Map([[overLong, workstreamId]]),
       new Map([[workstreamId, summary]]),
     )).toEqual([]);
@@ -723,6 +731,7 @@ describe("recording shared work-stream links for refresh", () => {
     const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
 
     expect(__slackAgentTesting.recordableUnfurlLinks(
+      logEnv,
       new Map([[url, workstreamId]]),
       new Map(),
     )).toEqual([]);
@@ -743,13 +752,13 @@ describe("unfurl audience check", () => {
     // rendered the anonymous card with no refresh row to ever recover from.
     vi.stubGlobal("fetch", conversationsInfo({ id: "D123", is_im: true, user: "U1", is_open: true }));
 
-    await expect(slackChannelIsExternallyShared("tok", "D123")).resolves.toBe(false);
+    await expect(slackChannelIsExternallyShared(logEnv, "tok", "D123")).resolves.toBe(false);
   });
 
   it("still catches a Slack Connect DM, which also has a D channel id", async () => {
     vi.stubGlobal("fetch", conversationsInfo({ id: "D999", is_im: true, user: "U2", is_ext_shared: true }));
 
-    await expect(slackChannelIsExternallyShared("tok", "D999")).resolves.toBe(true);
+    await expect(slackChannelIsExternallyShared(logEnv, "tok", "D999")).resolves.toBe(true);
   });
 
   it("reports an unconfirmed audience as null rather than as external", async () => {
@@ -760,6 +769,6 @@ describe("unfurl audience check", () => {
       headers: { "content-type": "application/json" },
     })) as unknown as typeof fetch);
 
-    await expect(slackChannelIsExternallyShared("tok", "CGENERAL")).resolves.toBeNull();
+    await expect(slackChannelIsExternallyShared(logEnv, "tok", "CGENERAL")).resolves.toBeNull();
   });
 });

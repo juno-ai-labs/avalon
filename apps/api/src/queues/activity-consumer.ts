@@ -24,6 +24,7 @@ import { automationModelOverride, scheduledWorkstreamModel } from "../services/a
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
+import { logWarn } from "../observability/logger";
 
 interface ActivityRow {
   id: string;
@@ -200,7 +201,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
       await new SlackAgentService(env).processQueuedIngress(slackIngress.data.jobId);
       message.ack();
     } catch (error) {
-      console.warn("Slack ingress queue processing failed", {
+      logWarn(env, "slack_ingress_queue_processing_failed", {
         job_id: slackIngress.data.jobId,
         reason: error instanceof Error ? error.message : "unknown",
       });

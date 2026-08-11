@@ -200,7 +200,9 @@ describe("workspace Slack mention delivery", () => {
       async () => undefined,
     )).resolves.toBe("partial");
 
-    expect(warning).toHaveBeenCalledWith("Slack mention delivery partial", expect.objectContaining({
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_mention_delivery_incomplete",
+      outcome: "partial",
       posted_chunks: 1,
     }));
   });
@@ -228,7 +230,9 @@ describe("workspace Slack mention delivery", () => {
 
     await expect(sendWorkstreamMentionSlack(env, mention(), request)).resolves.toBe("skipped");
 
-    expect(warning).toHaveBeenCalledWith("Slack mention delivery skipped", expect.objectContaining({
+    expect(warning).toHaveBeenCalledWith(expect.objectContaining({
+      event: "slack_mention_delivery_incomplete",
+      outcome: "skipped",
       message_id: "message-1",
       recipient_user_id: recipientId,
       reason: "missing_scope",

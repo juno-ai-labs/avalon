@@ -38,6 +38,7 @@ import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
+import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
 import { LinearRoutingService } from "./linear-routing-service";
 import { SlackAgentService } from "./slack-agent-service";
@@ -832,7 +833,7 @@ export class ConnectionService {
       } catch (error) {
         // Auto-join is recoverable and must not invalidate otherwise healthy
         // Slack credentials or routing after the OAuth state is consumed.
-        console.warn("Slack public-channel sync could not be scheduled", {
+        logWarn(this.env, "slack_public_channel_sync_schedule_failed", {
           connection_id: connectionId,
           reason: error instanceof Error ? error.message : "unknown",
         });
@@ -1144,8 +1145,7 @@ export class ConnectionService {
               status: "disabled",
             });
           } catch (error) {
-            console.warn("GitHub route deactivation failed", {
-              region: this.env.AVALON_REGION,
+            logWarn(this.env, "github_route_deactivation_failed", {
               connection_id: connection.id,
               reason: error instanceof Error ? error.message : "unknown route error",
             });
@@ -1168,8 +1168,7 @@ export class ConnectionService {
           // The regional connection is already disabled and cannot consume the
           // event. Keep teardown recoverable; reconciliation can retire the
           // opaque Global route later without restoring credentials.
-          console.warn("Linear route deactivation failed", {
-            region: this.env.AVALON_REGION,
+          logWarn(this.env, "linear_route_deactivation_failed", {
             connection_id: connection.id,
             reason: error instanceof Error ? error.message : "unknown route error",
           });
@@ -1189,8 +1188,7 @@ export class ConnectionService {
             status: "disabled",
           });
         } catch (error) {
-          console.warn("Slack route deactivation failed", {
-            region: this.env.AVALON_REGION,
+          logWarn(this.env, "slack_route_deactivation_failed", {
             connection_id: connection.id,
             reason: error instanceof Error ? error.message : "unknown route error",
           });
