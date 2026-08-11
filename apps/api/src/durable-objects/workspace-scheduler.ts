@@ -407,6 +407,7 @@ export class WorkspaceScheduler {
         WHERE s.id = ?1
           AND s.workspace_id = ?2
           AND s.status = 'active'
+          AND s.lifecycle_state = 'visible'
         LIMIT 1`
     )
       .bind(subscriptionId, schedule.workspace_id)

@@ -779,6 +779,9 @@ export const AutomationSummarySchema = z.object({
   status: z.enum(["draft", "active", "paused", "error"]),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
+  /** Last time the subscription itself changed. It is the only activity a draft
+   * has, since a draft never runs. */
+  updatedAt: TimestampSchema,
   updateAvailable: z.boolean()
 });
 

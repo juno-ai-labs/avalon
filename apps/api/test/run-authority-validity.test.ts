@@ -14,6 +14,7 @@ type AuthorityState = {
   memberStatus: string;
   archivedAt: string | null;
   subscriptionStatus: string;
+  subscriptionLifecycleState: string;
   templateVersionId: string;
   templateArchivedAt: string | null;
   automationRunStatus: string;
@@ -65,6 +66,7 @@ class AuthorityStatement {
       expect(this.values).toEqual([RUN_ID, WORKSTREAM_ID, SUBSCRIPTION_ID, WORKSPACE_ID]);
       return {
         subscription_status: this.database.state.subscriptionStatus,
+        subscription_lifecycle_state: this.database.state.subscriptionLifecycleState,
         template_version_id: this.database.state.templateVersionId,
         email_route_status: this.database.state.emailRouteStatus,
         template_archived_at: this.database.state.templateArchivedAt,
@@ -88,6 +90,7 @@ function state(overrides: Partial<AuthorityState> = {}): AuthorityState {
     memberStatus: "active",
     archivedAt: null,
     subscriptionStatus: "active",
+    subscriptionLifecycleState: "visible",
     templateVersionId: "version-one",
     templateArchivedAt: null,
     automationRunStatus: "running",
@@ -119,6 +122,14 @@ describe("durable run authority revalidation", () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, input());
     database.state.subscriptionStatus = "paused";
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input(), snapshot))
+      .rejects.toThrow(/no longer active/i);
+  });
+
+  it("rejects a subscription deleted between model turns", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.binding, input());
+    database.state.subscriptionLifecycleState = "deleted";
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.binding, input(), snapshot))
       .rejects.toThrow(/no longer active/i);
   });
