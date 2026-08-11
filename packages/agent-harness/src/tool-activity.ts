@@ -174,6 +174,10 @@ const CONNECTOR_ACTION_PROSE: Record<string, { started: string; settled: string;
   // generic fallback would label a contact lookup with the same "Reviewed
   // <connector>" row every other unrecognized call gets.
   contacts: { started: "Looking up contacts in", settled: "Looked up contacts in" },
+  profile: { started: "Checking the connected account on", settled: "Checked the connected account on" },
+  // `gmail.create_draft` ends in its object too, so composing a draft was
+  // reaching the generic row and reading as a review rather than a write.
+  draft: { started: "Drafting in", settled: "Drafted in" },
 };
 
 /**
