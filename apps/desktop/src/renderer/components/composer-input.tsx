@@ -17,6 +17,7 @@ import type { AvalonApi } from '../lib/api';
 import { normalizeMentionLabels, splitMentionHighlights } from '../lib/mention-highlight';
 import { appendDictationTranscript, useRealtimeDictation } from '../lib/use-realtime-dictation';
 import { useFileDrop } from '../lib/use-file-drop';
+import { useFilePaste } from '../lib/use-file-paste';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import { type AttachmentPreview, PendingAttachmentTile } from './attachments';
 import { IconButton, InlineError } from './primitives';
@@ -106,6 +107,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
     if (!submitting) onAttach(files);
   }, [onAttach, submitting]);
   const drop = useFileDrop((files) => attachFiles(files), submitting);
+  const paste = useFilePaste(attachFiles, submitting);
   // An IME's in-flight text never reaches `value`, so the highlight layer steps
   // aside and lets the textarea paint itself until the composition commits.
   const [composing, setComposing] = useState(false);
@@ -179,6 +181,9 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         onDragLeave={drop.onDragLeave}
         onDragOver={drop.onDragOver}
         onDrop={drop.onDrop}
+        /* On the shell rather than the textarea: a paste lands wherever focus sits
+           inside the composer, including the toolbar and the attachment tiles. */
+        onPaste={paste}
       >
         {attachments.length > 0 && (
           <div className="composer-attachments" aria-label="Attachments">
