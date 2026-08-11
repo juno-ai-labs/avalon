@@ -74,7 +74,7 @@ describe("prompt renderers", () => {
         actual: renderAutomationCompilerMessages({
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "31d8676591f2047f0b8f1341cf82151f2f4ef646a3af3684e96ff75378871263",
+        hash: "4110366440a2b966f58661015ccf7139d83445a9342d3a75d617ef714dfaefe1",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -85,7 +85,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "8de0b32598342e4b6d471ff85ac6ca74437c90225bdf112aafdc8d07d2099bab",
+        hash: "b758cf46c954874ed61853ee2a8afb71ec571abeae8d2936d8b1316a949c2cd4",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -506,7 +506,13 @@ describe("prompt renderers", () => {
     const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
 
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
-    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(8_000);
+    // The compiler's ceiling is 1 KB above the work stream's because it gained
+    // a permanent `# Narration` section that the 8 KB figure predates. The
+    // bound is here to catch prose creeping in unnoticed, not to force the
+    // next author to delete a rule to fit a new one: raising it deliberately,
+    // with the reason in the AGENT_HARNESS.md changelog, is a valid move and
+    // usually the better one. See that entry before cutting policy to fit.
+    expect(Buffer.byteLength(compilerPrompt, "utf8")).toBeLessThan(9_000);
   });
 
   it("renders a stable active and loadable plugin catalog using model-facing IDs", () => {
@@ -558,8 +564,13 @@ describe("prompt renderers", () => {
     // The draft-before-question ordering is stated where an elicitation is
     // described as well as in Submission: calling the elicitation tool first
     // throws, and a thrown call spends an iteration the run may not have.
-    expect(policy).toContain("An elicitation follows a saved partial draft");
-    expect(policy).toContain("Write assistant text on research turns so that transcript is not silent");
+    expect(policy).toContain("first call automation_submit_draft with the best partial draft and ready=false");
+    // The narration rules and the no-text submission rule can both reach the
+    // same turn when a request needs no research at all, so narration is
+    // scoped to research turns in the section that asks for it rather than
+    // leaving the tie-break to the one that forbids it.
+    expect(policy).toContain("Narrate on research turns; a turn that only submits or elicits gets none");
+    expect(policy).toContain("Open the first research turn");
     expect(policy).toContain("one or two sentences roughly every three or four tool calls");
     expect(policy).toContain(
       "The turn that calls automation_submit_draft or core_request_elicitation must contain no assistant text",
