@@ -52,10 +52,11 @@ always produces a menu immediately. In order:
 3. **New Automation** — `avalon://automations/new`.
 4. A separator.
 5. A **Suggestions** header, one row per suggested work stream from
-   `GET /work-opportunities`, then another separator. The whole group is skipped
-   when Avalon is suggesting nothing — header and rules included — because two
-   rules with no group between them read as a menu that failed to load rather
-   than one with nothing to say.
+   `GET /work-opportunities`, then another separator. With nothing to suggest,
+   one disabled row reads **Connect platforms to get daily suggestions on work
+   streams to create** — with no connector there is nothing to suggest *from*,
+   and naming that is the difference between a section that looks unstarted and
+   one that looks broken.
 6. A **Recent** header, then the five most recent work streams from
    `GET /workstreams?limit=5`, which the API already orders by
    `last_activity_at` descending. When there are none, one disabled row says
@@ -66,9 +67,12 @@ always produces a menu immediately. In order:
    arrangement, from the same response. With nothing pinned the section stays and
    one disabled row says **Pin a work stream to see it here** — most people have
    never pinned anything, and a section that is simply absent teaches them
-   nothing about a feature they have not found. Signed out is the one case the
-   group is dropped: there is nothing to pin, and the **Recent** row above
-   already says to sign in.
+   nothing about a feature they have not found.
+
+Signed out, **Suggestions** and **Pinned** are dropped whole. Neither has
+anything to say to a stranger, and the one message that state needs is already on
+the **Recent** row. Everything else renders whether or not it has content, so the
+menu has a fixed shape a person can learn.
 8. A separator, then **Open Avalon** and **Quit Avalon**.
 
 Both headers use `type: 'header'`, which macOS added in 14 and which AppKit
@@ -170,10 +174,11 @@ destination, so the hidden state is not sticky.
 - **`menuBarEnabled` reads as on when it is missing or unreadable.** The item
   ships on, and any other reading would silently withdraw it from every device
   that upgraded.
-- **An empty group either explains itself or is not there.** **Recent** and
-  **Pinned** keep their header and say why they are empty; **Suggestions** has
-  nothing useful to say, so it goes. A group that renders a bare header with
-  nothing under it reads as a menu that failed to load.
+- **Every group renders, and an empty one says how it fills.** All three go
+  through `pushGroup`, which takes the rows and the line to show instead of
+  none, so a group cannot be added that renders a bare header or vanishes
+  silently. Signing out is the only thing that removes a group, and only
+  **Suggestions** and **Pinned**.
 - **The menu never renders state the operating system can change behind it.**
   It is rebuilt on content changes, not on open, so anything macOS owns
   independently — the login item is the case that came up — belongs in Settings,
@@ -212,15 +217,20 @@ the link there first, not a second navigation channel here.
 | Both halves fail | The last good menu stays. A warning is logged once per attempt. |
 | Signed out | All three fixed actions remain; the recent section becomes one disabled **Sign in to Avalon** row. Content refreshes are skipped entirely rather than failing twice per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
-| Nothing to suggest | The suggestion group, its header, and both of its rules are omitted, leaving one rule between the fixed actions and **Recent**. |
+| Nothing to suggest | The header stays over one disabled row naming what has to happen first: **Connect platforms to get daily suggestions on work streams to create**. |
 | Nothing pinned | The header stays over one disabled row: **Pin a work stream to see it here**. |
-| Signed out | The **Pinned** group is dropped entirely, header and rule included. |
+| Signed out | **Suggestions** and **Pinned** are dropped entirely, headers and rules included; **Recent** carries the sign-in row. |
 | More than five pins | The top five of the arrangement are shown. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
 | macOS 13 or older | Both headers fall back to disabled rows. Everything else is unchanged. |
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
 | Starting a suggestion fails | The main window is opened, where the same suggestion is on the home screen and starting it again reports its own failure. A menu click has to land somewhere. |
 | The `Tray` cannot be created | Logged and skipped. The preference stays on, so the next launch tries again. |
 | Not macOS | No status item; `menuBarAvailable` is false and Settings omits the toggle. The preference is still stored, so the same profile on a Mac gets the choice rather than the default. |
+
+The empty-state copy is exempt from `menuBarLabel`'s 60-character limit. That
+limit stops one model-written title stretching the menu; the fixed copy is ours,
+has to read in full, and sets the menu's width only for an account that has
+nothing in the section it belongs to.
 
 Numbers: five recent work streams (`MENU_BAR_RECENT_LIMIT`), five pinned
 (`MENU_BAR_PINNED_LIMIT`), at most four
@@ -324,6 +334,36 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 
 **Not done:** a submenu for older work streams.
 
+### 2026-08-11 — Every group renders, and an empty one says how it fills
+
+**What changed:** **Suggestions** now behaves like the other two: with nothing to
+suggest it keeps its header over **Connect platforms to get daily suggestions on
+work streams to create**, instead of disappearing. This reverses the second half
+of the entry below, which had just made "Suggestions goes when empty" an
+invariant. All three groups are now built by one `pushGroup` helper that takes
+the rows and the line to show instead of none. Signing out is the only thing that
+removes a group.
+
+**Why:** The reasoning that kept **Pinned** applies here at least as strongly.
+An account with no connectors has nothing to suggest *from*, and that is not an
+absence of news — it is a step nobody has taken. A vanishing section says
+neither, and a bare heading with nothing under it reads as a section that failed
+to load.
+
+**Considered and rejected:** the invariant written an hour earlier —
+"**Suggestions** has nothing useful to say, so it goes". It was wrong about the
+one thing that matters: the state is not "no suggestions today", it is "Avalon
+has nothing to look at". Also rejected: shortening the copy to fit the
+60-character content limit. That limit exists to stop a model-written title
+stretching the menu, and applying it to our own sentence would clip the
+instruction that is the whole point of the row.
+
+**Consequences:** the menu is now one fixed shape whatever the account holds,
+which is worth keeping — a group that renders conditionally makes the rows below
+it move, and this menu is used by muscle memory. Adding a group means adding an
+empty line for it. The suggestions row is the widest fixed string in the menu and
+therefore sets its width for a connector-less account.
+
 ### 2026-08-11 — The empty Pinned section stays, and says how to fill it
 
 **What changed:** Reverses the omission decided in the entry below, on the same
@@ -345,6 +385,7 @@ than one that does nothing.
 **Consequences:** the menu now has a fixed floor of rows whatever the account
 holds, which is the shape to keep — **Suggestions** stays the exception because
 it has nothing to say when empty, not because empty groups are dropped by rule.
+*(Overturned the same day by the entry above: it did have something to say.)*
 
 ### 2026-08-11 — A Pinned section below Recent
 
