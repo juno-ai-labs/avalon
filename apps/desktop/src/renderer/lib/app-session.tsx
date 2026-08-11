@@ -345,6 +345,15 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         setDeepLinkError('Avalon received an invalid sign-in link.');
         return;
       }
+      if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
+        if (!session?.workspace) {
+          setDeepLinkError('Sign in before starting a work stream.');
+          return;
+        }
+        setDeepLinkError(null);
+        window.location.hash = '/workstreams/new';
+        return;
+      }
       if (deepLink.protocol === 'avalon:' && deepLink.hostname === 'workstreams') {
         const workstreamId = deepLink.pathname.slice(1);
         if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
