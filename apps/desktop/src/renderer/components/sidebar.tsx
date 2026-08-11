@@ -25,7 +25,7 @@ import {
   Settings,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { formatRelative, groupActivityItems } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -374,6 +374,11 @@ export function Sidebar({
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const [resizing, setResizing] = useState(false);
+  // The handle stands in the strip beside the sidebar rather than on its edge,
+  // so the pointer's own position is not the sidebar's width. Holding the
+  // difference from the moment of the grab keeps the edge from jumping out to
+  // meet a pointer that grabbed the far side of the strip.
+  const grabOffset = useRef(0);
   const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -505,7 +510,7 @@ export function Sidebar({
   useEffect(() => {
     if (!resizing) return undefined;
 
-    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX);
+    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX - grabOffset.current);
     const stop = (): void => setResizing(false);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
@@ -652,6 +657,7 @@ export function Sidebar({
           }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
+            grabOffset.current = event.clientX - sidebarWidth;
             setResizing(true);
           }}
           role="separator"
