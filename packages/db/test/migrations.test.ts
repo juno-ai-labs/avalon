@@ -672,7 +672,7 @@ describe("database migrations", () => {
   });
 
   it("promotes only descriptions a person wrote and holds one refresh claim per work stream", () => {
-    const database = migrateDatabaseThrough("0056_workstream_wakeups.sql");
+    const database = migrateDatabaseThrough("0057_slack_unfurled_link_render_hash.sql");
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('description-owner', 'description-subject', 'owner@example.com', 'Owner', '2026-08-11', '2026-08-11');
@@ -711,7 +711,7 @@ describe("database migrations", () => {
     `);
 
     database.exec(readFileSync(
-      new URL("../migrations/0057_workstream_description_refresh.sql", import.meta.url),
+      new URL("../migrations/0058_workstream_description_refresh.sql", import.meta.url),
       "utf8",
     ));
 
