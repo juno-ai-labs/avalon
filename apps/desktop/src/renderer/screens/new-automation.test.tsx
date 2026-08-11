@@ -219,20 +219,16 @@ describe('New automation composer', () => {
       stream({
         type: 'tool',
         toolCallId: 'tool-1',
-        name: 'Searching Google Drive + Docs + Sheets and Linear',
-        summary: 'Finding the plugins relevant to this automation…',
+        name: 'Reviewing Google Drive + Docs + Sheets',
+        summary: 'Using an authorized connector…',
         status: 'started',
-        plugins: [
-          { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
-          { pluginId: 'plugin_linear', displayName: 'Linear', icon: 'linear' },
-        ],
+        plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
       });
     });
-    const activeResearch = (await screen.findByText('Searching Google Drive + Docs + Sheets and Linear')).closest('details');
+    const activeResearch = (await screen.findByText('Reviewing Google Drive + Docs + Sheets')).closest('details');
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-started');
-    expect(screen.getByRole('img', { name: 'Plugins: Google Drive + Docs + Sheets, Linear' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Plugin: Google Drive + Docs + Sheets' })).toBeInTheDocument();
     expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
-    expect(screen.getByTitle('Linear')).toBeInTheDocument();
     expect(screen.getByText('working for 42ms')).toBeInTheDocument();
     expect(screen.queryByText('Avalon is working')).not.toBeInTheDocument();
 
@@ -240,13 +236,10 @@ describe('New automation composer', () => {
       stream({
         type: 'tool',
         toolCallId: 'tool-1',
-        name: 'Found Google Drive + Docs + Sheets and Linear',
-        summary: 'Relevant plugins are ready',
+        name: 'Reviewed Google Drive + Docs + Sheets',
+        summary: 'Searched the authorized Drive folder',
         status: 'completed',
-        plugins: [
-          { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
-          { pluginId: 'plugin_linear', displayName: 'Linear', icon: 'linear' },
-        ],
+        plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
         durationMs: 42,
       });
       stream({
@@ -265,7 +258,7 @@ describe('New automation composer', () => {
       stream({ type: 'delta', delta: 'Which blog ', reset: false });
       stream({ type: 'delta', delta: 'should Avalon monitor?', reset: false });
     });
-    expect(await screen.findByText('Found Google Drive + Docs + Sheets and Linear')).toBeInTheDocument();
+    expect(await screen.findByText('Reviewed Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
     expect(screen.getByText('42ms')).toBeInTheDocument();
     expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
