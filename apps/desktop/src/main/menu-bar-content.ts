@@ -258,6 +258,14 @@ export class MenuBarContentStore {
     );
     const parsed = StartedWorkstreamSchema.safeParse(response);
     if (!parsed.success) throw new Error('Avalon returned an unreadable started work stream');
+    // Again, because the service consumed the suggestion only just now. The
+    // bump before the POST covers the cache; it cannot cover a refresh issued
+    // while the POST was in flight, which asked before the start had happened
+    // and so comes back still carrying the suggestion. Moving the generation
+    // here discards that answer — and, because `refresh` only reuses a request
+    // issued under the current generation, makes the call below a new one
+    // rather than a subscription to the stale one.
+    this.forget(suggestion.id);
     void this.refresh();
     return parsed.data.workstream.id;
   }

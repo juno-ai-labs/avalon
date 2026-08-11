@@ -228,6 +228,52 @@ describe('menu bar content', () => {
     expect(subject.store.content().suggestions).toEqual([]);
   });
 
+  it('discards a refresh that raced the start POST rather than joining it', async () => {
+    // The suggestion is consumed by the POST, not by the click, so a refresh
+    // issued after the click but still on the wire when the POST lands comes
+    // back legitimately carrying it — `mouse-enter` during the round trip is
+    // enough. Both halves are gated so the racing GET is still in flight at the
+    // moment the start resolves, which is the only window the bug lives in.
+    let releaseStart: () => void = () => undefined;
+    let releaseReads: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const reads = new Promise<void>((resolve) => {
+      releaseReads = resolve;
+    });
+    let consumed = false;
+    subject.requestJson.mockImplementation((path: string) => {
+      if (path.includes('/start')) {
+        return started.then(() => {
+          consumed = true;
+          return { workstream: { id: 'created' } };
+        });
+      }
+      // Captured when the request is made, not when it settles: that is what
+      // "asked before the start landed" means on the wire.
+      const carried = consumed ? [] : [{ id: 'o1', version: 5, displayPrompt: 'Reply to Dana' }];
+      const body = path.startsWith('/work-opportunities') ? { items: carried } : workstreamPage([]);
+      return reads.then(() => body);
+    });
+
+    const start = subject.store.startSuggestion({ id: 'o1', version: 5, label: 'Reply to Dana' });
+    await Promise.resolve();
+    const raced = subject.store.refresh();
+    releaseStart();
+    await start;
+    releaseReads();
+    await raced;
+    // Let whatever `startSuggestion` issued for itself land. Deliberately no
+    // corrective refresh here: the menu has to be right at this moment, not
+    // after the next thing that happens to refetch.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    expect(subject.store.content().suggestions).toEqual([]);
+  });
+
   it('coalesces overlapping refreshes', async () => {
     respond(subject.requestJson, {
       '/workstreams': workstreamPage([{ id: 'a', title: 'Acme renewal' }]),
