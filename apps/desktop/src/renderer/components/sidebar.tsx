@@ -1,5 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
   Archive,
@@ -7,12 +8,10 @@ import {
   ChevronsLeft,
   Check,
   CirclePause,
-  Cloud,
   Copy,
   EyeOff,
   FileStack,
   LogOut,
-  Lock,
   Menu,
   MessageSquarePlus,
   Mic2,
@@ -267,8 +266,7 @@ function NoteRow({ note }: { note: NoteSummary }): React.JSX.Element {
       </span>
       {note.scope === 'personal' && (
         <span aria-label="Private note" className="sidebar-note-privacy" role="img">
-          <Cloud aria-hidden="true" className="sidebar-note-privacy-cloud" size={17} strokeWidth={1.7} />
-          <Lock aria-hidden="true" className="sidebar-note-privacy-lock" size={8} strokeWidth={2.2} />
+          <IconLock aria-hidden="true" size={15} stroke={1.8} />
         </span>
       )}
     </NavLink>
