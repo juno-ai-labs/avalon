@@ -110,17 +110,24 @@ describe('menu bar menu', () => {
     expect(items.some((item) => item.label === 'Pinned')).toBe(true);
     expect(empty?.enabled).toBe(false);
     expect(empty?.click).toBeUndefined();
-    expect(labels(items).indexOf('Pinned'))
-      .toBe(labels(items).indexOf('Pin a work stream to see it here') - 1);
   });
 
-  it('drops the Pinned section entirely when nobody is signed in', () => {
+  it('drops Suggestions and Pinned entirely when nobody is signed in', () => {
     const items = template(emptyMenuBarContent, { signedIn: false });
 
-    // Nothing to pin, and the Recent row above already says to sign in.
-    expect(items.some((item) => item.label === 'Pinned')).toBe(false);
-    expect(items.some((item) => item.label === 'Pin a work stream to see it here')).toBe(false);
-    expect(labels(items).at(-4)).toBe('Sign in to Avalon');
+    // Neither has anything to say to a stranger, and the one message that state
+    // needs is already on the Recent row.
+    expect(labels(items)).toEqual([
+      'New Meeting/Note',
+      'New Work Stream',
+      'New Automation',
+      '—',
+      'Recent',
+      'Sign in to Avalon',
+      '—',
+      'Open Avalon',
+      'Quit Avalon',
+    ]);
   });
 
   it('opens a pinned row the same way a recent one opens', () => {
@@ -137,13 +144,15 @@ describe('menu bar menu', () => {
     expect(recentLabels).toHaveLength(MENU_BAR_RECENT_LIMIT);
   });
 
-  it('collapses the suggestion group to one rule when Avalon has nothing to suggest', () => {
+  it('renders every group whether or not it has anything in it', () => {
     const items = template({ suggestions: [], recents: workstreams.slice(0, 1) });
-    // Not two rules against each other with no group between them.
     expect(labels(items)).toEqual([
       'New Meeting/Note',
       'New Work Stream',
       'New Automation',
+      '—',
+      'Suggestions',
+      'Connect platforms to get daily suggestions on work streams to create',
       '—',
       'Recent',
       'Work stream 0',
@@ -156,15 +165,27 @@ describe('menu bar menu', () => {
     ]);
   });
 
-  it('heads each group, and keeps Recent and Pinned over their own empty states', () => {
+  it('names what has to happen before Avalon can suggest anything', () => {
+    const empty = template(emptyMenuBarContent)
+      .find((item) => item.label === 'Connect platforms to get daily suggestions on work streams to create');
+
+    // With no connector there is nothing to suggest from, so the row says that
+    // rather than leaving the section looking broken.
+    expect(empty?.enabled).toBe(false);
+    expect(empty?.click).toBeUndefined();
+  });
+
+  it('heads every group, and puts each empty state directly under its header', () => {
     const items = template(emptyMenuBarContent);
 
-    expect(items.find((item) => item.label === 'Recent')?.type).toBe('header');
-    expect(items.find((item) => item.label === 'Pinned')?.type).toBe('header');
-    // Suggestions is the one group with nothing to say when it is empty.
-    expect(items.some((item) => item.label === 'Suggestions')).toBe(false);
-    expect(labels(items).indexOf('Recent'))
-      .toBe(labels(items).indexOf('No recent work streams') - 1);
+    for (const [title, empty] of [
+      ['Suggestions', 'Connect platforms to get daily suggestions on work streams to create'],
+      ['Recent', 'No recent work streams'],
+      ['Pinned', 'Pin a work stream to see it here'],
+    ]) {
+      expect(items.find((item) => item.label === title)?.type).toBe('header');
+      expect(labels(items).indexOf(title!)).toBe(labels(items).indexOf(empty!) - 1);
+    }
   });
 
   it('falls back to a disabled row where macOS has no section headers', () => {
