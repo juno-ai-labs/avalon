@@ -10,6 +10,7 @@ import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 const staffUserId = "00000000-0000-4000-8000-0000000000a1";
 const customerUserId = "00000000-0000-4000-8000-0000000000a2";
 const workspaceId = "00000000-0000-4000-8000-0000000000a3";
+const staffPlatformUserId = "00000000-0000-4000-8000-0000000000b1";
 const accountCreatedAt = "2026-01-02T03:04:05.000Z";
 
 // APP_ENV production so the unreachable-binding path warns rather than staying
@@ -20,16 +21,19 @@ const baseEnv = {
   LOG_LEVEL: "error",
 } as unknown as Env;
 
-function envWithAccounts(flags?: Partial<Flagship>): Env {
+function envWithAccounts(flags?: Partial<Flagship>, platformUserId: string | null = staffPlatformUserId): Env {
   const database = migratedSqliteDatabase();
-  const accounts: Array<[string, string]> = [
-    [staffUserId, "Adam@Juno-Labs.com"],
-    [customerUserId, "adam@example.com"],
+  const accounts: Array<[string, string, string | null]> = [
+    [staffUserId, "Adam@Juno-Labs.com", platformUserId],
+    [customerUserId, "adam@example.com", "platform-user-customer"],
   ];
-  for (const [id, email] of accounts) {
+  for (const [id, email, platformId] of accounts) {
     database
-      .prepare("INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(id, `google-${id}`, email, "Adam", accountCreatedAt, accountCreatedAt);
+      .prepare(
+        `INSERT INTO users (id, google_subject, email, name, platform_user_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, `google-${id}`, email, "Adam", platformId, accountCreatedAt, accountCreatedAt);
   }
   return {
     ...baseEnv,
@@ -87,16 +91,34 @@ describe("client feature flags", () => {
     await resolveClientFeatureFlags(env, auth(staffUserId));
 
     expect(flags.getBooleanDetails).toHaveBeenCalledWith(DEVELOPER_SETTINGS_FLAG_KEY, false, {
-      userId: staffUserId,
+      // The stable identity a percentage rollout is bucketed by, kept distinct
+      // from the regional row id, which differs per region for one person.
+      platformUserId: staffPlatformUserId,
+      regionalUserId: staffUserId,
       region: "global",
       appEnv: "production",
       // Normalized, so a rule can be written in one spelling of the address.
       email: "adam@juno-labs.com",
       emailDomain: "juno-labs.com",
-      accountCreatedAt,
+      regionalAccountJoinedAt: accountCreatedAt,
       workspaceId,
       workspaceRole: "member",
     });
+  });
+
+  it("never passes a regional id off as the person's stable identity", async () => {
+    // An account that predates the platform control plane carries no
+    // `platform_user_id`. Substituting the regional row id would bucket the
+    // same person differently per region; the attribute is omitted instead, so
+    // a rule keyed on it does not match rather than matching the wrong person.
+    const flags = serving(true);
+    const env = envWithAccounts(flags, null);
+
+    await resolveDeveloperSettingsEnabled(env, auth(staffUserId));
+
+    const context = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
+    expect(context).not.toHaveProperty("platformUserId");
+    expect(context).toMatchObject({ regionalUserId: staffUserId });
   });
 
   it("lets a Flagship rule decide the cohort rather than deciding it here", async () => {
@@ -126,7 +148,7 @@ describe("client feature flags", () => {
     const context = (flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls[0]?.[2];
     expect(context).not.toHaveProperty("workspaceId");
     expect(context).not.toHaveProperty("workspaceRole");
-    expect(context).toMatchObject({ userId: staffUserId, emailDomain: "juno-labs.com" });
+    expect(context).toMatchObject({ regionalUserId: staffUserId, emailDomain: "juno-labs.com" });
   });
 
   it("sends no address attributes for an account it cannot read, so a cohort rule cannot match", async () => {
@@ -142,7 +164,7 @@ describe("client feature flags", () => {
   });
 
   it("evaluates, without throwing, when the account store is unavailable", async () => {
-    const flags = servingWhen((context) => context.userId === staffUserId);
+    const flags = servingWhen((context) => context.regionalUserId === staffUserId);
     const env = {
       ...baseEnv,
       DB: { prepare: () => { throw new Error("D1 unavailable"); } } as unknown as D1Database,

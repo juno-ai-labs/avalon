@@ -342,20 +342,33 @@ client flag on comes from `clientFlagEvaluationContext`:
 
 | Attribute | Value |
 | --- | --- |
-| `userId` | The account, and the right key to bucket a percentage rollout by |
+| `platformUserId` | The person, stable across regions. **Bucket percentage rollouts by this.** |
+| `regionalUserId` | Their `users` row in *this* region — a different value per region for one person |
 | `email` | The full address, lower-cased, for targeting one person |
 | `emailDomain` | Lower-cased domain, for targeting an organization such as staff |
-| `accountCreatedAt` | ISO timestamp, for targeting by tenure |
+| `regionalAccountJoinedAt` | When they first appeared in *this* region, not the age of the account |
 | `workspaceId` | Present once an organization is chosen |
 | `workspaceRole` | `owner`, `admin`, or `member`, likewise |
 | `region` | `global` or `eu` |
 | `appEnv` | `development`, `test`, `staging`, or `production` |
 
-An attribute is **omitted rather than sent empty** when it is unknown — before
-an organization is chosen, or when the account row cannot be read. A rule keyed
-on a missing attribute does not match, so an unreadable account falls out of
-every cohort instead of into one. That is the whole of the fail-closed behavior
-on the targeting side; there is no special case for it.
+**Two identity attributes, and the names are the warning.** `users.id` and
+`users.created_at` are regional, per [`REGIONALIZATION.md`](REGIONALIZATION.md):
+one person with workspaces in both regions has a row in each. Bucketing a
+rollout by `regionalUserId` would put them in a different bucket per region, so
+they would see the feature on one and not the other; a tenure rule on
+`regionalAccountJoinedAt` reads when they arrived in that region rather than how
+old the account is. `platformUserId` is the identity the Global control plane
+establishes once and neither region may change — it is the one to bucket by. It
+is absent only for an account that predates the control plane, and a rule keyed
+on a missing attribute does not match rather than matching the wrong person.
+
+That is the general rule: an attribute is **omitted rather than sent empty**
+when it is unknown — before an organization is chosen, when the account
+predates the control plane, or when the row cannot be read. An unreadable
+account therefore falls out of every cohort instead of into one, which is the
+whole of the fail-closed behavior on the targeting side. There is no special
+case for it.
 
 Every client flag is evaluated against one context built once per request, so
 two flags can never disagree about who is asking. Widening what rules can say
@@ -490,13 +503,14 @@ Leave the default variation at `off` rather than promoting `on` with the rule
 attached: the default is what an account the rule does not match falls through
 to, so `set … -V on` would hand the section to everyone regardless of the rule.
 
-To stage it among staff, roll out within that rule and bucket by `userId`; there
-is no workspace worth keeping consistent here, because the section describes one
-person's device:
+To stage it among staff, roll out within that rule and bucket by
+`platformUserId` — not `regionalUserId`, which would bucket a person with
+workspaces in both regions twice. There is no workspace worth keeping consistent
+here, because the section describes one person's device:
 
 ```bash
 pnpm exec wrangler flagship flags rollout <APP_ID> developer-settings \
-  --to on --from off --percentage 50 --by userId
+  --to on --from off --percentage 50 --by platformUserId
 ```
 
 To hand it to one person outside a cohort — a contractor, a support session —

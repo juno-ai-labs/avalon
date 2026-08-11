@@ -8,13 +8,36 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function controller(read: () => Promise<boolean>, onChange = vi.fn()): {
+interface Harness {
   controller: DeveloperSettingsFlagController;
   onChange: ReturnType<typeof vi.fn>;
-} {
+  onAvailabilityChange: ReturnType<typeof vi.fn>;
+}
+
+function controller(read: () => Promise<boolean>): Harness {
+  const onChange = vi.fn();
+  const onAvailabilityChange = vi.fn();
   return {
-    controller: new DeveloperSettingsFlagController({ read, onChange, pollIntervalMs: 1_000 }),
+    controller: new DeveloperSettingsFlagController({
+      read,
+      onChange,
+      onAvailabilityChange,
+      pollIntervalMs: 1_000,
+    }),
     onChange,
+    onAvailabilityChange,
+  };
+}
+
+/** A `read` whose every call is settled by hand, so a poll can be left in flight. */
+function deferredReads(): {
+  read: () => Promise<boolean>;
+  pending: Array<(enabled: boolean) => void>;
+} {
+  const pending: Array<(enabled: boolean) => void> = [];
+  return {
+    read: () => new Promise<boolean>((resolveRead) => pending.push(resolveRead)),
+    pending,
   };
 }
 
@@ -64,6 +87,29 @@ describe('developer settings flag controller', () => {
     expect(onChange.mock.calls).toEqual([[true]]);
   });
 
+  it('reports an unreachable service once, and again when it recovers', async () => {
+    let answer: () => Promise<boolean> = async () => true;
+    const { controller: flag, onAvailabilityChange } = controller(() => answer());
+    await flag.refresh();
+    expect(onAvailabilityChange).not.toHaveBeenCalled();
+
+    const failure = new Error('Avalon authentication failed (500)');
+    answer = async () => {
+      throw failure;
+    };
+    await flag.refresh();
+    await flag.refresh();
+
+    // Once for the outage, not once per poll — a device keeps its last answer
+    // through one, so a permanently broken poll must not be silent, and a
+    // temporarily offline one must not fill the log.
+    expect(onAvailabilityChange.mock.calls).toEqual([[false, failure]]);
+
+    answer = async () => true;
+    await flag.refresh();
+    expect(onAvailabilityChange.mock.calls).toEqual([[false, failure], [true, undefined]]);
+  });
+
   it('shares one request between callers that ask at the same moment', async () => {
     const read = vi.fn(async () => true);
     const { controller: flag } = controller(read);
@@ -81,7 +127,7 @@ describe('developer settings flag controller', () => {
     const read = vi.fn(async () => true);
     const { controller: flag } = controller(read);
 
-    flag.start();
+    flag.observeSession('user-1@https://api.example.com');
     await vi.advanceTimersByTimeAsync(0);
     expect(read).toHaveBeenCalledTimes(1);
 
@@ -93,20 +139,102 @@ describe('developer settings flag controller', () => {
     expect(read).toHaveBeenCalledTimes(3);
   });
 
-  it('starts one poll timer however often it is started', async () => {
+  it('does not re-ask when the same account is observed again, as a token refresh does', async () => {
     vi.useFakeTimers();
     const read = vi.fn(async () => true);
     const { controller: flag } = controller(read);
 
-    flag.start();
+    flag.observeSession('user-1@https://api.example.com');
     await vi.advanceTimersByTimeAsync(0);
-    flag.start();
+    flag.observeSession('user-1@https://api.example.com');
+    flag.observeSession('user-1@https://api.example.com');
     await vi.advanceTimersByTimeAsync(0);
-    read.mockClear();
-
-    await vi.advanceTimersByTimeAsync(1_000);
 
     expect(read).toHaveBeenCalledTimes(1);
+    // …and the one interval it started keeps its cadence.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks immediately when a different account signs in', async () => {
+    vi.useFakeTimers();
+    const read = vi.fn(async () => true);
+    const { controller: flag } = controller(read);
+
+    flag.observeSession('user-1@https://api.example.com');
+    await vi.advanceTimersByTimeAsync(0);
+    flag.observeSession('user-2@https://api.example.com');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('never applies an answer that arrives after sign-out', async () => {
+    const { read, pending } = deferredReads();
+    const { controller: flag, onChange } = controller(read);
+    void flag.refresh();
+
+    flag.stop();
+    pending[0]?.(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The section was closed by the sign-out and must stay closed: the answer
+    // in flight was asked as an account that is no longer signed in.
+    expect(flag.enabled()).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('never answers one account with the request it issued as another', async () => {
+    const { read, pending } = deferredReads();
+    const { controller: flag, onChange } = controller(read);
+    flag.observeSession('staff@https://api.example.com');
+
+    // Signing out and straight back in as someone else, while the staff
+    // account's poll is still in flight.
+    flag.stop();
+    flag.observeSession('customer@https://api.example.com');
+    pending[0]?.(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(pending).toHaveLength(2);
+    expect(flag.enabled()).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+
+    // The second account's own answer is the one that counts.
+    pending[1]?.(false);
+    await Promise.resolve();
+    expect(flag.enabled()).toBe(false);
+  });
+
+  it('abandons a request that outlives a poll interval rather than waiting on it forever', async () => {
+    vi.useFakeTimers();
+    const { read, pending } = deferredReads();
+    const readSpy = vi.fn(read);
+    const { controller: flag } = controller(readSpy);
+
+    flag.observeSession('user-1@https://api.example.com');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readSpy).toHaveBeenCalledTimes(1);
+
+    // The connection hangs. Ticks inside the interval keep sharing the request…
+    await vi.advanceTimersByTimeAsync(999);
+    expect(readSpy).toHaveBeenCalledTimes(1);
+
+    // …but the next one gives up on it and asks again, so a single hung
+    // connection cannot stop the flag being read for the life of the process.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(readSpy).toHaveBeenCalledTimes(2);
+
+    // The abandoned request's answer is discarded when it finally arrives.
+    pending[0]?.(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flag.enabled()).toBe(false);
+
+    pending[1]?.(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flag.enabled()).toBe(true);
   });
 
   it('closes the section when it stops, as a sign-out does', async () => {

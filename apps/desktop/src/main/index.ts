@@ -136,6 +136,9 @@ const customProtocol = 'avalon';
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
+/** Well inside the flag's poll interval, so a lost poll costs one round rather
+ * than blocking the next. */
+const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function isUuid(value: string): boolean {
@@ -241,13 +244,22 @@ function publicSession(value: WireSession): DesktopSession {
   };
 }
 
+/** Who the flag poll is asking as. The endpoint is part of it because the same
+ * person is a different regional account on each one. */
+function flagSessionIdentity(session: Pick<DesktopSession, 'apiBaseUrl' | 'user'>): string {
+  return `${session.user.id}@${session.apiBaseUrl}`;
+}
+
 function broadcastSessionChanged(value: WireSession | null): void {
   const exposed = value ? publicSession(value) : null;
   for (const window of avalonWindows()) window.webContents.send('session:changed', exposed);
   // Whether Developer may be offered belongs to the signed-in account, so a
   // sign-in asks again immediately rather than waiting out a poll interval, and
-  // a sign-out closes the section on the way past.
-  if (exposed) developerSettingsFlagController.start();
+  // a sign-out closes the section on the way past. The identity is what makes
+  // that distinction: this also fires on every token refresh, which is the same
+  // account and must not cost an extra poll, and an account swap must not be
+  // answered by a request issued as the previous one.
+  if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed));
   else developerSettingsFlagController.stop();
 }
 
@@ -408,6 +420,13 @@ const debugSettingsController = new DebugSettingsController({
 const developerSettingsFlagController = new DeveloperSettingsFlagController({
   read: readDeveloperSettingsFlag,
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  // Once per outage rather than once per poll: a device that cannot reach the
+  // service keeps its last answer, so a permanently broken poll would otherwise
+  // be indistinguishable from a quiet, working one.
+  onAvailabilityChange: (reachable, error) => {
+    if (reachable) console.info('[avalon] the developer settings flag is readable again');
+    else console.warn('[avalon] could not read the developer settings flag', error);
+  },
 });
 
 function desktopApplicationSettings(
@@ -439,6 +458,11 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   const apiBaseUrl = apiBaseForAuth(stored);
   const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}/feature-flags`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
+    // A poll must always settle. A connection that hangs — a captive portal
+    // answering the handshake and nothing else is the usual way — would
+    // otherwise leave the request the controller shares between callers pending
+    // forever, and the flag would stop being read for the life of the process.
+    signal: AbortSignal.timeout(DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS),
   });
   let response = await ask(stored.accessToken);
   if (response.status === 401) {
@@ -1875,7 +1899,11 @@ if (!singleInstanceLock) {
     // Launching with a credential already on disk broadcasts no session change,
     // so the first poll is asked for here. Developer stays closed until it
     // answers, which is why this does not block the first window.
-    if (launchAuth) developerSettingsFlagController.start();
+    if (launchAuth) {
+      developerSettingsFlagController.observeSession(
+        `${launchAuth.binding.userId}@${apiBaseForAuth(launchAuth)}`,
+      );
+    }
     await installRendererProtocol();
     installContentSecurityPolicy();
     registerIpc();
