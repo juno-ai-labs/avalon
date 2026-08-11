@@ -67,7 +67,16 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onArchiveNote={async (note) => {
           if (!api) return;
           await api.archiveNote(note.id);
-          await queryClient.invalidateQueries({ queryKey: ['notes'] });
+          // An archived note's resource stops being served everywhere, not just
+          // in the note queries: an open work stream it was attached to holds it
+          // in a cache that nothing else invalidates, and archiving emits no
+          // socket event to shake it loose.
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['notes'] }),
+            queryClient.invalidateQueries({ queryKey: ['workstream'] }),
+            queryClient.invalidateQueries({ queryKey: ['workstream-context'] }),
+            queryClient.invalidateQueries({ queryKey: ['resources'] }),
+          ]);
           queryClient.removeQueries({ queryKey: ['note', note.id] });
           // The archived note's own screen would keep polling a note the API no
           // longer serves, so leave it the way a deleted automation does.
@@ -76,11 +85,25 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;
           const updated = await api.updateNote(note.id, { scope });
+          // The server bumps last_activity_at on any note write, and that is the
+          // sidebar's sort key. Patching the scope alone would leave the row in
+          // its old position until the next refetch moved it for no visible
+          // reason, so the timestamps travel with it.
           queryClient.setQueryData<NoteSummary[]>(['notes'], (current) =>
-            current?.map((item) => item.id === updated.id ? { ...item, scope: updated.scope } : item),
+            current?.map((item) => item.id === updated.id ? {
+              ...item,
+              scope: updated.scope,
+              lastActivityAt: updated.lastActivityAt,
+              updatedAt: updated.updatedAt,
+            } : item),
           );
           queryClient.setQueryData<NoteDetail>(['note', updated.id], (current) =>
-            current ? { ...current, scope: updated.scope } : current,
+            current ? {
+              ...current,
+              scope: updated.scope,
+              lastActivityAt: updated.lastActivityAt,
+              updatedAt: updated.updatedAt,
+            } : current,
           );
         }}
         onDeleteAutomation={async (automation) => {
