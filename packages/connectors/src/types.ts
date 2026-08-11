@@ -526,6 +526,19 @@ export interface ConnectorAdapter {
    * fires, long after the check returned. An adapter falls back to its own
    * timeout only when a caller supplies none.
    */
+  /**
+   * Restores provider-side state a connection needs but that has drifted —
+   * a disabled webhook endpoint, a lapsed subscription.
+   *
+   * Separate from `healthCheck` because it writes. A health check runs on every
+   * plugin activation, and a read-shaped call that quietly mutates provider
+   * state on that cadence is a surprise; this runs only when someone explicitly
+   * tests a connection.
+   */
+  repair?(
+    connection: AuthorizedConnectorConnection,
+    signal: AbortSignal,
+  ): Promise<{ repaired: boolean; message?: string }>;
   healthCheck(
     connection?: AuthorizedConnectorConnection,
     signal?: AbortSignal,
