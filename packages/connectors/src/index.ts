@@ -794,6 +794,15 @@ const GOOGLE_TOOL_RESPONSE_BYTES = 512_000;
 const GOOGLE_TOOL_TEXT_BYTES = 128_000;
 const GOOGLE_TOOL_GMAIL_MESSAGES = 25;
 const GOOGLE_TOOL_HEADER_CONCURRENCY = 5;
+/** What a reader needs to see of a recipient list. */
+const GOOGLE_TOOL_ADDRESS_HEADER_BYTES = 640;
+/**
+ * What the contact scan needs to read of one. The display limit drops the tail
+ * of a large Cc list, and a person Gmail matched on can sit in that tail — so
+ * reusing it would make `gmail.find_contacts` miss the very address the query
+ * found the message by. These rows are ranked and discarded, never returned.
+ */
+const GOOGLE_TOOL_CONTACT_ADDRESS_HEADER_BYTES = 16_000;
 const GOOGLE_TOOL_CONTACT_SCAN_MESSAGES = 50;
 
 const GmailChangeRefSchema = z.object({
@@ -1198,7 +1207,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
   async function readCalendarAttendees(
     context: ConnectorToolContext,
     calendarId: string,
-    eventId: string
+    eventId: string,
+    requireComplete: boolean
   ): Promise<Record<string, unknown>[]> {
     const url = new URL(
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
@@ -1216,7 +1226,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
     const payload = await api(context.connection, url.toString(), { signal: context.signal }).then((response) =>
       safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
     );
-    if (payload.attendeesOmitted === true) {
+    // Only a relative change needs the list to be complete. When the caller
+    // states the whole list themselves, a partial read costs the state of the
+    // guests they kept, never their membership — so it degrades rather than
+    // refusing, and keeps `replaceAllAttendeeEmails` usable as the way out of
+    // an event whose list cannot be read.
+    if (requireComplete && payload.attendeesOmitted === true) {
       throw new ConnectorError(
         "invalid_payload",
         "This event's guest list came back incomplete, so adding or removing an attendee would drop the ones that were not returned. Set the full list explicitly with replaceAllAttendeeEmails, or change the event in Google Calendar.",
@@ -1236,7 +1251,8 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
   async function hydrateGmailSearchHits(
     connection: ConnectorConnectionContext,
     hits: Record<string, unknown>[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    addressLimit: number = GOOGLE_TOOL_ADDRESS_HEADER_BYTES
   ): Promise<Record<string, unknown>[]> {
     return mapWithConcurrency(hits, GOOGLE_TOOL_HEADER_CONCURRENCY, async (hit) => {
       const messageId = readString(hit, "id");
@@ -1254,17 +1270,21 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         try {
           const response = await api(connection, url.toString(), { signal }, [404]);
           if (response.ok) message = await safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES);
+          // A deleted message degrades exactly like a refused one, and says so:
+          // the paragraph in CONNECTORS.md promises this marker for any hit
+          // whose headers could not be fetched, not only for a transient one.
+          else return { ...summarizeGmailSearchHit(messageId, threadId, {}, addressLimit), headersUnavailable: true };
         } catch (error) {
-          // The same argument the deleted-message path makes, for a rate limit
-          // rather than a 404: this fan-out is up to 50 requests wide, and one
-          // refused hit must not cost the caller every other result. The row
-          // degrades to identifiers and says so, which a caller can act on;
-          // failing the search would look like an empty mailbox.
-          if (signal.aborted) throw error;
-          return { ...summarizeGmailSearchHit(messageId, threadId, {}), headersUnavailable: true };
+          // This fan-out is up to 50 requests wide, and one refused hit must not
+          // cost the caller every other result. But a broken connection is not
+          // a thin row: swallowing it would report "no address matched, try a
+          // different spelling" for a grant that was revoked mid-search, and
+          // send the caller looking for a better query rather than reconnecting.
+          if (signal.aborted || isGoogleAuthorizationFailure(error)) throw error;
+          return { ...summarizeGmailSearchHit(messageId, threadId, {}, addressLimit), headersUnavailable: true };
         }
       }
-      return summarizeGmailSearchHit(messageId, threadId, message);
+      return summarizeGmailSearchHit(messageId, threadId, message, addressLimit);
     });
   }
 
@@ -1818,7 +1838,12 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           safeJsonBounded(response, GOOGLE_TOOL_RESPONSE_BYTES)
         );
         const scanned = recordArray(payload, "messages").slice(0, GOOGLE_TOOL_CONTACT_SCAN_MESSAGES);
-        const hits = await hydrateGmailSearchHits(context.connection, scanned, context.signal);
+        const hits = await hydrateGmailSearchHits(
+          context.connection,
+          scanned,
+          context.signal,
+          GOOGLE_TOOL_CONTACT_ADDRESS_HEADER_BYTES
+        );
         const contacts = rankGmailContacts(
           hits,
           args.name,
@@ -1854,7 +1879,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const response = await api(context.connection, url.toString(), { signal: context.signal }, [404]);
         if (!response.ok) {
           throw new ConnectorError("invalid_payload", gmailIdentifierHint("threadId"), {
-            reason: "wrong_id_family",
+            reason: "message_or_thread_not_found",
             field: "threadId"
           });
         }
@@ -1878,7 +1903,7 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         const response = await api(context.connection, url.toString(), { signal: context.signal }, [404]);
         if (!response.ok) {
           throw new ConnectorError("invalid_payload", gmailIdentifierHint("messageId"), {
-            reason: "wrong_id_family",
+            reason: "message_or_thread_not_found",
             field: "messageId"
           });
         }
@@ -1903,16 +1928,18 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
           { method: "POST", body: JSON.stringify(body), signal: context.signal }
         ).then((response) => safeJsonBounded(response, 256_000));
         const operationId = readString(payload, "id") ?? readNestedString(payload, "message", "id");
-        const createdThreadId = readNestedString(payload, "message", "threadId");
+        // A draft nests its message; a send returns the sent message itself, so
+        // its thread is at the top level. Reading only the nested shape left
+        // `gmail.send` with a null address and no thread to follow up in.
+        const createdThreadId = readNestedString(payload, "message", "threadId")
+          ?? readString(payload, "threadId");
         return {
           output: boundedToolOutput({
             id: readString(payload, "id"),
-            message: readRecord(payload, "message")
-              ? {
-                  id: readNestedString(payload, "message", "id"),
-                  threadId: createdThreadId
-                }
-              : null,
+            message: {
+              id: readNestedString(payload, "message", "id") ?? readString(payload, "id"),
+              threadId: createdThreadId
+            },
             // Every calendar write hands back an openable address; a draft a
             // person is expected to review should not be the one result they
             // have to go hunting for.
@@ -2041,22 +2068,43 @@ export function createGoogleConnector(config: GoogleConnectorConfig): ConnectorA
         // identical write-back, and an update mail to every guest about a
         // change that did not happen.
         const changesAttendees = Boolean(args.addAttendeeEmails?.length || args.removeAttendeeEmails?.length);
-        let attendees: Record<string, unknown>[] | undefined = args.replaceAllAttendeeEmails
-          ?.map((email) => ({ email }));
-        if (changesAttendees) {
-          const removed = new Set((args.removeAttendeeEmails ?? []).map((email) => email.toLocaleLowerCase()));
-          const merged = new Map<string, Record<string, unknown>>();
-          for (const attendee of await readCalendarAttendees(context, calendarId, args.eventId)) {
-            const key = readString(attendee, "email")!.toLocaleLowerCase();
-            if (!removed.has(key)) merged.set(key, attendee);
+        let attendees: Record<string, unknown>[] | undefined;
+        let existingAttendees: Record<string, unknown>[] = [];
+        if (changesAttendees || args.replaceAllAttendeeEmails) {
+          existingAttendees = await readCalendarAttendees(
+            context,
+            calendarId,
+            args.eventId,
+            changesAttendees
+          );
+          const existingByEmail = new Map(existingAttendees.map((attendee) =>
+            [readString(attendee, "email")!.toLocaleLowerCase(), attendee]));
+          if (args.replaceAllAttendeeEmails) {
+            // Membership comes from the caller, state from the event. Rebuilding
+            // a retained guest as a bare address would reset their RSVP and
+            // demote a room to an ordinary invitee — the harm the relative path
+            // exists to avoid, reached through the other parameter.
+            attendees = args.replaceAllAttendeeEmails.map((email) =>
+              existingByEmail.get(email.toLocaleLowerCase()) ?? { email });
+          } else {
+            const removed = new Set((args.removeAttendeeEmails ?? []).map((email) => email.toLocaleLowerCase()));
+            const merged = new Map<string, Record<string, unknown>>();
+            for (const [key, attendee] of existingByEmail) {
+              if (!removed.has(key)) merged.set(key, attendee);
+            }
+            for (const email of args.addAttendeeEmails ?? []) {
+              const key = email.toLocaleLowerCase();
+              if (!removed.has(key) && !merged.has(key)) merged.set(key, { email });
+            }
+            attendees = [...merged.values()];
           }
-          for (const email of args.addAttendeeEmails ?? []) {
-            const key = email.toLocaleLowerCase();
-            if (!removed.has(key) && !merged.has(key)) merged.set(key, { email });
-          }
-          attendees = [...merged.values()];
         }
-        if (attendees !== undefined) url.searchParams.set("sendUpdates", "all");
+        // Notify on a change to the guest list, not on the mention of one.
+        // Removing somebody who was never invited leaves the list identical,
+        // and mailing every guest about that is a message they cannot act on.
+        if (attendees !== undefined && !sameAttendeeMembership(existingAttendees, attendees)) {
+          url.searchParams.set("sendUpdates", "all");
+        }
         const payload = await api(context.connection, url.toString(), {
           method: "PATCH",
           body: JSON.stringify({ ...calendarEventWriteBody(args), ...(attendees ? { attendees } : {}) }),
@@ -2761,7 +2809,8 @@ function sanitizeGmailThread(payload: Record<string, unknown>): Record<string, u
 function summarizeGmailSearchHit(
   messageId: string | null,
   threadId: string | null,
-  message: Record<string, unknown>
+  message: Record<string, unknown>,
+  addressLimit: number = GOOGLE_TOOL_ADDRESS_HEADER_BYTES
 ): Record<string, unknown> {
   const resolvedThreadId = threadId ?? readString(message, "threadId");
   return {
@@ -2770,14 +2819,45 @@ function summarizeGmailSearchHit(
     webUrl: gmailThreadWebUrl(resolvedThreadId),
     internalDate: readString(message, "internalDate"),
     labelIds: readStringArray(message, "labelIds"),
-    from: truncateAddressHeader(gmailHeader(message, "From"), 320),
-    to: truncateAddressHeader(gmailHeader(message, "To"), 640),
-    cc: truncateAddressHeader(gmailHeader(message, "Cc"), 640),
+    from: truncateAddressHeader(gmailHeader(message, "From"), Math.min(addressLimit, 320)),
+    to: truncateAddressHeader(gmailHeader(message, "To"), addressLimit),
+    cc: truncateAddressHeader(gmailHeader(message, "Cc"), addressLimit),
     subject: truncateNullable(gmailHeader(message, "Subject"), 500),
     date: truncateNullable(gmailHeader(message, "Date"), 120),
     messageIdHeader: truncateNullable(gmailHeader(message, "Message-ID"), 500),
     snippet: truncateText(readString(message, "snippet") ?? "", 500)
   };
+}
+
+/** Whether two guest lists name the same people, ignoring order and case. */
+function sameAttendeeMembership(
+  left: Record<string, unknown>[],
+  right: Record<string, unknown>[]
+): boolean {
+  const emails = (attendees: Record<string, unknown>[]) =>
+    new Set(attendees.flatMap((attendee) => {
+      const email = readString(attendee, "email");
+      return email ? [email.toLocaleLowerCase()] : [];
+    }));
+  const before = emails(left);
+  const after = emails(right);
+  return before.size === after.size && [...before].every((email) => after.has(email));
+}
+
+/**
+ * Whether a failure is the connection itself rather than the one call that hit it.
+ *
+ * A per-item loop that tolerates failures has to let this class through, or a
+ * revoked grant is reported once per item as a thin result and never as the
+ * reconnection it actually is.
+ */
+function isGoogleAuthorizationFailure(error: unknown): boolean {
+  if (!(error instanceof ConnectorError)) return false;
+  if (error.code === "unauthorized" || error.code === "unsupported_capability") return true;
+  const details = error.details;
+  return Boolean(
+    details && typeof details === "object" && (details as { reconnectRequired?: unknown }).reconnectRequired === true
+  );
 }
 
 /**
@@ -2805,9 +2885,11 @@ function assertGoogleIdFamily(eventId: string): void {
  * which when the provider refuses.
  */
 function gmailIdentifierHint(field: "messageId" | "threadId"): string {
-  return field === "messageId"
-    ? "No message has that id. A search hit's `threadId` is a different identifier from its `id`; pass the `id` to read one message, or use the thread reader for the whole thread."
-    : "No thread has that id. A search hit's `id` identifies one message rather than its thread; pass the hit's `threadId` here, or use the message reader for a single message.";
+  const other = field === "messageId" ? "threadId" : "messageId";
+  // Both causes, in one hint, and the deletion first. Naming only the other
+  // reader sends a caller holding a deleted id from one to the other and back
+  // until the run's iteration ceiling stops it.
+  return `Gmail has no ${field === "messageId" ? "message" : "thread"} with that id. Either it was deleted, or this is the hit's \`${other}\`, which is a different identifier that looks the same. Re-run the search to confirm the id still exists before trying the other reader.`;
 }
 
 /**
@@ -2848,7 +2930,11 @@ function gmailContactQuery(name: string): string | null {
   const escaped = name.replaceAll(/["()]/gu, " ").replaceAll(/\s+/gu, " ").trim();
   if (!escaped) return null;
   const term = `"${escaped}"`;
-  return `(from:(${term}) OR to:(${term}) OR cc:(${term})) in:anywhere`;
+  // Spam and Trash are excluded rather than searched. Gmail's default already
+  // spans archived mail, so `in:anywhere` adds only those two folders — and one
+  // spoofed message there would become an address the prompt tells the model to
+  // use verbatim, which is precisely the fabrication this tool exists to stop.
+  return `(from:(${term}) OR to:(${term}) OR cc:(${term})) -in:spam -in:trash`;
 }
 
 /**
