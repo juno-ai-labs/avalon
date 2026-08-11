@@ -59,6 +59,19 @@ describe('useDraftText', () => {
     await waitFor(async () => expect((await readDraftText(draftKey))?.text).toBe('typed and gone'));
   });
 
+  it('does not restamp a draft it only read, so the expiry clock keeps running', async () => {
+    await writeDraftText(draftKey, 'written once');
+    const writtenAt = (await readDraftText(draftKey))!.updatedAt;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const { result, unmount } = renderHook(() => useDraftText(draftKey));
+    await waitFor(() => expect(result.current.text).toBe('written once'));
+    unmount();
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await readDraftText(draftKey))?.updatedAt).toBe(writtenAt);
+  });
+
   it('swaps drafts when the key changes and keeps each one separate', async () => {
     await writeDraftText('workstream:other', 'the other draft');
     const { result, rerender } = renderHook(({ key }) => useDraftText(key), { initialProps: { key: draftKey } });

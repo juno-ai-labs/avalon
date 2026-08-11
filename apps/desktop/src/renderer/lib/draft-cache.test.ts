@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DRAFT_CACHE_TTL_MS,
   clearAllDrafts,
+  draftCacheEpoch,
   deleteDraftAttachments,
   nextDraftSortKey,
   pruneExpiredDrafts,
@@ -125,6 +126,38 @@ describe('draft cache', () => {
     expect(expired.map((attachment) => attachment.resource?.id)).toEqual([resource.id]);
     vi.useRealTimers();
     expect(await pruneExpiredDrafts()).toEqual([]);
+  });
+
+  it('drops a write whose content predates a wipe', async () => {
+    const atEpoch = draftCacheEpoch();
+    await cacheAttachment('workstream:1', 'first', 'one');
+
+    await clearAllDrafts();
+    // Both racing shapes: a debounced save and a file that was still being
+    // fingerprinted when the device left the session.
+    await writeDraftText('workstream:1', 'typed just before signing out', [], atEpoch);
+    const stored = await writeDraftAttachment({
+      draftKey: 'workstream:1',
+      localId: 'late',
+      sortKey: nextDraftSortKey(),
+      fileName: 'late.txt',
+      mimeType: 'text/plain',
+      lastModified: 1,
+      bytes: bytes('late'),
+    }, atEpoch);
+
+    expect(stored).toBe(false);
+    expect(await readDraftText('workstream:1')).toBeNull();
+    expect(await readDraftAttachments('workstream:1')).toEqual([]);
+  });
+
+  it('lets a composer opened after a wipe write normally', async () => {
+    await clearAllDrafts();
+    const atEpoch = draftCacheEpoch();
+
+    await writeDraftText('workstream:1', 'a new session, a new draft', [], atEpoch);
+
+    expect((await readDraftText('workstream:1'))?.text).toBe('a new session, a new draft');
   });
 
   it('degrades to empty results when IndexedDB is unavailable', async () => {

@@ -1,7 +1,21 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type AvalonApi } from './api';
+import type * as DraftCache from './draft-cache';
 import { clearAllDrafts, readDraftAttachments } from './draft-cache';
+
+/** Lets one test hold the cache read open long enough to lose a race to a drop. */
+let readDelayMs = 0;
+vi.mock('./draft-cache', async (importOriginal) => {
+  const actual = await importOriginal<typeof DraftCache>();
+  return {
+    ...actual,
+    readDraftAttachments: async (draftKey: string) => {
+      if (readDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, readDelayMs));
+      return actual.readDraftAttachments(draftKey);
+    },
+  };
+});
 import { useFileAttachments } from './use-file-attachments';
 import type { WorkstreamResource } from './types';
 
@@ -30,6 +44,7 @@ function apiMock(overrides: Partial<AvalonApi> = {}): AvalonApi {
 describe('useFileAttachments', () => {
   beforeEach(async () => {
     await clearAllDrafts();
+    readDelayMs = 0;
     vi.stubGlobal('URL', {
       ...URL,
       createObjectURL: vi.fn(() => 'blob:preview'),
@@ -239,6 +254,57 @@ describe('useFileAttachments', () => {
 
     await waitFor(async () => expect(await readDraftAttachments(draftKey)).toHaveLength(0));
     expect(result.current.attachments).toHaveLength(0);
+  });
+
+  it('settles the ten-file limit when a drop races the cache read', async () => {
+    const api = apiMock({ uploadResource: vi.fn(async (file: File) => ({ ...resource, id: file.name })) });
+    const seeded = renderHook(() => useFileAttachments(api, draftKey));
+    act(() => seeded.result.current.addFiles(
+      Array.from({ length: 9 }, (_, index) => new File([`cached-${index}`], `cached-${index}.txt`)),
+    ));
+    await waitFor(() => expect(seeded.result.current.ready).toHaveLength(9));
+    seeded.unmount();
+
+    // The drop lands before the cached nine are known, so it is counted against
+    // an empty composer and has to be reconciled once they arrive.
+    readDelayMs = 60;
+    const { result } = renderHook(() => useFileAttachments(api, draftKey));
+    act(() => result.current.addFiles(
+      Array.from({ length: 10 }, (_, index) => new File([`dropped-${index}`], `dropped-${index}.txt`)),
+    ));
+
+    // Wait for the cached nine to arrive, not merely for ten tiles: the ten
+    // dropped files satisfy that count on their own, before reconciliation.
+    await waitFor(() => expect(result.current.attachments[0]?.file.name).toBe('cached-0.txt'));
+    expect(result.current.attachments).toHaveLength(10);
+    expect(result.current.error).toBe('You can attach up to 10 files to one message.');
+    await waitFor(async () => expect(await readDraftAttachments(draftKey)).toHaveLength(10));
+    expect(result.current.attachments.map((attachment) => attachment.file.name))
+      .toEqual([...Array.from({ length: 9 }, (_, index) => `cached-${index}.txt`), 'dropped-0.txt']);
+    // Every file that did not fit released its draft resource rather than
+    // lingering upstream, invisible and unremovable.
+    await waitFor(() => {
+      for (let index = 1; index < 10; index += 1) {
+        expect(api.deleteDraftResource).toHaveBeenCalledWith(`dropped-${index}.txt`);
+      }
+    });
+  });
+
+  it('attributes a file added on the render that switches drafts to the new one', async () => {
+    const api = apiMock({ uploadResource: vi.fn(async (file: File) => ({ ...resource, id: file.name })) });
+    const { result, rerender } = renderHook(({ key }) => useFileAttachments(api, key), {
+      initialProps: { key: draftKey },
+    });
+    await waitFor(() => expect(result.current.attachments).toHaveLength(0));
+
+    // The add is issued from the render that changed the key, before the
+    // hydration effect for the new key has run.
+    rerender({ key: 'workstream:other' });
+    act(() => result.current.addFiles([new File(['switched'], 'switched.txt')]));
+
+    await waitFor(() => expect(result.current.ready).toHaveLength(1));
+    await waitFor(async () => expect(await readDraftAttachments('workstream:other')).toHaveLength(1));
+    expect(await readDraftAttachments(draftKey)).toEqual([]);
   });
 
   it('does not cache a file that could never be sent', async () => {
