@@ -101,12 +101,26 @@ describe('menu bar menu', () => {
     expect(pinnedLabels).toHaveLength(MENU_BAR_PINNED_LIMIT);
   });
 
-  it('omits the Pinned group whole when nothing is pinned', () => {
+  it('says how the Pinned section gets filled rather than hiding it', () => {
     const items = template({ recents: workstreams });
+    const empty = items.find((item) => item.label === 'Pin a work stream to see it here');
 
+    // A section that is simply absent teaches nobody about a feature they have
+    // not found yet.
+    expect(items.some((item) => item.label === 'Pinned')).toBe(true);
+    expect(empty?.enabled).toBe(false);
+    expect(empty?.click).toBeUndefined();
+    expect(labels(items).indexOf('Pinned'))
+      .toBe(labels(items).indexOf('Pin a work stream to see it here') - 1);
+  });
+
+  it('drops the Pinned section entirely when nobody is signed in', () => {
+    const items = template(emptyMenuBarContent, { signedIn: false });
+
+    // Nothing to pin, and the Recent row above already says to sign in.
     expect(items.some((item) => item.label === 'Pinned')).toBe(false);
-    expect(labels(items).at(-3)).toBe('—');
-    expect(labels(items).slice(-2)).toEqual(['Open Avalon', 'Quit Avalon']);
+    expect(items.some((item) => item.label === 'Pin a work stream to see it here')).toBe(false);
+    expect(labels(items).at(-4)).toBe('Sign in to Avalon');
   });
 
   it('opens a pinned row the same way a recent one opens', () => {
@@ -134,16 +148,20 @@ describe('menu bar menu', () => {
       'Recent',
       'Work stream 0',
       '—',
+      'Pinned',
+      'Pin a work stream to see it here',
+      '—',
       'Open Avalon',
       'Quit Avalon',
     ]);
   });
 
-  it('heads each group, and keeps Recent over its own empty state', () => {
+  it('heads each group, and keeps Recent and Pinned over their own empty states', () => {
     const items = template(emptyMenuBarContent);
-    const recent = items.find((item) => item.label === 'Recent');
 
-    expect(recent?.type).toBe('header');
+    expect(items.find((item) => item.label === 'Recent')?.type).toBe('header');
+    expect(items.find((item) => item.label === 'Pinned')?.type).toBe('header');
+    // Suggestions is the one group with nothing to say when it is empty.
     expect(items.some((item) => item.label === 'Suggestions')).toBe(false);
     expect(labels(items).indexOf('Recent'))
       .toBe(labels(items).indexOf('No recent work streams') - 1);

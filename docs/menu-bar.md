@@ -63,8 +63,12 @@ always produces a menu immediately. In order:
    in; the header stays, which is what makes that row read as an answer rather
    than a stray disabled item.
 7. A separator, a **Pinned** header, and the top five of the reader's own
-   arrangement, from the same response. Omitted whole — header and rule included
-   — when nothing is pinned, which is most people.
+   arrangement, from the same response. With nothing pinned the section stays and
+   one disabled row says **Pin a work stream to see it here** — most people have
+   never pinned anything, and a section that is simply absent teaches them
+   nothing about a feature they have not found. Signed out is the one case the
+   group is dropped: there is nothing to pin, and the **Recent** row above
+   already says to sign in.
 8. A separator, then **Open Avalon** and **Quit Avalon**.
 
 Both headers use `type: 'header'`, which macOS added in 14 and which AppKit
@@ -166,6 +170,10 @@ destination, so the hidden state is not sticky.
 - **`menuBarEnabled` reads as on when it is missing or unreadable.** The item
   ships on, and any other reading would silently withdraw it from every device
   that upgraded.
+- **An empty group either explains itself or is not there.** **Recent** and
+  **Pinned** keep their header and say why they are empty; **Suggestions** has
+  nothing useful to say, so it goes. A group that renders a bare header with
+  nothing under it reads as a menu that failed to load.
 - **The menu never renders state the operating system can change behind it.**
   It is rebuilt on content changes, not on open, so anything macOS owns
   independently — the login item is the case that came up — belongs in Settings,
@@ -205,7 +213,8 @@ the link there first, not a second navigation channel here.
 | Signed out | All three fixed actions remain; the recent section becomes one disabled **Sign in to Avalon** row. Content refreshes are skipped entirely rather than failing twice per pointer arrival. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
 | Nothing to suggest | The suggestion group, its header, and both of its rules are omitted, leaving one rule between the fixed actions and **Recent**. |
-| Nothing pinned | The **Pinned** group, its header, and its rule are omitted. |
+| Nothing pinned | The header stays over one disabled row: **Pin a work stream to see it here**. |
+| Signed out | The **Pinned** group is dropped entirely, header and rule included. |
 | More than five pins | The top five of the arrangement are shown. This is a display limit on a menu, not a cap on pinning — see the invariant in [`workstream-pinning.md`](workstream-pinning.md) about nothing counting pins against a limit. |
 | macOS 13 or older | Both headers fall back to disabled rows. Everything else is unchanged. |
 | A request hangs | Aborted after 8 s (`MENU_BAR_REQUEST_TIMEOUT_MS`). A wedged request would otherwise freeze the content for the life of the process. |
@@ -315,11 +324,33 @@ that assumes `mainWindow` exists after startup has to keep handling `null`, whic
 
 **Not done:** a submenu for older work streams.
 
+### 2026-08-11 — The empty Pinned section stays, and says how to fill it
+
+**What changed:** Reverses the omission decided in the entry below, on the same
+day. With nothing pinned, **Pinned** keeps its header over one disabled row
+reading **Pin a work stream to see it here**. Signed out is now the only state
+that drops the group.
+
+**Why:** The earlier entry treated an empty section as two wasted rows for the
+majority who have never pinned anything. That is the wrong way round: those are
+exactly the people who do not know pinning exists, and a section that is simply
+absent cannot tell them. The two rows buy the feature its only discovery surface
+outside a right-click menu.
+
+**Considered and rejected:** making the row clickable — opening the sidebar, or
+pinning the frontmost work stream. Both invent an action the copy does not
+promise, and a menu row that does something other than what it says is worse
+than one that does nothing.
+
+**Consequences:** the menu now has a fixed floor of rows whatever the account
+holds, which is the shape to keep — **Suggestions** stays the exception because
+it has nothing to say when empty, not because empty groups are dropped by rule.
+
 ### 2026-08-11 — A Pinned section below Recent
 
 **What changed:** A **Pinned** group under **Recent**, holding the top five of
 the reader's own pinned arrangement, from the same `GET /workstreams` response.
-Omitted whole when nothing is pinned.
+Omitted whole when nothing is pinned — reversed the same day by the entry above.
 
 **Why:** Pinning landed on `main` the same day (#95) and gave people a place to
 put the work streams they return to. Recency is what moved today; a pin is a
