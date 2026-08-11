@@ -141,6 +141,16 @@ for (const name of applicationIconNames) {
 const nativeIconScriptPath = join(resourcesDirectory, 'native/set-application-icon.js');
 if (!existsSync(nativeIconScriptPath)) throw new Error('Packaged app is missing its native application-icon bridge');
 
+// The Retina rendition is resolved by name at runtime rather than referenced in
+// code, so a bundle missing it fails nowhere until someone looks at the menu bar
+// on a Retina Mac and sees a blurred mark.
+for (const fileName of ['avalonTemplate.png', 'avalonTemplate@2x.png']) {
+  const menuBarIconPath = join(resourcesDirectory, 'menu-bar', fileName);
+  if (!existsSync(menuBarIconPath)) {
+    throw new Error(`Packaged app is missing its menu bar icon ${fileName}`);
+  }
+}
+
 function inspectEntitlementKeys(componentPath, label, { allowEmpty = false } = {}) {
   const entitlementResult = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', componentPath], {
     encoding: 'utf8',
