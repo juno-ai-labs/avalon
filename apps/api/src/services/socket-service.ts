@@ -1,4 +1,9 @@
 import { jwtVerify, SignJWT } from "jose";
+import {
+  offersSocketTicketSubprotocol,
+  socketTicketFromProtocols,
+  SOCKET_TICKET_SUBPROTOCOL,
+} from "@avalon/contracts/socket-tickets";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
@@ -119,17 +124,44 @@ export function isAllowedSocketOrigin(env: Pick<Env, "ALLOWED_ORIGINS">, origin:
     .some((allowed) => allowed === requested);
 }
 
+/**
+ * The ticket the client presented: the `Sec-WebSocket-Protocol` offer when it
+ * makes one, otherwise the deprecated query parameter a desktop build released
+ * before that scheme still sends. The header wins whenever both are present, so
+ * a client that has moved over cannot be downgraded by a URL it did not build.
+ */
+export function socketTicketFromRequest(request: Request, queryTicket: string | undefined): string {
+  const ticket = socketTicketFromProtocols(request.headers.get("sec-websocket-protocol")) ?? queryTicket;
+  if (!ticket) {
+    throw new ApiError(401, "socket_ticket_required", "The realtime ticket is missing");
+  }
+  return ticket;
+}
+
+/**
+ * Chromium fails a handshake where the client offered subprotocols and the
+ * server selected none, so the offer has to be answered. Only the sentinel is
+ * echoed — returning the ticket would put the credential in a response header
+ * and undo the point of moving it out of the URL.
+ */
+export function withNegotiatedSubprotocol(request: Request, response: Response): Response {
+  if (!offersSocketTicketSubprotocol(request.headers.get("sec-websocket-protocol"))) return response;
+  const headers = new Headers(response.headers);
+  headers.set("sec-websocket-protocol", SOCKET_TICKET_SUBPROTOCOL);
+  return new Response(null, { status: 101, webSocket: response.webSocket, headers });
+}
+
 export class SocketService {
   constructor(private readonly env: Env) {}
 
-  async upgrade(workstreamId: string, ticket: string, request: Request): Promise<Response> {
+  async upgrade(workstreamId: string, queryTicket: string | undefined, request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
     }
     if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
       throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
     }
-    const claims = await verifySocketTicket(this.env, ticket);
+    const claims = await verifySocketTicket(this.env, socketTicketFromRequest(request, queryTicket));
     if (claims.region !== this.env.AVALON_REGION || claims.workstreamId !== workstreamId) {
       throw new ApiError(403, "socket_ticket_scope_mismatch", "The realtime ticket does not authorize this work stream");
     }
@@ -141,6 +173,10 @@ export class SocketService {
     headers.set("x-avalon-user-id", claims.userId);
     headers.set("x-avalon-socket-ticket-id", claims.ticketId);
     headers.set("x-avalon-socket-ticket-expires-at", String(claims.expiresAt));
-    return rooms.get(durableId).fetch(new Request("https://room.internal/socket", { method: "GET", headers }));
+    const response = await rooms.get(durableId)
+      .fetch(new Request("https://room.internal/socket", { method: "GET", headers }));
+    // The room answers the upgrade; the subprotocol is negotiated out here so
+    // it stays a transport concern the room never has to know about.
+    return withNegotiatedSubprotocol(request, response);
   }
 }
