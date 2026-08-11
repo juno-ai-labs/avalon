@@ -48,8 +48,14 @@ interface SidebarProps {
   onChangeWorkstreamScope: (workstream: WorkstreamSummary, scope: 'personal' | 'workspace') => Promise<void>;
   onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
-  /** Pin or unpin for the signed-in person, on every device they use. */
-  onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<void>;
+  /**
+   * Pin or unpin for the signed-in person, on every device they use.
+   *
+   * Resolves to whether the response was the one applied — `false` when a later
+   * pin was issued behind it and took the list instead. Only the action that
+   * won gets to move the viewport; see `reveal`.
+   */
+  onPinWorkstream: (workstream: WorkstreamSummary, pinned: boolean) => Promise<boolean>;
   /** The pinned list's new order, in full, after a drag or a keyboard move. */
   onReorderPinnedWorkstreams: (workstreamIds: string[]) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
@@ -67,6 +73,20 @@ const EDGE_REVEAL_DISTANCE = 20;
 
 /** The one element carrying the keyboard-reorder instruction for the section. */
 const PINNED_DRAG_HINT_ID = 'pinned-drag-hint';
+
+/**
+ * How long the sidebar will wait for the list to carry a pin before it stops
+ * intending to follow the row.
+ *
+ * The wait is normally one render. It is bounded because the alternative is a
+ * reveal that stays armed: the list polls every fifteen seconds, so an intent
+ * that is never honoured is re-evaluated forever and fires the moment the state
+ * happens to match — scrolling, and moving focus, under somebody who pinned
+ * something a minute ago and has long since moved on. Following a row is only
+ * worth anything while the action that moved it is still what the reader is
+ * thinking about; two seconds is past the round trip and well short of that.
+ */
+export const REVEAL_DEADLINE_MS = 2_000;
 
 const onboardingItems = [
   {
@@ -307,6 +327,9 @@ function WorkstreamRow({
       <ContextMenu.Trigger asChild>
         <div
           className={clsx('sidebar-context-target', drag && 'is-draggable', drag?.dragging && 'is-dragging')}
+          // How the sidebar finds this row again after pinning has moved it to
+          // a different section — see the `reveal` effect.
+          data-workstream-id={workstream.id}
           draggable={drag !== undefined}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
@@ -604,6 +627,12 @@ export function Sidebar({
   const [scopePendingNoteId, setScopePendingNoteId] = useState<string | null>(null);
   const [scopePendingWorkstreamId, setScopePendingWorkstreamId] = useState<string | null>(null);
   const [pinPendingWorkstreamId, setPinPendingWorkstreamId] = useState<string | null>(null);
+  // The work stream a pin or unpin has just moved, and which side of the
+  // sidebar it was moved to, held until the list re-renders carrying that
+  // change. Cleared the moment it is honoured, so a later render for any other
+  // reason does not scroll the reader again.
+  const [reveal, setReveal] = useState<{ id: string; pinned: boolean } | null>(null);
+  const scrollRef = useRef<HTMLElement | null>(null);
   // The arrangement being dragged, held only for as long as the drag lasts.
   // The list renders from it while it exists, so rows move under the pointer
   // before anything is sent; the server's answer replaces it when the drag
@@ -741,7 +770,16 @@ export function Sidebar({
   const togglePin = async (workstream: WorkstreamSummary, pinned: boolean): Promise<void> => {
     setPinPendingWorkstreamId(workstream.id);
     try {
-      await onPinWorkstream(workstream, pinned);
+      // The row has just moved to a different section, which is off screen
+      // whenever the reader had scrolled down to reach it — the ordinary case,
+      // since being tired of hunting for something is why anyone pins it. Left
+      // alone, the action reads as the row vanishing under the cursor.
+      //
+      // Only when this response is the one that took the list, though. Two pins
+      // made close together resolve in either order, and the older one landing
+      // last would otherwise drag the viewport back to the row the reader has
+      // already finished with.
+      if (await onPinWorkstream(workstream, pinned)) setReveal({ id: workstream.id, pinned });
     } catch (error) {
       setMenuError({
         title: pinned ? 'Work stream could not be pinned' : 'Work stream could not be unpinned',
@@ -867,6 +905,68 @@ export function Sidebar({
     };
   }, [resizing, setSidebarWidth]);
 
+  // Waits for the list itself to carry the change before chasing the row.
+  //
+  // The request resolving is not the row moving: the cache write that follows
+  // it reaches this component through React Query's own scheduler, a tick or
+  // more after the state set here. Scrolling on the first render after the
+  // await therefore finds the row still sitting in the section it is leaving,
+  // scrolls to *that*, and is left pointing at empty space the moment the real
+  // update lands — which is exactly the failure this whole effect exists to
+  // prevent, reintroduced one render earlier. Comparing against the pinned-ness
+  // the action asked for is what makes "has the list caught up yet" answerable.
+  // Gives up on a reveal the list never honoured. Re-armed with the reveal, so
+  // the clock runs from the action rather than from any render after it.
+  useEffect(() => {
+    if (reveal === null) return undefined;
+    const timer = setTimeout(() => setReveal(null), REVEAL_DEADLINE_MS);
+    return () => clearTimeout(timer);
+  }, [reveal]);
+
+  useEffect(() => {
+    if (reveal === null) return;
+    const row = workstreams.find((workstream) => workstream.id === reveal.id);
+    // A row the list does not carry at all is not one that is about to arrive:
+    // every path that arms this acts on a row the reader just right-clicked.
+    // Waiting for it would leave the reveal armed indefinitely, ready to seize
+    // the viewport if that work stream ever reappeared.
+    if (row === undefined) {
+      setReveal(null);
+      return;
+    }
+    if ((row.pinPosition !== null) !== reveal.pinned) return;
+    setReveal(null);
+    // Ids are server-generated UUIDs, so they need no escaping in a selector.
+    const rendered = scrollRef.current?.querySelector(`[data-workstream-id="${reveal.id}"]`);
+    // Unpinning something the recent list does not carry leaves nothing to
+    // scroll to, which is a no-op rather than a case to handle.
+    rendered?.scrollIntoView?.({
+      // `nearest` is what keeps this from being an interruption: a row already
+      // on screen — a short sidebar, or a pin made from near the top — is not
+      // scrolled at all.
+      block: 'nearest',
+      // Motion is the point, since it is what lets the reader follow the row to
+      // its new section rather than hunt for it, so it is dropped only for
+      // someone who has asked for less of it.
+      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+    // Focus is where a keyboard reader *is*, and the two sections are separate
+    // subtrees, so the row is unmounted and remounted as it moves and Radix's
+    // restore on menu close has nothing left to restore to — focus lands on the
+    // body and the next Tab starts again from the top of the window. Scrolling
+    // alone therefore follows the row for the pointer half of the audience and
+    // abandons the half with the least other way to find it again.
+    //
+    // Only when focus was lost, which is precisely the case this repairs. Focus
+    // resting anywhere real — a composer, a dialog, another list — belongs to
+    // whoever put it there, and a pin is not a reason to take it.
+    if (document.activeElement === null || document.activeElement === document.body) {
+      // The scroll above already put the row where it belongs; letting focus
+      // scroll again would fight it, and would undo `nearest` besides.
+      rendered?.querySelector('a')?.focus({ preventScroll: true });
+    }
+  }, [reveal, workstreams]);
+
   return (
     <>
       <IconButton className="mobile-sidebar-trigger" label="Open navigation" onClick={() => setSidebarOpen(true)}>
@@ -880,7 +980,7 @@ export function Sidebar({
           </IconButton>
         </div>
 
-        <nav className="sidebar-scroll" onClick={() => setSidebarOpen(false)}>
+        <nav className="sidebar-scroll" onClick={() => setSidebarOpen(false)} ref={scrollRef}>
           <div className="sidebar-primary-actions">
             <NavLink className={({ isActive }) => clsx('sidebar-action', isActive && 'is-active')} to="/workstreams/new">
               <MessageSquarePlus aria-hidden="true" size={15} />

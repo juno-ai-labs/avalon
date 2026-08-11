@@ -83,6 +83,46 @@ means Escape, or a release outside the pinned list, and the arrangement built
 while the pointer passed over other rows is abandoned. The pinned list is itself
 a drop target, so a release in the gap between two rows still counts as a drop.
 
+### Following the row
+
+Pinning and unpinning both move a row between two sections that can be a whole
+screen apart, so the sidebar scrolls it back into view afterwards — otherwise the
+action reads as the row vanishing from under the cursor, which is the likely case
+rather than the exotic one: somebody pins a work stream *because* they were tired
+of hunting for it, which means they were scrolled down when they did it.
+
+Three details carry the behaviour. `scrollIntoView({ block: 'nearest' })` scrolls
+the least it can, so a row already on screen is not moved at all, and the motion
+is `smooth` unless the reader has asked for reduced motion.
+
+The scroll waits for the *list* to carry the change rather than for the request
+to resolve: the reveal records which side of the sidebar the row was moved to,
+and the effect does nothing until the work stream it is holding actually reports
+that `pinPosition`. The cache write reaches the component through React Query's
+scheduler a tick or more after the action resolves, so a scroll on the first
+render after the await lands on the row's *old* position and is left pointing at
+empty space — the same failure, one render earlier.
+
+And only the action whose response was applied arms the reveal at all.
+`onPinWorkstream` answers whether its response was the one that took the list,
+because the shell discards a response a later pin superseded: without that,
+two pins made close together let the older completion drag the viewport back to
+a row the reader has already finished with. A reveal is also dropped rather than
+held when the row leaves the list entirely, and in any case expires after
+`REVEAL_DEADLINE_MS`, so an intent the list never honours cannot sit armed
+against a fifteen-second poll and fire whenever the state happens to match.
+
+**Focus moves with the row, not just the viewport.** The two sections are
+separate subtrees, so a row moving between them is unmounted and remounted, and
+the focus Radix restores when the context menu closes has nothing left to
+restore to — it lands on the body, and the next Tab restarts at the top of the
+window. For somebody driving the sidebar from the keyboard, *where I was* is
+focus rather than `scrollTop`, so scrolling alone follows the row for the
+pointer half of the audience and abandons the half with the least other way to
+find it again. The reveal therefore focuses the moved row's link with
+`preventScroll: true` — but only when focus was lost, which is exactly the case
+it repairs. Focus resting anywhere real belongs to whoever put it there.
+
 ## Invariants
 
 - **A pin is per person.** Nothing about `workstream_pins` is readable by, or
@@ -187,6 +227,85 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-11 — Following the row means focus too, and the intent to follow expires
+
+**What changed:** The reveal added below now also moves focus to the row it
+scrolled to, when focus was lost by the move. Only the pin whose response was
+applied arms it, and any reveal the list does not honour within
+`REVEAL_DEADLINE_MS` is dropped.
+
+**Why:** Three things the scroll on its own got wrong, all found in review.
+
+Focus was the substantive one. A row moving between the two sections is
+unmounted and remounted, so Radix's focus restore on menu close has nothing left
+to restore to and focus falls to the body — confirmed by probe: an action that
+leaves the row in place ends with focus on the row's link, and **Pin** ends with
+focus on `document.body`. Scrolling repairs "the row vanished" for people who
+can see where it went, and leaves it exactly as broken for the people who
+cannot. That is the wrong half to fix.
+
+The other two are the same defect at two removes. The reveal armed on any pin
+that resolved, including one whose response the shell had already discarded as
+superseded, so overlapping pins could drag the viewport back to a row the reader
+had finished with. And because the reveal only cleared once the list agreed, an
+intent that was never honoured stayed armed against a fifteen-second poll and
+fired whenever the state eventually matched — scrolling, now also moving focus,
+under somebody a minute past caring.
+
+**Considered and rejected:** Detecting whether the reader is on the keyboard
+before moving focus. Radix restores focus to the trigger whichever way the menu
+was opened, so both pointer and keyboard end on the body and the modality is not
+observable at the point it would be needed. Restoring only when focus was
+*lost* is the same guarantee without the guess, and it cannot take focus from a
+composer or a dialog because those are not the body.
+
+**Consequences:** The deadline makes following a row a promise with a limit
+rather than a standing intent — anything that arms a reveal has to expect it to
+expire, and lengthening the wait re-opens the poll problem. The focus move is
+conditional on `document.activeElement`, so a future path that arms a reveal
+while focus sits somewhere real will scroll without moving focus, which is
+deliberate.
+
+### 2026-08-11 — Pinning scrolls the row it moved back into view
+
+**What changed:** After a pin or an unpin, the sidebar scrolls the row into view
+in its new section. `block: 'nearest'` means a row already on screen is not
+moved; the scroll waits for the work-stream list to report the new
+`pinPosition` rather than firing when the request resolves.
+
+**Why:** The row was simply disappearing. Pinning moves it from the recency list
+to a section above, and the scroll position did not follow — so a pin made from
+anywhere below the fold looked like the row had been deleted. That is the
+ordinary case rather than the edge one, because being tired of hunting for
+something down the list is the reason to pin it. The same is true in reverse for
+unpinning, which drops the row into whatever date group its `lastActivityAt`
+puts it in, potentially far below.
+
+This was not caught when the feature shipped because the seeded workspace holds
+two work streams, so the sidebar never scrolled in any of the manual passes. The
+gap was in the fixture, not just the feature.
+
+**Considered and rejected:** Scrolling on the render immediately after the
+request resolved — the obvious implementation, and it is wrong. React Query
+delivers the cache write through its own scheduler, a tick or more later, so
+that render still has the row in the section it is leaving: the scroll lands on
+the old position and is left pointing at empty space once the real update
+arrives. It was measured doing exactly that in a real window before the fix, and
+an instant `behavior` did not help, which ruled out the animation as the cause.
+
+**Consequences:** The reveal is keyed to a `{ id, pinned }` pair rather than an
+id, because "has the list caught up yet" is only answerable against the state
+the action asked for. Any future path that moves a row between these sections —
+a bulk pin, an unpin triggered by archiving — has to set that pair or the row
+will move without being followed. Rows carry `data-workstream-id` so the sidebar
+can find one after re-rendering; it is a hook for this, not a test seam.
+
+`onPinWorkstream` now returns whether its response was applied rather than
+`void`, which makes "did this action actually change anything" a question the
+sidebar can ask. Anything else that arms the reveal has to answer it too:
+scrolling on a superseded response points the viewport at work the reader has
+moved past.
 
 ### 2026-08-11 — There is no limit on how many work streams a person may pin
 
