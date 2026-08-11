@@ -21,8 +21,14 @@ update it in the same change.
   brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) for what Avalon is,
   then [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it is put together, then
   [`DATA_MODEL.md`](DATA_MODEL.md) and [`SECURITY.md`](SECURITY.md).
-- **Adding a document?** Create `docs/<NAME>.md` and register it in the correct
-  table below. This index is the only registry — the root
+- **Building or changing an architecture, engine, or large module?** It gets its
+  own document here, created or updated in the same change as the code, and every
+  such document carries a running changelog recording *why* each change was made.
+  [`module-documents.md`](module-documents.md) defines the threshold, the
+  sections, and the changelog rules. Read it first.
+- **Adding a document?** Create `docs/<lower-kebab-name>.md` and register it in
+  the correct table below. The `SCREAMING_SNAKE_CASE` names here predate that
+  convention; do not add new ones. This index is the only registry — the root
   [`README.md`](../README.md) points here instead of listing documents, so there
   is nothing to update there. **A PRD is the exception**: it goes in a dated
   folder under `docs/PRDs/` per [`prds.md`](prds.md), and is registered here at
@@ -33,6 +39,7 @@ update it in the same change.
 | Document | Scope — read and update when changing… |
 | --- | --- |
 | [`prds.md`](prds.md) | How a product requirement document under `docs/PRDs/` is named, which sections it must contain, how its `state.md` records progress, and when it freezes. Read before writing one. The PRD folders themselves are not listed in this index; this row is the tree's entry, and [the Avalon implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md) is the standing product contract it defers to. |
+| [`module-documents.md`](module-documents.md) | When an architecture or large module needs its own document here, the sections that document must contain, and how its **changelog** is kept — the running record of what changed in a module and, above all, *why*. Read before creating a document for a subsystem or making a substantial change to one that has one. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | The monorepo's three deployment surfaces, the Electron main/renderer split, the Hono Worker and its runtime components, and how the packages depend on each other. |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | Identity, tenancy, and the D1 schema — the checked-in migrations are authoritative. Read before adding a table, column, or migration. |
 | [`REGIONALIZATION.md`](REGIONALIZATION.md) | The Global/EU boundary: single identity endpoint, the Global control plane's membership and invitation discovery, immutable workspace region. Read before touching anything cross-region. |
