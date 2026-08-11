@@ -76,6 +76,16 @@ function ResourceIcon({ type }: { type: string }): React.JSX.Element {
   return <File size={15} />;
 }
 
+// The row is narrow enough that the status text competes with the resource
+// title for width, so the visible label is kept short and the fuller phrasing
+// is left to the accessible name.
+function watchLabel(resource: WorkstreamResource): { text: string; name: string } {
+  if (resource.watchStatus === 'unsupported') return { text: 'Unavailable', name: 'Watch unavailable' };
+  if (resource.watchStatus === 'error') return { text: 'Needs attention', name: 'Watch needs attention' };
+  if (resource.watchEnabled) return { text: 'Watching', name: 'Watching' };
+  return { text: 'Watch', name: 'Watch' };
+}
+
 function ContextContent({
   workstream,
   onAddParticipant,
@@ -150,25 +160,29 @@ function ContextContent({
           <p className="rail-empty-line">No resources attached</p>
         ) : (
           <ul className="rail-card-list">
-            {workstream.resources.map((resource) => (
-              <li className="rail-card resource-row" key={resource.id}>
-                <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
-                  <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
-                  <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
-                </button>
-                <label className="watch-toggle">
-                  <input
-                    checked={resource.watchEnabled}
-                    disabled={resource.watchStatus === 'unsupported'}
-                    onChange={(event) => onToggleWatch?.(resource, event.target.checked)}
-                    type="checkbox"
-                  />
-                  <small>{resource.watchStatus === 'unsupported' ? 'Watch unavailable' : resource.watchStatus === 'error' ? 'Watch needs attention' : resource.watchEnabled ? 'Watching' : 'Watch'}</small>
-                  <span aria-hidden="true" />
-                </label>
-                <ChevronRight aria-hidden="true" className="resource-row-chevron" size={14} />
-              </li>
-            ))}
+            {workstream.resources.map((resource) => {
+              const watch = watchLabel(resource);
+              return (
+                <li className="rail-card resource-row" key={resource.id}>
+                  <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
+                    <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
+                    <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
+                  </button>
+                  <label className="watch-toggle" title={watch.name}>
+                    <input
+                      aria-label={watch.name}
+                      checked={resource.watchEnabled}
+                      disabled={resource.watchStatus === 'unsupported'}
+                      onChange={(event) => onToggleWatch?.(resource, event.target.checked)}
+                      type="checkbox"
+                    />
+                    <small>{watch.text}</small>
+                    <span aria-hidden="true" />
+                  </label>
+                  <ChevronRight aria-hidden="true" className="resource-row-chevron" size={14} />
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>
