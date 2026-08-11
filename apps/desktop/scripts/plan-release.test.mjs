@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { RELEASE_RECORD_PATH, planRelease, planningCommit } from './plan-release.mjs';
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+// Resolved the way plan-release.mjs and validate-release-tag.mjs resolve it —
+// by absolute path rather than through PATH. Those two run in this same macOS
+// release job, so the path is already load-bearing there.
+const GIT = '/usr/bin/git';
 // Resolves to nothing, so `git show <sha>:<path>` cannot serve the record and
 // the script is left with its working-tree fallback.
 const UNRESOLVABLE_SHA = '0000000000000000000000000000000000000000';
@@ -48,7 +52,7 @@ test('a dispatch plans without reading the release record at all', () => {
   // invocation exited 1 on ENOENT.
   const worktree = mkdtempSync(join(tmpdir(), 'plan-release-'));
   try {
-    execFileSync('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
+    execFileSync(GIT, ['worktree', 'add', '--detach', worktree, 'HEAD'], {
       cwd: repositoryRoot,
       stdio: 'ignore',
     });
@@ -84,7 +88,7 @@ test('a dispatch plans without reading the release record at all', () => {
     // so `origin/main` does not exist there, and a push planned from an
     // unresolvable head would fall through to the deleted working-tree copy and
     // fail for a reason that has nothing to do with what is being tested.
-    const resolvableSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    const resolvableSha = execFileSync(GIT, ['rev-parse', 'HEAD'], {
       cwd: repositoryRoot,
       encoding: 'utf8',
     }).trim();
@@ -96,13 +100,13 @@ test('a dispatch plans without reading the release record at all', () => {
     // failed, and the directory goes either way: mkdtemp created it before git
     // was involved, so nothing above is a precondition for deleting it.
     try {
-      execFileSync('git', ['worktree', 'remove', '--force', worktree], {
+      execFileSync(GIT, ['worktree', 'remove', '--force', worktree], {
         cwd: repositoryRoot,
         stdio: 'ignore',
       });
     } catch {
       try {
-        execFileSync('git', ['worktree', 'prune'], { cwd: repositoryRoot, stdio: 'ignore' });
+        execFileSync(GIT, ['worktree', 'prune'], { cwd: repositoryRoot, stdio: 'ignore' });
       } catch { /* A stale registration outlives the run at worst. */ }
     }
     rmSync(worktree, { recursive: true, force: true });
