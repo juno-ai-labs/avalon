@@ -1187,6 +1187,12 @@ export const WorkstreamWorkflowInputSchema = z.object({
   triggerMessageId: IdSchema.nullable(),
   automationSubscriptionId: IdSchema.nullable(),
   activityId: IdSchema.nullable(),
+  /**
+   * Set when the workspace scheduler started this run from a due wake-up. The
+   * run reads the wake-up's prompt as its trigger. Optional rather than
+   * nullable so every existing producer keeps parsing unchanged.
+   */
+  scheduledWakeupId: IdSchema.optional(),
   executionPrincipal: ExecutionPrincipalSchema,
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),

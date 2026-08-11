@@ -12,6 +12,8 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { fireWorkstreamWakeup } from "../services/workstream-service";
+import type { WorkstreamWakeupRow } from "../services/workstream-wakeup-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 const RefreshRequestSchema = z.object({ workspaceId: IdSchema });
@@ -28,7 +30,7 @@ const SchedulerRetryStatesSchema = z.record(z.string(), SchedulerRetryStateSchem
 type SchedulerRetryStates = z.infer<typeof SchedulerRetryStatesSchema>;
 
 interface AlarmTargetRow {
-  target_kind: "schedule" | "watch";
+  target_kind: "schedule" | "watch" | "wakeup";
   id: string;
   due_at: string;
 }
@@ -204,7 +206,11 @@ export class WorkspaceScheduler {
        UNION ALL
        SELECT 'watch' AS target_kind, id, next_poll_at AS due_at
          FROM resource_watches
-        WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL`
+        WHERE workspace_id = ?1 AND enabled = 1 AND next_poll_at IS NOT NULL
+       UNION ALL
+       SELECT 'wakeup' AS target_kind, id, due_at
+         FROM workstream_wakeups
+        WHERE workspace_id = ?1 AND status = 'pending'`
     )
       .bind(parsedWorkspaceId)
       .all<AlarmTargetRow>();
@@ -246,7 +252,7 @@ export class WorkspaceScheduler {
       const now = new Date();
       const retryStates = await this.loadRetryStates();
       let retryStatesChanged = false;
-      const [due, dueWatches] = await Promise.all([
+      const [due, dueWatches, dueWakeups] = await Promise.all([
         this.env.DB.prepare(
           `SELECT *
              FROM schedules
@@ -270,7 +276,19 @@ export class WorkspaceScheduler {
             LIMIT 100`
         )
           .bind(workspaceId, now.toISOString())
-          .all<ResourceWatchRow>()
+          .all<ResourceWatchRow>(),
+        this.env.DB.prepare(
+          `SELECT id, workspace_id, workstream_id, execution_principal_json, prompt,
+                  due_at, status, version, created_at
+             FROM workstream_wakeups
+            WHERE workspace_id = ?1
+              AND status = 'pending'
+              AND due_at <= ?2
+            ORDER BY due_at ASC
+            LIMIT 100`
+        )
+          .bind(workspaceId, now.toISOString())
+          .all<WorkstreamWakeupRow>()
       ]);
 
       for (const schedule of due.results) {
@@ -314,6 +332,27 @@ export class WorkspaceScheduler {
           await this.saveRetryStates(retryStates);
           retryStatesChanged = false;
           await this.recordWatchFailure(watch, error);
+        }
+      }
+
+      for (const wakeup of dueWakeups.results) {
+        const key = retryStateKey("wakeup", wakeup.id);
+        if ((retryStates[key]?.retryAt ?? 0) > now.getTime()) continue;
+        try {
+          await fireWorkstreamWakeup(this.env, wakeup);
+          if (retryStates[key]) {
+            delete retryStates[key];
+            retryStatesChanged = true;
+          }
+        } catch (error) {
+          const attempt = (retryStates[key]?.attempt ?? 0) + 1;
+          retryStates[key] = {
+            attempt,
+            retryAt: now.getTime() + schedulerRetryDelay(attempt)
+          };
+          await this.saveRetryStates(retryStates);
+          retryStatesChanged = false;
+          await this.recordWakeupFailure(wakeup, error);
         }
       }
 
@@ -676,6 +715,26 @@ export class WorkspaceScheduler {
         schedule.workspace_id,
         schedule.id,
         JSON.stringify({ code: "schedule_execution_failed", message: message.slice(0, 500) }),
+        new Date().toISOString()
+      )
+      .run();
+  }
+
+  private async recordWakeupFailure(wakeup: WorkstreamWakeupRow, error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : "unknown wake-up error";
+    await this.env.DB.prepare(
+      `INSERT INTO audit_events (
+         id, workspace_id, actor_type, actor_user_id, workstream_id, action,
+         target_type, target_id, metadata_json, created_at
+       ) VALUES (?1, ?2, 'system', NULL, ?3, 'workstream_wakeup.failed',
+                 'workstream_wakeup', ?4, ?5, ?6)`
+    )
+      .bind(
+        crypto.randomUUID(),
+        wakeup.workspace_id,
+        wakeup.workstream_id,
+        wakeup.id,
+        JSON.stringify({ code: "workstream_wakeup_failed", message: message.slice(0, 500) }),
         new Date().toISOString()
       )
       .run();

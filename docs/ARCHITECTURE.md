@@ -87,6 +87,10 @@ Natural-language automation creation compiles into a validated draft. A versione
 
 One WorkspaceScheduler Durable Object per workspace maintains one alarm for the earliest due item. D1 uniqueness constraints are authoritative under repeated alarms. It starts generic workflow instances rather than deploying per-automation code. A planned run and its work stream are reused when the scheduled instant arrives.
 
+The alarm has three target kinds: due `schedules`, due `resource_watches`, and due `workstream_wakeups`. A Durable Object holds one alarm at a time, so the object arms for the earliest target across all three and drains every target due at that instant before re-arming, with per-target exponential backoff held in Durable Object storage. Workspaces never contend: each has its own object and its own alarm.
+
+A work stream can schedule its own wake-up through `workstream_schedule_wakeup`, giving a relative duration or an exact ISO-8601 instant plus the prompt to act on. When it fires, the scheduler claims the row, re-checks the execution principal that scheduled it against current membership, writes a system row into the transcript, and starts an ordinary work-stream run whose trigger is the stored prompt.
+
 ## Connectors and ingestion
 
 Connector adapters expose typed authorization, polling, webhook normalization, hydration, tools, watches, health checks, and a static agent-plugin descriptor. Runtime plugins are instantiated per eligible connection; provider content and connection labels cannot contribute trusted plugin instructions. V1 ships complete paths for:
