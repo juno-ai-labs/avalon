@@ -55,6 +55,7 @@ import {
   type ModelMessage,
   type OpenRouterProviderError,
   type PluginAuthorization,
+  type PluginAuthorizationOccasion,
   type RunHarnessInput,
 } from "./index";
 import { renderPromptPluginCatalog } from "./prompts/plugin-catalog";
@@ -1085,8 +1086,11 @@ async function createPluginRuntime(
     return registry;
   };
   // A host that supplies no port authorizes everything it made eligible.
-  const reauthorize = async (id: string): Promise<PluginAuthorization> =>
-    await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id))
+  const reauthorize = async (
+    id: string,
+    occasion: PluginAuthorizationOccasion,
+  ): Promise<PluginAuthorization> =>
+    await requiredPort("Plugin authorization revalidation failed", () => input.reauthorizePlugin?.(id, occasion))
       ?? "authorized";
   const discovery = buildPlugin({
     canonicalId: AVALON_DISCOVERY_PLUGIN_ID,
@@ -1129,7 +1133,7 @@ async function createPluginRuntime(
         if (!eligibleIds.has(id) || activeRegistry.isCoreName(id)) {
           return { output: { error: "plugin_not_available" }, summary: "Plugin is not available" };
         }
-        const authorization = await reauthorize(id);
+        const authorization = await reauthorize(id, "activation");
         if (authorization === "denied") {
           return { output: { error: "plugin_not_authorized" }, summary: "Plugin is no longer authorized" };
         }
@@ -1251,7 +1255,7 @@ async function createPluginRuntime(
       // Bind's rehydration vocabulary has one drop reason, so a denial and an
       // unverifiable plugin both land on `unreachable`; the host distinguishes
       // them in its own log when it produces the verdict.
-      return await reauthorize(id) === "authorized" ? true : "unreachable";
+      return await reauthorize(id, "activation") === "authorized" ? true : "unreachable";
     },
   });
   for (const id of restored.active) active.add(id);
@@ -1270,7 +1274,7 @@ async function createPluginRuntime(
   const reauthorizeActive = async () => {
     for (const id of [...active]) {
       if (registry.isCoreName(id)) continue;
-      if (await reauthorize(id) !== "authorized") {
+      if (await reauthorize(id, "continuation") !== "authorized") {
         active.delete(id);
         await input.onActivationDropped?.({ name: id, reason: "unreachable" });
       }

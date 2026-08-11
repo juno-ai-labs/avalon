@@ -509,6 +509,10 @@ describe("Slack connector", () => {
     }, AbortSignal.timeout(1_000))).rejects.toMatchObject({
       code: "unauthorized",
       message: "invalid_refresh_token",
+      // The name of this test was the only place the verdict appeared. Slack
+      // answers a refused refresh with HTTP 200, so nothing downstream can
+      // infer it, and without the flag the host left the connection healthy.
+      details: { reconnectRequired: true },
     });
   });
 

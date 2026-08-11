@@ -4,11 +4,13 @@ import {
   base64,
   booleanValue,
   isRecord,
+  isRevokedGrantError,
   jsonHeaders,
   numberValue,
   providerJson,
   readResponseBytes,
   recordValue,
+  refreshExpiringCredentials,
   sha256Hex,
   stringValue,
   truncateText,
@@ -1282,7 +1284,11 @@ async function withLinearAccess<T>(
 ): Promise<T> {
   const expiration = stringValue(connection.credentials, "expiresAt");
   if (expiration && Date.parse(expiration) <= now() + 60_000) {
-    connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
+    connection.credentials = await refreshExpiringCredentials(
+      connection,
+      (candidate, refreshSignal) => refreshLinearCredentials(config, fetcher, now(), candidate, refreshSignal),
+      signal,
+    );
   }
   // Through the shared helper rather than a private retry: it prefers the
   // host's lease-serialized rotation, so two calls refused at once cannot each
@@ -1520,11 +1526,9 @@ function isProviderUnauthorized(error: unknown): boolean {
   return error instanceof ConnectorError && error.code === "unauthorized" && isRecord(error.details) && error.details.status === 401;
 }
 
-function isRefreshRejected(error: unknown): error is ConnectorError {
-  return error instanceof ConnectorError
-    && isRecord(error.details)
-    && [400, 401, 403].includes(Number(error.details.status));
-}
+// Classified by the provider's own error code rather than by status: a token
+// endpoint answers both a dead grant and our own malformed request with 400.
+const isRefreshRejected = isRevokedGrantError;
 
 function requiredRecord(record: Record<string, unknown>, key: string, message: string): Record<string, unknown> {
   const value = recordValue(record, key);
