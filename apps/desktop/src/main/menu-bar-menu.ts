@@ -60,6 +60,19 @@ function sectionHeader(label: string, supported: boolean): MenuItemConstructorOp
   return supported ? { label, type: 'header' } : { label, enabled: false };
 }
 
+/**
+ * Names the thing that has to happen for Avalon to have anything to suggest,
+ * because with no connector there is nothing to suggest *from* and the section
+ * would otherwise look broken rather than unstarted.
+ *
+ * The longest fixed string in the menu, and past the limit
+ * {@link menuBarLabel} imposes on content. That limit exists to stop one
+ * model-written title stretching the menu; this is our own copy, it has to read
+ * in full, and it is the width of the menu only for an account with no
+ * connectors — which is exactly the account it is written for.
+ */
+const SUGGESTIONS_EMPTY_LABEL = 'Connect platforms to get daily suggestions on work streams to create';
+
 /** How many recent work streams the menu shows, per the product contract. */
 export const MENU_BAR_RECENT_LIMIT = 5;
 /**
@@ -115,11 +128,11 @@ export function menuBarLabel(rawLabel: string): string {
  * The order is the product contract: the three things a person can always
  * start, then a rule, then **Suggestions** with whatever Avalon is currently
  * suggesting, then a rule and **Recent** with the five most recent work streams,
- * then a rule and **Pinned** with the top five of the reader's own arrangement,
- * or the line that says how that section gets filled.
- * The trailing group is not part of that contract but is what makes the item
- * usable at all — Avalon can be launched hidden at login, and then this menu is
- * the only way to open a window or quit.
+ * then a rule and **Pinned** with the top five of the reader's own arrangement.
+ * Each of the three renders whether or not it has anything in it; an empty one
+ * says how it fills. The trailing group is not part of that contract but is what
+ * makes the item usable at all — Avalon can be launched hidden at login, and
+ * then this menu is the only way to open a window or quit.
  */
 export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstructorOptions[] {
   const { actions, content } = options;
@@ -129,63 +142,53 @@ export function menuBarMenuTemplate(options: MenuBarMenuOptions): MenuItemConstr
     { label: 'New Automation', click: actions.newAutomation },
   ];
 
+  const openWorkstreamRow = (workstream: MenuBarWorkstream): MenuItemConstructorOptions => ({
+    label: menuBarLabel(workstream.title),
+    click: () => actions.openWorkstream(workstream.id),
+  });
+
+  const pushGroup = (title: string, emptyLabel: string, rows: MenuItemConstructorOptions[]): void => {
+    template.push(sectionHeader(title, options.sectionHeaders));
+    if (rows.length > 0) template.push(...rows);
+    else template.push({ label: emptyLabel, enabled: false });
+  };
+
   template.push({ type: 'separator' });
 
-  // The suggestions sit in a group of their own, between what a person can
-  // always start and what they have already started. Skipped entirely — header
-  // and rule included — when Avalon is suggesting nothing, because the
-  // alternative is two rules against each other with no group between them.
-  if (content.suggestions.length > 0) {
-    template.push(sectionHeader('Suggestions', options.sectionHeaders));
-    for (const suggestion of content.suggestions) {
-      template.push({
+  // Suggestions and Pinned are dropped whole when nobody is signed in: neither
+  // has anything to say to a stranger, and the Recent row below already carries
+  // the one message that state needs. Signed in, every group renders — an empty
+  // one says how it fills instead of disappearing, because the people it is
+  // empty for are exactly the ones who have not found the feature yet.
+  if (options.signedIn) {
+    pushGroup(
+      'Suggestions',
+      SUGGESTIONS_EMPTY_LABEL,
+      content.suggestions.map((suggestion) => ({
         label: menuBarLabel(suggestion.label),
         click: () => actions.startSuggestion(suggestion),
-      });
-    }
+      })),
+    );
     template.push({ type: 'separator' });
   }
 
-  // The Recent header stays even with nothing under it. The row below says why
-  // the group is empty, and a header is what makes that row read as an answer
-  // rather than as a stray disabled item.
-  template.push(sectionHeader('Recent', options.sectionHeaders));
-  const recents = content.recents.slice(0, MENU_BAR_RECENT_LIMIT);
-  if (recents.length > 0) {
-    for (const workstream of recents) {
-      template.push({
-        label: menuBarLabel(workstream.title),
-        click: () => actions.openWorkstream(workstream.id),
-      });
-    }
-  } else {
+  pushGroup(
+    'Recent',
     // A menu that silently loses its lower half reads as broken. Say which of
     // the two reasons it is: nothing to show, or nobody to show it to.
-    template.push({
-      label: options.signedIn ? 'No recent work streams' : 'Sign in to Avalon',
-      enabled: false,
-    });
-  }
+    options.signedIn ? 'No recent work streams' : 'Sign in to Avalon',
+    content.recents.slice(0, MENU_BAR_RECENT_LIMIT).map(openWorkstreamRow),
+  );
 
   // Below Recent, because a pin is a standing choice and the recent list is
-  // what moved today. The section stays with nothing under it, saying how it
-  // gets filled: most people have never pinned anything, and a section that is
-  // simply absent teaches them nothing about a feature they have not found.
-  // Signed out is the one case it is dropped — there is nothing to pin, and the
-  // Recent row above already says to sign in.
+  // what moved today.
   if (options.signedIn) {
-    template.push({ type: 'separator' }, sectionHeader('Pinned', options.sectionHeaders));
-    const pinned = content.pinned.slice(0, MENU_BAR_PINNED_LIMIT);
-    if (pinned.length > 0) {
-      for (const workstream of pinned) {
-        template.push({
-          label: menuBarLabel(workstream.title),
-          click: () => actions.openWorkstream(workstream.id),
-        });
-      }
-    } else {
-      template.push({ label: 'Pin a work stream to see it here', enabled: false });
-    }
+    template.push({ type: 'separator' });
+    pushGroup(
+      'Pinned',
+      'Pin a work stream to see it here',
+      content.pinned.slice(0, MENU_BAR_PINNED_LIMIT).map(openWorkstreamRow),
+    );
   }
 
   template.push(
