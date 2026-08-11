@@ -41,6 +41,9 @@ describe("tool activity names", () => {
       .toBe("Downloaded from Google Drive · Work");
     expect(toolActivityName({ toolName: "google_2_docs_append", status: "completed", plugin: drive }))
       .toBe("Appended to Google Drive · Work");
+    // Named for its object rather than its verb, and still not the generic row.
+    expect(toolActivityName({ toolName: "google_2_gmail_find_contacts", status: "started", plugin: drive }))
+      .toBe("Looking up contacts in Google Drive · Work");
   });
 
   it("does not describe a connector write as a read", () => {
