@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { HonoAppEnv } from "../env";
 import { durableObjectNamespaceForRegion } from "../lib/durable-object-namespace";
+import { logEvent } from "../observability/logger";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 
 export const healthRoutes = new Hono<HonoAppEnv>();
@@ -26,7 +27,7 @@ healthRoutes.get("/", async (c) => {
     checks.durableObjects = { ok: response.ok, message: response.ok ? "available" : `returned ${response.status}` };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown Durable Object error";
-    console.warn("Durable Object health check failed", { region: c.env.AVALON_REGION, reason });
+    logEvent(c, "warn", "durable_object_health_check_failed", { reason });
     checks.durableObjects = {
       ok: false,
       message: c.env.APP_ENV === "development" ? reason : "unavailable",
@@ -96,10 +97,7 @@ healthRoutes.get("/", async (c) => {
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown registry error";
-    console.warn("Work-stream email registry health check failed", {
-      region: c.env.AVALON_REGION,
-      reason,
-    });
+    logEvent(c, "warn", "workstream_email_registry_health_check_failed", { reason });
     checks.workstreamEmailRegistry = {
       ok: false,
       message: c.env.APP_ENV === "development" ? reason : "unavailable",

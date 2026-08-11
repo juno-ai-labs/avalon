@@ -10,6 +10,7 @@ import { newId, nowIso } from "@avalon/db";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { nextRRuleOccurrence } from "../lib/recurrence";
+import { logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedulerAlarm } from "./workstream-wakeup-service";
 import { declaredUserDeliveryTargetType, resolveFrozenDeliveryIdentity } from "./user-delivery";
 
@@ -298,7 +299,7 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   // D1, so refreshing per digest would just recompute the same alarm N times.
   await Promise.all([...workspaces].map((workspaceId) =>
     refreshWorkspaceSchedulerAlarm(env, workspaceId).catch((error: unknown) => {
-      console.warn("Digest reconcile could not refresh a workspace alarm", {
+      logWarn(env, "digest_alarm_refresh_failed", {
         workspace_id: workspaceId,
         reason: error instanceof Error ? error.message : "unknown",
       });

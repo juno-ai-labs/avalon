@@ -2,6 +2,7 @@ import { ConnectorError, slackApi } from "@avalon/connectors";
 import { z } from "zod";
 
 import { sha256 } from "../lib/crypto";
+import { logWarn, type LogEnv } from "../observability/logger";
 
 /**
  * The Slack unfurl card for a work-stream link, shared by the live
@@ -135,6 +136,7 @@ function slackErrorReason(error: unknown): string {
  * DM has one too, and it is exactly the case worth catching.
  */
 export async function slackChannelIsExternallyShared(
+  env: LogEnv,
   token: string,
   channelId: string,
 ): Promise<boolean | null> {
@@ -144,7 +146,7 @@ export async function slackChannelIsExternallyShared(
     }, AbortSignal.timeout(5_000));
     return result.channel.is_ext_shared === true || result.channel.is_pending_ext_shared === true;
   } catch (error) {
-    console.warn("Slack unfurl audience lookup failed", {
+    logWarn(env, "slack_unfurl_audience_lookup_failed", {
       channel_id: channelId,
       reason: slackErrorReason(error),
     });

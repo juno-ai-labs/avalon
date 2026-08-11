@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { logError } from '../common/logger';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
@@ -36,7 +37,7 @@ class ErrorBoundary extends Component<PropsWithChildren, { error: Error | null }
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('Avalon renderer error', error, info.componentStack);
+    logError('avalon', 'renderer error boundary caught an error', error, info.componentStack);
   }
 
   override render(): React.ReactNode {

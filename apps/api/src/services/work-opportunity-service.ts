@@ -17,6 +17,7 @@ import { ApiError } from "../lib/api-error";
 import { resolveAgentModelRouting } from "./agent-model-flags";
 import { createActivitySuggestion } from "./activity-suggestion-service";
 import { hydrateConnectorActivitySource } from "./integrations";
+import { logWarn } from "../observability/logger";
 import { runStructuredInference } from "./structured-inference";
 import { WorkstreamService } from "./workstream-service";
 
@@ -426,7 +427,7 @@ async function loadSource(env: Env, workspaceId: string, event: BatchEventRow): 
         }
       } catch (error) {
         if (isTransientSourceHydrationError(error)) throw error;
-        console.warn("Opportunity source hydration failed", {
+        logWarn(env, "work_opportunity_source_hydration_failed", {
           activity_id: event.source_id,
           provider: row.provider,
           reason: error instanceof Error ? error.message : "unknown",

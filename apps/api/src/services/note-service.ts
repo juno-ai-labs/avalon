@@ -9,6 +9,7 @@ import type {
 } from "@avalon/contracts";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
+import { logWarn } from "../observability/logger";
 import { MeetingNotesService } from "./meeting-notes-service";
 import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
 
@@ -185,8 +186,8 @@ export class NoteService {
     await this.materialize(id);
     if (becamePrivate) {
       await processPendingNotePrivacyNotifications(this.env, { noteId: id }).catch((error: unknown) => {
-        console.warn("Note privacy workstream notification deferred", {
-          noteId: id,
+        logWarn(this.env, "note_privacy_notification_deferred", {
+          note_id: id,
           reason: error instanceof Error ? error.message : "unknown notification error",
         });
       });

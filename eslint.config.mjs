@@ -90,6 +90,33 @@ export default tseslint.config(
     },
   },
   {
+    // Everything a Worker logs reaches Workers Logs, which indexes a logged
+    // object's properties as queryable fields and lists `message` as the row
+    // summary. A bare `console` call satisfies neither reliably, so the two
+    // structured loggers own the only calls in either Worker — each one an
+    // explicit `eslint-disable` at the line that emits.
+    // `apps/site` is the fourth Worker and has no logger of its own: it serves
+    // static assets and logs nothing. The rule holds the line there rather than
+    // waiting for the first bare `console` call to need migrating.
+    files: [
+      "apps/api/src/**/*.ts",
+      "apps/release-retention/src/**/*.ts",
+      "apps/site/src/**/*.ts",
+    ],
+    rules: {
+      "no-console": "error",
+    },
+  },
+  {
+    // The desktop client logs to a terminal or DevTools rather than to Workers
+    // Logs, but the same rule holds: a diagnostic goes through the logger, which
+    // owns the scope tag and the level.
+    files: ["apps/desktop/src/**/*.{ts,tsx}"],
+    rules: {
+      "no-console": "error",
+    },
+  },
+  {
     files: ["packages/agent-harness/src/**/*.ts"],
     ignores: ["**/*.test.ts"],
     rules: {

@@ -20,43 +20,117 @@ export function redact(value: unknown, depth = 0): unknown {
   return value;
 }
 
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+// Everything the logger reads off the environment. Callers that hold a full
+// `Env` satisfy it; the narrow shape keeps helpers callable from code that only
+// receives the observability bindings.
+export type LogEnv = Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">;
+
+// `message` is the one reserved key: it becomes the row summary rather than an
+// ordinary field, so it has to be a string. Typing it that way is what keeps a
+// caller from putting a structured value in the slot and losing it — the
+// runtime falls back to the derived summary, which cannot carry it.
+export type LogFields = Record<string, unknown> & { message?: string };
+
 export function logEvent(
   c: Context<HonoAppEnv>,
-  level: "debug" | "info" | "warn" | "error",
+  level: LogLevel,
   event: string,
-  fields: Record<string, unknown> = {},
+  fields: LogFields = {},
 ): void {
-  const auth = c.get("auth");
+  // The request context is authoritative for correlation: a caller must not be
+  // able to relabel which request an entry belongs to, or which workspace it
+  // authenticated as. Both are absent on an unauthenticated route — a connector
+  // OAuth callback carries no session, and an error thrown before
+  // `requestContext` has no request id — so they are spread only when present,
+  // leaving a caller that knows the workspace able to fill the gap rather than
+  // having its value overwritten with `undefined`.
+  const requestId = c.get("requestId");
+  const workspaceId = c.get("auth")?.workspaceId;
   logStructuredEvent(c.env, level, event, {
-    request_id: c.get("requestId"),
-    workspace_id: auth?.workspaceId,
     ...fields,
+    ...(requestId === undefined ? {} : { request_id: requestId }),
+    ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
   });
 }
 
+// Fields that read like a log line when a diagnostic carries them, in the order
+// a reader expects them. Everything else stays a field only: the summary exists
+// to identify the row, not to reproduce it. Adding a name here is safe whatever
+// it is, because the summary is derived from the redacted fields rather than
+// the caller's — a name that starts matching `sensitiveKey` reads `[REDACTED]`
+// in the summary too, instead of printing the plaintext beside the hidden
+// field.
+const SUMMARY_FIELDS = ["method", "path", "status", "code"] as const;
+
+// Workers Logs renders the log list's message column from the entry's `message`
+// field. An entry that omits one lists as a blank row that has to be expanded
+// before it says anything, so give every diagnostic a one-line summary of the
+// fields it already carries.
+export function summarizeEvent(event: string, fields: LogFields = {}): string {
+  const parts: string[] = [event];
+  for (const key of SUMMARY_FIELDS) {
+    const value = fields[key];
+    if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+  }
+  if (typeof fields.duration_ms === "number") parts.push(`${fields.duration_ms}ms`);
+  return parts.join(" ");
+}
+
 export function logStructuredEvent(
-  env: Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA">,
-  level: "debug" | "info" | "warn" | "error",
+  env: LogEnv,
+  level: LogLevel,
   event: string,
-  fields: Record<string, unknown> = {},
+  fields: LogFields = {},
 ): void {
   const configured = env.LOG_LEVEL ?? "info";
   const rank = { debug: 0, info: 1, warn: 2, error: 3 } as const;
   if (rank[level] < rank[configured]) return;
-  const entry = redact({
+  // `message` is typed as a string, so the only value the fallback can discard
+  // is one an untyped caller forced into the slot; an empty string still falls
+  // back rather than listing the row blank.
+  const { message: provided, ...rest } = fields;
+  const redacted = redact(rest) as Record<string, unknown>;
+  const entry = {
     timestamp: new Date().toISOString(),
     level,
     event,
+    message: typeof provided === "string" && provided.length > 0
+      ? redact(provided) as string
+      : summarizeEvent(event, redacted),
     region: env.AVALON_REGION,
     app_version: env.APP_VERSION ?? "unknown",
     build_sha: env.BUILD_SHA ?? null,
-    ...fields,
-  });
-  // Workers Logs indexes object properties as structured fields. Serializing
-  // first would collapse every diagnostic into `$metadata.message`, making the
-  // release dashboards unable to filter on fields such as `event` or `code`.
+    ...redacted,
+  };
+  // Workers Logs indexes the properties of a logged object as structured
+  // fields, and treats `message` as the row's summary. Serializing the entry
+  // first would collapse every diagnostic into that one string, making the
+  // release dashboards unable to filter on fields such as `event` or `code`;
+  // omitting `message` keeps the fields but empties the log list. These are the
+  // only `console` calls in this Worker, which `no-console` enforces everywhere
+  // else so no diagnostic can reach Workers Logs unindexed or unsummarized.
+  /* eslint-disable no-console */
   if (level === "error") console.error(entry);
   else if (level === "warn") console.warn(entry);
   else if (level === "debug") console.debug(entry);
   else console.info(entry);
+  /* eslint-enable no-console */
+}
+
+export function logDebug(env: LogEnv, event: string, fields: LogFields = {}): void {
+  logStructuredEvent(env, "debug", event, fields);
+}
+
+export function logInfo(env: LogEnv, event: string, fields: LogFields = {}): void {
+  logStructuredEvent(env, "info", event, fields);
+}
+
+export function logWarn(env: LogEnv, event: string, fields: LogFields = {}): void {
+  logStructuredEvent(env, "warn", event, fields);
+}
+
+export function logError(env: LogEnv, event: string, fields: LogFields = {}): void {
+  logStructuredEvent(env, "error", event, fields);
 }
