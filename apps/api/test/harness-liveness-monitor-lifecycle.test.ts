@@ -53,8 +53,11 @@ describe("what a run may consult, and what it may do", () => {
       "function inlineChildOutcomeAsToolResult(",
     );
     // The block is what was submitted, not whatever text the run trailed off
-    // with — a preamble used to become part of the dashboard.
-    expect(root).toContain("hyperSightBlock.markdown,");
+    // with — a preamble used to become part of the dashboard. `submitted` is
+    // the row-backed value, so a retried attempt that replayed the submission
+    // receipt instead of executing it still persists the block it has.
+    expect(root).toContain("readHyperSightBlockMarkdown(env, input, hyperSightRun.id)");
+    expect(root).toContain("hyperSightBlockOutcome(terminalResult, submitted)");
     expect(root).not.toContain("streamedText || null,");
     // And a turn that ends without the call is asked for it once.
     expect(root).toContain("onTurnWouldEnd:");
