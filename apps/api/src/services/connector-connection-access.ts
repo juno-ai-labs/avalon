@@ -8,7 +8,10 @@ import {
 import { nowIso } from "@avalon/db";
 import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
-import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
+import {
+  ensureFreshConnectorCredentials,
+  rotateConnectorCredentials,
+} from "./connector-credential-refresh";
 
 type ConnectionAccessEnv = Pick<Env,
   "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
@@ -40,14 +43,40 @@ export async function withAuthorizedConnection<T>(
     signal: AbortSignal;
     /** Refresh a credential expiring within this window. */
     minimumValidityMs?: number;
+    /**
+     * The connection's stored status, for the callers that can hold one which
+     * is not healthy.
+     *
+     * Rotation requires a healthy row — the refresh coordinator filters both
+     * its lease claim and its credential reload on `status = 'healthy'` — so
+     * for anything else a refresh cannot succeed and would only replace the
+     * provider's answer with `Connector authorization is unavailable`. The
+     * diagnostic paths that exist precisely to ask a broken connection what is
+     * wrong with it (testing one, revoking one on disconnect) pass what they
+     * loaded and reach the provider with the credentials on hand. Omitting
+     * this asks for a refresh, which is the safe default: every other caller
+     * selects healthy rows to begin with.
+     */
+    connectionStatus?: string;
   },
   operation: (connection: AuthorizedConnectorConnection) => Promise<T>,
 ): Promise<T> {
   const { connection, adapter, signal } = input;
-  await ensureFreshConnectorCredentials(env, connection, adapter, signal, input.minimumValidityMs);
-  const credentialsBefore = JSON.stringify(connection.credentials);
+  if (input.connectionStatus === undefined || input.connectionStatus === "healthy") {
+    await ensureFreshConnectorCredentials(env, connection, adapter, signal, input.minimumValidityMs);
+  }
+  let credentialsBefore = JSON.stringify(connection.credentials);
   try {
-    return await operation(authorizedConnection(connection));
+    // An adapter that meets a mid-call rejection rotates through the same lease
+    // this door's refresh uses, rather than redeeming the stored refresh token
+    // beside it. Like the refresh above, that coordinator persists what it
+    // rotated, so the baseline moves with it and only mutations the adapter
+    // makes afterwards are written again below.
+    return await operation(authorizedConnection(connection, async (refused, rotateSignal) => {
+      const rotated = await rotateConnectorCredentials(env, connection, adapter, rotateSignal, refused);
+      credentialsBefore = JSON.stringify(rotated);
+      return rotated;
+    }));
   } catch (error) {
     if (!isReconnectRequiredConnectorError(error)) throw error;
     const reason = reconnectReason(error);

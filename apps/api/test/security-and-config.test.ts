@@ -367,22 +367,47 @@ describe("API security utilities", () => {
 
   it("persists credentials mutated by a reactive connector refresh with connection-bound encryption", async () => {
     const updates: Array<{ sql: string; values: unknown[] }> = [];
+    const encryptionKey = randomToken(32);
+    // A mid-call rejection rotates under the credential-refresh lease, so this
+    // stub answers the lease claim and the write-back the coordinator performs.
     const database = {
       prepare(sql: string) {
         const update = { sql, values: [] as unknown[] };
-        updates.push(update);
         return {
           bind(...values: unknown[]) {
             update.values = values;
-            return this;
-          },
-          async run() {
-            return { success: true, meta: { changes: 1 } };
+            return {
+              async first() {
+                if (sql.includes("credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?")) {
+                  const encrypted = await encryptString(
+                    JSON.stringify({
+                      accessToken: "expired-access-token",
+                      refreshToken: "offline-refresh-token",
+                    }),
+                    encryptionKey,
+                    String(values[2]),
+                  );
+                  return {
+                    encrypted_credentials: encrypted.ciphertext,
+                    credential_iv: encrypted.iv,
+                    credential_key_version: 7,
+                  };
+                }
+                if (sql.includes("RETURNING id")) {
+                  updates.push(update);
+                  return { id: "connection" };
+                }
+                return null;
+              },
+              async run() {
+                if (sql.includes("encrypted_credentials = ?")) updates.push(update);
+                return { success: true, meta: { changes: 1 } };
+              },
+            };
           },
         };
       },
     } as unknown as D1Database;
-    const encryptionKey = randomToken(32);
     const connection = connectorContext({
       accessToken: "expired-access-token",
       refreshToken: "offline-refresh-token",

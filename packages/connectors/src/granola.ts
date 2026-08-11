@@ -2,7 +2,7 @@ import type { ToolDefinition } from "@avalon/contracts";
 import { HttpsUrlSchema } from "@avalon/contracts/url-schemas";
 import { z } from "zod";
 import {
-  isCredentialRejection,
+  isProviderCredentialRejection,
   isRecord,
   jsonHeaders,
   providerJson,
@@ -547,7 +547,12 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
       connection,
       {
         refresh: refreshCredentials,
-        isRejection: isCredentialRejection,
+        // Granola's MCP transport answers a token it will not accept with 401.
+        // A 403 is a policy denial that a new token does not change.
+        isRejection: (error) => isProviderCredentialRejection(
+          error,
+          (details) => details.status === 401,
+        ),
         canRefresh: (candidate) => candidate.scope === "personal"
           && Boolean(stringValue(candidate.credentials, "refreshToken")),
         signal,

@@ -1,4 +1,8 @@
-import { ConnectorError, type ConnectorConnectionContext } from "./types";
+import {
+  ConnectorError,
+  type AuthorizedConnectorConnection,
+  type ConnectorConnectionContext,
+} from "./types";
 
 const DEFAULT_RESPONSE_BYTES = 1_000_000;
 
@@ -15,7 +19,10 @@ const DEFAULT_RESPONSE_BYTES = 1_000_000;
  * grant.
  *
  * Refreshed credentials are written back onto `connection.credentials`, which
- * is what the host's credential door persists when the operation returns.
+ * is what the host's credential door persists when the operation returns. When
+ * the host supplied a serialized `rotateCredentials`, that is used in
+ * preference to the adapter's own refresh: a rotating refresh token is
+ * single-use, and two calls refused at the same moment must not each redeem it.
  *
  * A second rejection is a real one and is raised: it is no longer plausible
  * that the credential was merely stale.
@@ -36,6 +43,7 @@ export async function withProviderReauthorization<T>(
   },
   call: () => Promise<T>,
 ): Promise<T> {
+  const refused = connection.credentials;
   try {
     return await call();
   } catch (error) {
@@ -43,14 +51,34 @@ export async function withProviderReauthorization<T>(
     if (input.canRefresh && !input.canRefresh(connection)) throw error;
     if (isAbortError(error)) throw error;
     input.signal.throwIfAborted();
-    connection.credentials = await input.refresh(connection, input.signal);
+    const rotate = (connection as Partial<AuthorizedConnectorConnection>).rotateCredentials;
+    connection.credentials = rotate
+      ? await rotate(refused, input.signal)
+      : await input.refresh(connection, input.signal);
     return await call();
   }
 }
 
-/** The `unauthorized` shape every adapter raises for a refused credential. */
-export function isCredentialRejection(error: unknown): boolean {
-  return error instanceof ConnectorError && error.code === "unauthorized";
+/**
+ * Whether an error is the provider refusing the credential that was presented.
+ *
+ * `unauthorized` alone is far too broad to answer this: adapters also raise it
+ * for policy and configuration failures that never reached the provider — a
+ * tool invoked without its invocation token, an event from another workspace, a
+ * missing token — and rotating a refresh token over one of those spends a
+ * single-use grant to retry something that will fail identically. The provider
+ * vocabulary that means "this credential is stale" is provider-specific, so
+ * each adapter states its own; only errors carrying provider response details
+ * are eligible in the first place.
+ */
+export function isProviderCredentialRejection(
+  error: unknown,
+  matches: (details: Record<string, unknown>) => boolean,
+): boolean {
+  return error instanceof ConnectorError
+    && error.code === "unauthorized"
+    && isRecord(error.details)
+    && matches(error.details);
 }
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;

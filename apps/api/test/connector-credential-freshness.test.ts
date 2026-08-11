@@ -2,6 +2,8 @@ import {
   ConnectorError,
   authorizedConnection,
   createConnectorRegistry,
+  isProviderCredentialRejection,
+  withProviderReauthorization,
   type ConnectorConnectionContext,
   type ResolvedConnectorAdapter,
 } from "@avalon/connectors";
@@ -84,6 +86,87 @@ describe("the credential door", () => {
     expect(refreshCredentials).not.toHaveBeenCalled();
   });
 
+  it("does not attempt a refresh a connection is no longer eligible for", async () => {
+    // A connection D1 no longer holds as healthy cannot rotate: the refresh
+    // coordinator filters its lease and its reload on `status = 'healthy'`, so
+    // asking would replace the provider's answer with an availability error.
+    // Testing and revoking a broken connection are the paths that exist to get
+    // that answer.
+    const refreshCredentials = vi.fn(async () => ({ accessToken: FRESH_TOKEN }));
+    const reached: unknown[] = [];
+
+    await withAuthorizedConnection(
+      {
+        DB: unusableDatabase(),
+        CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      },
+      {
+        connection: connectionContext({
+          accessToken: STALE_TOKEN,
+          refreshToken: "refresh-token",
+          expiresAt: EXPIRED_AT,
+        }),
+        adapter: { refreshCredentials } as unknown as ResolvedConnectorAdapter,
+        signal: AbortSignal.timeout(2_000),
+        connectionStatus: "needs_reconnect",
+      },
+      async (authorized) => { reached.push(authorized.credentials.accessToken); },
+    );
+
+    expect(refreshCredentials).not.toHaveBeenCalled();
+    expect(reached).toEqual([STALE_TOKEN]);
+  });
+
+  it("redeems a rotating refresh token once when concurrent calls are both refused", async () => {
+    // A rotating refresh token is single-use. Two calls refused at the same
+    // moment must not each redeem it, or the loser's `invalid_grant` marks a
+    // connection that was just rotated successfully as needing reconnection.
+    const secret = "door-credential-key";
+    const stale = { accessToken: STALE_TOKEN, refreshToken: "single-use-token" };
+    const database = leasedCredentialDatabase(await encryptString(
+      JSON.stringify(stale),
+      secret,
+      "00000000-0000-7000-8000-00000000c0de",
+    ), secret);
+    const refreshCredentials = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { accessToken: FRESH_TOKEN, refreshToken: "next-single-use-token" };
+    });
+    const adapter = { refreshCredentials } as unknown as ResolvedConnectorAdapter;
+    const env = {
+      DB: database,
+      CONNECTOR_CREDENTIALS_KEY: secret,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+    };
+
+    const call = async () => {
+      let refused = false;
+      return withAuthorizedConnection(
+        env,
+        { connection: connectionContext({ ...stale }), adapter, signal: AbortSignal.timeout(5_000) },
+        (authorized) => withProviderReauthorization(
+          authorized,
+          {
+            refresh: async () => { throw new Error("the door's serialized rotation must be preferred"); },
+            isRejection: () => true,
+            signal: AbortSignal.timeout(5_000),
+          },
+          async () => {
+            if (!refused) {
+              refused = true;
+              throw new ConnectorError("unauthorized", "refused", { status: 401 });
+            }
+            return authorized.credentials.accessToken;
+          },
+        ),
+      );
+    };
+
+    await expect(Promise.all([call(), call()])).resolves.toEqual([FRESH_TOKEN, FRESH_TOKEN]);
+    expect(refreshCredentials).toHaveBeenCalledTimes(1);
+  });
+
   it("marks a connection the provider refuses mid-operation for reconnect", async () => {
     const statements: string[] = [];
     const database = {
@@ -162,6 +245,32 @@ describe("adapter conformance: recovery from a rejected credential", () => {
       expect(health.reconnectRequired ?? false).toBe(false);
     });
   }
+});
+
+describe("credential rejection", () => {
+  it("does not rotate over an authorization failure that never reached the provider", async () => {
+    // Adapters raise `unauthorized` for policy and configuration failures too —
+    // a tool invoked without its invocation token, an event from another
+    // workspace. Rotating a single-use refresh token over one of those buys a
+    // retry that fails identically.
+    const refresh = vi.fn(async () => ({ accessToken: FRESH_TOKEN }));
+    const connection = connectionContext({ accessToken: STALE_TOKEN, refreshToken: "refresh-token" });
+
+    await expect(withProviderReauthorization(
+      connection,
+      {
+        refresh,
+        isRejection: (error) => isProviderCredentialRejection(
+          error,
+          (details) => details.status === 401,
+        ),
+        signal: AbortSignal.timeout(2_000),
+      },
+      async () => { throw new ConnectorError("unauthorized", "Slack event belongs to a different app"); },
+    )).rejects.toThrow(/different app/u);
+
+    expect(refresh).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -375,6 +484,59 @@ function credentialDatabase(encrypted: { ciphertext: string; iv: string }) {
     },
   } as unknown as D1Database;
   return { d1 };
+}
+
+/**
+ * Models the one part of D1 the rotation coordinator depends on: a lease only
+ * one caller can hold, and a credential blob that changes when the holder
+ * rotates it. Everything else is a no-op.
+ */
+function leasedCredentialDatabase(
+  encrypted: { ciphertext: string; iv: string },
+  secret: string,
+): D1Database {
+  const row = { ...encrypted, leaseId: null as string | null };
+  void secret;
+  return {
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async first() {
+              if (sql.includes("credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?")) {
+                if (row.leaseId) return null;
+                row.leaseId = String(values[0]);
+                return {
+                  encrypted_credentials: row.ciphertext,
+                  credential_iv: row.iv,
+                  credential_key_version: 1,
+                };
+              }
+              if (sql.includes("SELECT encrypted_credentials")) {
+                return {
+                  encrypted_credentials: row.ciphertext,
+                  credential_iv: row.iv,
+                  credential_key_version: 1,
+                };
+              }
+              if (sql.includes("RETURNING id")) {
+                if (row.leaseId !== String(values[6])) return null;
+                row.ciphertext = String(values[0]);
+                row.iv = String(values[1]);
+                row.leaseId = null;
+                return { id: "connection" };
+              }
+              return null;
+            },
+            async run() {
+              if (sql.includes("credential_refresh_lease_id = NULL")) row.leaseId = null;
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as D1Database;
 }
 
 function unusableDatabase(): D1Database {
