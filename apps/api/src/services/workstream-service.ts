@@ -25,6 +25,11 @@ import {
   workstreamVisibilityBindings,
 } from "../lib/workstream-visibility";
 import {
+  toWorkstream,
+  WORKSTREAM_VIEWER_COLUMNS_SQL,
+  WORKSTREAM_VIEWER_JOINS_SQL,
+} from "../mappers/workstream";
+import {
   isCanonicalPersonMention,
   prepareMentionMarkdown,
   type MentionPerson,
@@ -39,6 +44,11 @@ import { scheduledWorkstreamModel } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
 import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
+import {
+  nameWorkstream,
+  provisionalWorkstreamTitle,
+  refreshWorkstreamName,
+} from "./workstream-naming-service";
 import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamMentionSlack } from "./slack-mention-service";
@@ -421,16 +431,9 @@ export class WorkstreamService {
     // enforced below whatever the caller asked to see.
     const systemClause = includeSystem ? "" : "AND w.system_kind IS NULL";
     const statement = this.env.DB.prepare(
-      `SELECT w.*, t.name AS origin_label,
-         rs.user_id AS viewer_read_state_user_id,
-         rs.read_through_sequence_number AS viewer_read_through_sequence_number,
-         rs.manual_unread_from_sequence_number AS viewer_manual_unread_from_sequence_number,
-         rs.manual_unread_generation AS viewer_manual_unread_generation
+      `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
        FROM workstreams w
-       LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-       LEFT JOIN automation_templates t ON t.id = s.template_id
-       LEFT JOIN workstream_read_states rs
-         ON rs.workstream_id = w.id AND rs.user_id = ?
+       ${WORKSTREAM_VIEWER_JOINS_SQL}
        WHERE w.workspace_id = ? AND w.archived_at IS NULL ${systemClause} ${cursorClause}
          AND ${WORKSTREAM_VISIBILITY_SQL}
        ORDER BY w.last_activity_at DESC LIMIT ?`,
@@ -472,7 +475,7 @@ export class WorkstreamService {
     await this.assertDraftAttachments(attachmentIds);
     const objective = input.objective
       ?? (input.openingMessage.trim() || "Review the attached files");
-    const title = input.title ?? objective.split(/\r?\n/u)[0]?.trim().slice(0, 180) ?? "New work stream";
+    const title = input.title ?? provisionalWorkstreamTitle(objective, "New work stream");
     const workstreamId = newId();
     const emailRouting = new WorkstreamEmailRoutingService(this.env);
     const routeInput = {
@@ -485,6 +488,9 @@ export class WorkstreamService {
       id: workstreamId,
       workspaceId: this.auth.workspaceId,
       title,
+      // A caller-supplied title is a decision already made; anything derived
+      // from the objective is a placeholder until the naming agent answers.
+      titleStatus: input.title == null ? "naming" : "settled",
       objective,
       descriptionSource: input.descriptionSource ?? "derived",
       emailAddress: emailRoute.emailAddress,
@@ -507,6 +513,16 @@ export class WorkstreamService {
       slackOrigin,
       slackSearchAuthorization,
     );
+    // Only when the caller did not supply one: a title that arrived with the
+    // request is a decision already made, not a placeholder to improve on.
+    if (input.title == null) {
+      await this.nameInBackground({
+        workstreamId: created.workstream.id,
+        objective,
+        openingMessage: input.openingMessage,
+        provisionalTitle: title,
+      });
+    }
     return { ...created, harnessRunId };
   }
 
@@ -531,6 +547,7 @@ export class WorkstreamService {
       id: workstreamId,
       workspaceId: this.auth.workspaceId,
       title: input.displayPrompt,
+      titleStatus: "naming",
       objective: input.displayPrompt,
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
@@ -562,7 +579,42 @@ export class WorkstreamService {
       });
     }
     const harnessRunId = await this.launchHarness(created.workstream.id, created.messageId, "suggested_work");
+    await this.nameInBackground({
+      workstreamId: created.workstream.id,
+      objective: input.displayPrompt,
+      openingMessage: input.executionPrompt,
+      provisionalTitle: input.displayPrompt,
+    });
     return { ...created, harnessRunId };
+  }
+
+  /**
+   * Name the work stream after the response has gone out.
+   *
+   * The model call is deliberately outside the creation path: the person who
+   * typed the request is waiting on that response, and a name is worth about a
+   * second of latency to nobody. The work stream is created under its
+   * provisional title, the run starts against the unchanged objective, and the
+   * rename lands over the socket a moment later.
+   *
+   * A caller that supplied no way to defer gets the call awaited instead of
+   * dropped. Those callers — Slack ingress, tests — are not the ones a person
+   * is waiting on, and an unawaited promise in a Worker is not guaranteed to
+   * finish once the response is sent.
+   */
+  private async nameInBackground(input: {
+    workstreamId: string;
+    objective: string;
+    openingMessage: string;
+    provisionalTitle: string;
+  }): Promise<void> {
+    const task = nameWorkstream(this.env, {
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      ...input,
+    });
+    if (!this.defer) return task;
+    this.defer(task);
   }
 
   async get(id: string): Promise<WorkstreamDetail> {
@@ -624,6 +676,9 @@ export class WorkstreamService {
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
        description_source = CASE WHEN ? IS NULL OR ? = objective THEN description_source ELSE 'authored' END,
+       -- A person naming a work stream settles it: a naming pass still in
+       -- flight must not overwrite what they chose.
+       title_status = CASE WHEN ? IS NULL THEN title_status ELSE 'settled' END,
        archived_at = CASE WHEN ? IS NULL THEN archived_at WHEN ? = 1 THEN ? ELSE NULL END,
        email_route_status = CASE WHEN ? IS NULL THEN email_route_status ELSE 'reserved' END,
        updated_at = ?
@@ -634,6 +689,7 @@ export class WorkstreamService {
         input.objective ?? null,
         input.objective ?? null,
         input.objective ?? null,
+        input.title ?? null,
         input.archived == null ? null : Number(input.archived),
         Number(input.archived ?? false),
         at,
@@ -672,7 +728,18 @@ export class WorkstreamService {
         workstreamId: id,
       });
     }
-    return toWorkstream(await this.requireWorkstreamForUpdate(id));
+    const updated = toWorkstream(await this.requireWorkstreamForUpdate(id));
+    // Everyone else looking at this work stream has its old title on screen —
+    // in the header they are reading and in their sidebar. The same event the
+    // naming agent publishes carries a human rename to them too.
+    if (input.title != null) {
+      await publishWorkstreamEvent(this.env, this.auth.workspaceId, id, {
+        type: "workstream_renamed",
+        title: updated.title,
+        titleStatus: "settled",
+      });
+    }
+    return updated;
   }
 
   async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
@@ -852,6 +919,14 @@ export class WorkstreamService {
       });
     }
     this.scheduleMentionNotifications(messageWithMentions, workstream);
+    // A reply is where the detail a name was missing usually arrives, so this
+    // is the moment to look at an Avalon-chosen title again. It stops on a
+    // count for every work stream that is not due one.
+    this.deferTask(refreshWorkstreamName(this.env, {
+      workspaceId: this.auth.workspaceId,
+      workstreamId: id,
+      userId: this.auth.userId,
+    }));
     const connectorMentions = preparedInput.mentions
       .filter((mention) => mention.type === "connector" && mention.connectorType)
       .map((mention) => mention.connectorType!);
@@ -1258,16 +1333,9 @@ export class WorkstreamService {
 
   private async loadVisibleWorkstreamRow(id: string, includeArchived: boolean): Promise<Record<string, unknown>> {
     const row = await this.env.DB.prepare(
-      `SELECT w.*, t.name AS origin_label,
-         rs.user_id AS viewer_read_state_user_id,
-         rs.read_through_sequence_number AS viewer_read_through_sequence_number,
-         rs.manual_unread_from_sequence_number AS viewer_manual_unread_from_sequence_number,
-         rs.manual_unread_generation AS viewer_manual_unread_generation
+      `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
        FROM workstreams w
-       LEFT JOIN automation_subscriptions s ON s.id = w.automation_subscription_id
-       LEFT JOIN automation_templates t ON t.id = s.template_id
-       LEFT JOIN workstream_read_states rs
-         ON rs.workstream_id = w.id AND rs.user_id = ?
+       ${WORKSTREAM_VIEWER_JOINS_SQL}
        WHERE w.id = ? AND w.workspace_id = ?
          ${includeArchived ? "" : "AND w.archived_at IS NULL"}
          AND ${WORKSTREAM_VISIBILITY_SQL}`,
@@ -1470,13 +1538,21 @@ export class WorkstreamService {
   }
 
   private scheduleMentionNotifications(message: Message, workstream: Workstream): void {
-    const task = this.sendMentionNotifications(message, workstream).catch((error: unknown) => {
+    this.deferTask(this.sendMentionNotifications(message, workstream).catch((error: unknown) => {
       console.warn("Mention notification delivery failed", {
         messageId: message.id,
         region: this.env.AVALON_REGION,
         reason: error instanceof ApiError ? error.code : "unknown_error",
       });
-    });
+    }));
+  }
+
+  /**
+   * Keep a background task alive past the response where the caller gave us a
+   * way to, and drop it otherwise — every task passed here has already handled
+   * its own failures, so nothing is lost but the work itself.
+   */
+  private deferTask(task: Promise<unknown>): void {
     if (this.defer) {
       this.defer(task);
       return;
@@ -1846,33 +1922,3 @@ function safeArtifactFileName(title: string, artifactType: string): string {
   return `${clean}.${extension}`;
 }
 
-function toWorkstream(row: Record<string, unknown>) {
-  const latestAttentionSequenceNumber = Number(row.latest_attention_sequence_number ?? 0);
-  const hasPersistedReadState = row.viewer_read_state_user_id != null;
-  const readThroughSequenceNumber = hasPersistedReadState
-    ? Number(row.viewer_read_through_sequence_number ?? 0)
-    : Number(row.unread_tracking_start_sequence_number ?? 0);
-  const manualUnreadFromSequenceNumber = row.viewer_manual_unread_from_sequence_number == null
-    ? null
-    : Number(row.viewer_manual_unread_from_sequence_number);
-  const hasUnread = manualUnreadFromSequenceNumber != null
-    || latestAttentionSequenceNumber > readThroughSequenceNumber;
-  return {
-    id: String(row.id), workspaceId: String(row.workspace_id), title: String(row.title), objective: String(row.objective ?? ""),
-    emailAddress: row.email_address == null ? null : String(row.email_address),
-    originType: row.origin_type === "automation" ? "automation" as const : "ad_hoc" as const,
-    originLabel: row.origin_label == null ? null : String(row.origin_label), createdByUserId: row.created_by_user_id == null ? null : String(row.created_by_user_id),
-    automationSubscriptionId: row.automation_subscription_id == null ? null : String(row.automation_subscription_id), automationRunId: row.automation_run_id == null ? null : String(row.automation_run_id),
-    plannedFor: row.planned_for == null ? null : String(row.planned_for), harnessStatus: String(row.harness_status) as "scheduled" | "running" | "needs_input" | "completed" | "failed" | "idle",
-    latestAttentionSequenceNumber,
-    readThroughSequenceNumber,
-    manualUnreadFromSequenceNumber,
-    manualUnreadGeneration: Number(row.viewer_manual_unread_generation ?? 0),
-    hasUnread,
-    firstUnreadSequenceNumber: manualUnreadFromSequenceNumber
-      ?? (hasUnread ? Math.min(latestAttentionSequenceNumber, readThroughSequenceNumber + 1) : null),
-    lastActivityAt: String(row.last_activity_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at), archivedAt: row.archived_at == null ? null : String(row.archived_at),
-    scope: row.scope === "personal" ? "personal" as const : "workspace" as const,
-    systemKind: row.system_kind == null ? null : (String(row.system_kind) as "digest"),
-  };
-}

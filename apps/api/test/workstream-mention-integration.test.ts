@@ -229,7 +229,9 @@ describe("work-stream person mention persistence", () => {
       startOffset: 11,
       endOffset: 11 + token.length,
     })]);
-    expect(deferred).toHaveLength(1);
+    // The notification and the naming refresh — a message is both something to
+    // tell someone about and a reason to look at the title again.
+    expect(deferred).toHaveLength(2);
     expect(sendWorkstreamMentionSlack).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -269,7 +271,9 @@ describe("work-stream person mention persistence", () => {
       attachmentIds: [],
     });
     expect(replay.agentInvoked).toBe(false);
-    expect(deferred).toHaveLength(1);
+    // A replayed message defers nothing new: it is the same message, so no
+    // second notification and no second look at the title.
+    expect(deferred).toHaveLength(2);
     expect(sendWorkstreamMentionEmail).toHaveBeenCalledTimes(1);
   });
 

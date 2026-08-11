@@ -316,6 +316,7 @@ function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSummary {
   return {
     id: workstream.id,
     title: workstream.title,
+    titleStatus: workstream.titleStatus,
     objective: workstream.objective,
     ...(workstream.emailAddress ? { emailAddress: workstream.emailAddress } : {}),
     origin: workstream.originType,
@@ -950,6 +951,7 @@ export class AvalonApi {
     return {
       id: result.workstreamId,
       title: 'Automation run',
+      titleStatus: 'settled',
       origin: 'automation',
       harnessStatus: 'running',
       scope: 'workspace',

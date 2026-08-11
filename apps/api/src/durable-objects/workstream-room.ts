@@ -14,6 +14,11 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { truncateUtf16Safe } from "../lib/text";
 import { connectionFromRow } from "../mappers/connection";
+import {
+  toWorkstream,
+  WORKSTREAM_VIEWER_COLUMNS_SQL,
+  WORKSTREAM_VIEWER_JOINS_SQL,
+} from "../mappers/workstream";
 import { launchHyperSightRefresh } from "../services/hypersight-service";
 
 const SocketAttachmentSchema = z.object({
@@ -63,23 +68,14 @@ interface PendingHyperSightRefresh {
   firstQueuedAt: number;
 }
 
-interface WorkstreamRow {
-  id: string;
-  workspace_id: string;
-  title: string;
-  objective: string;
-  email_address: string | null;
-  origin_type: "ad_hoc" | "automation";
-  created_by_user_id: string | null;
-  automation_subscription_id: string | null;
-  automation_run_id: string | null;
-  planned_for: string | null;
-  harness_status: WorkstreamDetail["harnessStatus"];
-  last_activity_at: string;
-  created_at: string;
-  updated_at: string;
-  archived_at: string | null;
-}
+/**
+ * The snapshot's work-stream row, read through `toWorkstream` rather than
+ * field by field. The viewer columns matter as much as the work stream's own:
+ * `WorkstreamDetail` carries per-person read state, so a row selected without
+ * the read-state join produces a snapshot that fails contract validation and
+ * degrades every initial subscribe into a resync.
+ */
+type WorkstreamRow = Record<string, unknown>;
 
 interface UserRow {
   id: string;
@@ -656,138 +652,11 @@ export class WorkstreamRoom {
     workstreamId: string,
     viewerUserId: string,
   ): Promise<WorkstreamDetail> {
-    const row = await this.env.DB.prepare(
-      `SELECT * FROM workstreams WHERE id = ?1 AND workspace_id = ?2 LIMIT 1`
-    )
-      .bind(workstreamId, workspaceId)
-      .first<WorkstreamRow>();
-    if (!row) throw new Error("Work stream not found");
-
-    const [participantRows, resourceRows, connectionRows, elicitationRows, suggestionRows, latestRun] =
-      await Promise.all([
-        this.env.DB.prepare(
-          `SELECT u.*, wp.participation_reason, wp.joined_at
-             FROM workstream_participants wp
-             JOIN users u ON u.id = wp.user_id
-            WHERE wp.workstream_id = ?1 AND wp.removed_at IS NULL
-            ORDER BY wp.joined_at`
-        )
-          .bind(workstreamId)
-          .all<UserRow & { participation_reason: string; joined_at: string }>(),
-        loadVisibleWorkstreamRoomResources(this.env, workspaceId, workstreamId, viewerUserId),
-        this.env.DB.prepare(
-          `SELECT DISTINCT c.*, owner.name AS owner_name
-             FROM workstream_resources wr
-             JOIN resources r ON r.id = wr.resource_id
-             JOIN connector_connections c ON c.id = r.connection_id
-             LEFT JOIN users owner ON owner.id = c.owner_user_id
-            WHERE wr.workstream_id = ?1
-            ORDER BY c.created_at`
-        )
-          .bind(workstreamId)
-          .all<Record<string, unknown>>(),
-        this.env.DB.prepare(
-          `SELECT * FROM elicitations
-            WHERE workstream_id = ?1 AND status = 'open'
-            ORDER BY created_at`
-        )
-          .bind(workstreamId)
-          .all<Record<string, unknown>>(),
-        this.env.DB.prepare(
-          `SELECT s.*, a.title, a.summary
-             FROM activity_suggestions s
-             JOIN activities a ON a.id = s.activity_id
-            WHERE s.workstream_id = ?1 AND s.status = 'pending'
-            ORDER BY s.created_at DESC`
-        )
-          .bind(workstreamId)
-          .all<Record<string, unknown>>(),
-        this.env.DB.prepare(
-          `SELECT id FROM harness_runs
-            WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
-              AND origin != 'hypersight_block'
-            ORDER BY started_at DESC LIMIT 1`
-        )
-          .bind(workstreamId)
-          .first<{ id: string }>()
-      ]);
-
-    const viewers = await this.loadViewers(workspaceId, workstreamId);
-
-    return WorkstreamDetailSchema.parse({
-      id: row.id,
-      workspaceId: row.workspace_id,
-      title: row.title,
-      objective: row.objective,
-      emailAddress: row.email_address,
-      originType: row.origin_type,
-      originLabel: null,
-      createdByUserId: row.created_by_user_id,
-      automationSubscriptionId: row.automation_subscription_id,
-      automationRunId: row.automation_run_id,
-      plannedFor: row.planned_for,
-      harnessStatus: row.harness_status,
-      lastActivityAt: row.last_activity_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      archivedAt: row.archived_at,
-      participants: participantRows.results.map((participant) => ({
-        user: userFromRow(participant),
-        participationReason: participant.participation_reason,
-        joinedAt: participant.joined_at
-      })),
-      viewers,
-      resources: resourceRows.map((resource) => ({
-        id: resource.id,
-        workspaceId: resource.workspace_id,
-        connectionId: resource.connection_id,
-        resourceType: resource.resource_type,
-        provider: resource.provider,
-        providerResourceId: resource.provider_resource_id,
-        title: truncateUtf16Safe(String(resource.title), 300),
-        mimeType: resource.mime_type,
-        canonicalUrl: resource.canonical_url,
-        watchEnabled: Number(resource.attached_watch_enabled) === 1,
-        watchStatus: resource.connection_id == null
-          ? "unsupported"
-          : Number(resource.attached_watch_enabled) === 1 ? "watching" : "paused",
-        lastHydratedAt: resource.last_hydrated_at,
-        createdAt: resource.created_at,
-        updatedAt: resource.updated_at
-      })),
-      connections: connectionRows.results.map((row) => connectionFromRow(row)),
-      openElicitations: elicitationRows.results.map((elicitation) => ({
-        id: elicitation.id,
-        workstreamId: elicitation.workstream_id,
-        harnessRunId: elicitation.harness_run_id,
-        prompt: elicitation.prompt,
-        responseType: elicitation.response_type,
-        options: parseJsonArray(elicitation.options_json),
-        minimumSelections: elicitation.minimum_selections ?? 0,
-        maximumSelections: elicitation.maximum_selections ?? null,
-        targetUserId: elicitation.target_user_id,
-        status: elicitation.status,
-        answer:
-          typeof elicitation.answer_json === "string"
-            ? (JSON.parse(elicitation.answer_json) as unknown)
-            : null,
-        answeredByUserId: elicitation.answered_by_user_id,
-        createdAt: elicitation.created_at,
-        answeredAt: elicitation.answered_at
-      })),
-      suggestions: suggestionRows.results.map((suggestion) => ({
-        id: suggestion.id,
-        activityId: suggestion.activity_id,
-        workstreamId: suggestion.workstream_id,
-        title: truncateUtf16Safe(String(suggestion.title), 300),
-        summary: truncateUtf16Safe(String(suggestion.summary), 2_000),
-        confidence: suggestion.confidence,
-        reason: truncateUtf16Safe(String(suggestion.reason), 1_200),
-        status: suggestion.status,
-        createdAt: suggestion.created_at,
-        resolvedAt: suggestion.resolved_at
-      })),
-      latestHarnessRunId: latestRun?.id ?? null
+    return loadWorkstreamRoomSnapshot(this.env, {
+      workspaceId,
+      workstreamId,
+      viewerUserId,
+      viewers: await this.loadViewers(workspaceId, workstreamId),
     });
   }
 
@@ -930,4 +799,143 @@ export class WorkstreamRoom {
       return next;
     });
   }
+}
+
+/**
+ * The canonical work stream one subscriber is sent on connecting.
+ *
+ * Exported so the shape it produces can be asserted against the contract
+ * directly: a snapshot that fails validation is not an error anyone sees — the
+ * room answers `snapshot_unavailable`, the client resynchronizes over REST, and
+ * every live update between the two is simply missed.
+ */
+export async function loadWorkstreamRoomSnapshot(
+  env: Env,
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    viewerUserId: string;
+    viewers: WorkstreamDetail["viewers"];
+  },
+): Promise<WorkstreamDetail> {
+  const { workspaceId, workstreamId, viewerUserId, viewers } = input;
+  const row = await env.DB.prepare(
+    `SELECT w.*, ${WORKSTREAM_VIEWER_COLUMNS_SQL}
+       FROM workstreams w
+       ${WORKSTREAM_VIEWER_JOINS_SQL}
+      WHERE w.id = ? AND w.workspace_id = ? LIMIT 1`
+  )
+    .bind(viewerUserId, workstreamId, workspaceId)
+    .first<WorkstreamRow>();
+  if (!row) throw new Error("Work stream not found");
+
+  const [participantRows, resourceRows, connectionRows, elicitationRows, suggestionRows, latestRun] =
+    await Promise.all([
+      env.DB.prepare(
+        `SELECT u.*, wp.participation_reason, wp.joined_at
+           FROM workstream_participants wp
+           JOIN users u ON u.id = wp.user_id
+          WHERE wp.workstream_id = ?1 AND wp.removed_at IS NULL
+          ORDER BY wp.joined_at`
+      )
+        .bind(workstreamId)
+        .all<UserRow & { participation_reason: string; joined_at: string }>(),
+      loadVisibleWorkstreamRoomResources(env, workspaceId, workstreamId, viewerUserId),
+      env.DB.prepare(
+        `SELECT DISTINCT c.*, owner.name AS owner_name
+           FROM workstream_resources wr
+           JOIN resources r ON r.id = wr.resource_id
+           JOIN connector_connections c ON c.id = r.connection_id
+           LEFT JOIN users owner ON owner.id = c.owner_user_id
+          WHERE wr.workstream_id = ?1
+          ORDER BY c.created_at`
+      )
+        .bind(workstreamId)
+        .all<Record<string, unknown>>(),
+      env.DB.prepare(
+        `SELECT * FROM elicitations
+          WHERE workstream_id = ?1 AND status = 'open'
+          ORDER BY created_at`
+      )
+        .bind(workstreamId)
+        .all<Record<string, unknown>>(),
+      env.DB.prepare(
+        `SELECT s.*, a.title, a.summary
+           FROM activity_suggestions s
+           JOIN activities a ON a.id = s.activity_id
+          WHERE s.workstream_id = ?1 AND s.status = 'pending'
+          ORDER BY s.created_at DESC`
+      )
+        .bind(workstreamId)
+        .all<Record<string, unknown>>(),
+      env.DB.prepare(
+        `SELECT id FROM harness_runs
+          WHERE workstream_id = ?1 AND parent_tool_call_id IS NULL
+            AND origin != 'hypersight_block'
+          ORDER BY started_at DESC LIMIT 1`
+      )
+        .bind(workstreamId)
+        .first<{ id: string }>()
+    ]);
+
+  return WorkstreamDetailSchema.parse({
+    ...toWorkstream(row),
+    participants: participantRows.results.map((participant) => ({
+      user: userFromRow(participant),
+      participationReason: participant.participation_reason,
+      joinedAt: participant.joined_at
+    })),
+    viewers,
+    resources: resourceRows.map((resource) => ({
+      id: resource.id,
+      workspaceId: resource.workspace_id,
+      connectionId: resource.connection_id,
+      resourceType: resource.resource_type,
+      provider: resource.provider,
+      providerResourceId: resource.provider_resource_id,
+      title: truncateUtf16Safe(String(resource.title), 300),
+      mimeType: resource.mime_type,
+      canonicalUrl: resource.canonical_url,
+      watchEnabled: Number(resource.attached_watch_enabled) === 1,
+      watchStatus: resource.connection_id == null
+        ? "unsupported"
+        : Number(resource.attached_watch_enabled) === 1 ? "watching" : "paused",
+      lastHydratedAt: resource.last_hydrated_at,
+      createdAt: resource.created_at,
+      updatedAt: resource.updated_at
+    })),
+    connections: connectionRows.results.map((row) => connectionFromRow(row)),
+    openElicitations: elicitationRows.results.map((elicitation) => ({
+      id: elicitation.id,
+      workstreamId: elicitation.workstream_id,
+      harnessRunId: elicitation.harness_run_id,
+      prompt: elicitation.prompt,
+      responseType: elicitation.response_type,
+      options: parseJsonArray(elicitation.options_json),
+      minimumSelections: elicitation.minimum_selections ?? 0,
+      maximumSelections: elicitation.maximum_selections ?? null,
+      targetUserId: elicitation.target_user_id,
+      status: elicitation.status,
+      answer:
+        typeof elicitation.answer_json === "string"
+          ? (JSON.parse(elicitation.answer_json) as unknown)
+          : null,
+      answeredByUserId: elicitation.answered_by_user_id,
+      createdAt: elicitation.created_at,
+      answeredAt: elicitation.answered_at
+    })),
+    suggestions: suggestionRows.results.map((suggestion) => ({
+      id: suggestion.id,
+      activityId: suggestion.activity_id,
+      workstreamId: suggestion.workstream_id,
+      title: truncateUtf16Safe(String(suggestion.title), 300),
+      summary: truncateUtf16Safe(String(suggestion.summary), 2_000),
+      confidence: suggestion.confidence,
+      reason: truncateUtf16Safe(String(suggestion.reason), 1_200),
+      status: suggestion.status,
+      createdAt: suggestion.created_at,
+      resolvedAt: suggestion.resolved_at
+    })),
+    latestHarnessRunId: latestRun?.id ?? null
+  });
 }

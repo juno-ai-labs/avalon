@@ -33,6 +33,7 @@ vi.mock('../lib/platform', () => ({
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Monday invoice review',
+  titleStatus: 'settled' as const,
   emailAddress: 'luminous-tidal-structured-curie@automation.with-avalon.com',
   origin: 'automation',
   automationName: 'Weekly invoice monitor',

@@ -42,6 +42,7 @@ function workstream(id: string, title: string, harnessStatus: WorkstreamSummary[
   return {
     id,
     title,
+    titleStatus: 'settled',
     origin: 'ad_hoc',
     harnessStatus,
     scope: 'workspace',

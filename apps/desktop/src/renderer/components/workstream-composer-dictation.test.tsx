@@ -51,6 +51,7 @@ import { WorkstreamComposer } from './workstream-composer';
 const workstream: WorkstreamDetail = {
   id: 'workstream-1',
   title: 'Live transcript',
+  titleStatus: 'settled' as const,
   origin: 'ad_hoc',
   harnessStatus: 'completed',
   scope: 'workspace' as const,

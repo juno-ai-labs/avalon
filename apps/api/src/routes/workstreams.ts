@@ -16,6 +16,7 @@ import {
 } from "@avalon/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
+import { requestDeferral } from "../lib/defer";
 import { getAuth } from "../middleware/auth";
 import { WorkstreamService } from "../services/workstream-service";
 import { HyperSightService } from "../services/hypersight-service";
@@ -58,7 +59,7 @@ workstreamRoutes.post("/", zValidator("json", CreateWorkstreamRequestSchema), as
   const body = c.req.valid("json");
   // This is the one create path where a person is at a keyboard, so it is the
   // only one that can claim an objective was authored rather than derived.
-  return c.json(await new WorkstreamService(c.env, getAuth(c)).create({
+  return c.json(await new WorkstreamService(c.env, getAuth(c), requestDeferral(c)).create({
     ...body,
     descriptionSource: body.objective ? "authored" : "derived",
   }), 201);
@@ -115,16 +116,7 @@ workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("
   ));
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), zValidator("json", CreateMessageRequestSchema), async (c) => {
-  const defer = (promise: Promise<unknown>): void => {
-    try {
-      c.executionCtx.waitUntil(promise);
-    } catch {
-      // Node-based route tests do not provide a Workers ExecutionContext. The
-      // promise is already guarded by the service and may finish normally.
-      void promise;
-    }
-  };
-  const result = await new WorkstreamService(c.env, getAuth(c), defer)
+  const result = await new WorkstreamService(c.env, getAuth(c), requestDeferral(c))
     .createMessage(c.req.valid("param").id, c.req.valid("json"));
   return c.json(result, 201);
 });

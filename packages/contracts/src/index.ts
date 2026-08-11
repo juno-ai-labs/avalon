@@ -137,6 +137,13 @@ export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
   title: z.string().min(1).max(180),
+  /**
+   * Who owns the title. `naming` means Avalon is still choosing one and the
+   * stored title is a placeholder, so a surface that shows it renders a
+   * skeleton; `automatic` means Avalon named it and one later pass may replace
+   * it; `settled` means it will not change on its own again.
+   */
+  titleStatus: z.enum(["naming", "automatic", "settled"]).default("settled"),
   objective: z.string().max(4000),
   /** Stable inbound address. Null is transitional for pre-migration rows only. */
   emailAddress: z.string().email().max(254).nullable().default(null),
@@ -1093,6 +1100,12 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("snapshot"), workstream: WorkstreamDetailSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
+  /** The title changed — a person renamed the work stream, or Avalon named it. */
+  ServerEventBaseSchema.extend({
+    type: z.literal("workstream_renamed"),
+    title: z.string().min(1).max(180),
+    titleStatus: z.enum(["automatic", "settled"])
+  }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),
     messageId: IdSchema,
@@ -1304,6 +1317,15 @@ export const AddressingClassificationSchema = z.object({
     "social_acknowledgement",
     "insufficient_signal"
   ])
+});
+
+/**
+ * One generated work-stream name. Bounded well under the 180 characters a
+ * title may hold: the prompt asks for under 60, and the ceiling is here to stop
+ * a model that answers the request instead of naming it, not to be aimed at.
+ */
+export const WorkstreamNameResultSchema = z.object({
+  title: z.string().trim().min(1).max(80)
 });
 
 export const ActivityRoutingResultSchema = z.object({
@@ -1687,6 +1709,7 @@ export type SlackSearchAuthorization = z.infer<typeof SlackSearchAuthorizationSc
 export type ConnectorPollWorkflowInput = z.infer<typeof ConnectorPollWorkflowInputSchema>;
 export type AddressingClassification = z.infer<typeof AddressingClassificationSchema>;
 export type ActivityRoutingResult = z.infer<typeof ActivityRoutingResultSchema>;
+export type WorkstreamNameResult = z.infer<typeof WorkstreamNameResultSchema>;
 export type ToolDefinition = z.infer<typeof ToolDefinitionSchema>;
 export type ConnectorSurface = z.infer<typeof ConnectorSurfaceSchema>;
 export type NativeAgentInvocationMode = z.infer<typeof NativeAgentInvocationModeSchema>;

@@ -25,6 +25,7 @@ import { deliverAutomationResultEmail } from "../services/automation-email-servi
 import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
+import { refreshWorkstreamName } from "../services/workstream-naming-service";
 
 const HarnessWorkflowOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
@@ -278,6 +279,17 @@ export class WorkstreamLoopWorkflow extends WorkflowEntrypoint<Env, WorkstreamWo
     await this.publishBestEffort(input, {
       type: "harness_status_changed",
       status: currentStatus,
+    });
+
+    // A run is the other way a work stream's transcript grows, so it is the
+    // other place an Avalon-chosen name gets its second look. Best-effort by
+    // construction: the run is already over, and a name is not worth failing
+    // it for. It stops on a count for a work stream that is not due one.
+    await step.do("refresh-workstream-name", async () => {
+      await refreshWorkstreamName(this.env, {
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+      });
     });
 
     // The description-refresh loop rides on finished work rather than on an

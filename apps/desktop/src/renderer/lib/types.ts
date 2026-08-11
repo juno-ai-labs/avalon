@@ -80,6 +80,8 @@ export interface AutomationSummary {
 export interface WorkstreamSummary {
   id: string;
   title: string;
+  /** `naming` while Avalon is choosing the title; the title is a placeholder. */
+  titleStatus: 'naming' | 'automatic' | 'settled';
   objective?: string;
   emailAddress?: string;
   origin: 'ad_hoc' | 'automation';
