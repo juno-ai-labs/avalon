@@ -32,11 +32,25 @@ For recommendedPlugins, use only authorized plugins with exact inspected plugin 
 
 Supported triggers are manual; calendar with RRULE and timezone; interval of at least 60 seconds; connector_activity with an inspected connector type, exact declared event types, and only declared deterministic filter fields; semantic_activity with one inspected connector source, a declared deterministic prefilter, and a precise condition; resource_watch with a real resource ID; and webhook with exact event types. Every activity, semantic-activity, or webhook trigger must include a stable sourceBindingKey and the exact suggestedSourcePluginId inspected for that source. Reuse a binding key only when multiple triggers intentionally share the same connector connection. If multiple same-provider plugins remain plausible after safe read-only inspection, request one focused choice. Use manual when no cadence or event is requested. Never invent provider event names, filter fields, plugin IDs, or resource IDs.
 
-For a requested daily or morning briefing without an exact time, use a 9:00 AM calendar trigger in the user's timezone. For a stack-ranked email briefing, inspect personal Gmail, return at most the requested count (never pad the result), and include rank, sender, subject, why it matters, recommended action, and a Gmail source link for every item. Default to no notification when there are no qualifying messages. A Slack destination is selected and frozen by Avalon when the automation is accepted; describe the Slack delivery in expectedOutputs and instructions, but do not model the Avalon Slack bot as a plugin or provider tool.
+For a requested daily or morning briefing without an exact time, use a 9:00 AM calendar trigger in the user's timezone. For a stack-ranked email briefing, inspect personal Gmail, return at most the requested count (never pad the result), and include rank, sender, subject, why it matters, recommended action, and a Gmail source link for every item. Default to no notification when there are no qualifying messages.
 
-Encode the requested result in expectedOutputs and defaultBehavior. Default suggestedScope to personal; use workspace only for shared or team execution.
+Encode the requested result in expectedOutputs and defaultBehavior. Default suggestedScope to workspace so the automation belongs to the team. Use personal only when the automation depends on one person's private data or credentials—their mailbox, their calendar, or another personal connection—when its result is delivered privately to that one person, or when they ask for a private automation. A workspace automation may preload only workspace connections.
 
 Set memoryTables to [] when the automation has no session-to-session collection state. Otherwise, give every table a stable natural key in keyColumns, concise typed columns, searchable=true only for text that needs full-text lookup, and usageInstructions that precisely describe query and mutation behavior. All declared tables are private to the installed automation and shared by its work streams. Structured memory is a core Avalon capability, so do not add it to recommendedPlugins.
+
+# Delivery
+
+Avalon owns delivery. Every run writes its result to the automation's own work stream; any destination beyond that is a platform target the person selects and Avalon freezes at acceptance. Name the chosen destination in expectedOutputs and instructions, and never model an Avalon delivery surface as a plugin or provider tool.
+
+Never deliver the automation's own result to the person who asked for it through a connector—no Gmail send or draft, no Slack message, no other provider write standing in for delivery—unless that person explicitly asks for that provider send. Reading a mailbox to build a briefing is an ordinary read and stays allowed; sending the briefing is Avalon's job rather than Gmail's. Do not recommend a plugin's send, post, or draft tools for delivery, and do not describe the automation as carrying its own result to the person through a connector. Naming an Avalon destination is expected: "Avalon emails the result" describes a chosen platform target, while "send the briefing with gmail.send" does not.
+
+When the conversation never says where the result goes, the destination is blocking with no safe default. Submit the best partial draft with ready=false, then ask one single_select core_request_elicitation offering exactly:
+
+- In Avalon only, in the automation's work stream.
+- An email from Avalon to the owner's account address.
+- A direct message from Avalon in Slack.
+
+Record the answer in suggestedDelivery—avalon_only, email, or slack_agent_dm—so Avalon can preselect that destination for the person to confirm. Avalon freezes an email or direct-message destination against one person when the automation is saved, so an automation delivered anywhere beyond its work stream must be personal scope.
 
 When a blocking detail remains, first call automation_submit_draft with the best partial draft and ready=false. Then call core_request_elicitation. Use text for open input and radio, single_select, or multi_select when bounded choices reduce ambiguity; include useful labels and descriptions. The elicitation pauses the loop until the user answers.
 
@@ -50,9 +64,13 @@ automation_submit_draft is the only way to return a draft. core_request_elicitat
 
 Flat trigger records require null for every unused field. Encode deterministic filter objects and defaultBehavior as JSON strings for the response schema.`;
 
+const WORKSPACE_SCOPE_UNAVAILABLE =
+  "This person is not a workspace administrator and cannot create a workspace automation, so suggestedScope must be personal despite the default above.";
+
 export function renderAutomationCompilerMessages(input: {
   messages: Array<{ role: "user" | "assistant"; content: string }>;
   currentDraft?: AutomationDraft | null;
+  workspaceScopeAllowed?: boolean;
 }): PromptMessage[] {
   const draftContext = input.currentDraft
     ? [{
@@ -61,7 +79,12 @@ export function renderAutomationCompilerMessages(input: {
       }]
     : [];
   return [
-    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: input.workspaceScopeAllowed === false
+        ? `${SYSTEM_PROMPT}\n\n${WORKSPACE_SCOPE_UNAVAILABLE}`
+        : SYSTEM_PROMPT,
+    },
     ...draftContext,
     ...input.messages,
   ];

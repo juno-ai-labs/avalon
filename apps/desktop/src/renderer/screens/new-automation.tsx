@@ -494,6 +494,7 @@ export function NewAutomationScreen(): React.JSX.Element {
   const [scopeOverride, setScopeOverride] = useState<AutomationScope | null>(null);
   const [emailDelivery, setEmailDelivery] = useState(false);
   const [deliveryConnectionId, setDeliveryConnectionId] = useState('');
+  const [initializedDelivery, setInitializedDelivery] = useState('');
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
@@ -589,10 +590,20 @@ export function NewAutomationScreen(): React.JSX.Element {
   }, [draft?.draftId, draft?.summary?.scope]);
 
   const deliveryDraftKey = draft ? `${draft.draftId}:${draft.summary?.scope ?? 'pending'}` : '';
+  // The delivery question is answered in the conversation, so the destination
+  // the person chose arrives on the draft and preselects its control here. It
+  // stays a checkbox they can clear: the draft proposes, saving freezes.
   useEffect(() => {
-    setDeliveryConnectionId('');
-    setEmailDelivery(false);
-  }, [deliveryDraftKey]);
+    if (!deliveryDraftKey || deliveryDraftKey === initializedDelivery || !connections.data) return;
+    const suggested = draft?.summary?.suggestedDelivery ?? 'avalon_only';
+    const eligible = connections.data.filter((connection) =>
+      connection.userDelivery?.targetType === 'slack_agent_dm');
+    setEmailDelivery(scope === 'you' && suggested === 'email');
+    setDeliveryConnectionId(
+      scope === 'you' && suggested === 'slack_agent_dm' && eligible.length === 1 ? eligible[0]!.id : '',
+    );
+    setInitializedDelivery(deliveryDraftKey);
+  }, [connections.data, deliveryDraftKey, draft, initializedDelivery, scope]);
 
   useEffect(() => {
     if (scope !== 'you') setEmailDelivery(false);

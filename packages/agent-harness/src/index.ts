@@ -856,6 +856,11 @@ const automationDraftSubmissionJsonSchema = {
       }
     },
     suggestedScope: { type: "string", enum: ["personal", "workspace"] },
+    suggestedDelivery: {
+      type: "string",
+      enum: ["avalon_only", "email", "slack_agent_dm"],
+      description: "Where the person said the result should go. Use avalon_only unless they chose an Avalon email or Slack direct message."
+    },
     ready: {
       type: "boolean",
       description: "True only when no blocking human input remains; false means request_elicitation must be called after this draft is submitted."
@@ -872,6 +877,7 @@ const automationDraftSubmissionJsonSchema = {
     "recommendedPlugins",
     "memoryTables",
     "suggestedScope",
+    "suggestedDelivery",
     "ready"
   ]
 };
@@ -1080,6 +1086,8 @@ export async function compileAutomation(input: {
   latestUserAttachmentParts?: ModelMessageContentPart[];
   currentDraft?: AutomationDraft | null;
   defaultTimezones?: { personal: string; workspace: string };
+  /** False for a member who may only create personal automations; defaults to true. */
+  workspaceScopeAllowed?: boolean;
   pluginCatalog?: AutomationCreatorPluginCatalogEntry[];
   /** Avalon-owned plugins available through the same progressive-disclosure catalog. */
   additionalPlugins?: HarnessPlugin[];
@@ -1097,6 +1105,7 @@ export async function compileAutomation(input: {
   const rendered = renderAutomationCompilerMessages({
     messages: input.messages,
     currentDraft: input.currentDraft ?? null,
+    workspaceScopeAllowed: input.workspaceScopeAllowed !== false,
   });
   const conversationMessages: ModelMessage[] = rendered.slice(1);
   if (input.latestUserAttachmentParts?.length) {
@@ -1223,7 +1232,7 @@ export async function compileAutomation(input: {
           fallbackAttempt: 0,
           repairAttempt: 0,
         });
-        const normalized = normalizeAutomationDraft(raw, input.defaultTimezones);
+        const normalized = normalizeAutomationDraft(raw, input.defaultTimezones, input.workspaceScopeAllowed !== false);
         const parsed = AutomationDraftSchema.safeParse(normalized);
         await input.onDiagnostic?.({
           stage: "validate",
@@ -1667,10 +1676,23 @@ function easyEnglishCurrentTime(
 function normalizeAutomationDraft(
   value: unknown,
   defaultTimezones?: { personal: string; workspace: string },
+  workspaceScopeAllowed = true,
 ): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
-  const scope = draft.suggestedScope === "workspace" ? "workspace" : "personal";
+  const delivery = draft.suggestedDelivery === "email" || draft.suggestedDelivery === "slack_agent_dm"
+    ? draft.suggestedDelivery
+    : "avalon_only";
+  // Workspace is the policy default and the prompt asks for it, but only an
+  // explicit "workspace" widens the draft here: an omitted or unrecognized value
+  // means the model did not comply, and guessing wide costs the person a 422
+  // from validateConnectorSelections over a scope they never mentioned.
+  // A member who cannot create one is narrowed rather than failing at
+  // acceptance, and a destination beyond the work stream is frozen against one
+  // person, so choosing one settles the scope.
+  const scope = draft.suggestedScope === "workspace" && workspaceScopeAllowed && delivery === "avalon_only"
+    ? "workspace"
+    : "personal";
   const defaultTimezone = defaultTimezones?.[scope];
   const triggers = Array.isArray(draft.triggers)
     ? draft.triggers.map((trigger) => normalizeAutomationTrigger(trigger, defaultTimezone))
@@ -1678,6 +1700,8 @@ function normalizeAutomationDraft(
   const ready = draft.ready !== false;
   return {
     ...draft,
+    suggestedScope: scope,
+    suggestedDelivery: delivery,
     triggers,
     requiredCapabilities: [],
     defaultBehavior: parseJsonObject(draft.defaultBehavior),

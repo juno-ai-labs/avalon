@@ -29,6 +29,7 @@ function createInput(
       recommendedPlugins: [],
       memoryTables: [],
       suggestedScope: "personal",
+      suggestedDelivery: "avalon_only" as const,
       followUpQuestion: null,
       elicitation: null,
       ready: true,

@@ -856,6 +856,7 @@ export async function compileAutomationDraft(
     attachmentIds?: string[];
     currentDraft?: AutomationDraft | null;
     defaultTimezones: { personal: string; workspace: string };
+    workspaceScopeAllowed: boolean;
     requestId: string;
     workspaceId: string;
     userId: string;
@@ -892,6 +893,7 @@ export async function compileAutomationDraft(
       ...(latestUserAttachmentParts.length > 0 ? { latestUserAttachmentParts } : {}),
       currentDraft: input.currentDraft ?? null,
       defaultTimezones: input.defaultTimezones,
+      workspaceScopeAllowed: input.workspaceScopeAllowed,
       pluginCatalog,
       ...(webPlugin ? { additionalPlugins: [webPlugin] } : {}),
       maxResearchIterations: 20,

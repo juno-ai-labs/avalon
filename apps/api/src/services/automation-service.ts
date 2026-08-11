@@ -134,6 +134,7 @@ export class AutomationService {
           personal: defaults.user_timezone,
           workspace: defaults.workspace_timezone,
         },
+        workspaceScopeAllowed: this.auth.role === "owner" || this.auth.role === "admin",
       });
       if (draft.ready) {
         try {
@@ -631,7 +632,7 @@ export class AutomationService {
       expectedOutputs: parseJson(template.expected_outputs_json, []), defaultBehavior: parseJson(template.default_behavior_json, {}),
       recommendedPlugins: parseJson(template.recommended_plugins_json, []),
       memoryTables: parseJson(template.memory_tables_json, []),
-      suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
+      suggestedScope: "personal", suggestedDelivery: "avalon_only", followUpQuestion: null, elicitation: null, ready: true,
     };
     const connectorSelection = await this.validateConnectorSelections(
       "personal",
