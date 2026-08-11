@@ -49,6 +49,7 @@ interface WorkspaceFacts {
 interface UserFacts {
   emailDomain: string | undefined;
   role: string | undefined;
+  platformId: string | undefined;
 }
 
 interface WorkstreamFacts {
@@ -230,11 +231,15 @@ async function userFacts(env: Env, subject: FlagTargetingSubject, userId: string
   // two workspaces must not read one workspace's role from the other's entry.
   const key = `${userId}:${subject.workspaceId ?? ""}`;
   return cached(userCache, "user", key, async () => {
-    const outcome = await loadRow<{ email: string; role: string | null }>(
+    const outcome = await loadRow<{
+      email: string;
+      role: string | null;
+      platform_user_id: string | null;
+    }>(
       env,
       subject,
       "user",
-      `SELECT u.email, m.role
+      `SELECT u.email, u.platform_user_id, m.role
          FROM users u
          LEFT JOIN workspace_members m ON m.user_id = u.id AND m.workspace_id = ?2
         WHERE u.id = ?1`,
@@ -243,6 +248,7 @@ async function userFacts(env: Env, subject: FlagTargetingSubject, userId: string
     return mapped(outcome, (row) => ({
       emailDomain: emailDomain(row.email),
       role: text(row.role),
+      platformId: text(row.platform_user_id),
     } satisfies UserFacts));
   });
 }
@@ -337,6 +343,12 @@ async function collectAttributes(
   if (user) {
     if (user.emailDomain) attributes.userEmailDomain = user.emailDomain;
     if (user.role) attributes.userRole = user.role;
+    // `userId` is regional: one person with workspaces in both regions has a
+    // `users` row in each, so bucketing a percentage rollout on it would put
+    // them in a different bucket per region and hand them the feature on one.
+    // The platform id is the identity the Global control plane establishes once
+    // and neither region may change, so it is the one to bucket a *person* by.
+    if (user.platformId) attributes.userPlatformId = user.platformId;
   }
   if (workstream) {
     attributes.workstreamOrigin = workstream.origin;

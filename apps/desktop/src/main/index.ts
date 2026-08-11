@@ -1,5 +1,6 @@
 import {
   ActivateWorkspaceRequestSchema,
+  ClientFeatureFlagsSchema,
   CreateWorkspaceRequestSchema,
   IdSchema,
   OnboardingRegionRequestSchema,
@@ -68,6 +69,7 @@ import {
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { applicationMenuTemplate } from './application-menu';
 import { DebugSettingsController } from './debug-settings';
+import { DeveloperSettingsFlagController } from './developer-settings-flag';
 import { LockdownModeController } from './lockdown-mode';
 import {
   allowsTrustedAudioCapture,
@@ -134,6 +136,9 @@ const customProtocol = 'avalon';
 const rendererProtocol = 'app';
 const rendererHost = 'avalon';
 const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
+/** Well inside the flag's poll interval, so a lost poll costs one round rather
+ * than blocking the next. */
+const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function isUuid(value: string): boolean {
@@ -239,9 +244,43 @@ function publicSession(value: WireSession): DesktopSession {
   };
 }
 
+/**
+ * Stops waiting on `work` after `timeoutMs`, without cancelling it. The work
+ * keeps running for whoever else is awaiting it; only this caller gives up.
+ */
+async function withDeadline<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let expire: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        expire = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (expire !== undefined) clearTimeout(expire);
+  }
+}
+
+/** Who the flag poll is asking as. The endpoint is part of it because the same
+ * person is a different regional account on each one. Both callers derive it
+ * here: a stored credential and a live session have to agree on the identity or
+ * a launch would look like an account change and poll twice. */
+function flagSessionIdentity(userId: string, apiBaseUrl: string): string {
+  return `${userId}@${apiBaseUrl}`;
+}
+
 function broadcastSessionChanged(value: WireSession | null): void {
   const exposed = value ? publicSession(value) : null;
   for (const window of avalonWindows()) window.webContents.send('session:changed', exposed);
+  // Whether Developer may be offered belongs to the signed-in account, so a
+  // sign-in asks again immediately rather than waiting out a poll interval, and
+  // a sign-out closes the section on the way past. The identity is what makes
+  // that distinction: this also fires on every token refresh, which is the same
+  // account and must not cost an extra poll, and an account swap must not be
+  // answered by a request issued as the previous one.
+  if (exposed) developerSettingsFlagController.observeSession(flagSessionIdentity(exposed.user.id, exposed.apiBaseUrl));
+  else developerSettingsFlagController.stop();
 }
 
 async function withSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
@@ -398,10 +437,77 @@ const debugSettingsController = new DebugSettingsController({
   onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
 });
 
+const developerSettingsFlagController = new DeveloperSettingsFlagController({
+  read: readDeveloperSettingsFlag,
+  onChange: () => broadcastApplicationSettingsChanged(desktopApplicationSettings()),
+  // Once per outage rather than once per poll: a device that cannot reach the
+  // service keeps its last answer, so a permanently broken poll would otherwise
+  // be indistinguishable from a quiet, working one.
+  // Both edges warn, because both describe the same degraded state: the device
+  // is serving an answer it can no longer confirm, and then is not. A quieter
+  // level for the recovery would leave the warning that opened it unclosed.
+  onAvailabilityChange: (reachable, error) => {
+    if (reachable) console.warn('[avalon] the developer settings flag is readable again');
+    else console.warn('[avalon] could not read the developer settings flag', error);
+  },
+});
+
 function desktopApplicationSettings(
   lockdown: DesktopLockdownSettings = lockdownModeController.state(),
 ): DesktopApplicationSettings {
-  return { ...lockdown, debugEnabled: debugSettingsController.enabled() };
+  const developerSettingsAvailable = developerSettingsFlagController.enabled();
+  return {
+    ...lockdown,
+    developerSettingsAvailable,
+    // The effective preference, not the stored one. Debug enabled is a
+    // per-device choice inside a section the service decides exists at all, so
+    // a stored `true` grants nothing once the flag is off. Gating it here
+    // rather than at each reader means no surface can miss the second half:
+    // every window reads this one value. The stored bit is left alone, so the
+    // choice is still there when the flag comes back.
+    debugEnabled: debugSettingsController.enabled() && developerSettingsAvailable,
+  };
+}
+
+/**
+ * Asks the service whether Application → Developer may be offered. Rejects
+ * rather than answering `false` when the question could not be put — the
+ * controller keeps its last answer through an outage, and only a real answer
+ * moves it. No stored session is an answer, though: signed out is off.
+ */
+async function readDeveloperSettingsFlag(): Promise<boolean> {
+  const stored = await loadStoredAuth();
+  if (!stored) return false;
+  const apiBaseUrl = apiBaseForAuth(stored);
+  const ask = async (accessToken: string): Promise<Response> => net.fetch(`${apiBaseUrl}/feature-flags`, {
+    headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
+    // A poll must always settle. A connection that hangs — a captive portal
+    // answering the handshake and nothing else is the usual way — would
+    // otherwise leave the request the controller shares between callers pending
+    // forever, and the flag would stop being read for the life of the process.
+    signal: AbortSignal.timeout(DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS),
+  });
+  let response = await ask(stored.accessToken);
+  if (response.status === 401) {
+    // The poll runs on its own schedule, so it is often the first request to
+    // meet an expired access token. Renewing through the coalescing path shares
+    // whatever refresh a renderer already has in flight — and that is also why
+    // the wait is bounded here rather than inside `requestSession`: the refresh
+    // is shared with callers who should keep waiting for it, while this poll
+    // must give up and be asked again on the next tick. Without this the hop
+    // would be the one unbounded step in a function whose whole contract is
+    // that it settles.
+    const renewed = await withDeadline(
+      coalescedRefreshSession(),
+      DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS,
+      'Renewing the Avalon session for the feature flag poll timed out',
+    );
+    response = await ask(renewed.accessToken);
+  }
+  if (!response.ok) throw await responseError(response);
+  const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
+  if (!parsed.success) throw new Error('Avalon returned an unreadable feature flag response');
+  return parsed.data.developerSettings;
 }
 
 async function writeSplitSessionFiles(value: WireSession): Promise<StoredAuth> {
@@ -1822,7 +1928,15 @@ if (!singleInstanceLock) {
     }
     // Complete the one-time full-session to split-state migration before any
     // renderer window can issue concurrent session requests.
-    await loadStoredAuth();
+    const launchAuth = await loadStoredAuth();
+    // Launching with a credential already on disk broadcasts no session change,
+    // so the first poll is asked for here. Developer stays closed until it
+    // answers, which is why this does not block the first window.
+    if (launchAuth) {
+      developerSettingsFlagController.observeSession(
+        flagSessionIdentity(launchAuth.binding.userId, apiBaseForAuth(launchAuth)),
+      );
+    }
     await installRendererProtocol();
     installContentSecurityPolicy();
     registerIpc();

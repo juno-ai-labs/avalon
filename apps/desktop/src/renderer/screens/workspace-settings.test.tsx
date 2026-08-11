@@ -2,6 +2,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
 
@@ -32,6 +33,7 @@ const getApplicationSettings = vi.hoisted(() => vi.fn());
 const setLockdownMode = vi.hoisted(() => vi.fn());
 const setDebugEnabled = vi.hoisted(() => vi.fn());
 const signOut = vi.hoisted(() => vi.fn());
+const applicationSettingsListeners = vi.hoisted(() => new Set<(settings: unknown) => void>());
 const settingsSectionRequest = vi.hoisted(() => ({
   listener: null as ((section: string) => void) | null,
 }));
@@ -56,7 +58,10 @@ vi.mock('../lib/platform', () => ({
     getApplicationSettings,
     setLockdownMode,
     setDebugEnabled,
-    onApplicationSettingsChanged: () => () => undefined,
+    onApplicationSettingsChanged: (listener: (settings: unknown) => void) => {
+      applicationSettingsListeners.add(listener);
+      return () => applicationSettingsListeners.delete(listener);
+    },
     getApplicationIcon,
     setApplicationIcon,
     resetApplicationIcon,
@@ -117,6 +122,7 @@ function openSettingsSection(name: 'Account' | 'Workspace' | 'Connections' | 'Ap
 describe('Workspace settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    applicationSettingsListeners.clear();
     vi.stubGlobal('ResizeObserver', class {
       observe(): void {}
       unobserve(): void {}
@@ -185,16 +191,19 @@ describe('Workspace settings', () => {
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled: false,
+      developerSettingsAvailable: true,
     });
     setLockdownMode.mockImplementation(async (lockdownMode: boolean) => ({
       lockdownMode,
       lockdownAvailable: true,
       debugEnabled: false,
+      developerSettingsAvailable: true,
     }));
     setDebugEnabled.mockImplementation(async (debugEnabled: boolean) => ({
       lockdownMode: false,
       lockdownAvailable: true,
       debugEnabled,
+      developerSettingsAvailable: true,
     }));
     setApplicationIcon.mockImplementation(async (activeIcon: string) => ({
       activeIcon,
@@ -920,6 +929,7 @@ describe('Workspace settings', () => {
       lockdownMode: false,
       lockdownAvailable: false,
       debugEnabled: false,
+      developerSettingsAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -936,6 +946,7 @@ describe('Workspace settings', () => {
       lockdownMode: true,
       lockdownAvailable: false,
       debugEnabled: false,
+      developerSettingsAvailable: true,
     });
     renderSettings();
     openSettingsSection('Application');
@@ -962,6 +973,90 @@ describe('Workspace settings', () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(setDebugEnabled).toHaveBeenCalledWith(false));
     expect(toggle).not.toBeChecked();
+  });
+
+  it('does not answer a search for "debug" with a pane that has no Developer section', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+    });
+    renderSettings();
+    await screen.findByRole('navigation', { name: 'Settings sections' });
+    const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
+    const search = screen.getByRole('searchbox', { name: 'Search settings' });
+
+    fireEvent.change(search, { target: { value: 'debug' } });
+    expect(screen.getByText('No settings found')).toBeVisible();
+
+    // The same search finds it once the section is actually on offer.
+    act(() => {
+      for (const listener of applicationSettingsListeners) {
+        listener({
+          lockdownMode: false,
+          lockdownAvailable: true,
+          debugEnabled: false,
+          developerSettingsAvailable: true,
+        });
+      }
+    });
+    expect(within(navigation).getByRole('button', { name: 'Application' })).toBeVisible();
+  });
+
+  it('offers no Developer section when the service has not enabled the flag', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      // A stored preference the service does not stand behind. The main process
+      // reports the effective value, so this reads off however the file reads.
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+
+    // The rest of the pane is there; only the flagged section is absent.
+    expect(await screen.findByRole('switch', { name: 'Lockdown mode' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Developer' })).toBeNull();
+    expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
+  });
+
+  it('reveals and withdraws the Developer section as the polled flag changes', async () => {
+    getApplicationSettings.mockResolvedValue({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+    });
+    renderSettings();
+    openSettingsSection('Application');
+    await screen.findByRole('switch', { name: 'Lockdown mode' });
+    expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
+
+    const announce = (settings: DesktopApplicationSettings): void => {
+      act(() => {
+        for (const listener of applicationSettingsListeners) listener(settings);
+      });
+    };
+
+    announce({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: true,
+      developerSettingsAvailable: true,
+    });
+    expect(screen.getByRole('switch', { name: 'Debug enabled' })).toBeChecked();
+
+    // The flag going off takes the section with it, without a reload, and takes
+    // the effective preference to off on the way past.
+    announce({
+      lockdownMode: false,
+      lockdownAvailable: true,
+      debugEnabled: false,
+      developerSettingsAvailable: false,
+    });
+    expect(screen.queryByRole('switch', { name: 'Debug enabled' })).toBeNull();
   });
 
   it('shows application-setting load failures inline', async () => {

@@ -30,6 +30,7 @@ describe('useDebugEnabled', () => {
       lockdownMode: false,
       lockdownAvailable: false,
       debugEnabled: false,
+      developerSettingsAvailable: true,
     });
   });
 
@@ -38,6 +39,7 @@ describe('useDebugEnabled', () => {
       lockdownMode: false,
       lockdownAvailable: false,
       debugEnabled: true,
+      developerSettingsAvailable: true,
     });
     const { result } = renderHook(() => useDebugEnabled());
 
@@ -49,10 +51,10 @@ describe('useDebugEnabled', () => {
     const { result } = renderHook(() => useDebugEnabled());
     await waitFor(() => expect(getApplicationSettings).toHaveBeenCalled());
 
-    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true });
+    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true });
     expect(result.current).toBe(true);
 
-    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false });
+    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true });
     expect(result.current).toBe(false);
   });
 
@@ -71,7 +73,7 @@ describe('useDebugEnabled', () => {
     unmount();
     expect(settingsListeners.size).toBe(0);
 
-    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true });
+    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true });
     expect(result.current).toBe(false);
   });
 });
