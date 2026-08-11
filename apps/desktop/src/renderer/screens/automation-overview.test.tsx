@@ -1,13 +1,14 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AutomationDetail } from '../lib/types';
 import { AutomationOverviewScreen } from './automation-overview';
 
 const api = vi.hoisted(() => ({
   adoptAutomationUpdate: vi.fn(),
+  deleteAutomation: vi.fn(),
   getAutomation: vi.fn(),
   getConnections: vi.fn(),
   runAutomation: vi.fn(),
@@ -75,6 +76,7 @@ function renderScreen(): QueryClient {
         <MemoryRouter initialEntries={[`/automations/${automationId}`]}>
           <Routes>
             <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
+            <Route element={<p>New work stream</p>} path="/workstreams/new" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -94,6 +96,7 @@ describe('Automation template updates', () => {
     });
     api.getAutomation.mockResolvedValue(detail);
     api.getConnections.mockResolvedValue([]);
+    api.deleteAutomation.mockResolvedValue(undefined);
     api.adoptAutomationUpdate.mockResolvedValue({
       ...detail,
       statusMessage: undefined,
@@ -240,6 +243,125 @@ describe('Automation template updates', () => {
     expect(await screen.findByText(
       'Email this address from a workspace member email to start a new work stream.',
     )).toBeVisible();
+  });
+
+  it('deletes the automation from the header menu only after the confirmation dialog', async () => {
+    const queryClient = renderScreen();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    await screen.findByRole('heading', { name: 'Weekly brief' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const item = await screen.findByRole('menuitem', { name: 'Delete automation' });
+    expect(item).not.toHaveAttribute('data-disabled');
+    expect(item).toHaveClass('menu-item-danger');
+    fireEvent.click(item);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Delete automation' });
+    expect(within(dialog).getByText('Weekly brief')).toBeVisible();
+    expect(api.deleteAutomation).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
+    expect(api.deleteAutomation).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete automation' })).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(api.deleteAutomation).toHaveBeenCalledWith(automationId));
+    // The screen the automation was deleted from cannot stay open on it.
+    expect(await screen.findByText('New work stream')).toBeVisible();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['automations'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['workstreams'] });
+    // Nothing may render the deleted automation from cache on a later mount.
+    expect(queryClient.getQueryData(['automation', automationId])).toBeUndefined();
+  });
+
+  it('leaves no history entry that can navigate back into the deleted automation', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+    });
+    const router = createMemoryRouter(
+      [
+        { path: '/workstreams/new', element: <p>New work stream</p> },
+        { path: '/automations/:id', element: <AutomationOverviewScreen /> },
+      ],
+      { initialEntries: ['/workstreams/new', `/automations/${automationId}`], initialIndex: 1 },
+    );
+    render(
+      <Tooltip.Provider>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </Tooltip.Provider>,
+    );
+    await screen.findByRole('heading', { name: 'Weekly brief' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete automation' })).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(api.deleteAutomation).toHaveBeenCalledWith(automationId));
+    expect(await screen.findByText('New work stream')).toBeVisible();
+
+    // Back must not resurrect the automation that was just deleted: the route
+    // it was on was replaced, so there is nothing behind it to return to.
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(screen.queryByRole('heading', { name: 'Weekly brief' })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).not.toBe(`/automations/${automationId}`);
+  });
+
+  it('does not greet a reopened delete dialog with the previous attempt’s error', async () => {
+    api.deleteAutomation.mockRejectedValueOnce(new Error('Automation could not be deleted.'));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Weekly brief' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete automation' })).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Automation could not be deleted.')).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    const reopened = await screen.findByRole('dialog', { name: 'Delete automation' });
+    expect(within(reopened).queryByText('Automation could not be deleted.')).not.toBeInTheDocument();
+  });
+
+  it('keeps the automation open when the delete fails, and says why', async () => {
+    api.deleteAutomation.mockRejectedValueOnce(new Error('Automation could not be deleted.'));
+    renderScreen();
+    await screen.findByRole('heading', { name: 'Weekly brief' });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete automation' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    expect(await within(dialog).findByText('Automation could not be deleted.')).toBeVisible();
+    expect(screen.queryByText('New work stream')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Delete' })).toBeEnabled();
   });
 
   it('keeps the automation copy control retryable when the clipboard write fails', async () => {
