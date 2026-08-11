@@ -1,9 +1,10 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AutomationAssistantStreamEvent } from '../lib/api';
+import { clearAllDrafts } from '../lib/draft-cache';
 import { NewAutomationScreen } from './new-automation';
 
 const api = vi.hoisted(() => ({
@@ -48,11 +49,12 @@ function renderScreen(): void {
 }
 
 describe('New automation composer', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     // Restored here rather than at the end of the one test that changes it, so
     // a failure there cannot leak the role into every later test.
     session.workspace.role = 'owner';
+    await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
     api.compileAutomation.mockResolvedValue({
@@ -338,6 +340,7 @@ describe('New automation composer', () => {
     expect(screen.queryByRole('region', { name: 'Default plugins' })).not.toBeInTheDocument();
     expect(screen.queryByText('Suggested tools: linear_search_issues')).not.toBeInTheDocument();
     expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Default plugins' })).getByRole('checkbox')).toBeChecked());
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
@@ -395,7 +398,7 @@ describe('New automation composer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     const source = await screen.findByRole('combobox', { name: 'Connector for github_source' });
-    expect(source).toHaveValue('plugin_github_acme');
+    await waitFor(() => expect(source).toHaveValue('plugin_github_acme'));
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
       'draft-merged-pr',
@@ -403,6 +406,25 @@ describe('New automation composer', () => {
       { github_source: 'plugin_github_acme' },
       { scope: 'you', delivery: {} },
     ));
+  });
+
+  it('brings the drafted description and its attachment back after the screen is reopened', async () => {
+    renderScreen();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Watch the changelog every Friday' },
+    });
+    fireEvent.change(document.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
+    });
+    await screen.findByRole('button', { name: 'Remove notes.txt' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
+    cleanup();
+
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' }))
+      .toHaveValue('Watch the changelog every Friday'));
+    expect(await screen.findByRole('button', { name: 'Remove notes.txt' })).toBeInTheDocument();
   });
 
   it('allows Avalon-only delivery when a draft recommends Slack', async () => {
