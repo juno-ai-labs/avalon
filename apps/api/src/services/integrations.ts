@@ -18,6 +18,7 @@ import {
   compileAutomation,
   composeBeforeToolCallHooks,
   canonicalToolInputHash,
+  createTextDeltaBatcher,
   memberSafeHarnessFailureMessage,
   renderScheduledDigestBriefMessage,
   renderScheduledWakeupMessage,
@@ -1307,11 +1308,6 @@ function workflowAlreadyExists(error: unknown): boolean {
   return error instanceof Error && /(already exists|duplicate|conflict)/iu.test(error.message);
 }
 
-interface StreamDeltaBatcher {
-  push(delta: string): Promise<void>;
-  flush(): Promise<void>;
-}
-
 interface SequencedStreamDeltaBatcher {
   push(event: Extract<HarnessEvent, { type: "stream_delta" }>): Promise<void>;
   flush(): Promise<void>;
@@ -1352,35 +1348,6 @@ function createSequencedStreamDeltaBatcher(
         ? { ...event, delta: pending.delta + event.delta }
         : event;
       if (pending.delta.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
-        await flush();
-      }
-    },
-    flush,
-  };
-}
-
-function createStreamDeltaBatcher(
-  publish: (delta: string) => Promise<void>,
-  options: { maxCharacters?: number; maxDelayMs?: number; now?: () => number } = {},
-): StreamDeltaBatcher {
-  const maxCharacters = options.maxCharacters ?? 2_048;
-  const maxDelayMs = options.maxDelayMs ?? 75;
-  const now = options.now ?? Date.now;
-  let pending = "";
-  let lastFlushAt = now();
-
-  const flush = async (): Promise<void> => {
-    if (!pending) return;
-    const delta = pending;
-    pending = "";
-    lastFlushAt = now();
-    await publish(delta);
-  };
-
-  return {
-    async push(delta: string): Promise<void> {
-      pending += delta;
-      if (pending.length >= maxCharacters || now() - lastFlushAt >= maxDelayMs) {
         await flush();
       }
     },
@@ -6117,7 +6084,7 @@ export const __integrationTesting = {
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
   reauthorizeFrozenPlugin,
-  createStreamDeltaBatcher,
+  createTextDeltaBatcher,
   classifyHarnessToolFailure,
   createConnectorToolContext,
   resolveHarnessToolReceiptPolicy,
