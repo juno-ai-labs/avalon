@@ -8,6 +8,7 @@ import {
   AVALON_WEB_PLUGIN_ID,
   AVALON_WORKSTREAM_PLUGIN_ID,
   AVALON_DISCOVERY_TOOL_DEFINITIONS,
+  BUILT_IN_SKILLS,
   RequestElicitationInputSchema,
   AutomationCompilerError,
   OpenRouterError,
@@ -1660,6 +1661,12 @@ export async function runWorkstreamHarness(
         ? `${promptContext.systemPrompt}\n\n${HYPERSIGHT_SYSTEM_PROMPT}`
         : promptContext.systemPrompt,
       messages: modelMessages,
+      // Offered, never activated: the catalog line is all a run sees until it
+      // loads one, and loading grants no authority. HyperSight is excluded
+      // because it renders one block of Markdown, cannot pause for input, and
+      // does not write — every shipped skill is a procedure for doing something
+      // it is not there to do.
+      ...(hyperSightRun ? {} : { skills: [...BUILT_IN_SKILLS] }),
       ...(!hyperSightRun ? {
         compaction: {
           persist: async (checkpoint) => {
