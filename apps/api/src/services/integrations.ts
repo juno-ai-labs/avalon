@@ -4404,6 +4404,11 @@ async function reauthorizeFrozenPlugin(
   try {
     await ownershipGuard?.();
     if (occasion === "continuation") {
+      // The caller's deadline still bounds this branch. Without it a cancelled
+      // or timed-out run would answer `authorized` from records it read after
+      // the run stopped being allowed to proceed, and the disposable deadline
+      // wrapped around this call would bound nothing.
+      signal.throwIfAborted();
       // Between turns, authority is exactly what Avalon's own records say: the
       // principal, the work stream, the automation authority, the connection's
       // identity, scope, owner, grants, and stored health. This check runs

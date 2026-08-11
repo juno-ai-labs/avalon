@@ -514,19 +514,6 @@ export interface ConnectorAdapter {
   hydrateResource?(connection: AuthorizedConnectorConnection, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
   /**
-   * `reconnectRequired` separates the two ways a check fails: the provider
-   * refused this authorization, or the check could not be completed at all.
-   * A caller deciding whether authority was withdrawn must not read an
-   * unreachable provider as a revoked grant.
-   */
-  /**
-   * `signal` is threaded from the caller rather than timed internally.
-   * Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout`
-   * created here is not disposable — it keeps the invocation alive until it
-   * fires, long after the check returned. An adapter falls back to its own
-   * timeout only when a caller supplies none.
-   */
-  /**
    * Restores provider-side state a connection needs but that has drifted —
    * a disabled webhook endpoint, a lapsed subscription.
    *
@@ -539,6 +526,23 @@ export interface ConnectorAdapter {
     connection: AuthorizedConnectorConnection,
     signal: AbortSignal,
   ): Promise<{ repaired: boolean; message?: string }>;
+  /**
+   * `reconnectRequired` separates the two ways a check fails: the provider
+   * refused this authorization, or the check could not be completed at all.
+   * A caller deciding whether authority was withdrawn must not read an
+   * unreachable provider as a revoked grant — the host maps the first to a
+   * denial that marks the connection, and the second to an indeterminate
+   * verdict that leaves it alone.
+   *
+   * `signal` is threaded from the caller rather than timed internally.
+   * Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout`
+   * created here is not disposable — it keeps the invocation alive until it
+   * fires, long after the check returned. An adapter falls back to its own
+   * timeout only when a caller supplies none.
+   *
+   * A health check must not write. State that needs restoring belongs in
+   * `repair`.
+   */
   healthCheck(
     connection?: AuthorizedConnectorConnection,
     signal?: AbortSignal,
