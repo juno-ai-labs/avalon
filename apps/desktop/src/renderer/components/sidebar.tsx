@@ -221,7 +221,9 @@ function WorkstreamRow({
               <span className="sidebar-row-title">{workstream.title}</span>
               {(workstream.preview || workstream.automationName) && (
                 <span className="sidebar-row-hint">
-                  {workstream.preview ?? workstream.automationName}
+                  <span className="sidebar-row-hint-text">
+                    {workstream.preview ?? workstream.automationName}
+                  </span>
                 </span>
               )}
             </span>

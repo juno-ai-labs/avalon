@@ -9,6 +9,17 @@
 -- typed the description themselves. The backfill promotes the rows that can
 -- still be shown to have been authored: an ad-hoc work stream whose description
 -- is not simply its opening message.
+--
+-- This runs once and cannot be re-run, so it excludes the two shapes where
+-- "differs from the opening message" is not evidence of a person:
+--
+--   * an attachment-only work stream, whose description is the literal fallback
+--     `Review the attached files` against an empty opening message;
+--   * a Slack mention longer than 4,000 characters, whose description is the
+--     opening message truncated to that length rather than a different text.
+--
+-- Both would otherwise be promoted, and a wrongly promoted row tells the
+-- refresh loop to protect a description nobody wrote.
 ALTER TABLE workstreams ADD COLUMN description_source TEXT NOT NULL DEFAULT 'derived'
   CHECK (description_source IN ('authored', 'derived'));
 
@@ -17,8 +28,14 @@ SET description_source = 'authored'
 WHERE origin_type = 'ad_hoc'
   AND created_from_opportunity_id IS NULL
   AND trim(objective) <> ''
+  AND trim(objective) <> 'Review the attached files'
   AND trim(objective) <> COALESCE((
     SELECT trim(m.text_content)
+      FROM messages m
+     WHERE m.workstream_id = workstreams.id AND m.sequence_number = 1
+  ), '')
+  AND trim(objective) <> COALESCE((
+    SELECT trim(substr(m.text_content, 1, 4000))
       FROM messages m
      WHERE m.workstream_id = workstreams.id AND m.sequence_number = 1
   ), '');
@@ -66,8 +83,11 @@ CREATE TABLE IF NOT EXISTS workstream_description_refreshes (
   -- is deliberately recorded: knowing the loop looked and left the description
   -- alone is what separates a description that still fits from one nothing has
   -- examined. `rejected` is a proposal the guards refused, `failed` an
-  -- evaluation that never produced one.
-  decision TEXT NOT NULL CHECK (decision IN ('pending', 'kept', 'rewritten', 'rejected', 'failed')),
+  -- evaluation that never produced one, and `authored` a person settling the
+  -- description themselves — which is not a `kept`, because the loop did not
+  -- look and this row is the only place that distinction is recorded.
+  decision TEXT NOT NULL
+    CHECK (decision IN ('pending', 'kept', 'rewritten', 'rejected', 'failed', 'authored')),
   rejection_code TEXT,
   confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
   model TEXT,

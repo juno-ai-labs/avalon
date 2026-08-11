@@ -1,7 +1,13 @@
 import type { PromptMessage } from "./types";
 
 export interface WorkstreamDescriptionMessageInput {
-  authorType: "human" | "agent" | "system";
+  /**
+   * `external` is a person too — someone speaking from a connected surface such
+   * as Slack rather than from an Avalon account. It is kept distinct from
+   * `human` because who is in the room is part of what a work stream is for,
+   * and collapsing the two would hide that a work stream is run from Slack.
+   */
+  authorType: "human" | "external" | "agent" | "system";
   authorName: string | null;
   occurredAt: string;
   text: string;

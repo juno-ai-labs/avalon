@@ -33,7 +33,7 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { scheduledWorkstreamModel } from "./agent-model-flags";
 import { issueSocketTicket } from "./socket-service";
-import { restDescriptionAfterHumanEdit } from "./workstream-description-service";
+import { describeAuthoredDescriptionStatement } from "./workstream-description-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { ResourceService } from "./resource-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
@@ -46,7 +46,17 @@ import {
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
 
-type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
+/**
+ * `descriptionSource` is the caller's assertion, never inferred from whether
+ * `objective` is present. A supplied objective means "the caller had one", which
+ * is true of every machine-derived path — a Slack mention slices its prompt into
+ * the field, and reading that as authorship would tell the refresh loop to
+ * protect exactly the descriptions it exists to fix. Only a caller that knows a
+ * person typed the text says so, and the default is the honest one.
+ */
+type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
+  descriptionSource?: "authored" | "derived";
+};
 type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
 type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema>;
 type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
@@ -464,9 +474,7 @@ export class WorkstreamService {
       workspaceId: this.auth.workspaceId,
       title,
       objective,
-      // Only an explicit objective was written by a person; the fallback is the
-      // opening message, which is what the refresh loop exists to improve on.
-      descriptionSource: input.objective ? "authored" : "derived",
+      descriptionSource: input.descriptionSource ?? "derived",
       emailAddress: emailRoute.emailAddress,
       creatorUserId: this.auth.userId,
       openingAuthor: { type: "human", userId: this.auth.userId },
@@ -597,13 +605,13 @@ export class WorkstreamService {
   }
 
   async update(id: string, input: UpdateWorkstreamInput) {
-    await this.requireWorkstreamForUpdate(id);
+    const before = await this.requireWorkstreamForUpdate(id);
     if (Object.keys(input).length === 0) throw new ApiError(422, "empty_update", "No work-stream fields were provided");
     const at = nowIso();
-    await this.env.DB.prepare(
+    const write = this.env.DB.prepare(
       `UPDATE workstreams SET
        title = COALESCE(?, title), objective = COALESCE(?, objective),
-       description_source = CASE WHEN ? IS NULL THEN description_source ELSE 'authored' END,
+       description_source = CASE WHEN ? IS NULL OR ? = objective THEN description_source ELSE 'authored' END,
        archived_at = CASE WHEN ? IS NULL THEN archived_at WHEN ? = 1 THEN ? ELSE NULL END,
        email_route_status = CASE WHEN ? IS NULL THEN email_route_status ELSE 'reserved' END,
        updated_at = ?
@@ -613,6 +621,7 @@ export class WorkstreamService {
         input.title ?? null,
         input.objective ?? null,
         input.objective ?? null,
+        input.objective ?? null,
         input.archived == null ? null : Number(input.archived),
         Number(input.archived ?? false),
         at,
@@ -620,19 +629,33 @@ export class WorkstreamService {
         at,
         id,
         this.auth.workspaceId,
-      )
-      .run();
+      );
+    // The person just answered the only question the refresh loop asks, so the
+    // loop rests rather than spending a model call second-guessing them. It
+    // lands in the same batch as the description itself: a refresh that read
+    // between the two writes would see the new description with no rest
+    // recorded, claim, and be free to overwrite it.
+    // A PATCH that resubmits the description unchanged is not an authorship
+    // event: it would flip the provenance and reset the loop's state without
+    // anyone having said anything.
+    const previousDescription = String(before.objective ?? "");
+    const authored = input.objective != null && input.objective !== previousDescription;
+    if (authored) {
+      await this.env.DB.batch([
+        write,
+        await describeAuthoredDescriptionStatement(this.env, {
+          workspaceId: this.auth.workspaceId,
+          workstreamId: id,
+          description: input.objective!,
+          previousDescription,
+        }),
+      ]);
+    } else {
+      await write.run();
+    }
     if (input.archived != null) {
       await new WorkstreamEmailRoutingService(this.env).ensureWorkstreamAddress({
         region: this.env.AVALON_REGION,
-        workspaceId: this.auth.workspaceId,
-        workstreamId: id,
-      });
-    }
-    // The person just answered the only question the refresh loop asks. Let it
-    // rest rather than spend a model call second-guessing them.
-    if (input.objective != null) {
-      await restDescriptionAfterHumanEdit(this.env, {
         workspaceId: this.auth.workspaceId,
         workstreamId: id,
       });

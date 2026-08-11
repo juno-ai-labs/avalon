@@ -10,3 +10,21 @@ import 'fake-indexeddb/auto';
 // a real defect, and only ever on CI. Five seconds costs a passing run nothing
 // and only slows one that was going to fail anyway.
 configure({ asyncUtilTimeout: 5_000 });
+
+/**
+ * jsdom implements no `ResizeObserver`, and several components construct one on
+ * mount. Individual tests used to install their own inside an `it()`, which made
+ * every later test in the same file depend on that one having run first: the
+ * stub outlived the test that created it, so the file passed as a unit and its
+ * tests failed the moment anything reset globals between them.
+ *
+ * Defining it here makes it part of the environment rather than something a test
+ * leaks. It is assigned directly instead of through `vi.stubGlobal` because
+ * `unstubGlobals` reverts stubs before each test, which would take this with it.
+ */
+class ResizeObserverStub implements ResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+globalThis.ResizeObserver ??= ResizeObserverStub;

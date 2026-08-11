@@ -28,6 +28,7 @@
  * `renderWorkstreamDescriptionMessages`. See `docs/workstream-descriptions.md`.
  */
 import {
+  MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS,
   OpenRouterClient,
   renderWorkstreamDescriptionMessages,
   type WorkstreamDescriptionMessageInput,
@@ -58,6 +59,22 @@ export const DESCRIPTION_WINDOW_MINIMUM_MESSAGES = 200;
  * work stream that only ever discussed today.
  */
 export const MAXIMUM_DESCRIPTION_WINDOW_MESSAGES = 600;
+/**
+ * The same ceiling expressed in characters, and the one that actually binds the
+ * request size.
+ *
+ * 600 messages bounded individually at 800 characters is a ~480,000-character
+ * prompt — well past the context of a model this role could reasonably be
+ * retargeted to, and `FEATURE_FLAGS.md` names it as the role most likely to be
+ * retargeted. A row cap alone therefore makes the ceiling depend on which model
+ * the flag happens to point at, and the failure mode is a hard rejection on the
+ * largest windows rather than a smaller one. Budgeting characters too keeps the
+ * ceiling a property of this loop.
+ *
+ * Oldest messages are dropped first, so the window stays the most recent thing
+ * the work stream said, and the prompt is told it was truncated either way.
+ */
+export const MAXIMUM_DESCRIPTION_WINDOW_CHARACTERS = 120_000;
 
 /**
  * The floor on how long a work stream rests between evaluations. Descriptions
@@ -85,6 +102,19 @@ export const DESCRIPTION_REFRESH_MAXIMUM_INTERVAL_SECONDS = 48 * 60 * 60;
  */
 export const DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES = 10;
 export const DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_CHARACTERS = 600;
+
+/**
+ * Who counts as a person for the gate above.
+ *
+ * A work stream run from Slack has no messages authored by an Avalon account at
+ * all: every person in it speaks as an external actor. Counting only `human`
+ * would mean the descriptions most in need of this loop — the ones derived from
+ * whichever message happened to mention Avalon — were the only ones it could
+ * never reach.
+ */
+function isPerson(authorType: WindowMessage["authorType"]): boolean {
+  return authorType === "human" || authorType === "external";
+}
 /**
  * How much of what was said has to be *about* something the description does
  * not already cover.
@@ -178,6 +208,20 @@ const NON_SUBJECT_TERMS: ReadonlySet<string> = new Set([
   "your",
 ]);
 
+/** The display name off a stored external actor, or null when the row has none. */
+function parseExternalActor(value: string | null): { displayName: string } | null {
+  if (value == null) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    const displayName = (parsed as { displayName?: unknown } | null)?.displayName;
+    return { displayName: typeof displayName === "string" ? displayName : "" };
+  } catch {
+    // The row is still external even when its actor blob will not parse; only
+    // the name is lost, and losing the name must not silently demote a person.
+    return { displayName: "" };
+  }
+}
+
 /** Terms long enough and ordinary enough to carry subject matter. */
 function subjectTerms(value: string): string[] {
   return normalizeDescription(value)
@@ -242,6 +286,7 @@ interface WindowMessageRow {
   sequence_number: number;
   author_type: string;
   author_name: string | null;
+  external_actor_json: string | null;
   text_content: string;
   created_at: string;
 }
@@ -340,7 +385,7 @@ async function evaluate(
   // enough of it was about something the description does not already name.
   const evaluatedThrough = Number(previous?.evaluated_through_sequence ?? 0);
   const spoken = window.messages.filter(
-    (message) => message.sequenceNumber > evaluatedThrough && message.authorType === "human",
+    (message) => message.sequenceNumber > evaluatedThrough && isPerson(message.authorType),
   );
   const spokenText = spoken.map((message) => message.text).join("\n");
   if (
@@ -355,6 +400,18 @@ async function evaluate(
     title: workstream.title,
   });
   if (novelTerms < DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS) {
+    // The threshold is a guess until there is data behind it, and this is the
+    // only place that data can come from: a work stream that talked enough to
+    // clear every other gate and was turned away here is exactly the near-miss
+    // worth counting. A rewrite the loop is deferring shows up as a run of
+    // these on one work stream with the count sitting just below the floor.
+    logStructuredEvent(env, "info", "workstream_description_change_below_threshold", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      novel_terms: novelTerms,
+      required_novel_terms: DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS,
+      new_person_messages: spoken.length,
+    });
     return { status: "skipped", reason: "nothing_new_discussed" };
   }
 
@@ -454,12 +511,18 @@ async function evaluate(
     workstream.objective,
   ).run();
   if ((applied.meta?.changes ?? 0) === 0) {
+    // `description` is what is in force after this evaluation, and after a
+    // refusal that is whatever the other writer put there — not the text this
+    // evaluation read. Re-read it rather than record the superseded value.
+    const inForce = await env.DB.prepare(
+      "SELECT objective FROM workstreams WHERE id = ? AND workspace_id = ?",
+    ).bind(input.workstreamId, input.workspaceId).first<{ objective: string }>();
     await recordOutcome(env, input, claim, {
       decision: "rejected",
       rejectionCode: "description_changed_during_evaluation",
       model: routing.model,
       previousDescription: workstream.objective,
-      description: workstream.objective,
+      description: inForce?.objective ?? null,
       confidence: proposal.confidence,
       reasoning: proposal.reasoning.slice(0, 2_000),
       windowMessageCount: window.messages.length,
@@ -557,7 +620,8 @@ async function loadWindow(
   const requested = Math.max(DESCRIPTION_WINDOW_MINIMUM_MESSAGES, Number(recent?.message_count ?? 0));
   const limit = Math.min(requested, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES);
   const rows = await env.DB.prepare(
-    `SELECT m.sequence_number, m.author_type, m.text_content, m.created_at, u.name AS author_name
+    `SELECT m.sequence_number, m.author_type, m.external_actor_json, m.text_content, m.created_at,
+            u.name AS author_name
        FROM messages m LEFT JOIN users u ON u.id = m.author_user_id
       WHERE m.workspace_id = ? AND m.workstream_id = ?
         AND m.message_type <> 'tool' AND trim(m.text_content) <> ''
@@ -566,17 +630,41 @@ async function loadWindow(
   ).bind(workspaceId, workstreamId, limit).all<WindowMessageRow>();
 
   const ordered = (rows.results ?? []).slice().reverse();
-  const messages = ordered.map((row) => ({
-    sequenceNumber: Number(row.sequence_number),
-    authorType: row.author_type === "agent" ? "agent" : row.author_type === "system" ? "system" : "human",
-    authorName: row.author_name == null ? null : String(row.author_name),
-    occurredAt: String(row.created_at),
-    text: String(row.text_content),
-  } satisfies WindowMessage));
+  const messages = ordered.map((row) => {
+    // A message from a connected surface is stored as `system` carrying an
+    // external actor, because it has no Avalon account behind it. Reading the
+    // column alone would file a whole Slack conversation as host notices — and
+    // then exclude every one of its people from the admission gate below.
+    const external = parseExternalActor(row.external_actor_json);
+    const authorType = external
+      ? "external" as const
+      : row.author_type === "agent"
+        ? "agent" as const
+        : row.author_type === "system" ? "system" as const : "human" as const;
+    return {
+      sequenceNumber: Number(row.sequence_number),
+      authorType,
+      authorName: external?.displayName ?? (row.author_name == null ? null : String(row.author_name)),
+      occurredAt: String(row.created_at),
+      text: String(row.text_content),
+    } satisfies WindowMessage;
+  });
+  // Drop from the oldest end until the window fits its character budget. Each
+  // message is measured as the prompt will render it, so the budget bounds the
+  // request rather than approximating it.
+  let budget = MAXIMUM_DESCRIPTION_WINDOW_CHARACTERS;
+  let firstKept = messages.length;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const cost = Math.min(messages[index]!.text.length, MAXIMUM_DESCRIPTION_MESSAGE_CHARACTERS);
+    if (cost > budget) break;
+    budget -= cost;
+    firstKept = index;
+  }
+  const kept = messages.slice(firstKept);
   return {
-    messages,
-    latestSequence: messages.at(-1)?.sequenceNumber ?? 0,
-    truncated: requested > limit,
+    messages: kept,
+    latestSequence: kept.at(-1)?.sequenceNumber ?? messages.at(-1)?.sequenceNumber ?? 0,
+    truncated: requested > limit || kept.length < messages.length,
   };
 }
 
@@ -646,35 +734,71 @@ async function claimEvaluation(
 }
 
 /**
- * Record that a person wrote this description themselves, and let the loop rest
- * a full cycle on the strength of it.
+ * The write that records a person having authored this description themselves,
+ * and rests the loop a full cycle on the strength of it.
  *
- * Someone editing the description has just answered, first-hand, the only
- * question an evaluation asks. Re-deciding it hours later spends inference to
- * second-guess the most authoritative statement of intent the work stream has,
- * and risks reverting it. The rest is the floor rather than a backoff step: the
- * edit says what the work stream is for now, not that it will stay that way.
+ * Returned as a statement rather than executed, because it has to land in the
+ * same batch as the `workstreams.objective` write it belongs to. Two separate
+ * statements leave a window between them in which an evaluation can read the
+ * newly edited description, find no rest recorded yet, claim, and go on to
+ * overwrite the text the person just wrote — its own guard would not catch that,
+ * because the description it read *is* the one still in force. Batching closes
+ * the window: an evaluation sees both writes or neither.
+ *
+ * The rest is at least the floor and never less than what the work stream had
+ * already earned: `MAX` of the two. Writing the floor unconditionally would let
+ * the most authoritative statement of intent a work stream ever receives make
+ * the loop *more* eager to second-guess it, which is backwards. For the same
+ * reason `consecutive_keeps` is left alone — an edit is not an evaluation, so
+ * it is not a confirmation and not a refutation either.
  */
-export async function restDescriptionAfterHumanEdit(
+export async function describeAuthoredDescriptionStatement(
   env: Env,
-  input: { workspaceId: string; workstreamId: string; now?: Date },
-): Promise<void> {
+  input: {
+    workspaceId: string;
+    workstreamId: string;
+    description: string;
+    previousDescription: string;
+    now?: Date;
+  },
+): Promise<D1PreparedStatement> {
   const now = input.now ?? new Date();
   const at = now.toISOString();
+  // Read outside the batch. A sequence that advances between this read and the
+  // write only makes the next evaluation count a few extra messages as new,
+  // which errs toward looking rather than toward skipping.
   const latest = await env.DB.prepare(
     `SELECT COALESCE(MAX(sequence_number), 0) AS latest_sequence
        FROM messages WHERE workspace_id = ? AND workstream_id = ?`,
   ).bind(input.workspaceId, input.workstreamId).first<{ latest_sequence: number }>();
-  await env.DB.prepare(
+  // `authored` is its own decision rather than a `kept`: the loop did not look,
+  // a person settled it. Recording it as `kept` would make the one row that is
+  // supposed to say whether anything has examined this description claim an
+  // evaluation that never happened. Every field an evaluation would have filled
+  // is cleared for the same reason — including `rejection_code`, which the
+  // table's CHECK requires to be null for any decision but `rejected`/`failed`.
+  return env.DB.prepare(
     `INSERT INTO workstream_description_refreshes
        (workstream_id, workspace_id, evaluated_at, rest_until, consecutive_keeps,
-        evaluated_through_sequence, window_message_count, decision, version, created_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, 'kept', 1, ?3, ?3)
+        evaluated_through_sequence, window_message_count, decision,
+        previous_description, description, version, created_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, 0, ?5, 0, 'authored', ?6, ?7, 1, ?3, ?3)
      ON CONFLICT(workstream_id) DO UPDATE SET
        evaluated_at = ?3,
-       rest_until = ?4,
-       consecutive_keeps = 0,
+       rest_until = MAX(workstream_description_refreshes.rest_until, ?4),
        evaluated_through_sequence = ?5,
+       window_message_count = 0,
+       decision = 'authored',
+       rejection_code = NULL,
+       confidence = NULL,
+       model = NULL,
+       previous_description = ?6,
+       description = ?7,
+       reasoning = NULL,
+       -- Invalidates any evaluation already in flight. Its own guard protects
+       -- the person's text, but not the rest and provenance this row just
+       -- recorded, which its outcome write would otherwise overwrite.
+       version = workstream_description_refreshes.version + 1,
        updated_at = ?3`,
   ).bind(
     input.workstreamId,
@@ -682,7 +806,9 @@ export async function restDescriptionAfterHumanEdit(
     at,
     restUntil(now, 0),
     Number(latest?.latest_sequence ?? 0),
-  ).run();
+    input.previousDescription,
+    input.description,
+  );
 }
 
 interface RecordedOutcome {
@@ -715,7 +841,7 @@ async function recordOutcome(
   outcome: RecordedOutcome,
 ): Promise<void> {
   const keeps = outcome.decision === "kept" ? Number(claim.consecutive_keeps ?? 0) + 1 : 0;
-  await env.DB.prepare(
+  const written = await env.DB.prepare(
     `UPDATE workstream_description_refreshes
         SET decision = ?, rejection_code = ?, confidence = ?, model = ?,
             previous_description = ?, description = ?, reasoning = ?,
@@ -737,4 +863,16 @@ async function recordOutcome(
     input.workspaceId,
     claim.version,
   ).run();
+  // The row moved on — a person edited the description while this evaluation
+  // was running, and their write owns it. The decision is still worth knowing,
+  // so it goes to the log rather than being lost with the discarded write.
+  if ((written.meta?.changes ?? 0) === 0) {
+    logStructuredEvent(env, "info", "workstream_description_outcome_superseded", {
+      workspace_id: input.workspaceId,
+      workstream_id: input.workstreamId,
+      decision: outcome.decision,
+      rejection_code: outcome.rejectionCode,
+      claim_version: claim.version,
+    });
+  }
 }
