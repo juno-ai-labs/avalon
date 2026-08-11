@@ -6,6 +6,7 @@ import { requestContext, securityMiddleware } from "./middleware/request-context
 import { authRoutes } from "./routes/auth";
 import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
+import { digestRoutes } from "./routes/digest";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
 import { noteRoutes } from "./routes/notes";
@@ -104,6 +105,7 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workstreams", workstreamRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/notes", noteRoutes);
+  protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/automation-templates", templateRoutes);
   protectedApi.route("/automation-subscriptions", subscriptionRoutes);

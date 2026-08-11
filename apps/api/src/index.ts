@@ -1,7 +1,9 @@
 import { app } from "./app";
 import type { Env } from "./env";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
+import { reapExpiredActivityEvents } from "./services/activity-event-service";
 import { reapStaleHarnessRuns } from "./runtime/harness-run-runtime";
+import { reconcileDigestDefaults } from "./services/digest-service";
 import { processMemoryIndexOutbox } from "./services/memory-service";
 import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
 import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
@@ -67,6 +69,8 @@ export default {
       refreshSlackWorkstreamUnfurls(env),
       processDueOpportunityWindows(env),
       recoverPendingActivityQueue(env),
+      reapExpiredActivityEvents(env),
+      reconcileDigestDefaults(env),
     ]));
   },
 } satisfies ExportedHandler<Env>;

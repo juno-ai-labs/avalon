@@ -14,6 +14,7 @@ import {
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
 import { SlackAgentService } from "./slack-agent-service";
+import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 
 interface InvitationRow {
   id: string;
@@ -289,6 +290,23 @@ export class WorkspaceService {
     await this.env.DB.prepare("UPDATE users SET timezone = ?, updated_at = ? WHERE id = ?")
       .bind(timezone, nowIso(), this.auth.userId)
       .run();
+    // A digest's times are wall-clock times in this person's day, so moving
+    // timezone moves every occurrence — in every workspace they belong to, since
+    // this is one column for the whole account. The configuration is unchanged;
+    // the instants it resolves to are not, and those live in derived `schedules`
+    // rows the workspace alarm reads.
+    await rebuildDigestSchedulesForTimezone(this.env, {
+      userId: this.auth.userId,
+      timezone,
+    }).catch((error: unknown) => {
+      // The preference itself is saved, and the cron reconciler rebuilds any
+      // derived row whose timezone disagrees with the account. Failing the
+      // request here would lose the preference to fix a thing that self-heals.
+      console.warn("Digest schedules could not be re-derived for the new timezone", {
+        workspace_id: this.auth.workspaceId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    });
     const row = await this.env.DB.prepare(
       "SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?",
     ).bind(this.auth.userId).first<Record<string, unknown>>();

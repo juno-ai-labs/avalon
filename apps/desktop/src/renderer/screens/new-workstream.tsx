@@ -8,6 +8,7 @@ import { formatRelative } from '../lib/format';
 import { useDraftText } from '../lib/use-draft-text';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
+import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { type AttachmentPreview, AttachmentLightbox } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
@@ -131,13 +132,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     enabled: Boolean(api),
     staleTime: 60_000,
   });
-  const workstreams = useQuery({
-    queryKey: ['workstreams'],
-    queryFn: ({ signal }) => api!.getWorkstreams(signal),
-    enabled: Boolean(api),
-    refetchInterval: 15_000,
-    staleTime: 10_000,
-  });
+  // The same list the sidebar shows, from the same cache entry, so a realtime
+  // update lands on both at once.
+  const workstreams = useWorkstreamsQuery();
   const opportunities = useQuery({
     queryKey: ['work-opportunities'],
     queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
@@ -201,7 +198,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       queryClient.setQueryData(['messages-cursor', created.workstream.id], null);
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       attachmentDraft.consume(input.attachmentLocalIds);
       void navigate(`/workstreams/${created.workstream.id}`);
     },
@@ -216,7 +213,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     onSuccess: (created, opportunity) => {
       opportunityKeys.current.delete(opportunity.id);
       void queryClient.invalidateQueries({ queryKey: ['work-opportunities'] });
-      void queryClient.invalidateQueries({ queryKey: ['workstreams'] });
+      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       void navigate(`/workstreams/${created.workstream.id}`);
     },
   });

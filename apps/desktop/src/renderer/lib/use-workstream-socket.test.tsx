@@ -255,6 +255,7 @@ describe('useWorkstreamSocket', () => {
       title: 'Watched activity',
       origin: 'ad_hoc',
       harnessStatus: 'completed',
+      scope: 'workspace',
       latestAttentionSequenceNumber: 3,
       readThroughSequenceNumber: 3,
       manualUnreadFromSequenceNumber: null,
@@ -899,6 +900,7 @@ describe('useWorkstreamSocket', () => {
     const canonicalWorkstream = {
       id: workstreamId,
       harnessStatus: 'running',
+      scope: 'workspace',
       latestHarnessRunId: 'run-new',
       latestHarnessRun: {
         id: 'run-new',
@@ -911,6 +913,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'completed',
+      scope: 'workspace',
       latestHarnessRunId: 'run-old',
     });
     const api = {
