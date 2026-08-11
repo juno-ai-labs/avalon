@@ -3,13 +3,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import {
-  DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES,
+  DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
+  DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS,
   DESCRIPTION_WINDOW_MINIMUM_MESSAGES,
   MAXIMUM_DESCRIPTION_CHARACTERS,
   MAXIMUM_DESCRIPTION_WINDOW_MESSAGES,
+  countNovelSubjectTerms,
   isTooGenericDescription,
   judgeDescriptionProposal,
   refreshWorkstreamDescription,
+  restUntil,
 } from "../src/services/workstream-description-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -101,30 +104,61 @@ function fixture(options: {
   return { database, env, prompts };
 }
 
+/**
+ * A message substantial enough to be conversation and specific enough to be
+ * about something the seeded description does not name — what the admission
+ * gates are looking for, so a test that wants an evaluation gets one.
+ */
+const DRIFTING_MESSAGE =
+  "The 3-D Secure migration for our EU issuers needs a rollout plan, and issuer "
+  + "sandbox coverage is still short of the acquirer requirements we agreed.";
+/**
+ * Substantial conversation that raises nothing the description does not already
+ * name — a busy work stream that has not changed.
+ */
+const ON_TOPIC_MESSAGE =
+  "Morgan reported the payment error on Monday, and the payment error Morgan "
+  + "reported on Monday is still the payment error we are looking into.";
+
 function addMessages(
   database: DatabaseSync,
   count: number,
-  options: { createdAt?: string; startSequence?: number; text?: string } = {},
+  options: {
+    createdAt?: string;
+    startSequence?: number;
+    text?: string;
+    authorType?: "human" | "agent" | "system";
+  } = {},
 ): void {
   const startSequence = options.startSequence ?? 1;
+  const authorType = options.authorType ?? "human";
   for (let index = 0; index < count; index += 1) {
     const sequence = startSequence + index;
     database.prepare(
       `INSERT INTO messages
          (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
           message_type, text_content, sequence_number, created_at)
-       VALUES (?, ?, ?, ?, 'human', ?, 'text', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?)`,
     ).run(
       `message-${sequence}`,
       `client-${sequence}`,
       WORKSPACE_ID,
       WORKSTREAM_ID,
-      USER_ID,
-      options.text ?? `Message ${sequence}`,
+      authorType,
+      authorType === "human" ? USER_ID : null,
+      options.text ?? DRIFTING_MESSAGE,
       sequence,
       options.createdAt ?? NOW.toISOString(),
     );
   }
+}
+
+/** The smallest transcript that clears every admission gate. */
+function addQualifyingConversation(
+  database: DatabaseSync,
+  options: { createdAt?: string; startSequence?: number } = {},
+): void {
+  addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES, options);
 }
 
 /**
@@ -235,33 +269,19 @@ describe("description proposal guards", () => {
 });
 
 describe("work-stream description refresh", () => {
-  it("leaves a barely-used work stream alone", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES - 1);
-
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({ status: "skipped", reason: "insufficient_new_messages" });
-    expect(prompts).toHaveLength(0);
-    expect(refreshRow(database)).toBeUndefined();
-  });
+  const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
 
   it("records a keep without touching the description", async () => {
     const { database, env } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
 
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({ status: "kept" });
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
     expect(objective(database)).toBe("Look into the payment error Morgan reported on Monday.");
     expect(refreshRow(database)).toMatchObject({
       decision: "kept",
       rejection_code: null,
-      evaluated_through_sequence: DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES,
+      consecutive_keeps: 1,
+      evaluated_through_sequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
     });
   });
 
@@ -275,13 +295,9 @@ describe("work-stream description refresh", () => {
         reasoning: "The work stream now runs the migration, not the original bug.",
       },
     });
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
 
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({
       status: "rewritten",
       description: "Track the 3-D Secure migration for EU card issuers.",
     });
@@ -298,13 +314,9 @@ describe("work-stream description refresh", () => {
 
   it("tells the model how the description in force was written", async () => {
     const { database, env, prompts } = fixture({ descriptionSource: "authored" });
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
 
-    await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    });
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
     expect(prompts[0]!.user).toContain('"descriptionSource":"authored"');
     expect(prompts[0]!.user).toContain("UNTRUSTED RECENT TRANSCRIPT");
   });
@@ -322,13 +334,10 @@ describe("work-stream description refresh", () => {
         };
       },
     });
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
 
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({ status: "rejected", code: "description_changed_during_evaluation" });
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "rejected", code: "description_changed_during_evaluation" });
     expect(objective(database)).toBe("Run the EU payments incident review.");
     expect(refreshRow(database)).toMatchObject({
       decision: "rejected",
@@ -336,50 +345,13 @@ describe("work-stream description refresh", () => {
     });
   });
 
-  it("rests between evaluations and resumes once enough is new", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
-    const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
-
-    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
-    expect(await refreshWorkstreamDescription(env, {
-      ...input,
-      now: new Date(NOW.getTime() + 60 * 60 * 1_000),
-    })).toEqual({ status: "skipped", reason: "not_due" });
-
-    const later = new Date(NOW.getTime() + 7 * 60 * 60 * 1_000);
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES, {
-      startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES + 1,
-      createdAt: later.toISOString(),
-    });
-    expect(await refreshWorkstreamDescription(env, { ...input, now: later })).toEqual({ status: "kept" });
-    expect(prompts).toHaveLength(2);
-  });
-
-  it("waits for new messages even after the interval has passed", async () => {
-    const { database, env, prompts } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
-    const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
-
-    await refreshWorkstreamDescription(env, { ...input, now: NOW });
-    expect(await refreshWorkstreamDescription(env, {
-      ...input,
-      now: new Date(NOW.getTime() + 30 * 60 * 60 * 1_000),
-    })).toEqual({ status: "skipped", reason: "insufficient_new_messages" });
-    expect(prompts).toHaveLength(1);
-  });
-
   it("reads the last 200 messages when the last 72 hours holds fewer", async () => {
     const { database, env, prompts } = fixture();
     const old = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1_000).toISOString();
-    addMessages(database, 250, { createdAt: old, text: "Historic message" });
-    addMessages(database, 20, { startSequence: 251, text: "Recent message" });
+    addMessages(database, 250, { createdAt: old });
+    addQualifyingConversation(database, { startSequence: 251 });
 
-    await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    });
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
     const transcript = transcriptOf(prompts[0]!.user);
     expect(transcript).toHaveLength(DESCRIPTION_WINDOW_MINIMUM_MESSAGES);
     expect(prompts[0]!.user).toContain(`${DESCRIPTION_WINDOW_MINIMUM_MESSAGES} messages, oldest first`);
@@ -388,13 +360,9 @@ describe("work-stream description refresh", () => {
 
   it("reads every message of a busy 72 hours, up to the ceiling, and says when it capped", async () => {
     const { database, env, prompts } = fixture();
-    addMessages(database, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES + 40, { text: "Busy message" });
+    addMessages(database, MAXIMUM_DESCRIPTION_WINDOW_MESSAGES + 40);
 
-    await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    });
+    await refreshWorkstreamDescription(env, { ...input, now: NOW });
     const transcript = transcriptOf(prompts[0]!.user);
     expect(transcript).toHaveLength(MAXIMUM_DESCRIPTION_WINDOW_MESSAGES);
     expect(prompts[0]!.user).toContain("older messages in this window were omitted");
@@ -402,49 +370,225 @@ describe("work-stream description refresh", () => {
 
   it("leaves an automation's work stream to its automation", async () => {
     const { database, env, prompts } = fixture({ originType: "automation" });
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
 
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({ status: "skipped", reason: "automation_origin" });
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "automation_origin" });
     expect(prompts).toHaveLength(0);
   });
 
   it("leaves an archived work stream alone", async () => {
     const { database, env, prompts } = fixture({ archived: true });
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
 
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({ status: "skipped", reason: "archived" });
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "archived" });
     expect(prompts).toHaveLength(0);
   });
 
   it("spends the window rather than retrying a model that failed", async () => {
     const { database, env } = fixture();
-    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_MESSAGES);
+    addQualifyingConversation(database);
     vi.stubGlobal("fetch", async () => new Response(
       JSON.stringify({ error: { message: "model unavailable" } }),
       { status: 503, headers: { "Content-Type": "application/json" } },
     ));
 
-    expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      now: NOW,
-    })).toEqual({ status: "failed", code: "model_unavailable" });
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "failed", code: "model_unavailable" });
     expect(refreshRow(database)).toMatchObject({
       decision: "failed",
       rejection_code: "model_unavailable",
+      consecutive_keeps: 0,
     });
     expect(await refreshWorkstreamDescription(env, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      ...input,
       now: new Date(NOW.getTime() + 60 * 1_000),
-    })).toEqual({ status: "skipped", reason: "not_due" });
+    })).toEqual({ status: "skipped", reason: "resting" });
+  });
+});
+
+describe("what it takes to spend a model call", () => {
+  const input = { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID };
+
+  it("will not look at a work stream that has not rested, however much was said", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+
+    const soon = new Date(NOW.getTime() + 60 * 1_000);
+    addQualifyingConversation(database, {
+      startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES + 1,
+      createdAt: soon.toISOString(),
+    });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: soon }))
+      .toEqual({ status: "skipped", reason: "resting" });
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("will not look at a rested work stream that has not changed", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+
+    expect(await refreshWorkstreamDescription(env, {
+      ...input,
+      now: new Date(NOW.getTime() + 20 * 60 * 60 * 1_000),
+    })).toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("looks once the work stream has both rested and changed", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW })).toEqual({ status: "kept" });
+
+    const later = new Date(NOW.getTime() + 20 * 60 * 60 * 1_000);
+    addQualifyingConversation(database, {
+      startSequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES + 1,
+      createdAt: later.toISOString(),
+    });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: later })).toEqual({ status: "kept" });
+    expect(prompts).toHaveLength(2);
+  });
+
+  it("does not count an agent's own turns as the work stream changing", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, 1);
+    addMessages(database, 40, { startSequence: 2, authorType: "agent" });
+    addMessages(database, 10, { startSequence: 42, authorType: "system" });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("does not count a row of acknowledgements as a conversation", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 2, { text: "ack" });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "insufficient_new_conversation" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("does not pay a model to confirm a description the conversation keeps restating", async () => {
+    const { database, env, prompts } = fixture();
+    addMessages(database, DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES * 3, { text: ON_TOPIC_MESSAGE });
+
+    expect(await refreshWorkstreamDescription(env, { ...input, now: NOW }))
+      .toEqual({ status: "skipped", reason: "nothing_new_discussed" });
+    expect(prompts).toHaveLength(0);
+  });
+
+  it("rests longer after each consecutive confirmation, and returns to the floor on a rewrite", () => {
+    const hours = (keeps: number) =>
+      (Date.parse(restUntil(NOW, keeps)) - NOW.getTime()) / (60 * 60 * 1_000);
+
+    expect(hours(0)).toBe(6);
+    expect(hours(1)).toBe(12);
+    expect(hours(2)).toBe(24);
+    expect(hours(3)).toBe(48);
+    // Capped, so a long-settled description is still re-read every two days.
+    expect(hours(9)).toBe(48);
+  });
+
+  it("backs off across repeated confirmations and resets when the description is rewritten", async () => {
+    let proposal: Proposal = {
+      decision: "keep",
+      description: null,
+      confidence: 0.9,
+      reasoning: "Still the same work.",
+    };
+    const { database, env } = fixture({ proposal: () => proposal });
+
+    let sequence = 1;
+    let now = NOW;
+    for (const expectedKeeps of [1, 2, 3]) {
+      addQualifyingConversation(database, {
+        startSequence: sequence,
+        createdAt: now.toISOString(),
+      });
+      sequence += DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES;
+      expect(await refreshWorkstreamDescription(env, { ...input, now })).toEqual({ status: "kept" });
+      expect(refreshRow(database)).toMatchObject({ consecutive_keeps: expectedKeeps });
+      // Two days clears every rest the backoff can produce.
+      now = new Date(now.getTime() + 49 * 60 * 60 * 1_000);
+    }
+
+    proposal = {
+      decision: "rewrite",
+      description: "Track the 3-D Secure migration for EU card issuers.",
+      confidence: 0.95,
+      reasoning: "The work moved.",
+    };
+    addQualifyingConversation(database, { startSequence: sequence, createdAt: now.toISOString() });
+    await refreshWorkstreamDescription(env, { ...input, now });
+    expect(refreshRow(database)).toMatchObject({ decision: "rewritten", consecutive_keeps: 0 });
+    expect(refreshRow(database)!.rest_until).toBe(restUntil(now, 0));
+  });
+
+  it("rests instead of second-guessing a description a person just wrote", async () => {
+    const { database, env, prompts } = fixture();
+    addQualifyingConversation(database);
+
+    await new WorkstreamService(env, {
+      sessionId: "session-1",
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "owner",
+    }).update(WORKSTREAM_ID, { objective: "Run the EU payments incident review." });
+
+    const row = refreshRow(database)!;
+    expect(row).toMatchObject({
+      decision: "kept",
+      consecutive_keeps: 0,
+      evaluated_through_sequence: DESCRIPTION_REFRESH_MINIMUM_NEW_HUMAN_MESSAGES,
+    });
+    // The edit stamps the wall clock, so the rest is asserted against the
+    // instant it recorded rather than against this test's frozen one.
+    expect(String(row.rest_until)).toBe(restUntil(new Date(String(row.evaluated_at)), 0));
+    expect(await refreshWorkstreamDescription(env, {
+      ...input,
+      now: new Date(String(row.evaluated_at)),
+    })).toEqual({ status: "skipped", reason: "resting" });
+    expect(prompts).toHaveLength(0);
+    expect(objective(database)).toBe("Run the EU payments incident review.");
+  });
+});
+
+describe("measuring what is new in a conversation", () => {
+  const description = "Resolve the EU checkout authorization failures Morgan reported.";
+  const title = "Checkout";
+
+  it("counts a subject the description does not name", () => {
+    expect(countNovelSubjectTerms({
+      newText: [
+        "The 3-D Secure migration needs a rollout plan.",
+        "Sandbox coverage for the migration is short, and the rollout plan needs issuer sign-off.",
+        "Each issuer wants its own sandbox window before we schedule the migration rollout.",
+      ].join("\n"),
+      description,
+      title,
+    })).toBeGreaterThanOrEqual(DESCRIPTION_REFRESH_MINIMUM_NOVEL_TERMS);
+  });
+
+  it("counts nothing when the conversation restates the description", () => {
+    expect(countNovelSubjectTerms({
+      newText: "The EU checkout authorization failures Morgan reported are still failures in EU checkout.",
+      description,
+      title,
+    })).toBe(0);
+  });
+
+  it("ignores a subject mentioned only once, and ordinary sentence words", () => {
+    expect(countNovelSubjectTerms({
+      newText: "We should probably think about whether the invoicing thing matters here.",
+      description,
+      title,
+    })).toBe(0);
   });
 });

@@ -715,12 +715,16 @@ describe("database migrations", () => {
     // One row per work stream is what makes the claim a claim: a second
     // evaluation has to take the same row rather than start beside it.
     const claim = `INSERT INTO workstream_description_refreshes
-      (workstream_id, workspace_id, evaluated_at, evaluated_through_sequence, decision, created_at, updated_at)
-      VALUES ('description-authored', 'description-workspace', '2026-08-11T12:00:00.000Z', 1, 'pending', '2026-08-11', '2026-08-11')`;
+      (workstream_id, workspace_id, evaluated_at, rest_until, evaluated_through_sequence, decision, created_at, updated_at)
+      VALUES ('description-authored', 'description-workspace', '2026-08-11T12:00:00.000Z',
+              '2026-08-11T18:00:00.000Z', 1, 'pending', '2026-08-11', '2026-08-11')`;
     database.exec(claim);
     expect(() => database.exec(claim)).toThrow(/UNIQUE|PRIMARY KEY/u);
     expect(() => database.exec(
       `UPDATE workstream_description_refreshes SET decision = 'rejected' WHERE workstream_id = 'description-authored'`,
+    )).toThrow(/CHECK/u);
+    expect(() => database.exec(
+      `UPDATE workstream_description_refreshes SET consecutive_keeps = -1 WHERE workstream_id = 'description-authored'`,
     )).toThrow(/CHECK/u);
     database.close();
   });

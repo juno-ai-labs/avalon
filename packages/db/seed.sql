@@ -40,10 +40,10 @@ VALUES
   ('00000000-0000-7000-8000-000000000013', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000012', 'calendar', 'FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0', 'America/Los_Angeles', '2026-08-07T21:00:00.000Z', 1, 1, '2026-07-31T18:02:00.000Z', '2026-07-31T18:02:00.000Z');
 
 INSERT OR IGNORE INTO workstreams
-  (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+  (id, workspace_id, title, objective, description_source, origin_type, created_by_user_id, harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
 VALUES
-  ('00000000-0000-7000-8000-000000000020', '00000000-0000-7000-8000-000000000002', 'Prepare the Acme client follow-up', 'Turn the client call into a clear follow-up with owners and next steps.', 'ad_hoc', '00000000-0000-7000-8000-000000000001', 'needs_input', 4, '2026-07-31T19:45:00.000Z', '2026-07-31T19:30:00.000Z', '2026-07-31T19:45:00.000Z'),
-  ('00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000002', 'Investigate ENG-142', 'Find the cause of intermittent invoice retry failures.', 'ad_hoc', '00000000-0000-7000-8000-000000000001', 'running', 3, '2026-07-31T19:40:00.000Z', '2026-07-31T19:20:00.000Z', '2026-07-31T19:40:00.000Z');
+  ('00000000-0000-7000-8000-000000000020', '00000000-0000-7000-8000-000000000002', 'Prepare the Acme client follow-up', 'Turn the client call into a clear follow-up with owners and next steps.', 'authored', 'ad_hoc', '00000000-0000-7000-8000-000000000001', 'needs_input', 4, '2026-07-31T19:45:00.000Z', '2026-07-31T19:30:00.000Z', '2026-07-31T19:45:00.000Z'),
+  ('00000000-0000-7000-8000-000000000021', '00000000-0000-7000-8000-000000000002', 'Investigate ENG-142', 'Find the cause of intermittent invoice retry failures.', 'authored', 'ad_hoc', '00000000-0000-7000-8000-000000000001', 'running', 3, '2026-07-31T19:40:00.000Z', '2026-07-31T19:20:00.000Z', '2026-07-31T19:40:00.000Z');
 
 INSERT OR IGNORE INTO workstream_participants
   (workstream_id, user_id, added_by_user_id, participation_reason, joined_at)
