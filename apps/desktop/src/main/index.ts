@@ -244,6 +244,24 @@ function publicSession(value: WireSession): DesktopSession {
   };
 }
 
+/**
+ * Stops waiting on `work` after `timeoutMs`, without cancelling it. The work
+ * keeps running for whoever else is awaiting it; only this caller gives up.
+ */
+async function withDeadline<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let expire: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        expire = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (expire !== undefined) clearTimeout(expire);
+  }
+}
+
 /** Who the flag poll is asking as. The endpoint is part of it because the same
  * person is a different regional account on each one. Both callers derive it
  * here: a stored credential and a live session have to agree on the identity or
@@ -473,8 +491,18 @@ async function readDeveloperSettingsFlag(): Promise<boolean> {
   if (response.status === 401) {
     // The poll runs on its own schedule, so it is often the first request to
     // meet an expired access token. Renewing through the coalescing path shares
-    // whatever refresh a renderer already has in flight.
-    response = await ask((await coalescedRefreshSession()).accessToken);
+    // whatever refresh a renderer already has in flight — and that is also why
+    // the wait is bounded here rather than inside `requestSession`: the refresh
+    // is shared with callers who should keep waiting for it, while this poll
+    // must give up and be asked again on the next tick. Without this the hop
+    // would be the one unbounded step in a function whose whole contract is
+    // that it settles.
+    const renewed = await withDeadline(
+      coalescedRefreshSession(),
+      DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS,
+      'Renewing the Avalon session for the feature flag poll timed out',
+    );
+    response = await ask(renewed.accessToken);
   }
   if (!response.ok) throw await responseError(response);
   const parsed = ClientFeatureFlagsSchema.safeParse(await response.json());
