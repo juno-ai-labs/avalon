@@ -9,6 +9,9 @@ import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 
+/** Waits before a rotation gives up rather than spinning to the caller's deadline. */
+const ROTATION_WAIT_ATTEMPTS = 8;
+
 const CredentialRowSchema = z.object({
   encrypted_credentials: z.string().min(1),
   credential_iv: z.string().min(1),
@@ -94,24 +97,133 @@ export async function ensureFreshConnectorCredentials(
     } catch (error) {
       await releaseLease(env.DB, connection, leaseId);
       if (error instanceof ConnectorError && error.code === "unauthorized") {
-        await env.DB.prepare(
-          `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
-        ).bind(
-          JSON.stringify({
-            code: "connector_reauthorization_required",
-            message: "Reconnect this connector account",
-            reconnectRequired: true,
-            reason: "authorization_failed",
-          }),
-          nowIso(),
-          connection.id,
-          connection.workspaceId,
-        ).run();
+        await markNeedsReconnect(env.DB, connection);
       }
       throw error;
     }
   }
+}
+
+/**
+ * Rotates a credential the provider has just refused, under the same lease
+ * that serializes expiry-driven refreshes.
+ *
+ * A rotating refresh token is single-use. Two calls that are in flight together
+ * and are both refused would otherwise each redeem the stored one, and the
+ * loser's `invalid_grant` would mark a connection `needs_reconnect` that had in
+ * fact just been rotated successfully by its sibling. Serializing through the
+ * lease makes the second caller wait and then discover the sibling's result:
+ * credentials that differ from the ones that were refused are the sibling's
+ * rotation, and are adopted rather than redeemed over.
+ */
+export async function rotateConnectorCredentials(
+  env: CredentialEnv,
+  connection: ConnectorConnectionContext,
+  adapter: ResolvedConnectorAdapter,
+  signal: AbortSignal,
+  refused: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (!adapter.refreshCredentials) {
+    throw new ConnectorError("unauthorized", "This connector cannot rotate its credentials");
+  }
+  let attempt = 0;
+  while (true) {
+    signal.throwIfAborted();
+    const leaseId = crypto.randomUUID();
+    const claimed = await env.DB.prepare(
+      `UPDATE connector_connections SET
+         credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?
+       WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+         AND (credential_refresh_lease_id IS NULL OR credential_refresh_lease_expires_at < ?)
+       RETURNING encrypted_credentials, credential_iv, credential_key_version`,
+    ).bind(
+      leaseId,
+      new Date(Date.now() + 2 * 60_000).toISOString(),
+      connection.id,
+      connection.workspaceId,
+      nowIso(),
+    ).first<Record<string, unknown>>();
+
+    if (!claimed) {
+      const current = await loadCredentials(env, connection);
+      if (!sameCredentials(current, refused)) return current;
+      // Bounded and backed off. A waiter polling flat out re-reads D1 ~300
+      // times under the default tool deadline, and a lease a crashed sibling
+      // left behind pushes that to its two-minute expiry with the waiter
+      // spinning throughout. This path is reached on rejection, where several
+      // in-flight calls are likelier to pile onto one connection than they are
+      // on the expiry route.
+      attempt += 1;
+      if (attempt > ROTATION_WAIT_ATTEMPTS) {
+        throw new ConnectorError("provider_error", "Connector credentials are still being rotated by another request");
+      }
+      await abortableDelay(Math.min(100 * 2 ** (attempt - 1), 2_000), signal);
+      continue;
+    }
+
+    try {
+      const current = await decryptCredentials(env, connection.id, CredentialRowSchema.parse(claimed));
+      if (!sameCredentials(current, refused)) {
+        await releaseLease(env.DB, connection, leaseId);
+        return current;
+      }
+      const refreshed = await adapter.refreshCredentials({ ...connection, credentials: current }, signal);
+      const encrypted = await encryptString(
+        JSON.stringify(refreshed),
+        env.CONNECTOR_CREDENTIALS_KEY,
+        connection.id,
+      );
+      const persisted = await env.DB.prepare(
+        `UPDATE connector_connections SET
+           encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
+           credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL,
+           updated_at = ?
+         WHERE id = ? AND workspace_id = ? AND status = 'healthy'
+           AND credential_refresh_lease_id = ?
+         RETURNING id`,
+      ).bind(
+        encrypted.ciphertext,
+        encrypted.iv,
+        Number(env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+        nowIso(),
+        connection.id,
+        connection.workspaceId,
+        leaseId,
+      ).first<{ id: string }>();
+      if (!persisted) throw new ConnectorError("provider_error", "Connector credentials changed while they were being rotated");
+      return refreshed;
+    } catch (error) {
+      await releaseLease(env.DB, connection, leaseId);
+      if (error instanceof ConnectorError && error.code === "unauthorized") {
+        await markNeedsReconnect(env.DB, connection);
+      }
+      throw error;
+    }
+  }
+}
+
+function sameCredentials(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+async function markNeedsReconnect(
+  database: D1Database,
+  connection: Pick<ConnectorConnectionContext, "id" | "workspaceId">,
+): Promise<void> {
+  await database.prepare(
+    `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
+     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
+  ).bind(
+    JSON.stringify({
+      code: "connector_reauthorization_required",
+      message: "Reconnect this connector account",
+      reconnectRequired: true,
+      reason: "authorization_failed",
+    }),
+    nowIso(),
+    connection.id,
+    connection.workspaceId,
+  ).run();
 }
 
 function needsRefresh(credentials: Record<string, unknown>, minimumValidityMs: number): boolean {

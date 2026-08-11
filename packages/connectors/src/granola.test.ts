@@ -7,7 +7,10 @@ import {
   verifyGranolaWebhook,
 } from "./granola";
 import type { FetchLike } from "./provider-utils";
-import type { ConnectorConnectionContext } from "./types";
+import {
+  type AuthorizedConnectorConnection,
+  authorizedConnection,
+} from "./types";
 
 describe("Granola connector", () => {
   it("uses the documented workspace API endpoints and exact query parameters", async () => {
@@ -442,8 +445,8 @@ describe("Granola connector", () => {
 
 const workspaceApiKey = `grn_${"a".repeat(32)}`;
 
-function workspaceConnection(): ConnectorConnectionContext {
-  return {
+function workspaceConnection(): AuthorizedConnectorConnection {
+  return authorizedConnection({
     id: "granola-workspace-connection",
     workspaceId: "avalon-workspace",
     scope: "workspace",
@@ -452,7 +455,7 @@ function workspaceConnection(): ConnectorConnectionContext {
     credentials: { apiKey: workspaceApiKey },
     cursor: {},
     config: {},
-  };
+  });
 }
 
 function workspaceToolContext() {

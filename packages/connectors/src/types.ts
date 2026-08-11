@@ -95,8 +95,69 @@ export interface ConnectorConnectionContext {
   config: Record<string, unknown>;
 }
 
+// Declared, never exported, and with no runtime value: an object literal
+// written anywhere else cannot carry this key, so the branded type below has
+// exactly one producer.
+declare const credentialFreshness: unique symbol;
+
+/**
+ * A connection whose credentials the host refreshed immediately before use.
+ *
+ * Every adapter entry point that calls a provider takes this type rather than
+ * `ConnectorConnectionContext`, which makes "refresh before you call out" a
+ * property of the value instead of a step each caller has to remember. The
+ * brand cannot be forged by a structural literal; `authorizedConnection` is
+ * its only producer, and the host confines that to its single credential door.
+ */
+export interface AuthorizedConnectorConnection extends ConnectorConnectionContext {
+  readonly [credentialFreshness]: true;
+}
+
+/**
+ * Host-serialized credential rotation, per connection.
+ *
+ * A rotating refresh token is single-use, so two calls in flight together must
+ * not each redeem the stored one. The host serializes rotation behind the same
+ * lease its expiry-driven refresh uses and registers it here.
+ *
+ * It is deliberately not a property of the connection. The connection is handed
+ * to adapters as `ConnectorToolContext.connection`, and a rotation hanging off
+ * it would be an escape hatch every adapter could reach — guarded by a doc
+ * comment asking them not to, which is exactly the remembered step this brand
+ * exists to remove. `withProviderReauthorization` reads it here instead.
+ */
+export type ConnectorCredentialRotation = (
+  refused: Record<string, unknown>,
+  signal: AbortSignal,
+) => Promise<Record<string, unknown>>;
+
+const credentialRotations = new WeakMap<ConnectorConnectionContext, ConnectorCredentialRotation>();
+
+/** The host's serialized rotation for this connection, when it registered one. */
+export function connectorCredentialRotation(
+  connection: ConnectorConnectionContext,
+): ConnectorCredentialRotation | undefined {
+  return credentialRotations.get(connection);
+}
+
+/**
+ * Mints the freshness brand.
+ *
+ * Production code must reach this only through the host's credential door
+ * (`withAuthorizedConnection`), which is the one caller that has actually
+ * refreshed the credentials; ESLint pins the import to that module. Tests
+ * calling an adapter directly are the other legitimate caller.
+ */
+export function authorizedConnection(
+  connection: ConnectorConnectionContext,
+  rotateCredentials?: ConnectorCredentialRotation,
+): AuthorizedConnectorConnection {
+  if (rotateCredentials) credentialRotations.set(connection, rotateCredentials);
+  return connection as AuthorizedConnectorConnection;
+}
+
 export interface ConnectorToolContext {
-  connection: ConnectorConnectionContext;
+  connection: AuthorizedConnectorConnection;
   principal: ExecutionPrincipal;
   /** Stable host receipt key when the provider supports idempotent writes. */
   providerIdempotencyKey?: string;
@@ -177,7 +238,7 @@ export interface ConnectorPollingActivitySource {
     highWatermark: unknown,
   ): Record<string, unknown>;
   pollStream(
-    connection: ConnectorConnectionContext,
+    connection: AuthorizedConnectorConnection,
     stream: ConnectorPollingActivityStream,
     highWatermark: Record<string, unknown>,
     signal: AbortSignal,
@@ -246,7 +307,7 @@ function streamFailure(error: unknown, streamId: string): ConnectorActivityStrea
 /** Shared bounded orchestration for every checkpointed polling provider. */
 export async function pollCheckpointedActivityStreams(
   source: ConnectorPollingActivitySource,
-  connection: ConnectorConnectionContext,
+  connection: AuthorizedConnectorConnection,
   signal: AbortSignal,
 ): Promise<ConnectorPollResult> {
   const streams = [...source.streams(connection)];
@@ -445,14 +506,34 @@ export interface ConnectorAdapter {
   beginAuthorization?(input: ConnectorAuthorizationInput): Promise<{ url: string; state?: Record<string, unknown> }>;
   handleAuthorizationCallback?(input: ConnectorAuthorizationCallbackInput): Promise<Record<string, unknown>>;
   refreshCredentials?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<Record<string, unknown>>;
-  revoke?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<void>;
+  revoke?(connection: AuthorizedConnectorConnection, signal: AbortSignal): Promise<void>;
   webhookActivity?: ConnectorWebhookActivitySource;
   pollingActivity?: ConnectorPollingActivitySource;
   /** @deprecated Implement pollingActivity for new connectors. */
-  poll?(connection: ConnectorConnectionContext, signal: AbortSignal): Promise<ConnectorPollResult>;
-  hydrateResource?(connection: ConnectorConnectionContext, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
+  poll?(connection: AuthorizedConnectorConnection, signal: AbortSignal): Promise<ConnectorPollResult>;
+  hydrateResource?(connection: AuthorizedConnectorConnection, resource: Record<string, unknown>, signal: AbortSignal): Promise<unknown>;
   executeTool(name: string, args: unknown, context: ConnectorToolContext): Promise<ConnectorToolResult>;
-  healthCheck(connection?: ConnectorConnectionContext): Promise<{ ok: boolean; message: string }>;
+  /**
+   * `reconnectRequired` separates the two ways a check fails: the provider
+   * refused this authorization, or the check could not be completed at all.
+   * A caller deciding whether authority was withdrawn must not read an
+   * unreachable provider as a revoked grant.
+   */
+  /**
+   * `signal` is threaded from the caller rather than timed internally.
+   * Reauthorization runs inside a Workflow step, and an `AbortSignal.timeout`
+   * created here is not disposable — it keeps the invocation alive until it
+   * fires, long after the check returned. An adapter falls back to its own
+   * timeout only when a caller supplies none.
+   */
+  healthCheck(
+    connection?: AuthorizedConnectorConnection,
+    signal?: AbortSignal,
+  ): Promise<{
+    ok: boolean;
+    message: string;
+    reconnectRequired?: boolean;
+  }>;
 }
 
 export function connectorCapabilitySupportsScope(

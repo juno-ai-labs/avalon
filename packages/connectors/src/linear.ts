@@ -13,6 +13,7 @@ import {
   stringValue,
   truncateText,
   verifyHmacSha256,
+  withProviderReauthorization,
   type FetchLike,
 } from "./provider-utils";
 import {
@@ -778,10 +779,11 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
       throw new ConnectorError("unsupported_capability", `Unsupported Linear tool: ${name}`);
     },
 
-    async healthCheck(connection) {
+    async healthCheck(connection, callerSignal) {
       if (!connection) return { ok: true, message: "Linear OAuth is configured" };
       assertLinearConnection(connection);
-      const data = await graphql(connection, AbortSignal.timeout(15_000), "query AvalonLinearHealth { viewer { id } }");
+      const signal = callerSignal ?? AbortSignal.timeout(15_000);
+      const data = await graphql(connection, signal, "query AvalonLinearHealth { viewer { id } }");
       const viewer = recordValue(data, "viewer");
       return viewer?.id ? { ok: true, message: "Linear authorization is healthy" } : { ok: false, message: "Linear did not return an authorized identity" };
     },
@@ -1282,15 +1284,19 @@ async function withLinearAccess<T>(
   if (expiration && Date.parse(expiration) <= now() + 60_000) {
     connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
   }
-  let token = credentialString(connection, "accessToken");
-  try {
-    return await operation(token);
-  } catch (error) {
-    if (!isProviderUnauthorized(error)) throw error;
-    connection.credentials = await refreshLinearCredentials(config, fetcher, now(), connection, signal);
-    token = credentialString(connection, "accessToken");
-    return operation(token);
-  }
+  // Through the shared helper rather than a private retry: it prefers the
+  // host's lease-serialized rotation, so two calls refused at once cannot each
+  // redeem the same rotating refresh token.
+  return withProviderReauthorization(
+    connection,
+    {
+      refresh: (candidate, refreshSignal) =>
+        refreshLinearCredentials(config, fetcher, now(), candidate, refreshSignal),
+      isRejection: isProviderUnauthorized,
+      signal,
+    },
+    () => operation(credentialString(connection, "accessToken")),
+  );
 }
 
 async function linearGraphql(
