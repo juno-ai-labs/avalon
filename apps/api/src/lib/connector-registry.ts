@@ -80,7 +80,33 @@ export function xConnectorConfig(env: Env): XConnectorConfig | null {
   return { apiKey };
 }
 
+/**
+ * One registry per `Env`, because building one is not free and the result is a
+ * pure function of its input.
+ *
+ * Construction instantiates every configured adapter and re-validates every
+ * manifest through Zod. Callers treat `connectorRegistryForEnv` as a cheap
+ * lookup — the activity consumer reads one boolean from it per ingested
+ * activity, and a queue batch fans out over a hundred of those at once — so
+ * without this the hottest ingest path rebuilds eight adapters a hundred times
+ * to answer a hundred questions.
+ *
+ * A `WeakMap` rather than a module-level singleton: `Env` is per-invocation in
+ * a Worker, two regions can be exercised in one test file, and a cache that
+ * outlives its environment would serve one region's connectors to the other.
+ * The registry is immutable, so sharing one within an invocation is safe.
+ */
+const registriesByEnv = new WeakMap<Env, ReturnType<typeof buildConnectorRegistry>>();
+
 export function connectorRegistryForEnv(env: Env) {
+  const cached = registriesByEnv.get(env);
+  if (cached) return cached;
+  const registry = buildConnectorRegistry(env);
+  registriesByEnv.set(env, registry);
+  return registry;
+}
+
+function buildConnectorRegistry(env: Env) {
   const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);
   const linear = linearConnectorConfig(env);
