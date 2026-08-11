@@ -174,6 +174,7 @@ export const ViewerSchema = z.object({
 });
 
 export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
+
 export const WorkstreamSchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -219,7 +220,18 @@ export const WorkstreamSchema = z.object({
    * surfaces leave these out unless the reader has asked to see them, and render
    * them as secondary when they do.
    */
-  systemKind: z.enum(["digest"]).nullable().default(null)
+  systemKind: z.enum(["digest"]).nullable().default(null),
+  /**
+   * Where this work stream sits in *the reader's* pinned list, or `null` when
+   * they have not pinned it. Per-viewer the way the read-state fields above are:
+   * the same row is pinned for one member and not for another, so a client must
+   * never treat it as a property of the work stream itself.
+   *
+   * A position is an index into a dense ascending run, so it is only meaningful
+   * relative to the reader's other pins and changes whenever they rearrange
+   * them. Sort by it; do not store it as an identity.
+   */
+  pinPosition: z.number().int().nonnegative().nullable().default(null)
 });
 
 export const ExternalActorSchema = z.object({
@@ -1066,6 +1078,27 @@ export const UpdateWorkstreamRequestSchema = z.object({
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
+});
+
+/**
+ * The whole pinned list in its new order, not a move of one row.
+ *
+ * A drag produces a complete arrangement, and sending that arrangement is what
+ * lets the server write a dense run without inferring one from an index whose
+ * meaning depends on a list state the client may no longer share. Ids the
+ * caller has since unpinned elsewhere are ignored rather than rejected, and
+ * pins the caller does not name keep their relative order behind the ones it
+ * did — a second window that pinned something a moment ago loses its position,
+ * never its pin.
+ *
+ * Deliberately unbounded. Nothing limits how many work streams a person may
+ * pin, so any count this array could be capped at would be a number the server
+ * can legitimately exceed — and the arrangement is all-or-nothing, so a cap
+ * would not truncate a drag, it would refuse one and leave the list
+ * unreorderable for as long as the person stayed above it.
+ */
+export const ReorderWorkstreamPinsRequestSchema = z.object({
+  workstreamIds: z.array(IdSchema),
 });
 
 export const CreateMessageRequestSchema = z.object({

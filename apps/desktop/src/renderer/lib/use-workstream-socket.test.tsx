@@ -264,6 +264,7 @@ describe('useWorkstreamSocket', () => {
       manualUnreadGeneration: 0,
       hasUnread: false,
       firstUnreadSequenceNumber: null,
+      pinPosition: null,
       lastActivityAt: '2026-07-31T19:20:00.000Z',
     };
     const detail: WorkstreamDetail = {

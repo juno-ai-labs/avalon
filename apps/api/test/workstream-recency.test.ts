@@ -192,7 +192,13 @@ describe("work-stream recency ordering", () => {
           record.values = values;
           return statement;
         }),
-        all: vi.fn(async () => ({ success: true, results: rows })),
+        // Nothing is pinned here, so the read that collects the viewer's pins
+        // answers with nothing. This fixture otherwise returns `rows` for every
+        // statement, which would hand the listing each row a second time.
+        all: vi.fn(async () => ({
+          success: true,
+          results: sql.includes("pin.user_id IS NOT NULL") ? [] : rows,
+        })),
       };
       prepared.set(statement, record);
       return statement;
