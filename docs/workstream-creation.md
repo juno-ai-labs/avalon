@@ -280,7 +280,7 @@ to move work off this path has to answer two questions first — what recovers t
 state if `waitUntil` is dropped, and does the client immediately undo the saving
 by refetching. A run row that says `running` must have a Workflow behind it.
 
-Pull request not yet opened; add the trailer when it is.
+Shipped in #98.
 
 ### 2026-08-11 — The work stream opens on the keystroke, and the create path stops waiting for what the caller does not need
 
@@ -339,4 +339,4 @@ response carries its result, deferred through `offCriticalPath` if not — and
 deferred work must swallow its own failures, because there is no longer a
 response for them to fail.
 
-Pull request not yet opened; add the trailer when it is.
+Shipped in #98.
