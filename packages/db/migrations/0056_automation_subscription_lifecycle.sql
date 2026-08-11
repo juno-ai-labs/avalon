@@ -10,8 +10,11 @@
 -- status = 'active' AND lifecycle_state = 'visible', so a hidden automation can
 -- never run. Rows are kept rather than deleted because automation runs, work
 -- streams, memory scopes, and the permanent email tombstone all reference them.
+--
+-- No index accompanies the column. It has near-zero selectivity — virtually
+-- every row is 'visible' — and every query that reads it also filters on
+-- workspace_id and status, which automation_subscriptions_next_idx already
+-- covers. A second index would be write amplification on each subscription
+-- mutation for no read benefit.
 ALTER TABLE automation_subscriptions ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'visible'
   CHECK (lifecycle_state IN ('visible', 'archived', 'deleted'));
-
-CREATE INDEX IF NOT EXISTS automation_subscriptions_lifecycle_idx
-  ON automation_subscriptions(workspace_id, lifecycle_state);
