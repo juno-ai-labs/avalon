@@ -456,7 +456,10 @@ pre {
 .menu-label { color: var(--ink-soft); display: flex; flex-direction: column; font-size: 12px; padding: 7px 8px; }
 .menu-label small { color: var(--muted); margin-top: 2px; }
 .menu-separator { background: var(--line); height: 1px; margin: 4px; }
-.menu-item { align-items: center; border-radius: 5px; color: var(--ink-soft); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; }
+/* `width` and `text-align` matter for the items rendered `asChild` onto a
+   button, which would otherwise shrink to fit its label and centre it. Both
+   restate what an item rendered onto Radix's own div already computes. */
+.menu-item { align-items: center; border-radius: 5px; color: var(--ink-soft); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; width: 100%; }
 .menu-item[data-highlighted] { background: #393a35; color: var(--ink); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--red); }
