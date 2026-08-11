@@ -44,6 +44,7 @@ const workspace: Workspace = {
 
 const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
+  onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
@@ -56,6 +57,7 @@ const automation: AutomationSummary = {
   scope: 'you',
   status: 'active',
   nextRunAt: '2026-08-01T16:00:00.000Z',
+  updatedAt: '2026-07-20T09:00:00.000Z',
 };
 
 function workstream(
@@ -258,22 +260,36 @@ describe('Sidebar work-stream markers', () => {
 
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toBeVisible();
     expect(screen.getByRole('menuitem', { name: 'Turn into template' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveClass('menu-item-danger');
+    expect(screen.getByRole('menuitem', { name: 'Delete automation' })).toHaveClass('menu-item-danger');
+    expect(screen.queryByRole('menuitem', { name: 'Archive draft' })).not.toBeInTheDocument();
     expect(screen.queryByText(/^[PTRADU]$/u)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Run now' }));
     await waitFor(() => expect(onRunAutomation).toHaveBeenCalledWith(automation));
   });
 
-  it('sinks drafts under the automations that run and archives one from its menu', async () => {
+  it('sinks drafts under the automations that run, newest draft first, and archives one from its menu', async () => {
     const onArchiveDraftAutomation = vi.fn(async () => undefined);
-    const draft: AutomationSummary = { id: 'automation-2', name: 'Ad hoc competitor scan', scope: 'you', status: 'draft' };
+    const staleDraft: AutomationSummary = {
+      id: 'automation-2',
+      name: 'Ad hoc competitor scan',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-07-28T11:00:00.000Z',
+    };
+    const freshDraft: AutomationSummary = {
+      id: 'automation-3',
+      name: 'A support escalation digest',
+      scope: 'you',
+      status: 'draft',
+      updatedAt: '2026-08-02T11:00:00.000Z',
+    };
     render(
       <MemoryRouter>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automations={[draft, automation]}
+            automations={[staleDraft, automation, freshDraft]}
             onArchiveDraftAutomation={onArchiveDraftAutomation}
             onSignOut={vi.fn()}
             workspace={workspace}
@@ -283,9 +299,12 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
+    // Drafts follow the automations that run, and lead with the one touched
+    // most recently rather than the alphabetically first one.
     const section = screen.getByRole('region', { name: 'Automations' });
     expect([...section.querySelectorAll('.sidebar-row-title')].map((row) => row.textContent)).toEqual([
       'Daily product brief',
+      'A support escalation digest',
       'Ad hoc competitor scan',
     ]);
     const draftRow = screen.getByRole('link', { name: /Ad hoc competitor scan/u });
@@ -298,7 +317,43 @@ describe('Sidebar work-stream markers', () => {
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('data-disabled');
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Archive draft' }));
-    await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(draft));
+    await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(staleDraft));
+  });
+
+  it('deletes an automation only after the confirmation dialog', async () => {
+    const onDeleteAutomation = vi.fn(async () => undefined);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            onDeleteAutomation={onDeleteAutomation}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Delete automation' });
+    expect(within(dialog).getByText('Daily product brief')).toBeVisible();
+    expect(onDeleteAutomation).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
+    expect(onDeleteAutomation).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete automation' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete automation' })).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(onDeleteAutomation).toHaveBeenCalledWith(automation));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete automation' })).not.toBeInTheDocument());
   });
 
   it('opens meeting notes from the primary actions', async () => {

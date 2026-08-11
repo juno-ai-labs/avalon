@@ -64,6 +64,8 @@ export interface AutomationSummary {
   status: AutomationStatus;
   nextRunAt?: string;
   lastRunAt?: string;
+  /** Last time the automation itself changed — a draft's only activity. */
+  updatedAt: string;
   statusMessage?: string;
 }
 

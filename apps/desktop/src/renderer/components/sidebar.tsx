@@ -22,6 +22,7 @@ import {
   Play,
   Plus,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
@@ -39,6 +40,7 @@ interface SidebarProps {
   workstreams: WorkstreamSummary[];
   loading?: boolean;
   onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
+  onDeleteAutomation: (automation: AutomationSummary) => Promise<void>;
   onMarkWorkstreamUnread: (workstream: WorkstreamSummary) => Promise<void>;
   onRenameWorkstream: (workstream: WorkstreamSummary, title: string) => Promise<void>;
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
@@ -138,11 +140,13 @@ function AutomationRow({
   automation,
   debugEnabled,
   onArchiveDraft,
+  onDelete,
   onRunNow,
 }: {
   automation: AutomationSummary;
   debugEnabled: boolean;
   onArchiveDraft: (automation: AutomationSummary) => void;
+  onDelete: (automation: AutomationSummary) => void;
   onRunNow: (automation: AutomationSummary) => void;
 }): React.JSX.Element {
   const isDraft = automation.status === 'draft';
@@ -178,15 +182,14 @@ function AutomationRow({
           </ContextMenu.Item>
           {debugEnabled && <CopyResourceIdItem id={automation.id} label="Copy automation id" />}
           <ContextMenu.Separator className="menu-separator" />
-          {isDraft ? (
+          {isDraft && (
             <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchiveDraft(automation)}>
               <Archive aria-hidden="true" size={16} /> Archive draft
             </ContextMenu.Item>
-          ) : (
-            <ContextMenu.Item className="menu-item menu-item-danger">
-              <Archive aria-hidden="true" size={16} /> Archive
-            </ContextMenu.Item>
           )}
+          <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onDelete(automation)}>
+            <Trash2 aria-hidden="true" size={16} /> Delete automation
+          </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
@@ -279,6 +282,7 @@ export function Sidebar({
   workstreams,
   loading,
   onArchiveDraftAutomation,
+  onDeleteAutomation,
   onMarkWorkstreamUnread,
   onRenameWorkstream,
   onRunAutomation,
@@ -295,11 +299,17 @@ export function Sidebar({
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AutomationSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   // Drafts are unfinished automations, so they sit under the ones that run
-  // rather than interleaving with them by name.
+  // rather than interleaving with them by name. Among themselves they lead with
+  // the one touched most recently, which is the draft still being worked on.
   const orderedAutomations = [
     ...automations.filter((automation) => automation.status !== 'draft'),
-    ...automations.filter((automation) => automation.status === 'draft'),
+    ...automations
+      .filter((automation) => automation.status === 'draft')
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
   ];
   const groups = groupActivityItems<RecentSidebarItem>([
     ...workstreams.map((workstream) => ({
@@ -320,6 +330,26 @@ export function Sidebar({
     setRenameTarget(workstream);
     setRenameTitle(workstream.title);
     setRenameError(null);
+  };
+
+  const closeDelete = (): void => {
+    if (deleting) return;
+    setDeleteTarget(null);
+    setDeleteError(null);
+  };
+
+  const submitDelete = async (): Promise<void> => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteAutomation(deleteTarget);
+      setDeleteTarget(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'The automation could not be deleted.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const closeRename = (): void => {
@@ -401,6 +431,7 @@ export function Sidebar({
                     debugEnabled={debugEnabled}
                     key={automation.id}
                     onArchiveDraft={(target) => void onArchiveDraftAutomation(target).catch(() => undefined)}
+                    onDelete={setDeleteTarget}
                     onRunNow={(target) => void onRunAutomation(target).catch(() => undefined)}
                   />
                 ))}
@@ -526,6 +557,27 @@ export function Sidebar({
           </label>
         </form>
         {renameError && <InlineError>{renameError}</InlineError>}
+      </Modal>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={deleting} onClick={closeDelete}>Cancel</Button>
+            <Button className="button-danger" disabled={deleting} onClick={() => void submitDelete()}>
+              Delete
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeDelete();
+        }}
+        open={Boolean(deleteTarget)}
+        title="Delete automation"
+      >
+        <p className="modal-copy">
+          <strong>{deleteTarget?.name}</strong> stops running and leaves the sidebar for good. Its past
+          runs and the work streams it created stay where they are.
+        </p>
+        {deleteError && <InlineError>{deleteError}</InlineError>}
       </Modal>
     </>
   );

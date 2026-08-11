@@ -929,6 +929,7 @@ describe('Avalon API wire adapter', () => {
       status: 'active' as const,
       nextRunAt: null,
       lastRunAt: null,
+      updatedAt: '2026-08-01T09:00:00.000Z',
       updateAvailable: true,
       templateId,
       templateVersionId: currentVersionId,
