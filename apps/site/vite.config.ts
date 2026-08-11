@@ -36,6 +36,7 @@ export default defineConfig(async () => {
           invite: `${projectRoot}invite/index.html`,
           slackLink: `${projectRoot}slack/link/index.html`,
           desktopOpen: `${projectRoot}open/index.html`,
+          workstreamLink: `${projectRoot}app/workstreams/index.html`,
           slack: `${projectRoot}slack/index.html`,
           terms: `${projectRoot}terms/index.html`,
           privacy: `${projectRoot}privacy/index.html`,

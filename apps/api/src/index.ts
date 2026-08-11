@@ -6,6 +6,7 @@ import { processMemoryIndexOutbox } from "./services/memory-service";
 import { reapDeletedNoteObjects } from "./services/note-resource-cleanup";
 import { processPendingNotePrivacyNotifications } from "./services/note-privacy-notification-service";
 import { SlackAgentService } from "./services/slack-agent-service";
+import { refreshSlackWorkstreamUnfurls } from "./services/slack-unfurl-refresh";
 import { processDueOpportunityWindows } from "./services/work-opportunity-service";
 
 const REAPER_BATCH_LIMIT = 100;
@@ -63,6 +64,7 @@ export default {
       processPendingNotePrivacyNotifications(env),
       processMemoryIndexOutbox(env),
       new SlackAgentService(env).maintainIngress(),
+      refreshSlackWorkstreamUnfurls(env),
       processDueOpportunityWindows(env),
       recoverPendingActivityQueue(env),
     ]));

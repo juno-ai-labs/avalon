@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./connector-oauth-providers": "./src/connector-oauth-providers.ts"
+    "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
+    "./workstream-links": "./src/workstream-links.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopSession } from '../../common/desktop';
@@ -19,8 +19,9 @@ import {
 } from './workstream';
 
 const copyText = vi.hoisted(() => vi.fn());
+const getRuntimeConfig = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText }) }));
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText, getRuntimeConfig }) }));
 
 const headerWorkstream: WorkstreamDetail = {
   id: 'workstream-header',
@@ -63,6 +64,37 @@ function renderWorkstreamHeader(workstream = headerWorkstream): ReturnType<typeo
 describe('WorkstreamHeader origin affordances', () => {
   beforeEach(() => {
     useUiStore.setState({ railOpen: false, railVariant: 'context', inspector: null });
+  });
+
+  it('copies the canonical HTTPS link, which survives being pasted outside Avalon', async () => {
+    const workstreamId = '019fec70-fba0-7b0e-9f7a-3dd1ef56520f';
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    copyText.mockReset();
+    copyText.mockResolvedValue(undefined);
+    getRuntimeConfig.mockResolvedValue({
+      appVersion: 'test',
+      isPackaged: true,
+      platform: 'darwin',
+      api: { global: 'https://api.with-avalon.com', eu: 'https://eu.api.with-avalon.com' },
+      webBaseUrl: 'https://with-avalon.com',
+      devAuthEnabled: false,
+    });
+    renderWorkstreamHeader({ ...headerWorkstream, id: workstreamId });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More work-stream actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy work-stream link' }));
+
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(
+      `https://with-avalon.com/app/workstreams/${workstreamId}`,
+    ));
+    expect(copyText).not.toHaveBeenCalledWith(expect.stringContaining('avalon://'));
   });
 
   it('removes origin icons while preserving automation runs in the More menu', async () => {

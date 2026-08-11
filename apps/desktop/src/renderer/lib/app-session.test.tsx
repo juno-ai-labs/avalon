@@ -110,6 +110,7 @@ describe('single-platform desktop identity routing', () => {
         global: 'https://api.with-avalon.com',
         eu: 'https://eu.api.with-avalon.com',
       },
+      webBaseUrl: 'https://with-avalon.com',
       devAuthEnabled: false,
     });
     bridge.getSession.mockResolvedValue(null);
@@ -165,6 +166,7 @@ describe('single-platform desktop identity routing', () => {
         global: 'https://api.with-avalon.com',
         eu: 'https://eu.api.with-avalon.com',
       },
+      webBaseUrl: 'https://with-avalon.com',
       devAuthEnabled: false,
     }));
 
