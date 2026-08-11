@@ -18,6 +18,7 @@ import {
   MessageSquare,
   MonitorCog,
   Newspaper,
+  PanelTop,
   Plug,
   RefreshCcw,
   Search,
@@ -99,7 +100,7 @@ const settingsNavigation: Array<{ label: string; items: SettingsNavItem[] }> = [
   {
     label: 'Desktop app',
     items: [
-      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance dock customize version platform api realtime diagnostics', icon: MonitorCog },
+      { id: 'application', label: 'Application', searchTerms: 'app security lockdown encryption keychain session icon appearance menu bar status item startup login dock customize version platform api realtime diagnostics', icon: MonitorCog },
     ],
   },
 ];
@@ -465,6 +466,10 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
   });
   const updateDebugEnabled = useMutation({
     mutationFn: (enabled: boolean) => bridge.setDebugEnabled(enabled),
+    onSuccess: setApplicationSettings,
+  });
+  const updateMenuBarEnabled = useMutation({
+    mutationFn: (enabled: boolean) => bridge.setMenuBarEnabled(enabled),
     onSuccess: setApplicationSettings,
   });
   const pendingInvitations = useMemo(
@@ -1042,6 +1047,39 @@ export function WorkspaceSettingsScreen({ workspace }: { workspace: Workspace })
                   <InlineError>{applicationSettingsLoadError ?? updateLockdownMode.error?.message}</InlineError>
                 )}
                 <div className="settings-pane-heading settings-pane-heading-spaced"><h2>Appearance</h2><p>Make Avalon feel at home on this Mac.</p></div>
+                {applicationSettings?.menuBarAvailable !== false && (
+                  <>
+                    <div className="settings-list-card">
+                      <label className="settings-preference-row">
+                        <span className="settings-row-icon"><PanelTop aria-hidden="true" size={18} /></span>
+                        <span className="settings-row-copy">
+                          <strong>Show Avalon in the menu bar</strong>
+                          <small>Keep the Avalon mark in the menu bar for a new meeting or note, a new automation, what Avalon suggests next, and your recent work streams.</small>
+                        </span>
+                        <span className="settings-toggle">
+                          <input
+                            aria-label="Show Avalon in the menu bar"
+                            checked={applicationSettings?.menuBarEnabled ?? true}
+                            /* One preference file behind all three toggles, and
+                             * a Lockdown transition holds it for as long as it
+                             * takes to re-encrypt the session. Keep one write in
+                             * flight. */
+                            disabled={
+                              applicationSettings === null
+                              || updateMenuBarEnabled.isPending
+                              || updateLockdownMode.isPending
+                            }
+                            onChange={(event) => updateMenuBarEnabled.mutate(event.currentTarget.checked)}
+                            role="switch"
+                            type="checkbox"
+                          />
+                          <span aria-hidden="true" />
+                        </span>
+                      </label>
+                    </div>
+                    {updateMenuBarEnabled.error && <InlineError>{updateMenuBarEnabled.error.message}</InlineError>}
+                  </>
+                )}
                 <ApplicationIconPicker />
                 {/* The service decides whether this section exists at all, and
                   * answers on a poll, so it can appear or disappear without the

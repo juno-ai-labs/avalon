@@ -23,6 +23,11 @@ const browserApplicationSettings: DesktopApplicationSettings = {
   // The browser fallback has no main process to poll the service, so the
   // Developer section is simply not on offer there.
   developerSettingsAvailable: false,
+  // A tab has no status item. The preference reads as on so the desktop and the
+  // browser agree about what the stored default is, and unavailable so the
+  // toggle is offered nowhere it cannot work.
+  menuBarEnabled: true,
+  menuBarAvailable: false,
 };
 const browserApplicationSettingsListeners = new Set<(settings: DesktopApplicationSettings) => void>();
 const browserSessionListeners = new Set<(session: DesktopSession | null) => void>();
@@ -199,6 +204,9 @@ const browserBridge: AvalonDesktopBridge = {
       listener({ ...browserApplicationSettings });
     }
     return { ...browserApplicationSettings };
+  },
+  async setMenuBarEnabled() {
+    throw new Error('The menu bar item is available only in the Avalon desktop app.');
   },
   onApplicationSettingsChanged(listener) {
     browserApplicationSettingsListeners.add(listener);

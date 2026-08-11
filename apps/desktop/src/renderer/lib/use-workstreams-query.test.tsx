@@ -97,7 +97,7 @@ describe('useWorkstreamsQuery', () => {
     expect(getWorkstreams).toHaveBeenCalledTimes(1);
     expect(getWorkstreams.mock.calls[0]?.[1]).toBe(false);
 
-    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true });
+    announce({ lockdownMode: false, lockdownAvailable: false, debugEnabled: true, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true });
 
     await waitFor(() => expect(getWorkstreams).toHaveBeenCalledTimes(2));
     expect(getWorkstreams.mock.calls[1]?.[1]).toBe(true);

@@ -52,6 +52,20 @@ Run the Electron desktop with `pnpm dev:desktop` and exercise these flows agains
 10. For each OAuth connector, confirm the provider returns to `/auth/desktop/`, the page reports success or cancellation and offers **Open Avalon**, and Settings reaches the same terminal result when automatic app opening is blocked. Close Avalon before a successful callback, reopen it, and confirm the persisted connection appears without repeating authorization.
 11. Accept the emailed invitation with the matching Google identity, confirm it cannot be reused, then create another invitation and revoke it before opening the email. Confirm the revoked link fails and a non-admin cannot create or revoke invitations. Sign out from Settings and confirm both application surfaces return to onboarding.
 
+## Desktop menu bar acceptance
+
+macOS only, and best done from a packaged build — a development run deliberately
+never registers a login item. See [`menu-bar.md`](menu-bar.md).
+
+1. Start from an empty profile and confirm the Avalon mark is in the menu bar without anyone having asked for it. Switch the system appearance between light and dark, and drag a light and a dark desktop picture behind the menu bar on macOS 26 or 27, confirming the mark stays legible in all four and inverts when the item is highlighted. Confirm it is crisp on a Retina display — a blurred mark means the `@2x` rendition is missing from the bundle.
+2. Click it. Confirm the order: **New Meeting/Note**, **New Automation**, one row per current suggestion, a rule, up to five recent work streams, a rule, **Open Avalon**, **Launch at login**, a rule, **Quit Avalon**. Confirm the recent rows match the top of the sidebar in the same order, and that a work stream Avalon is still naming reads **Untitled work stream** rather than a placeholder.
+3. Exercise each row from a state where Avalon has **no** window open: the meeting/note row opens a notes window, the automation row opens the new-automation screen, a recent row opens that work stream, and each brings Avalon to the front rather than opening behind the frontmost app. Confirm a suggestion row creates its work stream, opens it, and that the suggestion is gone from the menu on the next open.
+4. Send a message in another work stream from a second device and confirm that work stream moves to the top of the menu's recent list within a few seconds of the pointer reaching the status item.
+5. Open **Settings → Application → Appearance**. Confirm **Show Avalon in the menu bar** sits above the app icon and is on. Turn it off and confirm the item disappears immediately; turn it on and confirm it returns; restart and confirm both states survive.
+6. Open **System Settings → General → Login Items** and confirm Avalon is listed and enabled without anyone having added it. Uncheck **Launch at login** in the menu, confirm it disappears there, and confirm a relaunch does **not** re-add it. Re-enable it from the menu and confirm the checkbox reflects what macOS actually holds, including the case where macOS asks for approval first.
+7. With the login item enabled, restart the Mac. Confirm Avalon comes back with the menu bar item present and **no window on screen**, that the menu's recent list is already populated, and that **Open Avalon** or clicking the Dock icon opens the main window. Then quit and launch Avalon by hand and confirm the window opens as usual — a manual launch must never be treated as a login launch.
+8. Sign out. Confirm the menu keeps both fixed actions, replaces the recent list with a disabled **Sign in to Avalon** row, and shows no trace of the previous account's work-stream titles.
+
 ## Realtime recovery acceptance
 
 1. Open a work stream and confirm the first client frame is `subscribe` with `afterSequence: 0`, followed by one room snapshot rather than duplicate snapshots.

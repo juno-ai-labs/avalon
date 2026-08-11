@@ -166,6 +166,12 @@ workspace with its work streams, automations, and onboarding checklist.
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local
   Worker has none unless a tunnel is configured.
+- **The macOS menu bar status item.** It is created only on darwin, and there is
+  no menu bar to draw it into here. What the sandbox can check is everything
+  around it: the Settings toggle in a real window, and the hidden launch, by
+  adding `--hidden` to the Electron arguments and confirming
+  `curl -s http://127.0.0.1:9222/json` returns no renderer targets while the main
+  process still loads the menu's content. See [`menu-bar.md`](menu-bar.md).
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**
   `package:desktop`, `start:desktop:packaged`, and the release publisher are
   macOS-only and must run on a Mac.
