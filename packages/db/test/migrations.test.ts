@@ -671,6 +671,60 @@ describe("database migrations", () => {
     database.close();
   });
 
+  it("promotes only descriptions a person wrote and holds one refresh claim per work stream", () => {
+    const database = migrateDatabaseThrough("0056_workstream_wakeups.sql");
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES ('description-owner', 'description-subject', 'owner@example.com', 'Owner', '2026-08-11', '2026-08-11');
+      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('description-workspace', 'Descriptions', 'descriptions', 'global', 'description-owner', '2026-08-11', '2026-08-11');
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES
+        ('description-authored', 'description-workspace', 'Checkout', 'Resolve EU checkout authorization failures.',
+         'ad_hoc', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11'),
+        ('description-derived', 'description-workspace', 'Checkout', 'EU cards are failing again.',
+         'ad_hoc', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11'),
+        ('description-automation', 'description-workspace', 'Weekly brief', 'Produce the weekly brief.',
+         'automation', 'description-owner', 'idle', 2, '2026-08-11', '2026-08-11', '2026-08-11');
+      INSERT INTO messages
+        (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
+         message_type, text_content, sequence_number, created_at)
+      VALUES
+        ('description-message-a', 'client-a', 'description-workspace', 'description-authored', 'human',
+         'description-owner', 'text', 'EU cards are failing again.', 1, '2026-08-11'),
+        ('description-message-b', 'client-b', 'description-workspace', 'description-derived', 'human',
+         'description-owner', 'text', 'EU cards are failing again.', 1, '2026-08-11');
+    `);
+
+    database.exec(readFileSync(
+      new URL("../migrations/0057_workstream_description_refresh.sql", import.meta.url),
+      "utf8",
+    ));
+
+    const sources = database.prepare(
+      "SELECT id, description_source FROM workstreams ORDER BY id",
+    ).all() as Array<{ id: string; description_source: string }>;
+    expect(sources).toEqual([
+      { id: "description-authored", description_source: "authored" },
+      { id: "description-automation", description_source: "derived" },
+      { id: "description-derived", description_source: "derived" },
+    ]);
+
+    // One row per work stream is what makes the claim a claim: a second
+    // evaluation has to take the same row rather than start beside it.
+    const claim = `INSERT INTO workstream_description_refreshes
+      (workstream_id, workspace_id, evaluated_at, evaluated_through_sequence, decision, created_at, updated_at)
+      VALUES ('description-authored', 'description-workspace', '2026-08-11T12:00:00.000Z', 1, 'pending', '2026-08-11', '2026-08-11')`;
+    database.exec(claim);
+    expect(() => database.exec(claim)).toThrow(/UNIQUE|PRIMARY KEY/u);
+    expect(() => database.exec(
+      `UPDATE workstream_description_refreshes SET decision = 'rejected' WHERE workstream_id = 'description-authored'`,
+    )).toThrow(/CHECK/u);
+    database.close();
+  });
+
   it("migrates Slack sessions and permits workspace-owned externally attributed work streams", () => {
     const database = migrateDatabaseThrough("0040_realtime_transcription_admission.sql");
     database.exec(`
