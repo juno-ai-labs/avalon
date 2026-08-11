@@ -169,6 +169,19 @@ than a snake_case symbol. Adding an Avalon tool means adding its prose there.
 `ToolInvocation.activityName` carries the result to the desktop, which falls
 back to the raw tool name only for rows persisted before the field existed.
 
+A connector row is named for the **action**, and the action's verb is found by
+scanning the whole tool name for a known one rather than reading a fixed
+position — connectors do not agree on word order, and one that says
+`send_message` sits beside one that says `drive.search` and one that says
+`calendar.create_event`, where the verb is neither first nor last. Reading only
+the trailing segment left 63 of 75 connector tools rendering as "Reviewed
+<connector>", `send_message` and `create_issue` and `calendar.create_event`
+among them: a write to another person, shown to that person's colleague as
+though the run had merely looked at something. `apps/api/test/connector-tool-prose.test.ts`
+walks every tool in the connector registry and fails on any that reaches the
+generic row or that describes a `write` in passive words, so a connector added
+later either names its tools with a recognized verb or declares its own prose.
+
 ## HyperSight blocks
 
 A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript of its own and nobody watching it. Three things follow.
