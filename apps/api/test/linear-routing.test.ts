@@ -8,6 +8,7 @@ import {
   serializeLinearRpcResult,
 } from "../src/services/linear-routing-service";
 import { ApiError } from "../src/lib/api-error";
+import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET = "shared-linear-webhook-secret";
@@ -33,11 +34,11 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<D1Result<T>> {
-    return this.database.all(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.all(this.sql, this.values));
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -153,14 +154,14 @@ function route(region: Region, workspaceId: string, connectionId: string) {
 }
 
 function environment(database: FakeDatabase): Env {
-  return {
-    DB: database as unknown as D1Database,
+  return createTestEnv({
+    DB: createTestD1Database(database),
     AVALON_REGION: "global",
     LINEAR_INGRESS_BASE_URL: "https://linear.with-avalon.com",
     LINEAR_WEBHOOK_SECRET: SECRET,
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     PROVIDER_WEBHOOK_MAX_BYTES: "2000000",
-  } as Env;
+  });
 }
 
 async function signedDelivery(organizationId: string) {

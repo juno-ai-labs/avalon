@@ -281,7 +281,7 @@ const PersistedCompactionMessagesSchema = z.array(z.discriminatedUnion("role", [
         }),
         z.object({
           type: z.literal("input_audio"),
-          input_audio: z.object({ data: z.string(), format: z.string() }),
+          input_audio: z.object({ data: z.string(), format: z.enum(["wav", "mp3"]) }),
         }),
       ])),
     ]),
@@ -4556,9 +4556,9 @@ async function reauthorizeFrozenPlugin(
  * and each later load repeated the same refused provider calls.
  */
 async function pluginAuthorizationFromHealth(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  frozen: FrozenConnectorPlugin,
+  env: PluginAuthorizationEnv,
+  input: PluginAuthorizationInput,
+  frozen: PluginAuthorizationConnection,
   health: { ok: boolean; message: string; reconnectRequired?: boolean; warning?: string },
 ): Promise<PluginAuthorization> {
   if (health.ok) {
@@ -4591,10 +4591,25 @@ async function pluginAuthorizationFromHealth(
   return "denied";
 }
 
+export type PluginAuthorizationEnv = Pick<
+  Env,
+  "DB" | "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA"
+>;
+
+export type PluginAuthorizationInput = Pick<
+  WorkstreamWorkflowInput,
+  "harnessRunId" | "workspaceId" | "workstreamId"
+>;
+
+export type PluginAuthorizationConnection = Pick<
+  FrozenConnectorPlugin,
+  "pluginId" | "connectionId" | "workspaceId" | "connectorType"
+>;
+
 function logPluginAuthorizationFailure(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  frozen: FrozenConnectorPlugin,
+  env: PluginAuthorizationEnv,
+  input: PluginAuthorizationInput,
+  frozen: PluginAuthorizationConnection,
   cause: unknown,
 ): void {
   logStructuredEvent(env, "warn", "connector_plugin_reauthorization_failed", {

@@ -1,9 +1,15 @@
 import { Building2, Check, ExternalLink, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import type { AvalonDesktopBridge } from '../../common/desktop';
 import { AvalonMark, Button, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import type { PendingWorkspaceInvitation, Region } from '../lib/types';
+
+export type SignInDesktopBridge = Pick<
+  AvalonDesktopBridge,
+  'cancelDesktopAuthAttempt' | 'createDesktopAuthAttempt' | 'openExternal'
+>;
 
 export function BootScreen(): React.JSX.Element {
   return (
@@ -81,16 +87,17 @@ export function SignInScreen(): React.JSX.Element {
     setError(null);
     clearDeepLinkError();
     let attemptId: string | null = null;
+    const bridge: SignInDesktopBridge = desktopBridge();
     try {
-      const authAttempt = await desktopBridge().createDesktopAuthAttempt({
+      const authAttempt = await bridge.createDesktopAuthAttempt({
         apiBaseUrl: api.baseUrl,
         region: 'global',
       });
       attemptId = authAttempt.attemptId;
       const url = await api.beginGoogleLogin('global', 'avalon://auth/complete', { authAttempt });
-      await desktopBridge().openExternal(url);
+      await bridge.openExternal(url);
     } catch (caught) {
-      if (attemptId) await desktopBridge().cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
+      if (attemptId) await bridge.cancelDesktopAuthAttempt(attemptId).catch(() => undefined);
       setError(caught instanceof Error ? caught.message : 'Avalon could not open the sign-in page.');
     } finally {
       setStarting(false);

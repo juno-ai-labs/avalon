@@ -10,6 +10,7 @@ import {
   type WorkstreamEmailRouteInput,
   type WorkstreamEmailRouterRpcResult,
 } from "../src/services/workstream-email-routing-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const ADDRESS_KEY = "avalon-workstream-routing-test-key-v1";
 const DOMAIN = "automation.with-avalon.com";
@@ -63,7 +64,7 @@ class FakeStatement {
   }
 
   async run<T>(): Promise<D1Result<T>> {
-    return this.database.run(this.sql, this.values) as D1Result<T>;
+    return createTestD1Result<T>(this.database.run(this.sql, this.values));
   }
 }
 
@@ -73,12 +74,12 @@ class FakeDatabase {
   readonly automations: LocalAutomationRow[] = [];
   routeInsertAttempts = 0;
 
-  prepare(sql: string): FakeStatement {
-    return new FakeStatement(this, sql);
+  prepare(sql: string): D1PreparedStatement {
+    return createTestD1PreparedStatement(new FakeStatement(this, sql));
   }
 
-  async batch(statements: FakeStatement[]): Promise<D1Result[]> {
-    return Promise.all(statements.map((statement) => statement.run()));
+  async batch<T>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+    return Promise.all(statements.map((statement) => statement.run<T>()));
   }
 
   first(sql: string, values: unknown[]): RouteRow | LocalWorkstreamRow | LocalAutomationRow | null {
@@ -671,7 +672,7 @@ describe("WorkstreamEmailRoutingService", () => {
       reserveMany: vi.fn(),
       activateMany: vi.fn(),
       setStatus: vi.fn(),
-    } as unknown as GlobalWorkstreamEmailRouterRpcBinding;
+    } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
       AVALON_REGION: "eu",
       GLOBAL_EMAIL_ROUTER: binding,
@@ -804,23 +805,23 @@ function existingRoute(
 }
 
 function environment(database: FakeDatabase, overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     APP_ENV: "test",
     AVALON_REGION: "global",
-    DB: database as unknown as D1Database,
+    DB: createTestD1Database(database),
     SESSION_SIGNING_KEY: "s".repeat(32),
     WORKSTREAM_EMAIL_ADDRESS_KEY: ADDRESS_KEY,
     WORKSTREAM_EMAIL_DOMAIN: DOMAIN,
     ...overrides,
-  } as Env;
+  });
 }
 
 function result<T>(changes: number, results: T[] = []): D1Result<T> {
-  return {
+  return createTestD1Result<T>({
     success: true,
     results,
     meta: { changes },
-  } as D1Result<T>;
+  });
 }
 
 function success<T>(value: T): WorkstreamEmailRouterRpcResult<T> {

@@ -48,6 +48,7 @@ import {
   describeWorkstreamOrigin,
   type OriginResourceDescriptor,
 } from "../src/services/workstream-origin-resource";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const memberId = "00000000-0000-7000-8000-000000000002";
@@ -264,11 +265,11 @@ describe("a work stream a connector activity created", () => {
     // signing secret that was never set here.
     const database = seededDatabase();
     seedActivityAutomation(database);
-    const env = {
+    const env = createTestEnv({
       ...automationEnvironment(database),
       LINEAR_OAUTH_CLIENT_ID: undefined,
       LINEAR_OAUTH_CLIENT_SECRET: undefined,
-    } as unknown as Env;
+    });
 
     await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
 
@@ -493,7 +494,7 @@ function auth(): AuthContext {
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     APP_ENV: "test",
     AVALON_REGION: "global",
@@ -510,7 +511,7 @@ function environment(database: DatabaseSync): Env {
     OPENROUTER_PRIMARY_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
     OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
-  } as unknown as Env;
+  });
 }
 
 function opportunityRequest() {
@@ -547,10 +548,10 @@ function linearActivityRow() {
 }
 
 function automationEnvironment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     ...environment(database),
     WORKSTREAM_LOOP_WORKFLOW: { create: async () => ({ id: "instance" }) },
-  } as unknown as Env;
+  });
 }
 
 /** A subscription bound to the connection the activity arrives on. */

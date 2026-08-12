@@ -6,6 +6,7 @@ import {
   recordHarnessRunObservation,
   summarizeHarnessRun,
 } from "../src/observability/harness-run-observability";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const outcome: HarnessOutcome = {
   status: "completed",
@@ -30,14 +31,14 @@ const outcome: HarnessOutcome = {
   },
 };
 
-function observationEnv(writeDataPoint: ReturnType<typeof vi.fn>): Env {
-  return {
+function observationEnv(writeDataPoint: AnalyticsEngineDataset["writeDataPoint"]): Env {
+  return createTestEnv({
     RUN_ANALYTICS: { writeDataPoint },
     LOG_LEVEL: "info",
     AVALON_REGION: "eu",
     APP_VERSION: "1.2.3",
     BUILD_SHA: "abc123",
-  } as unknown as Env;
+  });
 }
 
 afterEach(() => {

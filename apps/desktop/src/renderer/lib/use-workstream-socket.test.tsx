@@ -3,8 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AvalonApi } from './api';
 import type { HyperSight, HyperSightPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
+import { setCachedWorkstreams } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
   applyStreamingSocketEvent,
@@ -18,6 +18,7 @@ import {
   socketHeartbeatDelay,
   socketReconnectDelay,
   useWorkstreamSocket,
+  type WorkstreamSocketApi,
 } from './use-workstream-socket';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 
@@ -83,6 +84,53 @@ function deferred<T>(): {
   return { promise, resolve };
 }
 
+function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocketApi {
+  const unexpected = async (): Promise<never> => {
+    throw new Error('Unexpected socket API call.');
+  };
+  return {
+    getMessages: vi.fn(unexpected),
+    getSocketTicket: vi.fn(unexpected),
+    getWorkstream: vi.fn(unexpected),
+    getWorkstreams: vi.fn(unexpected),
+    ...overrides,
+  } satisfies WorkstreamSocketApi;
+}
+
+function workstreamSummary(overrides: Partial<WorkstreamSummary> = {}): WorkstreamSummary {
+  return {
+    id: '00000000-0000-7000-8000-000000000001',
+    title: 'Canonical work stream',
+    titleStatus: 'settled',
+    origin: 'ad_hoc',
+    harnessStatus: 'completed',
+    scope: 'workspace',
+    latestAttentionSequenceNumber: 0,
+    readThroughSequenceNumber: 0,
+    manualUnreadFromSequenceNumber: null,
+    manualUnreadGeneration: 0,
+    hasUnread: false,
+    firstUnreadSequenceNumber: null,
+    pinPosition: null,
+    lastActivityAt: '2026-07-31T20:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): WorkstreamDetail {
+  return {
+    ...workstreamSummary(overrides),
+    createdAt: '2026-07-31T19:00:00.000Z',
+    participants: [],
+    viewers: [],
+    resources: [],
+    connections: [],
+    backgroundTasks: [],
+    automationRuns: [],
+    ...overrides,
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -107,12 +155,13 @@ describe('useWorkstreamSocket', () => {
       visible: false,
       updatedAt: null,
     });
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: createWrapper(queryClient),
     });
@@ -282,13 +331,14 @@ describe('useWorkstreamSocket', () => {
       automationRuns: [],
     };
     queryClient.setQueryData(['workstream', workstreamId], detail);
-    queryClient.setQueryData(['workstreams'], [summary]);
-    const api = {
+    setCachedWorkstreams(queryClient, [summary]);
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -693,8 +743,9 @@ describe('useWorkstreamSocket', () => {
     const getSocketTicket = vi.fn(async () => ({
       url: `wss://api.avalon.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const api = { getSocketTicket } as unknown as AvalonApi;
+    const api = socketApiWith({ getSocketTicket });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
       wrapper: createWrapper(queryClient),
     });
@@ -883,12 +934,13 @@ describe('useWorkstreamSocket', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000061';
     const messageId = '00000000-0000-7000-8000-000000000062';
     const harnessRunId = '00000000-0000-7000-8000-000000000063';
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -974,15 +1026,16 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
     queryClient.setQueryData(['hypersight', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
     queryClient.setQueryData(['hypersight-preference', workstreamId], { visible: false, updatedAt: null });
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
+      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => [canonicalTool]),
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1011,16 +1064,17 @@ describe('useWorkstreamSocket', () => {
       titleStatus: 'naming',
       harnessStatus: 'running',
     } as WorkstreamDetail);
-    queryClient.setQueryData(['workstreams'], [
+    setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: provisional, titleStatus: 'naming' },
       { id: '00000000-0000-7000-8000-000000000402', title: 'August planning', titleStatus: 'settled' },
     ] as WorkstreamSummary[]);
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1054,16 +1108,17 @@ describe('useWorkstreamSocket', () => {
       scope: 'workspace',
       harnessStatus: 'completed',
     } as WorkstreamDetail);
-    queryClient.setQueryData(['workstreams'], [
+    setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: 'Compensation review', scope: 'workspace' },
       { id: '00000000-0000-7000-8000-000000000404', title: 'August planning', scope: 'workspace' },
     ] as WorkstreamSummary[]);
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1099,16 +1154,17 @@ describe('useWorkstreamSocket', () => {
       harnessStatus: 'completed',
     } as WorkstreamDetail);
     queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
-    queryClient.setQueryData(['workstreams'], [
+    setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: 'Compensation review' },
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
     ] as WorkstreamSummary[]);
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1140,15 +1196,16 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-7000-7000-8000-000000000407';
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
+      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1178,21 +1235,23 @@ describe('useWorkstreamSocket', () => {
         createdAt: '2026-08-06T05:00:00.000Z',
       },
     } as WorkstreamDetail;
+    const canonicalSummary = workstreamSummary({ id: workstreamId, harnessStatus: 'running' });
     queryClient.setQueryData(['workstream', workstreamId], {
       id: workstreamId,
       harnessStatus: 'completed',
       scope: 'workspace',
       latestHarnessRunId: 'run-old',
     });
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
       getWorkstream: vi.fn(async () => canonicalWorkstream),
       getMessages: vi.fn(async () => []),
-      getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+      getWorkstreams: vi.fn(async () => ({ items: [canonicalSummary], nextCursor: null })),
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1210,6 +1269,10 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.latestHarnessRun).toEqual(
       canonicalWorkstream.latestHarnessRun,
     );
+    // `getWorkstreams` returns a page, while this cache deliberately remains a
+    // flat array. This is the socket reconciliation path that once stored the
+    // page object and crashed the sidebar's first `.filter`.
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([canonicalSummary]);
   });
 
   it('pushes a status change into the sidebar list without waiting for a refetch', async () => {
@@ -1221,19 +1284,20 @@ describe('useWorkstreamSocket', () => {
       id: workstreamId,
       harnessStatus: 'running',
     });
-    queryClient.setQueryData(['workstreams'], [
-      { id: workstreamId, harnessStatus: 'running' },
-      { id: otherWorkstreamId, harnessStatus: 'running' },
+    setCachedWorkstreams(queryClient, [
+      workstreamSummary({ id: workstreamId, harnessStatus: 'running' }),
+      workstreamSummary({ id: otherWorkstreamId, harnessStatus: 'running' }),
     ]);
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => []),
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1292,15 +1356,16 @@ describe('useWorkstreamSocket', () => {
     const getMessages = vi.fn()
       .mockImplementationOnce(() => firstMessages.promise)
       .mockImplementationOnce(() => secondMessages.promise);
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'completed' })),
+      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages,
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1360,15 +1425,16 @@ describe('useWorkstreamSocket', () => {
       toolEvent: { id: invocationId, name: 'avalon.ask', status: 'completed' },
     };
     queryClient.setQueryData(['messages', workstreamId], [staleTool]);
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async () => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async () => ({ id: workstreamId, harnessStatus: 'needs_input' })),
+      getWorkstream: vi.fn(async () => workstreamDetail({ id: workstreamId, harnessStatus: 'needs_input' })),
       getMessages: vi.fn(async () => [canonicalTool]),
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+    });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1391,8 +1457,9 @@ describe('useWorkstreamSocket', () => {
     const getSocketTicket = vi.fn(async (workstreamId: string) => ({
       url: `wss://api.avalon.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket',
+      protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const api = { getSocketTicket } as unknown as AvalonApi;
+    const api = socketApiWith({ getSocketTicket });
     const { rerender } = renderHook(
       ({ workstreamId }) => useWorkstreamSocket(api, workstreamId, true),
       { initialProps: { workstreamId: 'workstream-one' }, wrapper: createWrapper() },
@@ -1422,18 +1489,19 @@ describe('useWorkstreamSocket', () => {
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000402';
     const messageId = '00000000-0000-7000-8000-000000000403';
     const harnessRunId = '00000000-0000-7000-8000-000000000404';
-    const api = {
+    const api = socketApiWith({
       getSocketTicket: vi.fn(async (workstreamId: string) => ({
         url: `wss://api.avalon.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
       })),
-      getWorkstream: vi.fn(async (workstreamId: string) => ({
+      getWorkstream: vi.fn(async (workstreamId: string) => workstreamDetail({
         id: workstreamId,
         harnessStatus: 'running',
-      } as WorkstreamDetail)),
+      })),
       getMessages: vi.fn(async () => []),
       getWorkstreams: vi.fn(async () => ({ items: [], nextCursor: null })),
-    } as unknown as AvalonApi;
+    });
 
     function Socket({ workstreamId }: { workstreamId: string }): null {
       useWorkstreamSocket(api, workstreamId, true);
@@ -1546,7 +1614,7 @@ describe('useWorkstreamSocket', () => {
     const getSocketTicket = vi.fn(async () => {
       throw new Error('offline');
     });
-    const api = { getSocketTicket } as unknown as AvalonApi;
+    const api = socketApiWith({ getSocketTicket });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
     await flushPromises();
@@ -1567,7 +1635,7 @@ describe('useWorkstreamSocket', () => {
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const api = { getSocketTicket } as unknown as AvalonApi;
+    const api = socketApiWith({ getSocketTicket });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
     await flushPromises();
@@ -1606,7 +1674,7 @@ describe('useWorkstreamSocket', () => {
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const api = { getSocketTicket } as unknown as AvalonApi;
+    const api = socketApiWith({ getSocketTicket });
     const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
     await flushPromises();
@@ -1631,7 +1699,7 @@ describe('useWorkstreamSocket', () => {
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const api = { getSocketTicket } as unknown as AvalonApi;
+    const api = socketApiWith({ getSocketTicket });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
     await flushPromises();
@@ -1658,26 +1726,45 @@ describe('useWorkstreamSocket', () => {
       latestHarnessRunId: '00000000-0000-7000-8000-000000000503',
     });
     queryClient.setQueryData(['messages', 'workstream-one'], []);
-    queryClient.setQueryData(['workstreams'], [{ id: 'workstream-one', title: 'Stale' }]);
+    const laterPage = workstreamSummary({
+      id: '00000000-0000-7000-8000-000000000504',
+      title: 'Later page',
+    });
+    const debugRow = workstreamSummary({
+      id: '00000000-0000-7000-8000-000000000505',
+      title: 'System row',
+      systemKind: 'digest',
+    });
+    setCachedWorkstreams(queryClient, [
+      workstreamSummary({ id: 'workstream-one', title: 'Stale' }),
+      laterPage,
+      debugRow,
+    ]);
     const getSocketTicket = vi.fn(async () => ({
       url: 'wss://api.avalon.test/workstreams/workstream-one',
       ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
     }));
-    const canonicalWorkstream = {
+    const canonicalWorkstream = workstreamDetail({
       id: 'workstream-one',
       title: 'Canonical',
       harnessStatus: 'running',
       latestHarnessRunId: harnessRunId,
-    };
+    });
+    const canonicalWorkstreamPage = {
+      items: [workstreamSummary({ id: 'workstream-one', title: 'Canonical' })],
+      nextCursor: null,
+    } satisfies Awaited<ReturnType<WorkstreamSocketApi['getWorkstreams']>>;
     const getWorkstream = vi.fn(async () => canonicalWorkstream);
     const getMessages = vi.fn()
       .mockRejectedValueOnce(new Error('transient D1 failure'))
       .mockResolvedValueOnce([]);
-    const api = {
+    const getWorkstreams = vi.fn(async () => canonicalWorkstreamPage);
+    const api = socketApiWith({
       getSocketTicket,
       getWorkstream,
       getMessages,
-    } as unknown as AvalonApi;
+      getWorkstreams,
+    });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper(queryClient) });
 
     await flushPromises();
@@ -1717,6 +1804,11 @@ describe('useWorkstreamSocket', () => {
       JSON.stringify({ type: 'subscribe', afterSequence: 14 }),
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
+    expect(queryClient.getQueryData(['workstreams'])).toEqual([
+      ...canonicalWorkstreamPage.items,
+      laterPage,
+      debugRow,
+    ]);
     expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
     act(() => FakeWebSocket.instances[1]?.message({
       type: 'stream_delta',

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";
 const userId = "00000000-0000-7000-8000-000000000002";
@@ -19,7 +20,7 @@ class WatchDatabase {
 
   constructor(private readonly connectorType: string) {}
 
-  readonly binding = {
+  readonly binding = createTestD1Database({
     prepare: (sql: string) => {
       const recorded = { sql: sql.replace(/\s+/gu, " ").trim(), values: [] as unknown[] };
       this.statements.push(recorded);
@@ -57,7 +58,7 @@ class WatchDatabase {
           throw new Error(`Unexpected first query: ${recorded.sql}`);
         },
       };
-      return statement as unknown as D1PreparedStatement;
+      return createTestD1PreparedStatement(statement);
     },
     batch: async () => {
       this.batches += 1;
@@ -66,7 +67,7 @@ class WatchDatabase {
         { success: true, meta: { changes: 1 }, results: [] },
       ];
     },
-  } as unknown as D1Database;
+  });
 }
 
 const auth: AuthContext = {
@@ -78,11 +79,11 @@ const auth: AuthContext = {
 };
 
 function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof vi.fn>): Env {
-  const schedulerNamespace = {
+  const schedulerNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => ({ toString: () => "scheduler-id" }),
     get: () => ({ fetch: schedulerFetch }),
-  } as unknown as DurableObjectNamespace;
-  return {
+  });
+  return createTestEnv({
     DB: database.binding,
     WORKSPACE_SCHEDULERS: schedulerNamespace,
     APP_ENV: "test",
@@ -95,7 +96,7 @@ function environment(database: WatchDatabase, schedulerFetch: ReturnType<typeof 
     GITHUB_APP_CLIENT_SECRET: "github-secret",
     GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nunused-test-key\n-----END PRIVATE KEY-----",
     GITHUB_WEBHOOK_SECRET: "github-webhook-secret",
-  } as unknown as Env;
+  });
 }
 
 afterEach(() => vi.useRealTimers());

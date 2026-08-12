@@ -6,9 +6,10 @@ import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
 import { migratedSqliteDatabase } from "./helpers/sqlite-d1";
+import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 // The logger only reads the observability bindings off the environment.
-const logEnv = { AVALON_REGION: "global", LOG_LEVEL: "error" } as unknown as Env;
+const logEnv = createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" });
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -271,7 +272,7 @@ describe("Slack Agent durable ingress", () => {
   });
 
   it("returns modal field errors synchronously", async () => {
-    const service = new SlackAgentService({ AVALON_REGION: "global" } as Env);
+    const service = new SlackAgentService(createTestEnv({ AVALON_REGION: "global" }));
     await expect(service.processInteraction({
       type: "view_submission",
       team: { id: "T1" },
@@ -288,7 +289,7 @@ describe("Slack Agent durable ingress", () => {
   });
 
   it("rejects a start-task modal whose signed source metadata is missing", async () => {
-    const service = new SlackAgentService({ AVALON_REGION: "global" } as Env);
+    const service = new SlackAgentService(createTestEnv({ AVALON_REGION: "global" }));
     await expect(service.processInteraction({
       type: "view_submission",
       team: { id: "T1" },
@@ -526,12 +527,12 @@ function channelMessagePayload(
 }
 
 function environment(database: IngressDatabase, send: (body: unknown) => Promise<void>): Env {
-  return {
-    DB: database as unknown as D1Database,
-    ACTIVITY_QUEUE: { send } as unknown as Queue,
+  return createTestEnv({
+    DB: createTestD1Database(database),
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     AVALON_REGION: "global",
     SLACK_APP_ID: "A1",
-  } as Env;
+  });
 }
 
 function result<T = unknown>(changes: number): D1Result<T> {

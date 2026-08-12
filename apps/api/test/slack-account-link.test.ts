@@ -5,6 +5,7 @@ import type { AuthContext, Env } from "../src/env";
 import { encryptString, sha256 } from "../src/lib/crypto";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackAgentService } from "../src/services/slack-agent-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const credentialsKey = "slack-account-link-test-key";
 const workspaceId = "00000000-0000-7000-8000-000000000001";
@@ -385,7 +386,7 @@ async function seededDatabase(): Promise<DatabaseSync> {
 }
 
 function environment(database: DatabaseSync): Env {
-  return {
+  return createTestEnv({
     DB: sqliteD1(database),
     ACTIVITY_QUEUE: { send: async () => {} },
     AVALON_REGION: "global",
@@ -398,5 +399,5 @@ function environment(database: DatabaseSync): Env {
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
     LOG_LEVEL: "error",
-  } as unknown as Env;
+  });
 }

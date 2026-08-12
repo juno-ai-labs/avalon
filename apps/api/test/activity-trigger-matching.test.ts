@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { Env } from "../src/env";
 import { __testing } from "../src/queues/activity-consumer";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const activity = {
   connection_id: "connection-github-acme",
@@ -30,7 +30,7 @@ describe("activity automation trigger matching", () => {
     const sourceBindings = { github_source: "plugin_github_acme" };
 
     await expect(__testing.triggerMatches(
-      {} as Env,
+      createTestEnv({}),
       activity as never,
       trigger,
       new Set(),
@@ -38,7 +38,7 @@ describe("activity automation trigger matching", () => {
       sourceBindings,
     )).resolves.toBe(true);
     await expect(__testing.triggerMatches(
-      {} as Env,
+      createTestEnv({}),
       { ...activity, connection_id: "connection-github-other" } as never,
       trigger,
       new Set(),
@@ -49,7 +49,7 @@ describe("activity automation trigger matching", () => {
 
   it("retains the frozen connector-set fallback for legacy slotless triggers", async () => {
     await expect(__testing.triggerMatches(
-      {} as Env,
+      createTestEnv({}),
       { ...activity, connection_id: "connection-github-other" } as never,
       {
         type: "connector_activity",

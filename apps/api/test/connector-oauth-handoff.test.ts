@@ -5,6 +5,7 @@ import type { AuthContext, Env } from "../src/env";
 import { sealString } from "../src/lib/crypto";
 import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const OTHER_USER_ID = "00000000-0000-4000-8000-000000000002";
@@ -22,7 +23,7 @@ class SqliteD1Statement {
 
   async run(): Promise<D1Result<unknown>> {
     const result = this.statement.run(...this.values as SQLInputValue[]);
-    return { success: true, meta: { changes: Number(result.changes) } } as unknown as D1Result<unknown>;
+    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
   }
 
   async first<T>(): Promise<T | null> {
@@ -73,21 +74,21 @@ function fixture(): { database: DatabaseSync; env: Env; auth: AuthContext } {
       status TEXT NOT NULL
     );
   `);
-  const binding = {
-    prepare: (sql: string) => new SqliteD1Statement(database.prepare(sql)) as unknown as D1PreparedStatement,
+  const binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
     batch: (statements: D1PreparedStatement[]) => Promise.all(
       statements.map((statement) => (statement as unknown as SqliteD1Statement).run()),
     ),
-  } as unknown as D1Database;
+  });
   return {
     database,
-    env: {
+    env: createTestEnv({
       DB: binding,
       AVALON_REGION: "global",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
-    } as Env,
+    }),
     auth: {
       sessionId: "session",
       userId: USER_ID,
@@ -275,14 +276,14 @@ describe("connector OAuth handoff", () => {
     const response = await createApp().request(
       `https://github.with-avalon.com/connections/github/setup?installation_id=1&state=${"x".repeat(20)}`,
       undefined,
-      {
+      createTestEnv({
         ALLOWED_ORIGINS: "app://avalon",
         AVALON_REGION: "global",
         GITHUB_INGRESS_BASE_URL: "https://github.with-avalon.com",
         PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
         DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
         LOG_LEVEL: "error",
-      } as Env,
+      }),
     );
 
     expect(response.status).toBe(302);

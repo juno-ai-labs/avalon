@@ -12,6 +12,14 @@ import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
 import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-validated-response.mjs";
+import {
+  noDirectWorkstreamsCacheWriteRule,
+} from "./scripts/eslint-rules/renderer-cache-boundaries.mjs";
+import {
+  noApplicationContractTestCastRule,
+  noDirectCloudflareTestCastRule,
+  noProductionDoubleAssertionRule,
+} from "./scripts/eslint-rules/type-assertion-boundaries.mjs";
 
 export default tseslint.config(
   {
@@ -29,7 +37,6 @@ export default tseslint.config(
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["packages/contracts/src/url-schemas.ts"],
     plugins: {
       avalon: {
         rules: {
@@ -42,16 +49,25 @@ export default tseslint.config(
           "require-validated-response": requireValidatedResponseRule,
           "require-inference-signal": requireInferenceSignalRule,
           "require-websocket-ticket": requireWebSocketTicketRule,
+          "no-application-contract-test-cast": noApplicationContractTestCastRule,
+          "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
+          "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
+          "no-production-double-assertion": noProductionDoubleAssertionRule,
         },
       },
     },
     rules: {
-      "avalon/no-bare-zod-url": "error",
       // Repository-wide rather than scoped to scripts/: the guard is wrong
       // wherever it is written, and the two folders that need it already keep
       // separate copies of the helper that replaces it.
       "avalon/no-raw-entry-point-check": "error",
       "avalon/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    ignores: ["packages/contracts/src/url-schemas.ts"],
+    rules: {
+      "avalon/no-bare-zod-url": "error",
     },
   },
   {
@@ -119,6 +135,40 @@ export default tseslint.config(
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
       "avalon/require-websocket-ticket": "error",
+    },
+  },
+  {
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
+    ignores: ["apps/desktop/src/renderer/lib/workstreams-cache.ts"],
+    rules: {
+      "avalon/no-direct-workstreams-cache-write": "error",
+    },
+  },
+  {
+    files: [
+      "apps/**/src/**/*.{ts,tsx}",
+      "packages/**/src/**/*.{ts,tsx}",
+    ],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: {
+      "avalon/no-production-double-assertion": "error",
+    },
+  },
+  {
+    files: [
+      "apps/**/*.test.{ts,tsx}",
+      "apps/**/test/**/*.{ts,tsx}",
+      "apps/**/test-workers/**/*.{ts,tsx}",
+      "packages/**/*.test.{ts,tsx}",
+      "packages/**/test/**/*.{ts,tsx}",
+    ],
+    ignores: [
+      "apps/api/test/helpers/cloudflare-test.ts",
+      "apps/release-retention/test/helpers/cloudflare-test.ts",
+    ],
+    rules: {
+      "avalon/no-application-contract-test-cast": "error",
+      "avalon/no-direct-cloudflare-test-cast": "error",
     },
   },
   {
