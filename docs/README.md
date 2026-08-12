@@ -69,6 +69,7 @@ update it in the same change.
 | [`CONNECTORS.md`](CONNECTORS.md) | The connector registry and manifest model — OAuth needs, personal versus workspace scopes, activity and resource types, tools, polling, webhooks, watches. Read before adding or changing an adapter. |
 | [`connector-digestibility.md`](connector-digestibility.md) | One row per declared activity type, for every connector, saying whether a person should hear about it in a digest and why. A reference for reviewing that judgement in one place; the manifests are authoritative and a test keeps the two in step. |
 | [`PROVIDER_APPS.md`](PROVIDER_APPS.md) | Provider app registrations and their regional routing, plus the source manifests in `config/provider-apps`. Read before changing a registration or callback. |
+| [`notion-ingress.md`](notion-ingress.md) | How one public Notion connection serves both regions: the `notion.with-avalon.com` callback and webhook host, the region-prefixed OAuth state, and the Global route directory. Read before changing Notion authorization or webhook ingestion. |
 | [`LINEAR_INTEGRATION.md`](LINEAR_INTEGRATION.md) | The Linear OAuth, webhook, and native-agent design against Linear's published contracts. |
 | [`SLACK_INTEGRATION.md`](SLACK_INTEGRATION.md) | The Slack Agent connector's product boundary, tools, and event handling. |
 | [`SLACK_PERMISSIONS.md`](SLACK_PERMISSIONS.md) | Every configured Slack OAuth scope and the behavior that depends on it. Read before adding a scope. |

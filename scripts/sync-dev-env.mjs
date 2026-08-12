@@ -127,6 +127,10 @@ const safeDefaults = {
   PUBLIC_WEB_BASE_URL: "http://127.0.0.1:5174",
   ALLOWED_ORIGINS: "app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
+  // Notion derives its one redirect URI from this, so leaving it unset would
+  // point a local authorization at production. Both regions name the local
+  // Global Worker, exactly as they name the shared ingress in production.
+  NOTION_INGRESS_BASE_URL: "http://127.0.0.1:8787",
   OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
   OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
   OPENROUTER_CLASSIFIER_MODEL: "google/gemini-2.5-flash-lite",
@@ -196,6 +200,9 @@ const sharedPublicAppKeys = [
   "LINEAR_OAUTH_CLIENT_ID",
   "LINEAR_OAUTH_CLIENT_SECRET",
   "LINEAR_WEBHOOK_SECRET",
+  "NOTION_OAUTH_CLIENT_ID",
+  "NOTION_OAUTH_CLIENT_SECRET",
+  "NOTION_INTEGRATION_ID",
   "SLACK_APP_ID",
   "SLACK_CLIENT_ID",
   "SLACK_CLIENT_SECRET",

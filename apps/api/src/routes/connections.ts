@@ -26,6 +26,8 @@ import {
   isSharedLinearIngress,
   LinearRoutingService,
 } from "../services/linear-routing-service";
+import { isSharedNotionIngress } from "../lib/notion-ingress";
+import { NotionRoutingService } from "../services/notion-routing-service";
 import { SlackAgentService } from "../services/slack-agent-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -308,9 +310,41 @@ connectionCallbackRoutes.get("/linear/callback", zValidator("query", googleCallb
   const query = c.req.valid("query");
   return connectorCallback(c, "linear", query, (service, code, state) => service.completeProvider("linear", code, state));
 });
+/**
+ * Notion registers one redirect URI for the whole public connection, so this
+ * callback answers on the shared Global host for both regions and hands the
+ * authorization code to the region named by the state prefix. The regional hosts
+ * keep serving it too: local development points the ingress at the API itself,
+ * and there the shared and regional paths are the same URL.
+ */
 connectionCallbackRoutes.get("/notion/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
-  return connectorCallback(c, "notion", query, (service, code, state) => service.completeProvider("notion", code, state));
+  if (!isSharedNotionIngress(c.env, c.req.url)) {
+    return connectorCallback(c, "notion", query, (service, code, state) =>
+      service.completeProvider("notion", code, state));
+  }
+  const routing = new NotionRoutingService(c.env);
+  c.header("Cache-Control", "no-store");
+  try {
+    const target = query.error
+      ? await routing.denyNotion(query.state)
+      : await routing.completeNotion(query.code!, query.state);
+    return c.redirect(desktopHandoffUrl(c.env, target), 302);
+  } catch (error) {
+    const failure = classifyConnectorOAuthCallbackFailure(error);
+    logEvent(c, failure.level, "connector_oauth_callback_failed", {
+      provider: "notion",
+      code: failure.errorCode,
+      ...failure.diagnostics,
+    });
+    const target = await recoverConnectorCallback(
+      c,
+      "notion",
+      failure.errorCode,
+      () => routing.failNotionAttempt(query.state, failure.errorCode),
+    );
+    return c.redirect(desktopHandoffUrl(c.env, target), 302);
+  }
 });
 connectionCallbackRoutes.get("/granola/callback", zValidator("query", googleCallback), async (c) => {
   const query = c.req.valid("query");
@@ -340,11 +374,11 @@ webhookIngestionRoutes.post("/linear", async (c) => {
   return c.json(WebhookIngestionSchema.parse(result), 200);
 });
 webhookIngestionRoutes.post("/notion", async (c) => {
-  const result = await new ProviderWebhookService(c.env).ingestNotion(
-    new Uint8Array(await c.req.arrayBuffer()),
-    c.req.raw.headers,
-    c.req.query("setup") ?? null,
-  );
+  const rawBody = new Uint8Array(await c.req.arrayBuffer());
+  const setupToken = c.req.query("setup") ?? null;
+  const result = isSharedNotionIngress(c.env, c.req.url)
+    ? await new NotionRoutingService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupToken)
+    : await new ProviderWebhookService(c.env).ingestNotion(rawBody, c.req.raw.headers, setupToken);
   // Notion requires a successful 2xx response; acknowledge verified durable
   // deliveries consistently with 200 so setup and normal delivery semantics
   // do not depend on whether a receipt was already present.
