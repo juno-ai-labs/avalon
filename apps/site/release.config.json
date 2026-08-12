@@ -1,41 +1,41 @@
 {
   "published": true,
-  "version": "1.91.0",
-  "commit": "fc43d08687d63cc71f29255dca588ca8b806db4b",
+  "version": "1.92.0",
+  "commit": "70fbdb881df9636011367322050f51403e14d586",
   "platform": "macOS",
   "architecture": "Apple silicon",
   "downloadBaseUrl": "https://downloads.with-avalon.com",
   "bucket": "avalon-desktop-releases",
   "prefix": "stable/darwin/arm64",
   "files": {
-    "dmg": "Avalon-1.91.0-mac-arm64.dmg",
+    "dmg": "Avalon-1.92.0-mac-arm64.dmg",
     "canonicalDmg": "Avalon.dmg",
-    "zip": "Avalon-1.91.0-mac-arm64.zip",
+    "zip": "Avalon-1.92.0-mac-arm64.zip",
     "blockmaps": [
-      "Avalon-1.91.0-mac-arm64.dmg.blockmap",
-      "Avalon-1.91.0-mac-arm64.zip.blockmap"
+      "Avalon-1.92.0-mac-arm64.dmg.blockmap",
+      "Avalon-1.92.0-mac-arm64.zip.blockmap"
     ],
     "checksums": "SHA256SUMS",
     "latest": "latest-mac.yml"
   },
   "objects": {
-    "dmg": "stable/darwin/arm64/Avalon-1.91.0-mac-arm64.dmg",
+    "dmg": "stable/darwin/arm64/Avalon-1.92.0-mac-arm64.dmg",
     "canonicalDmg": "stable/darwin/arm64/Avalon.dmg",
-    "zip": "stable/darwin/arm64/Avalon-1.91.0-mac-arm64.zip",
+    "zip": "stable/darwin/arm64/Avalon-1.92.0-mac-arm64.zip",
     "blockmaps": [
-      "stable/darwin/arm64/Avalon-1.91.0-mac-arm64.dmg.blockmap",
-      "stable/darwin/arm64/Avalon-1.91.0-mac-arm64.zip.blockmap"
+      "stable/darwin/arm64/Avalon-1.92.0-mac-arm64.dmg.blockmap",
+      "stable/darwin/arm64/Avalon-1.92.0-mac-arm64.zip.blockmap"
     ],
-    "checksums": "stable/darwin/arm64/1.91.0/SHA256SUMS",
+    "checksums": "stable/darwin/arm64/1.92.0/SHA256SUMS",
     "latest": "stable/darwin/arm64/latest-mac.yml"
   },
   "sha256": {
-    "Avalon-1.91.0-mac-arm64.dmg": "0a2b23d5ce13fa810a8548e13a3b841397807281010678a04860e5ad3e21fd03",
-    "Avalon-1.91.0-mac-arm64.dmg.blockmap": "59f52b1689d4acdd0432634988c5f47a194ca549615d52d5db2016ade0e004ff",
-    "Avalon-1.91.0-mac-arm64.zip": "ea3e06f6bbec83778d0ac65b5d75e4e803991806c64e657d7c69bc0d94a50712",
-    "Avalon-1.91.0-mac-arm64.zip.blockmap": "93417dc24e48ef694fd0c29513db18c02c9d27409f53654f57752a340ca224d4",
-    "SHA256SUMS": "01bc7b093a34acf3cc175f7146f7f923ddc128027872f95f2e57f1b111a6560b",
-    "Avalon.dmg": "0a2b23d5ce13fa810a8548e13a3b841397807281010678a04860e5ad3e21fd03"
+    "Avalon-1.92.0-mac-arm64.dmg": "87dd05aa52eec46d3b87a9071ac8d5081ed54a1557a7c18ebb0e4a116375dd19",
+    "Avalon-1.92.0-mac-arm64.dmg.blockmap": "e2f4b76dc3a6508ca3f212ac750937ba3fbeb80a57a1d522cf18bc567d238a75",
+    "Avalon-1.92.0-mac-arm64.zip": "83b1a902a07a91086703cd7291d06a4a7c147ae97a6a4cc3ed4ce87025748465",
+    "Avalon-1.92.0-mac-arm64.zip.blockmap": "2f950097f2df1b2844b274169f19e306eb5e261431a65af66844da5626c14d42",
+    "SHA256SUMS": "c874244ba0bd2f2ed3f265477d8f472bbc92fb4ea9276eded451b776b887ceb4",
+    "Avalon.dmg": "87dd05aa52eec46d3b87a9071ac8d5081ed54a1557a7c18ebb0e4a116375dd19"
   },
-  "publishedAt": "2026-08-12T23:09:52.856Z"
+  "publishedAt": "2026-08-12T23:37:50.131Z"
 }
