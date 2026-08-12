@@ -6,6 +6,7 @@ import {
   resolveFrozenDeliveryIdentity,
   resolveUserDelivery,
 } from "../src/services/user-delivery";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 function environment(linkedConnectionIds: string[] = []): { env: Env; prepare: ReturnType<typeof vi.fn> } {
   const prepare = vi.fn(() => ({
@@ -15,7 +16,7 @@ function environment(linkedConnectionIds: string[] = []): { env: Env; prepare: R
   }));
   return {
     prepare,
-    env: {
+    env: createTestEnv({
       APP_ENV: "test",
       AVALON_REGION: "global",
       DB: { prepare },
@@ -23,7 +24,7 @@ function environment(linkedConnectionIds: string[] = []): { env: Env; prepare: R
       SLACK_CLIENT_ID: "slack-client",
       SLACK_CLIENT_SECRET: "slack-secret",
       SLACK_SIGNING_SECRET: "slack-signing",
-    } as unknown as Env,
+    }),
   };
 }
 
@@ -163,7 +164,7 @@ function routedEnvironment(input: {
     }),
   }));
   return {
-    env: {
+    env: createTestEnv({
       APP_ENV: "test",
       AVALON_REGION: "global",
       DB: { prepare },
@@ -171,6 +172,6 @@ function routedEnvironment(input: {
       SLACK_CLIENT_ID: "slack-client",
       SLACK_CLIENT_SECRET: "slack-secret",
       SLACK_SIGNING_SECRET: "slack-signing",
-    } as unknown as Env,
+    }),
   };
 }

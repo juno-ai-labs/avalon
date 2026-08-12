@@ -36,6 +36,9 @@ const DELETE_RETRY_DELAYS_MS = [0, 250, 1_250] as const;
 /** One shared empty list, so clearing an already-empty composer renders nothing. */
 const NO_ATTACHMENTS: PendingAttachment[] = [];
 
+/** The attachment draft owns only upload and draft cleanup operations. */
+export type FileAttachmentsApi = Pick<AvalonApi, 'deleteDraftResource' | 'uploadResource'>;
+
 /** Expired drafts are swept once per application run, not once per composer. */
 let prunedThisSession = false;
 let pruning = false;
@@ -45,7 +48,7 @@ async function sha256Buffer(bytes: ArrayBuffer): Promise<string> {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function deleteDraftWithRetry(api: AvalonApi, id: string): Promise<void> {
+async function deleteDraftWithRetry(api: FileAttachmentsApi, id: string): Promise<void> {
   let lastError: unknown;
   for (const delay of DELETE_RETRY_DELAYS_MS) {
     if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
@@ -106,7 +109,7 @@ function restoredAttachment(cached: CachedDraftAttachment, connected: boolean): 
  * files exactly where the user left them. Sending or removing an attachment
  * clears its cached copy.
  */
-export function useFileAttachments(api: AvalonApi | null, draftKey: string) {
+export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: string) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>(NO_ATTACHMENTS);
   const [error, setError] = useState<string>();
   const [fingerprinting, setFingerprinting] = useState(0);

@@ -9,6 +9,7 @@ import {
   WorkspaceOnboardingService,
   WorkspaceService,
 } from "../src/services/workspace-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
 
 interface RecordedStatement {
   sql: string;
@@ -26,18 +27,18 @@ class StubDatabase {
     private readonly resolveAll?: (statement: RecordedStatement) => unknown[] | undefined,
   ) {}
 
-  readonly binding = {
-    prepare: (sql: string) => new StubStatement(this, sql) as unknown as D1PreparedStatement,
+  readonly binding = createTestD1Database({
+    prepare: (sql: string) => createTestD1PreparedStatement(new StubStatement(this, sql)),
     batch: async <T = unknown>(statements: D1PreparedStatement[]) => {
       const recorded = statements.map((statement) => (statement as unknown as StubStatement).record());
       this.batches.push(recorded);
-      return recorded.map(() => ({
+      return createTestD1Results<T>(recorded.map(() => ({
         success: true,
         results: [],
         meta: { changes: 1 },
-      })) as unknown as D1Result<T>[];
+      })));
     },
-  } as unknown as D1Database;
+  });
 
   first(statement: RecordedStatement): unknown | null {
     const value = this.resolveFirst(statement);
@@ -71,16 +72,16 @@ class StubStatement {
 
   async run<T>(): Promise<D1Result<T>> {
     this.database.runs.push(this.record());
-    return { success: true, results: [], meta: { changes: 1 } } as unknown as D1Result<T>;
+    return createTestD1Result<T>({ success: true, results: [], meta: { changes: 1 } });
   }
 
 
   async all<T>(): Promise<D1Result<T>> {
-    return {
+    return createTestD1Result<T>({
       success: true,
       results: this.database.all(this.record()) as T[],
       meta: {},
-    } as unknown as D1Result<T>;
+    });
   }
 
   record(): RecordedStatement {
@@ -113,7 +114,7 @@ const ownerAuth: AuthContext = {
 };
 
 function environment(database: StubDatabase, overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     DB: database.binding,
     APP_ENV: "test",
     AVALON_REGION: "global",
@@ -126,7 +127,7 @@ function environment(database: StubDatabase, overrides: Partial<Env> = {}): Env 
     SESSION_SIGNING_KEY: "test-session-signing-key-with-enough-entropy",
     RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
     ...overrides,
-  } as unknown as Env;
+  });
 }
 
 beforeEach(() => {

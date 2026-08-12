@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
+import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import {
   applyPinnedWorkstreams,
   applyPinnedWorkstreamsIfCurrent,
@@ -75,7 +76,7 @@ describe('applyPinnedWorkstreams', () => {
 
   function cacheWith(items: WorkstreamSummary[]): QueryClient {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY, items);
+    setCachedWorkstreams(queryClient, items);
     return queryClient;
   }
 

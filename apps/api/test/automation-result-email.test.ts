@@ -5,6 +5,7 @@ import {
   deliverAutomationResultEmail,
   type AutomationResultEmail,
 } from "../src/services/automation-email-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const input: AutomationResultEmail = {
   workspaceId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7900",
@@ -45,7 +46,7 @@ function environment(
   });
   return {
     calls,
-    env: {
+    env: createTestEnv({
       APP_ENV: "production",
       AVALON_REGION: "global",
       DB: { prepare },
@@ -53,7 +54,7 @@ function environment(
       RESEND_FROM_EMAIL: "Avalon <invites@with-avalon.com>",
       RESEND_NOTIFICATION_FROM_EMAIL: "Avalon <notifications@with-avalon.com>",
       ...overrides,
-    } as unknown as Env,
+    }),
   };
 }
 

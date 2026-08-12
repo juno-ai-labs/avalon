@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { assertEnvContract, EnvContractError, type Env } from "../src/env";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 function binding(): never {
   return {} as never;
 }
 
 function productionEnv(overrides: Partial<Env> = {}): Env {
-  return {
+  return createTestEnv({
     DB: binding(), PAYLOADS: binding(), IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
     RUN_ANALYTICS: binding(),
     WORKSTREAM_ROOMS: binding(), WORKSPACE_SCHEDULERS: binding(), ACTIVITY_QUEUE: binding(),
@@ -38,7 +39,7 @@ function productionEnv(overrides: Partial<Env> = {}): Env {
     WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
     CONNECTOR_POLL_TIMEOUT_MS: "20000",
     ...overrides,
-  } as Env;
+  });
 }
 
 describe("environment contract", () => {

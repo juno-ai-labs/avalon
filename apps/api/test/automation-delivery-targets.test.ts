@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
+import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
+import { createTestEnv } from "./helpers/cloudflare-test";
 
 const auth: AuthContext = {
   sessionId: "session-1",
@@ -43,7 +44,7 @@ function createInput(
 function serviceWith(first: () => Promise<unknown>): { service: AutomationService; bind: ReturnType<typeof vi.fn> } {
   const bind = vi.fn(() => ({ first }));
   const prepare = vi.fn(() => ({ bind }));
-  return { bind, service: new AutomationService({ DB: { prepare } } as unknown as Env, auth) };
+  return { bind, service: new AutomationService(createTestEnv({ DB: { prepare } }), auth) };
 }
 
 describe("automation delivery targets", () => {

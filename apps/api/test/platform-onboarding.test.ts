@@ -19,6 +19,7 @@ import {
   type RegionalIdentityBridgeRpcBinding,
   type RegionalRpcResult,
 } from "../src/services/platform-onboarding-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const platformUserId = "00000000-0000-7000-8000-000000000001";
 const euWorkspaceId = "00000000-0000-7000-8000-000000000002";
@@ -95,7 +96,7 @@ function invitation(region: Region = "eu") {
 class IdentityDatabase {
   readonly statements: Array<{ sql: string; values: unknown[] }> = [];
 
-  readonly binding = {
+  readonly binding = createTestD1Database({
     prepare: (sql: string) => {
       const record = { sql: sql.replace(/\s+/gu, " ").trim(), values: [] as unknown[] };
       this.statements.push(record);
@@ -122,11 +123,11 @@ class IdentityDatabase {
           }
           throw new Error(`Unexpected first query: ${record.sql}`);
         },
-        run: async <T>() => ({ success: true, results: [], meta: { changes: 1 } }) as unknown as D1Result<T>,
+        run: async <T>() => createTestD1Result<T>(({ success: true, results: [], meta: { changes: 1 } })),
       };
-      return statement as unknown as D1PreparedStatement;
+      return createTestD1PreparedStatement(statement);
     },
-  } as unknown as D1Database;
+  });
 }
 
 class MemoryBindingStore implements PlatformBindingStore {
@@ -219,14 +220,14 @@ class FakeRawRegionalBridge implements RegionalIdentityBridgeRpcBinding {
 }
 
 function environment(database: IdentityDatabase, eu?: RegionalIdentityBridgeRpcBinding): Env {
-  return {
+  return createTestEnv({
     DB: database.binding,
     AVALON_REGION: "global",
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     EU_PUBLIC_API_BASE_URL: "https://eu.api.with-avalon.com",
     EU_IDENTITY_BRIDGE: eu,
     SESSION_SIGNING_KEY: "global-session-signing-key-with-enough-entropy",
-  } as unknown as Env;
+  });
 }
 
 function service(input: {

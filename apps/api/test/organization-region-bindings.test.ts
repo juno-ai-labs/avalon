@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import { AuthService } from "../src/services/auth-service";
 import { previewInvitation } from "../src/services/workspace-service";
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 interface RecordedStatement {
   sql: string;
@@ -13,7 +14,7 @@ class RecordingDatabase {
 
   constructor(private readonly invitation: Record<string, unknown>) {}
 
-  readonly binding = {
+  readonly binding = createTestD1Database({
     prepare: (sql: string) => {
       const statement: RecordedStatement = {
         sql: sql.replace(/\s+/gu, " ").trim(),
@@ -32,16 +33,16 @@ class RecordingDatabase {
         },
         run: async <T>() => {
           this.runs.push(statement);
-          return {
+          return createTestD1Result<T>({
             success: true,
             results: [],
             meta: { changes: 1 },
-          } as unknown as D1Result<T>;
+          });
         },
       };
-      return prepared as unknown as D1PreparedStatement;
+      return createTestD1PreparedStatement(prepared);
     },
-  } as unknown as D1Database;
+  });
 }
 
 const invitation = {
@@ -60,7 +61,7 @@ const invitation = {
 };
 
 function environment(database: RecordingDatabase, region: "global" | "eu"): Env {
-  return {
+  return createTestEnv({
     DB: database.binding,
     AVALON_REGION: region,
     PUBLIC_API_BASE_URL: region === "eu"
@@ -71,7 +72,7 @@ function environment(database: RecordingDatabase, region: "global" | "eu"): Env 
     GOOGLE_OAUTH_CLIENT_ID: "google-client-id",
     GOOGLE_OAUTH_CLIENT_SECRET: "google-client-secret",
     OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
-  } as unknown as Env;
+  });
 }
 
 afterEach(() => vi.useRealTimers());
