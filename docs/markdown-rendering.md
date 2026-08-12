@@ -86,6 +86,14 @@ markdown element. Two surfaces take the exemption: a note reads as a document
 page and steps its headings 22/17/14, and the meeting briefing sits in a narrow
 rail beside a transcript and holds every level at 15px.
 
+Both write the exemption as `<host> .markdown-body :is(h1, …)`, naming the shared
+container even though the host alone would select the same elements. That is
+deliberate. `.note-detail-article h1` ties `.markdown-body h1` at (0,1,1) and
+wins only by sitting lower in the file, so the override would survive exactly as
+long as nobody split the stylesheet or moved a block. With `.markdown-body` in
+the selector it is (0,2,1) and the question does not arise. A host override that
+cannot be written this way is a sign it is not a typography override.
+
 ## Invariants
 
 - **`react-markdown` is mounted in exactly one place.** A second mount is a
@@ -98,9 +106,15 @@ rail beside a transcript and holds every level at 15px.
   specificity, so which one applies is decided by which is further down a
   3,000-line file. Nobody editing a screen's styles is thinking about that.
 - **A host may override typography, not elements.** The distinction is whether
-  the declaration describes the surface or the markdown. A heading scale, a
-  measure, and a text colour describe the surface; a list indent, a code
-  background, and a table border describe the markdown.
+  the declaration describes the surface or the markdown. A heading scale and a
+  measure describe the surface; a list indent, a code background, and a table
+  border describe the markdown. Text colour is on neither list, because it is
+  not a host's to set at all — see the failure modes below.
+- **A host override wins on specificity, not source order.** Name
+  `.markdown-body` in the selector. Anything relying on being further down the
+  file is a regression waiting for the next person who splits a stylesheet, and
+  it fails silently and visually, which is the combination this module has
+  already been bitten by once.
 - **A mention link is never navigable.** `person:` and `connector:` survive
   `urlTransform` only so the `a` override can turn them into chips or, failing
   that, into inert text. If one ever reached the DOM as an `href`, a model would
@@ -146,6 +160,15 @@ than an email client will honour.
 - **A table wider than its surface** scrolls inside `.markdown-table-scroll`. It
   never widens the page, which matters most in the meeting rail, the narrowest
   surface that renders one.
+- **A `color` set on a host does not reach the markdown.** `.markdown-body`
+  declares its own, and a declaration beats an inherited value, so the colour
+  stops at the wrapper. This is the one override that fails by doing nothing at
+  all rather than by losing a cascade fight, which makes it the one most likely
+  to be met with `!important` or a second `.markdown-body` rule — the divergence
+  the rest of this document exists to prevent. A surface that genuinely needs a
+  different body colour has to restate it inside the wrapper, and should say why
+  in the same breath. `.note-detail-article` carried a dead `color` of this kind
+  until 2026-08-12.
 - **A very long markdown string** is rendered in full. Nothing here truncates;
   the surfaces that need a cap impose it themselves, as the system-message clamp
   in `app.css` does.
@@ -216,6 +239,22 @@ of markdown; the two heading rules that remain are the model for it. Both screen
 were checked in a real window against a fixture covering `h1`–`h6`, three-level
 mixed `ol`/`ul` nesting, task lists, nested blockquotes, code in a list item,
 tables, and `hr`.
+
+Review caught two things about the two heading overrides that survived. They were
+first written as `.note-detail-article :is(h1, …)`, which ties the shared scale on
+specificity and wins only on source order — the exact hazard stated three
+paragraphs up in this document, and the one the guard fails a list rule for. The
+element was never the reason a competing rule is dangerous; the tie is. They name
+`.markdown-body` now, and a test asserts they keep doing so, because prose is
+what the guards in this change exist to replace. Pinning the source order with an
+`indexOf` assertion was the alternative and was rejected: it preserves the
+fragility and tests that nobody disturbs it.
+
+And `.note-detail-article` kept a `color: var(--ink-soft)` that had stopped
+reaching anything — the markdown takes `.markdown-body`'s colour, and the empty
+state sets its own. It is gone, and the invariant that offered "a text colour" as
+a legitimate host override is corrected, because a bullet promising an override
+that silently does nothing is worse than no bullet.
 
 The first version of the stylesheet guard searched the file for the substring
 `<host> <element>`. Review pointed out that it misses
