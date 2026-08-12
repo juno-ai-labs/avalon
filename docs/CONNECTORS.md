@@ -336,7 +336,7 @@ question — see the invariant in
 [`contextual-routing.md`](contextual-routing.md#invariants) before treating a
 `digestible` flag as one surface's business.
 
-Pull request number to be added when this is opened.
+Shipped in #109.
 
 ### 2026-08-11 — What was fixed for Google was fixed for every connector, including Google
 
