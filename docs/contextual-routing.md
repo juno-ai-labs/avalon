@@ -31,6 +31,8 @@ that feeds it.
 | `apps/api/src/services/work-opportunity-service.ts` → `routeExistingDecision` | **The other producer of the same card.** Not part of this module; listed because every feedback read here has to exclude it. |
 | `packages/agent-harness/src/prompts/activity-routing.ts` | The classifier prompt and its output schema. |
 | `apps/api/src/services/workstream-service.ts` → `resolveSuggestion` | Records `accepted`/`dismissed` and who clicked. The only writer of the signal both feedback reads consume. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | Defines the feed visibility rule and the session-lived dismissal IDs that stop stale message pages reopening a card. |
+| `apps/desktop/src/renderer/lib/api.ts`, `use-workstream-socket.ts`, `screens/workstream.tsx` | Apply that rule to canonical pages, realtime resolution, manual pagination, and the no-socket request fallback. |
 | `packages/db/migrations/0066_activity_suggestion_feedback.sql` | The two indexes those reads seek on. |
 
 ## How it works
@@ -78,6 +80,9 @@ What survives is written by `createActivitySuggestion` as a `pending` row and
 published to the work-stream room, where the desktop client renders it as a
 transcript block. `resolveSuggestion` later stamps `accepted` or `dismissed`
 along with who clicked, which is what steps 2–4 read on the next activity.
+Accepted cards remain in the feed as a receipt that the resource was added;
+dismissed cards leave the feed immediately while their database rows remain as
+routing feedback.
 
 ## Invariants
 
@@ -132,6 +137,14 @@ along with who clicked, which is what steps 2–4 read on the next activity.
   notice. Stamped with the original resolvers, or with several identities, it
   clears the corroboration bar and suppresses those types outright. Neither is a
   decision anybody made about routing.
+- **A dismissal removes the card, not the feedback.** The desktop filters a
+  dismissed suggestion out of every message page and removes it on both the live
+  resolution event and a successful request without a socket. It keeps the
+  suggestion ID as a session-lived query-cache tombstone, which every canonical
+  reconciliation and manual pagination commit consults before updating the
+  transcript. Leaving any of those paths out lets a rejected interruption
+  reappear or accumulate in the message feed, while deleting the database row
+  would erase the evidence the routing thresholds need.
 
 ## Boundary
 
@@ -211,6 +224,12 @@ migrated in-memory SQLite database:
 ```bash
 pnpm --filter @avalon/api exec vitest run test/activity-contextual-routing.test.ts
 ```
+
+`apps/desktop/src/renderer/lib/api.test.ts` covers canonical feed reconstruction
+and dismissed rows in a paginated message response.
+`apps/desktop/src/renderer/lib/use-workstream-socket-suggestions.test.tsx`
+covers accepted and dismissed resolution events in the live feed, including a
+canonical fetch that started before the dismissal and completes after it.
 
 Four traps. **GitHub credentials in the fake env are load-bearing** — the registry
 is what answers digestibility, and `GITHUB_APP_PRIVATE_KEY` must be PEM-shaped or
@@ -292,6 +311,38 @@ suppressed type. The prior is `connector-digestibility.md` plus whether that
 connector declares any digestible type at all.
 
 ## Changelog
+
+### 2026-08-12 — Dismissing a suggestion removes it from the message feed
+
+**What changed:** The desktop now removes dismissed Suggested context cards on
+the live resolution event and after a successful dismissal request when the
+socket is unavailable. Canonical and paginated message responses filter
+dismissed rows, and every reconciliation consults a session-lived dismissal ID
+before committing a response that may have started earlier. Accepted cards
+remain visible as confirmation that their resource was added, and the dismissed
+database row remains stored for routing feedback.
+
+**Why:** A resolution event replaced the pending card with a resolved card whose
+footer said “Dismissed.” Repeating the action therefore accumulated rejected
+suggestions in the message feed—the surface the person was trying to clear—and
+made the routing feedback improvement feel like more noise rather than less.
+
+**Considered and rejected:** Hiding the resolved content only inside the card
+component. The virtualized feed would still own and measure an empty transcript
+row, and stale dismissed messages would remain in its cache. Also rejected was
+keeping a compact dismissal receipt: acceptance has a durable side effect worth
+confirming, while dismissal is specifically the decision that this unsolicited
+context does not belong in the work stream.
+
+**Consequences:** Every path that introduces or reconciles suggestion messages
+must preserve the same visibility rule. Dismissal IDs remain in the renderer's
+query cache for the app session; they are UUIDs that cannot be reused, so this
+small monotonic set closes every overlapping page-fetch race without a cleanup
+timer or another server read. Dismissal is presentation removal only; future
+cleanup must not delete the `activity_suggestions` row, because its status and
+resolver are the evidence used to reduce later routing noise.
+
+Shipped in #135.
 
 ### 2026-08-12 — The workspace's own dismissals set the bar; the manifest only nudges it
 
