@@ -13,14 +13,12 @@ import {
 } from '@tabler/icons-react';
 import type { AutomationPluginActivity, AutomationPluginIcon } from '@avalon/contracts';
 import {
-  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Clipboard,
   Copy,
-  FileText,
   LoaderCircle,
   Pin,
   TerminalSquare,
@@ -516,18 +514,6 @@ function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX
   );
 }
 
-function ArtifactBlock({ message }: { message: Message }): React.JSX.Element | null {
-  const artifact = message.artifact;
-  if (!artifact) return null;
-  return (
-    <button className="artifact-block" type="button">
-      <span className="artifact-icon"><FileText aria-hidden="true" size={17} /></span>
-      <span><small>{artifact.artifactType}</small><strong>{artifact.title}</strong>{artifact.previewText && <p>{artifact.previewText}</p>}</span>
-      <ArrowRight aria-hidden="true" size={15} />
-    </button>
-  );
-}
-
 function elicitationAnswerLabel(elicitation: ElicitationData): string {
   const answer = elicitation.answer;
   if (answer == null) return 'Skipped';
@@ -838,7 +824,6 @@ export function MessageBlock({
 }: MessageBlockProps): React.JSX.Element {
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
-  if (message.messageType === 'artifact') return <div className="transcript-event" id={`message-${message.id}`}><ArtifactBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {
     if (message.elicitation.status === 'answered') {
       const externalResponse = message.authorType === 'external';

@@ -162,7 +162,7 @@ export async function refreshWorkstreamName(env: Env, input: {
     // This pass is the one thing that comes along afterwards, so it repairs the
     // row rather than stepping over it.
     // The count is over exactly the rows the naming context reads. `messages`
-    // also holds a row per tool call, per artifact, per elicitation — and a run
+    // also holds a row per tool call and per elicitation — and a run
     // ends where those accumulate, which is one of the two places this is
     // called from. Counting them would trip the threshold on a work stream that
     // has said two things, and name it from what the first pass already saw.

@@ -79,7 +79,6 @@ function detail(): WorkstreamDetail {
     viewers: [],
     resources: [],
     connections: [],
-    artifacts: [],
     backgroundTasks: [],
     automationRuns: [],
     suggestions: [],

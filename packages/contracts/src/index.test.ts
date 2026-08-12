@@ -31,7 +31,6 @@ import {
   UpdateHyperSightRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
-  WorkstreamArtifactSchema,
   WorkstreamWorkflowInputSchema
 } from "./index";
 
@@ -642,20 +641,7 @@ describe("boundary contracts", () => {
     });
   });
 
-  it("carries durable work-stream outputs and task records across reloads", () => {
-    expect(WorkstreamArtifactSchema.parse({
-      id,
-      workspaceId: id,
-      workstreamId: id,
-      harnessRunId: id,
-      artifactType: "markdown",
-      title: "Launch brief",
-      previewText: "First persisted lines",
-      status: "complete",
-      mimeType: "text/markdown; charset=utf-8",
-      createdAt: "2026-07-31T20:00:00.000Z",
-      updatedAt: "2026-07-31T20:00:01.000Z"
-    })).toMatchObject({ title: "Launch brief", status: "complete" });
+  it("carries task records across reloads", () => {
     expect(BackgroundTaskSchema.parse({
       id,
       harnessRunId: id,

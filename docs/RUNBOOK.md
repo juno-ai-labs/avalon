@@ -591,7 +591,11 @@ Retain the previous regional key during rotation. Decrypt with the stored key ve
 ## Recovery and data handling
 
 - D1 is canonical for work streams, messages, runs, schedules, connector metadata, and audit events.
-- R2 stores large payloads, uploads, snapshots, and artifacts referenced by D1.
+- R2 stores large payloads, uploads, and snapshots referenced by D1.
 - Durable Object storage coordinates presence, ordering, sockets, and alarms; it is not the backup source.
 - Production never loads `packages/db/seed.sql`.
 - Restore D1 and its corresponding R2 objects as a region-consistent set before resuming Queue consumers or scheduler alarms.
+
+### Sweeping the retired artifact objects
+
+Migration `0068` dropped the `artifacts` table, which held the only pointers to the objects the retired `create_artifact` tool wrote. They are still in the bucket, under `<region>/<workspace>/artifacts/<artifact-id>.txt` in both regions, and nothing references or reaps them. Delete them by prefix once per region — `wrangler r2 object delete` per key, or a bucket lifecycle rule on the prefix — and confirm the prefix lists empty afterwards. This is a one-off: no code writes that prefix any more. Do it deliberately rather than as part of a deploy; the objects are unreachable but they are the last copy of anything an agent wrote there, so anything worth keeping has to be pulled out first.

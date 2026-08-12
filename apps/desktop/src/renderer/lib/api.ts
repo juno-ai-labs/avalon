@@ -44,7 +44,6 @@ import {
   type Resource as WireResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
-  type WorkstreamArtifact as WireWorkstreamArtifact,
   type WorkstreamDetail as WireWorkstreamDetail,
 } from '@avalon/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@avalon/contracts/socket-tickets';
@@ -57,7 +56,6 @@ import { createElicitationMessage, upsertTranscriptMessage } from './transcript'
 import type {
   ActivitySuggestionData,
   AgentModelOverride,
-  ArtifactData,
   AutomationCreateOptions,
   AutomationDeliveryTargetType,
   AutomationDetail,
@@ -412,19 +410,6 @@ export function mapBackgroundTask(task: WireBackgroundTask): BackgroundTask {
   };
 }
 
-export function mapWorkstreamArtifact(artifact: WireWorkstreamArtifact): ArtifactData {
-  return {
-    id: artifact.id,
-    title: artifact.title,
-    artifactType: artifact.artifactType,
-    ...(artifact.previewText ? { previewText: artifact.previewText } : {}),
-    status: artifact.status,
-    mimeType: artifact.mimeType,
-    ...(artifact.harnessRunId ? { harnessRunId: artifact.harnessRunId } : {}),
-    createdAt: artifact.createdAt,
-  };
-}
-
 export function mapMessage(message: WireMessage): Message {
   const structured = message.structuredContent ?? {};
   const invocation = WireToolInvocationSchema.safeParse('invocation' in structured ? structured['invocation'] : structured);
@@ -464,16 +449,6 @@ export function mapMessage(message: WireMessage): Message {
     attachments: message.attachments.map((attachment) => ({ ...attachment })),
     createdAt: message.createdAt,
     ...(invocation.success ? { toolEvent: mapToolInvocation(invocation.data) } : {}),
-    ...(message.messageType === 'artifact'
-      ? {
-          artifact: {
-            id: typeof structured['id'] === 'string' ? structured['id'] : message.id,
-            title: typeof structured['title'] === 'string' ? structured['title'] : message.textContent || 'Artifact',
-            artifactType: typeof structured['artifactType'] === 'string' ? structured['artifactType'] : 'artifact',
-            ...(typeof structured['previewText'] === 'string' ? { previewText: structured['previewText'] } : {}),
-          },
-        }
-      : {}),
     ...(elicitation.success ? { elicitation: mapElicitation(elicitation.data) } : {}),
     ...(suggestion.success ? { activitySuggestion: mapSuggestion(suggestion.data) } : {}),
   };
@@ -491,7 +466,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
     viewers: workstream.viewers.map(mapViewer),
     resources: workstream.resources.map(mapResource),
     connections: workstream.connections.map(mapConnection),
-    artifacts: (workstream.artifacts ?? []).map(mapWorkstreamArtifact),
     backgroundTasks: (workstream.backgroundTasks ?? []).map(mapBackgroundTask),
     openElicitations: workstream.openElicitations.map(mapElicitation),
     suggestions: workstream.suggestions.map(mapSuggestion),
@@ -1305,7 +1279,6 @@ export class AvalonApi {
       signal,
     });
     const context: WorkstreamDeferredContext = {
-      artifacts: raw.artifacts.map(mapWorkstreamArtifact),
       backgroundTasks: raw.backgroundTasks.map(mapBackgroundTask),
       automationRuns: [],
     };
@@ -1349,29 +1322,6 @@ export class AvalonApi {
 
   async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
     return (await this.getMessagePage(id, { signal })).items;
-  }
-
-  async downloadArtifact(workstreamId: string, artifactId: string, signal?: AbortSignal): Promise<{
-    blob: Blob;
-    fileName: string;
-  }> {
-    const response = await this.execute(
-      `/workstreams/${encodeURIComponent(workstreamId)}/artifacts/${encodeURIComponent(artifactId)}/content`,
-      { method: 'GET', ...(signal ? { signal } : {}) },
-    );
-    if (!response.ok) return this.throwResponseError(response);
-    const disposition = response.headers.get('Content-Disposition') ?? '';
-    const encodedName = /filename\*=UTF-8''([^;]+)/iu.exec(disposition)?.[1];
-    const quotedName = /filename="([^"]+)"/iu.exec(disposition)?.[1];
-    let fileName = quotedName ?? `avalon-output-${artifactId}.txt`;
-    if (encodedName) {
-      try {
-        fileName = decodeURIComponent(encodedName);
-      } catch {
-        // Keep the conservative quoted filename when the extended form is malformed.
-      }
-    }
-    return { blob: await response.blob(), fileName };
   }
 
   private async mentionPayload(workstreamId: string, text: string, selected: MentionIdentity[] = []): Promise<Array<{
